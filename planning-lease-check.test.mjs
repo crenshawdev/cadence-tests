@@ -491,14 +491,14 @@ test('lease-check: a staged path that is not valid UTF-8 is refused BY NAME, nev
 
 test('lease-check: a staged census FILE is refused by a reason of its own, and leaves a record', () => {
   const { repo, dir } = leaseRepo({ files: ['a.txt'] });
-  stage(repo, 'cadence-core/bin/trace.test.mjs');
+  stage(repo, 'tests/trace.test.mjs');
 
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'undeclared-census-files');
   assert.notEqual(r.reason, 'undeclared-files');
-  assert.deepEqual(r.undeclared, ['cadence-core/bin/trace.test.mjs']);
-  assert.deepEqual(r.census_files, ['cadence-core/bin/trace.test.mjs']);
+  assert.deepEqual(r.undeclared, ['tests/trace.test.mjs']);
+  assert.deepEqual(r.census_files, ['tests/trace.test.mjs']);
   assert.equal(r.trace.written, true, JSON.stringify(r.trace));
   assert.equal(r._exit, 1);
 
@@ -623,10 +623,10 @@ const PHASE5_LEASE = [
 // missing one both redden - which is how a newly registered census reaches this
 // row rather than sliding past it.
 const PHASE5_AT_RISK = [
-  'cadence-core/bin/phase-spelling.test.mjs',
-  'cadence-core/bin/planning-lease-check.test.mjs',
-  'cadence-core/bin/self-verify.test.mjs',
-  'cadence-core/bin/trace.test.mjs',
+  'tests/phase-spelling.test.mjs',
+  'tests/planning-lease-check.test.mjs',
+  'tests/self-verify.test.mjs',
+  'tests/trace.test.mjs',
 ];
 
 const missingFiles = (r) => (r.censuses_at_risk || []).map((c) => c.missing).sort();
