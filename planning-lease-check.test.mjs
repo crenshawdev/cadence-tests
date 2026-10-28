@@ -22,11 +22,23 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 // --- lease-check: the declared file lease, enforced (QW-03) ------------------
 
 /**
+ * The project-root manifest that makes a tree Cadence's own repository, which
+ * is the only place `lease-check` applies the census table (D-20). Off by
+ * default, so a tree built without it is another project's.
+ */
+function writeCadenceManifest(root, name = 'cadence') {
+  mkdirSync(join(root, '.claude-plugin'), { recursive: true });
+  writeFileSync(join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name }));
+}
+
+/**
  * A scratch GIT repo whose `.planning/phases/<n>/` holds one plan declaring
  * `files`. Returns {repo, dir} - the seam is run with cwd inside the repo,
  * because it resolves the staged set from `git rev-parse --show-toplevel`.
+ * `cadence: true` writes the manifest naming Cadence at the repo root, which
+ * turns the census table on.
  */
-export function leaseRepo({ phase = 1, plan = 'PLAN.md', files = ['a.txt'], body = '' } = {}) {
+export function leaseRepo({ phase = 1, plan = 'PLAN.md', files = ['a.txt'], body = '', cadence = false } = {}) {
   const repo = mkdtempSync(join(tmpdir(), 'cad-lease-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: repo });
@@ -36,6 +48,7 @@ export function leaseRepo({ phase = 1, plan = 'PLAN.md', files = ['a.txt'], body
   mkdirSync(pdir, { recursive: true });
   const fm = files === null ? '' : `---\nphase: ${phase}\nfiles:\n${files.map((f) => `  - ${f}\n`).join('')}---\n`;
   writeFileSync(join(pdir, plan), `${fm}# Plan\n${body}`);
+  if (cadence) writeCadenceManifest(repo);
   return { repo, dir, pdir };
 }
 
@@ -490,7 +503,7 @@ test('lease-check: a staged path that is not valid UTF-8 is refused BY NAME, nev
 // the other.
 
 test('lease-check: a staged census FILE is refused by a reason of its own, and leaves a record', () => {
-  const { repo, dir } = leaseRepo({ files: ['a.txt'] });
+  const { repo, dir } = leaseRepo({ files: ['a.txt'], cadence: true });
   stage(repo, 'tests/trace.test.mjs');
 
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
@@ -517,13 +530,30 @@ test('lease-check: an undeclared path holding no count keeps the old reason, and
   // The append IS the distinguishing signal. Widening it to every refusal would
   // destroy the distinction criterion 6 asks for, so this arm asserts the trace
   // file was never created at all - not merely that it holds no census line.
-  const { repo, dir } = leaseRepo({ files: ['a.txt'] });
+  const { repo, dir } = leaseRepo({ files: ['a.txt'], cadence: true });
   stage(repo, 'src/other.js');
 
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'undeclared-files');
   assert.deepEqual(r.undeclared, ['src/other.js']);
+  assert.equal(r.census_files, undefined);
+  assert.equal(r.trace, undefined);
+  assert.equal(existsSync(join(dir, 'trace.jsonl')), false);
+  assert.equal(r._exit, 1);
+});
+
+test('lease-check: outside Cadence\'s own repository a holder-named path is only undeclared-files (D-20)', () => {
+  // `CENSUSES` is Cadence's own hand-maintained table. A user's `tests/` is an
+  // ordinary path there, so no manifest naming `cadence` means no census
+  // refusal and no `census_undeclared` event.
+  const { repo, dir } = leaseRepo({ files: ['a.txt'] });
+  stage(repo, 'tests/trace.test.mjs');
+
+  const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.reason, 'undeclared-files');
+  assert.deepEqual(r.undeclared, ['tests/trace.test.mjs']);
   assert.equal(r.census_files, undefined);
   assert.equal(r.trace, undefined);
   assert.equal(existsSync(join(dir, 'trace.jsonl')), false);
@@ -549,7 +579,9 @@ test('lease-check: an undeclared path holding no count keeps the old reason, and
  * Returns the containing directory as `cwd` so a caller can run the seam from
  * inside it, and `pdir` so the "reads paths, never instructions" arm can
  * rewrite the SAME plan file - two runs over one path are what make their two
- * stdouts comparable byte for byte.
+ * stdouts comparable byte for byte. `how.cadence` writes the manifest naming
+ * Cadence at the project root (D-20), which turns the census table on; it is
+ * off by default and `writePlanTimePlan` ignores it.
  */
 function planTimeTree(files, body = '', how) {
   const cwd = mkdtempSync(join(tmpdir(), 'cad-plantime-'));
@@ -557,6 +589,7 @@ function planTimeTree(files, body = '', how) {
   const pdir = join(dir, 'phases', '1');
   mkdirSync(pdir, { recursive: true });
   writePlanTimePlan(pdir, files, body, how);
+  if (how && how.cadence) writeCadenceManifest(cwd);
   return { cwd, dir, pdir };
 }
 
@@ -632,7 +665,7 @@ const PHASE5_AT_RISK = [
 const missingFiles = (r) => (r.censuses_at_risk || []).map((c) => c.missing).sort();
 
 test('lease-check --plan-time: phase 5\'s own lease names every census its work would move', () => {
-  const { cwd, dir } = planTimeTree(PHASE5_LEASE);
+  const { cwd, dir } = planTimeTree(PHASE5_LEASE, '', { cadence: true });
 
   const r = planTime(cwd, dir);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -655,7 +688,7 @@ test('lease-check --plan-time: the answer needs no repository, and spawns no git
   // The stub is the belt to that suspenders: it shadows `git` on the child's
   // PATH and records every argv it is handed, so a call would leave a file
   // behind even if its output changed nothing.
-  const { cwd, dir } = planTimeTree(PHASE5_LEASE);
+  const { cwd, dir } = planTimeTree(PHASE5_LEASE, '', { cadence: true });
   const stubDir = mkdtempSync(join(tmpdir(), 'cad-plantime-bin-'));
   const argvLog = join(stubDir, 'argv.log');
   writeFileSync(join(stubDir, 'git'),
@@ -676,7 +709,7 @@ test('lease-check --plan-time: the arm reads declared PATHS, never the plan\'s i
   // and a body carrying one would be testing the union rather than the prose.
   const { cwd, dir, pdir } = planTimeTree(PHASE5_LEASE,
     '### Task 1: split the seam\n\n- **Action:** re-pin every census in the tree'
-    + ' and delete the registry row that watches it.\n');
+    + ' and delete the registry row that watches it.\n', { cadence: true });
   const first = planTimeRaw(cwd, dir);
 
   writePlanTimePlan(pdir, PHASE5_LEASE, 'lorem ipsum dolor sit amet\n');
@@ -688,13 +721,30 @@ test('lease-check --plan-time: the arm reads declared PATHS, never the plan\'s i
 });
 
 test('lease-check --plan-time: a lease declaring the holding files is a PASS, not a silence', () => {
-  const { cwd, dir } = planTimeTree([...PHASE5_LEASE, ...PHASE5_AT_RISK]);
+  const { cwd, dir } = planTimeTree([...PHASE5_LEASE, ...PHASE5_AT_RISK], '', { cadence: true });
 
   const r = planTime(cwd, dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.declared, PHASE5_LEASE.length + PHASE5_AT_RISK.length);
   assert.equal(r.censuses_at_risk, undefined);
   assert.equal(r._exit, 0);
+});
+
+test('lease-check --plan-time: outside Cadence\'s own repository no census applies (D-20)', () => {
+  // The same lease that is census-at-risk above, in a tree with no manifest and
+  // in one whose manifest names another plugin: both answer ok:true.
+  const bare = planTimeTree(PHASE5_LEASE);
+  const a = planTime(bare.cwd, bare.dir);
+  assert.equal(a.ok, true, JSON.stringify(a));
+  assert.equal(a.censuses_at_risk, undefined);
+  assert.equal(a._exit, 0);
+
+  const other = planTimeTree(PHASE5_LEASE);
+  writeCadenceManifest(other.cwd, 'someone-elses-plugin');
+  const b = planTime(other.cwd, other.dir);
+  assert.equal(b.ok, true, JSON.stringify(b));
+  assert.equal(b.censuses_at_risk, undefined);
+  assert.equal(b._exit, 0);
 });
 
 test('lease-check --plan-time: a phase with no plan file is still no-plan on this arm', () => {
