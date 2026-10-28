@@ -91,30 +91,10 @@ test('an inline env assignment is stripped, so an inline secret is never the tok
   assert.equal(programOf(undefined), null);
 });
 
-test('excerpt_read is billed like Read, with its path as the target', () => {
-  const r = recordFromHook({
-    tool_name: 'mcp__excerpt__excerpt_read',
-    tool_input: { path: 'cadence-core/bin/route.mjs', offset: 40, limit: 20 },
-  }, TS);
-  assert.equal(r.tool, 'mcp__excerpt__excerpt_read');
-  assert.equal(r.target, 'cadence-core/bin/route.mjs');
-  assert.equal(r.offset, 40);
-  assert.equal(r.limit, 20);
-});
-
-test('excerpt_search records its SCOPE and never its pattern', () => {
-  const r = recordFromHook({
-    tool_name: 'mcp__excerpt__excerpt_search',
-    tool_input: { pattern: 'JWT_SECRET=(\\S+)', path: 'cadence-core' },
-  }, TS);
-  assert.equal(r.target, 'cadence-core');
-  assert.equal(JSON.stringify(r).includes('JWT_SECRET'), false);
-});
-
 test('a failed call records is_error and the first line of its cause', () => {
   const r = recordFromHook({
-    tool_name: 'mcp__excerpt__excerpt_read',
-    tool_input: { path: '/proc/self/environ' },
+    tool_name: 'Read',
+    tool_input: { file_path: '/proc/self/environ' },
     tool_response: { isError: true, content: [{ text: '/proc/self/environ: declined\nsecond line' }] },
   }, TS);
   assert.equal(r.is_error, true);
@@ -140,8 +120,8 @@ test('a response that says nothing about failure records no is_error at all', ()
 
 test('a cause line masks a credential VALUE and keeps its name', () => {
   const r = recordFromHook({
-    tool_name: 'mcp__excerpt__excerpt_read',
-    tool_input: { path: '/a' },
+    tool_name: 'Read',
+    tool_input: { file_path: '/a' },
     tool_response: { isError: true, error: 'auth failed: api_key=fake-key-ABC123 rejected' },
   }, TS);
   assert.equal(r.error.includes('fake-key-ABC123'), false);
@@ -152,8 +132,8 @@ test('a cause line masks a credential VALUE and keeps its name', () => {
 
 test('an error line is capped rather than storing a payload', () => {
   const r = recordFromHook({
-    tool_name: 'mcp__excerpt__excerpt_read',
-    tool_input: { path: '/a' },
+    tool_name: 'Read',
+    tool_input: { file_path: '/a' },
     tool_response: { isError: true, error: 'x'.repeat(500) },
   }, TS);
   assert.equal(r.error.length, MAX_ERROR_TEXT);
@@ -902,8 +882,6 @@ test('a project target is recorded as given, absolute or relative', () => {
   const abs = join(root, 'src', 'a.js');
   assert.equal(classified('Read', { file_path: abs }, { root }).target, abs);
   assert.equal(classified('Grep', { path: 'src', pattern: 'x' }, { root }).target, 'src');
-  assert.equal(classified('mcp__excerpt__excerpt_read', { path: abs }, { root }).target, abs);
-  assert.equal(classified('mcp__excerpt__excerpt_search', { path: 'src' }, { root }).target, 'src');
 });
 
 test('a relative target that climbs out of the project is outside', () => {
@@ -931,11 +909,11 @@ test('a home-relative target that expands into the project is recorded as given'
 });
 
 test('a failed call whose target is outside records no cause that could carry the path', () => {
-  const r = classified('mcp__excerpt__excerpt_read', { path: '/home/john/clients/acme/notes.md' }, {});
+  const r = classified('Read', { file_path: '/home/john/clients/acme/notes.md' }, {});
   assert.equal(r.target, 'outside');
   const failed = recordFromHook({
-    tool_name: 'mcp__excerpt__excerpt_read',
-    tool_input: { path: '/home/john/clients/acme/notes.md' },
+    tool_name: 'Read',
+    tool_input: { file_path: '/home/john/clients/acme/notes.md' },
     tool_response: { isError: true, content: [{ text: '/home/john/clients/acme/notes.md: declined' }] },
     cwd: tmp(),
   }, TS, { root: tmp(), cwd: tmp(), isFile, pluginRoot: PLUGIN });
@@ -948,8 +926,8 @@ test('a failed call inside the project keeps its cause', () => {
   const root = tmp();
   const file = join(root, 'a.md');
   const failed = recordFromHook({
-    tool_name: 'mcp__excerpt__excerpt_read',
-    tool_input: { path: file },
+    tool_name: 'Read',
+    tool_input: { file_path: file },
     tool_response: { isError: true, content: [{ text: file + ': declined' }] },
     cwd: root,
   }, TS, { root, cwd: root, isFile, pluginRoot: PLUGIN });
