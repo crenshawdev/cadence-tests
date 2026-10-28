@@ -1,6 +1,6 @@
 // Zero-dep tests for `planning.mjs capture-check` - the report `/cad-health`
 // prints and the phase close asserts against (CAP-01, CAP-03). Run:
-// node --test cadence-core/bin/planning-capture-check.test.mjs
+// node --test tests/planning-capture-check.test.mjs
 //
 // FIXTURES, not the live tree. Measured on this repository 2026-08-25 after the
 // hand sweep: 30 substantive walked bullets, zero annotations and no
@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeTree, run, isEntryFile } from './planning.test.mjs';
-import { EMPTY_CAPTURE } from './lib/capture-file.mjs';
+import { EMPTY_CAPTURE } from '../cadence-core/bin/lib/capture-file.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};

@@ -11,9 +11,9 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { hookEventIssues, HOOK_EVENTS, CODES, HOOKS_FILE } from './lib/hook-events.mjs';
+import { hookEventIssues, HOOK_EVENTS, CODES, HOOKS_FILE } from '../cadence-core/bin/lib/hook-events.mjs';
 
-const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** A root carrying `hooks/hooks.json` with `text`, and a plugin manifest if asked. */
 function root(text, { full = false } = {}) {

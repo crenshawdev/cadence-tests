@@ -1,5 +1,5 @@
 // Zero-dep tests for lib/trace.mjs and the `planning.mjs trace` seam.
-// Run: node --test 'cadence-core/bin/*.test.mjs'
+// Run: node --test 'tests/*.test.mjs'
 //
 // Two layers, matching the rest of the suite: the lib is exercised directly on
 // scratch planning roots (it does guarded I/O, so a fixture directory IS the
@@ -21,10 +21,11 @@ import {
   rotationClaimPath,
   MAX_TRACE_BYTES, ROTATED_TRACE_FILE, ROTATION_CLAIM_FILE, FAMILIES,
   ANCHOR, DISPATCH, TERMINAL, COORDINATOR, WORKER_CACHE, ROTATION,
-} from './lib/trace.mjs';
-import { STEP_WINDOW } from './lib/trace.mjs';
+} from '../cadence-core/bin/lib/trace.mjs';
+import { STEP_WINDOW } from '../cadence-core/bin/lib/trace.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
+const TESTS = dirname(fileURLToPath(import.meta.url));
 const PLANNING = join(HERE, 'planning.mjs');
 const REPO = join(HERE, '..', '..');
 
@@ -353,7 +354,7 @@ test('rotateTrace: a claim whose sidecar reads LIVE is left standing (TRC-09)', 
   //
   // `rotateTrace` DIRECTLY rather than through `appendEvent`, the way the
   // stale-stat row above does, so what is asserted is the rotation's own answer.
-  const { rotateTrace } = await import('./lib/trace.mjs');
+  const { rotateTrace } = await import('../cadence-core/bin/lib/trace.mjs');
   const dir = root();
   killedClaim(dir, 0);
   const live = readFileSync(tracePath(dir), 'utf8');
@@ -373,7 +374,7 @@ test('rotateTrace: a claim with NO sidecar at all is left standing (TRC-09)', as
   // rather than new behaviour: a claim taken by the code that shipped before
   // TRC-09 carries no sidecar, and missing evidence must read as LIVE. It is
   // what makes the change safe to ship before every claim in the wild has one.
-  const { rotateTrace } = await import('./lib/trace.mjs');
+  const { rotateTrace } = await import('../cadence-core/bin/lib/trace.mjs');
   const dir = root();
   killedClaim(dir, null);
 
@@ -575,7 +576,7 @@ test('appendEvent: a writer holding a STALE stat is refused the claim, not corre
   // REPLACING rename would succeed silently there - A's generation destroyed,
   // A's event carried off into the sibling, and exactly one sibling still on
   // disk so a count would call it healthy. The claim must REFUSE.
-  const { rotateTrace } = await import('./lib/trace.mjs');
+  const { rotateTrace } = await import('../cadence-core/bin/lib/trace.mjs');
   const dir = root();
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   padToBound(dir);
@@ -680,7 +681,7 @@ test('rotateTrace: a rescue that cannot READ the generation STATES the tail it c
   // rotation rotated - `reason` is for a rotation that failed outright - but
   // the bytes it could not carry are stated, and they come off the stat rather
   // than off a read that never established a count.
-  const { rotateTrace } = await import('./lib/trace.mjs');
+  const { rotateTrace } = await import('../cadence-core/bin/lib/trace.mjs');
   const dir = root();
   rotatedOnce(dir);
   appendFileSync(rotatedTracePath(dir), planted('racer'));
@@ -713,7 +714,7 @@ test('rotateTrace: a generation whose marker carries NO seal states an UNKNOWN s
   // shipped before `carried_bytes`. No offset can be guessed, so nothing is
   // rescued - but the generation is destroyed either way, and destroying it
   // with no field at all is the one silence the `shortfall` contract forbids.
-  const { rotateTrace } = await import('./lib/trace.mjs');
+  const { rotateTrace } = await import('../cadence-core/bin/lib/trace.mjs');
   const dir = root();
   rotatedOnce(dir);
   appendFileSync(rotatedTracePath(dir), planted('racer'));
@@ -3508,7 +3509,7 @@ test('census: every trace family has a producer, and every producer speaks the r
 // bracket that contributes no span at all to any residue, because it never
 // closed.
 
-const FIXTURE = join(HERE, 'fixtures', 'verbatim.trace.jsonl');
+const FIXTURE = join(TESTS, 'fixtures', 'verbatim.trace.jsonl');
 
 /** The committed fixture, in a scratch planning root of its own. */
 function fixtureRoot() {
@@ -3800,7 +3801,7 @@ test('falsifier: turns persist onto the close and reach both the bracket and the
 // WATCHED FAILING AT d94c79d, the tip of this plan's unpatched tree. Observed
 // there, with this file copied into that checkout's `cadence-core/bin/`:
 //
-//   $ node --test cadence-core/bin/trace.test.mjs
+//   $ node --test tests/trace.test.mjs
 //   x falsifier: every step window closes inside the corr that opened it (MSR-04)
 //     AssertionError [ERR_ASSERTION]: `commit`: a 18180000 ms window opened by
 //     `1-aaa1111`, whose own record ends 120000 ms after the marker - the window
@@ -3823,7 +3824,7 @@ test('falsifier: turns persist onto the close and reach both the bracket and the
 // this file's own `at`/`mark`/`bracket` helpers.
 //
 // To re-watch: `git worktree add --detach <tmp> d94c79d`, copy this file into
-// `<tmp>/cadence-core/bin/`, run `node --test cadence-core/bin/trace.test.mjs`
+// `<tmp>/cadence-core/bin/`, run `node --test tests/trace.test.mjs`
 // from `<tmp>`, then `git worktree remove <tmp>`.
 //
 test('falsifier: every step window closes inside the corr that opened it (MSR-04)', () => {
@@ -3897,8 +3898,8 @@ test('the four refusing trace flags carry ONE sentence each, in one map', () => 
   // read of planning.mjs alone would now find zero copies and pass by measuring
   // nothing - and would stop seeing the second copy pasted into a command
   // module, which is the drift this row exists to catch.
-  const dir = new URL('./planning/', import.meta.url);
-  const src = [readFileSync(new URL('./planning.mjs', import.meta.url), 'utf8')]
+  const dir = new URL('../cadence-core/bin/planning/', import.meta.url);
+  const src = [readFileSync(new URL('../cadence-core/bin/planning.mjs', import.meta.url), 'utf8')]
     .concat(readdirSync(dir).filter((f) => f.endsWith('.mjs')).sort()
       .map((f) => readFileSync(new URL(f, dir), 'utf8')))
     .join('\n');

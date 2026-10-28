@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readCurrentBranch } from './lib/git-head.mjs';
+import { readCurrentBranch } from '../cadence-core/bin/lib/git-head.mjs';
 
 const GIT_ENV = {
   ...process.env,

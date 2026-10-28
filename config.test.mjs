@@ -1,4 +1,4 @@
-// Zero-dep tests for config.mjs. Run: node --test 'cadence-core/bin/*.test.mjs'
+// Zero-dep tests for config.mjs. Run: node --test 'tests/*.test.mjs'
 // Only node: builtins, matching the repo's zero-dep ethos.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,11 +8,11 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { basename, join, dirname, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { readLayer, GLOBAL_CONFIG } from './lib/config-merge.mjs';
-import { RUNG_FILES } from './lib/rung-agent.mjs';
-import { CONTRACTS } from './lib/arg-contract.mjs';
+import { readLayer, GLOBAL_CONFIG } from '../cadence-core/bin/lib/config-merge.mjs';
+import { RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
+import { CONTRACTS } from '../cadence-core/bin/lib/arg-contract.mjs';
 
-const CONFIG = join(dirname(fileURLToPath(import.meta.url)), 'config.mjs');
+const CONFIG = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'config.mjs');
 const dir = mkdtempSync(join(tmpdir(), 'cad-config-'));
 
 // Run config.mjs with a controlled global-config path; returns parsed JSON

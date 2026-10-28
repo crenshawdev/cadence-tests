@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const SEAM = join(HERE, 'why.mjs');
 
 const GIT_ENV = {

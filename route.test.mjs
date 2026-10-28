@@ -1,4 +1,4 @@
-// Zero-dep tests for route.mjs. Run: node --test 'cadence-core/bin/*.test.mjs'
+// Zero-dep tests for route.mjs. Run: node --test 'tests/*.test.mjs'
 // Uses only node: builtins (no framework), matching the repo's zero-dep ethos.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,10 +8,10 @@ import { writeFileSync, mkdtempSync, mkdirSync, chmodSync, readFileSync, existsS
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { rungFile, RUNG_FILES } from './lib/rung-agent.mjs';
-import { renderCursor } from './lib/planning-files.mjs';
+import { rungFile, RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
+import { renderCursor } from '../cadence-core/bin/lib/planning-files.mjs';
 
-const ROUTE = join(dirname(fileURLToPath(import.meta.url)), 'route.mjs');
+const ROUTE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'route.mjs');
 const dir = mkdtempSync(join(tmpdir(), 'cad-route-'));
 
 // A global-config path that does not exist, so tests are hermetic by default
@@ -1014,7 +1014,7 @@ test('an unreadable schema degrades to ok:false, reason bad-schema, no stack', (
 // references/review-triggers.md now tells the user which effort a
 // claude-subagent review actually runs at (`cad-reviewer` = high), so that
 // claim gets a test rather than a promise.
-const AGENTS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'agents');
+const AGENTS = join(dirname(fileURLToPath(import.meta.url)), '..', 'agents');
 
 /** Frontmatter `effort:` of a shipped agent file. */
 function frontmatterEffort(agentName) {
@@ -1143,7 +1143,7 @@ test('the SCAFFOLDED template carries no triggers block, so nothing overrides th
   // pinned gate it never chose - which is the whole point of dropping the block
   // rather than retuning it.
   const template = JSON.parse(readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), '..', 'templates', 'config.json'), 'utf8'));
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'templates', 'config.json'), 'utf8'));
   assert.equal(template.review.triggers, undefined, 'the template must write no gate at all');
 
   const r = resolve('cad-executor', rawCfg(template, 'pd-template.json'));
@@ -2050,7 +2050,7 @@ test('fail-closed: the paired POSITIVE - both plans clean and surfaceless raises
 
 test('template-initialised: a repo scaffolded from the SHIPPED template reaches both arms', () => {
   const template = JSON.parse(readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), '..', 'templates', 'config.json'), 'utf8'));
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'templates', 'config.json'), 'utf8'));
   // No ANSWERED overlay: the template writes no `review.triggers` block, so a
   // template-initialised project carries all eight categories at
   // `surfaces_answered: false`. Overlaying an answered set would test a project

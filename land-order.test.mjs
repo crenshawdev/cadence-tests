@@ -1,6 +1,6 @@
 // Zero-dep test for the ORDER of skills/cad-land/SKILL.md: no git command gets
 // the base before the land-cleanup seam answered (phase 1 D-01).
-// Run: node --test cadence-core/bin/land-order.test.mjs
+// Run: node --test tests/land-order.test.mjs
 //
 // `land-cleanup.mjs cleanup` refuses a flag-shaped or unresolvable base with
 // `action:"skip"`, `returnToBase:false`. That refusal only protects anything if
@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SKILL = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'skills', 'cad-land', 'SKILL.md');
+const SKILL = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'cad-land', 'SKILL.md');
 const text = readFileSync(SKILL, 'utf8');
 
 /** Step 4's text: from its numbered heading to the closing </process>. */

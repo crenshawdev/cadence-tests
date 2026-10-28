@@ -1,7 +1,7 @@
 // @ts-check
 // Zero-dep tests for lib/trace-suggest.mjs - the suggestion rules as pure
 // functions over a trace render. Run:
-//   node --test cadence-core/bin/trace-suggest.test.mjs
+//   node --test tests/trace-suggest.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 //
 // The fixtures here are event lists in the exact shape renderTrace() emits
@@ -23,10 +23,10 @@ import {
   MIN_FIRES_FOR_GATE_SUGGESTION, MIN_DISPATCHES_FOR_RUNG_INFO,
   MIN_ESCALATIONS_FOR_RUNG_SUGGESTION, MIN_CHECKPOINTS_FOR_SIZE_SUGGESTION,
   MIN_RESIDUE_MS_FOR_COORDINATOR_INFO,
-} from './lib/trace-suggest.mjs';
-import { READS_ROTATION, ROTATED_READS_FILE } from './lib/read-trace.mjs';
+} from '../cadence-core/bin/lib/trace-suggest.mjs';
+import { READS_ROTATION, ROTATED_READS_FILE } from '../cadence-core/bin/lib/read-trace.mjs';
 
-const BIN = join(dirname(fileURLToPath(import.meta.url)), 'planning.mjs');
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'planning.mjs');
 
 /** @param {any[]} events @param {Record<string, any>} [roles] */
 const render = (events, roles = {}) => ({ counts: {}, roles, events });
@@ -618,7 +618,7 @@ test('suggestions order suggest-first, then stable by subject; an empty render i
 
 test('config keys named in actions exist in config.schema.json - the suggestion never names a phantom key', async () => {
   const { readFileSync } = await import('node:fs');
-  const schema = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'config.schema.json'), 'utf8'));
+  const schema = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'config.schema.json'), 'utf8'));
   // `keys` is a FLAT map of dotted key names, not a nested tree.
   /** @param {string} path */
   const schemaHas = (path) => Object.prototype.hasOwnProperty.call(schema.keys, path);
@@ -712,7 +712,7 @@ test('seam: a real trace written through appendEvent reads back through `trace s
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'verbatim.trace.jsonl');
 
 test('fixture: the committed verbatim trace suggests exactly what it did before this phase', async () => {
-  const { renderTrace, tracePath } = await import('./lib/trace.mjs');
+  const { renderTrace, tracePath } = await import('../cadence-core/bin/lib/trace.mjs');
   const dir = mkdtempSync(join(tmpdir(), 'cad-suggest-fx-'));
   try {
     const planning = join(dir, '.planning');
@@ -743,7 +743,7 @@ test('fixture: the committed verbatim trace suggests exactly what it did before 
 // WATCHED FAILING AT 4b1d659, the tip of this plan's unpatched tree. Observed
 // there, with this file copied into that checkout's `cadence-core/bin/`:
 //
-//   $ node --test cadence-core/bin/trace-suggest.test.mjs
+//   $ node --test tests/trace-suggest.test.mjs
 //   x MSR-02: the spend receipt names all three excluded sources, from the one exported list
 //     ^ the case was RENAMED in v3.7.10 when the list went three to two; the
 //       recipe and the assertion that fails are unchanged, so a re-watch prints
@@ -767,7 +767,7 @@ test('fixture: the committed verbatim trace suggests exactly what it did before 
 // this phase's re-pinned one - and it is expected there.
 //
 // To re-watch: `git worktree add --detach <tmp> 4b1d659`, copy this file into
-// `<tmp>/cadence-core/bin/`, run `node --test cadence-core/bin/trace-suggest.test.mjs`
+// `<tmp>/cadence-core/bin/`, run `node --test tests/trace-suggest.test.mjs`
 // from `<tmp>`, then `git worktree remove <tmp>`.
 //
 // The subject is the RULE, not the committed fixture: the assertion runs over a
@@ -783,7 +783,7 @@ test('fixture: the committed verbatim trace suggests exactly what it did before 
 // not exist yet says nothing about whether unpatched `/cad-suggest` makes the
 // wrong cost claim. A namespace import never fails on an absent name, so the
 // old tree reaches the assertion and fails on the CLAIM.
-import * as traceSuggestModule from './lib/trace-suggest.mjs';
+import * as traceSuggestModule from '../cadence-core/bin/lib/trace-suggest.mjs';
 
 const SPEND_EXCLUDES_READ = Array.isArray(traceSuggestModule.SPEND_EXCLUDES)
   ? traceSuggestModule.SPEND_EXCLUDES
@@ -794,7 +794,7 @@ const SPEND_EXCLUDES_READ = Array.isArray(traceSuggestModule.SPEND_EXCLUDES)
 // WATCHED FAILING AT 01b2ca1, the tip of this plan's unpatched tree. Observed
 // there, with this file copied into that checkout's `cadence-core/bin/`:
 //
-//   $ node --test cadence-core/bin/trace-suggest.test.mjs
+//   $ node --test tests/trace-suggest.test.mjs
 //   x SGT-01: `trace suggest` returns a direction, a current, and a proposed
 //     where the record prices one
 //     AssertionError [ERR_ASSERTION]: `model.effort.cad-planner` came back with
@@ -811,7 +811,7 @@ const SPEND_EXCLUDES_READ = Array.isArray(traceSuggestModule.SPEND_EXCLUDES)
 // every other end; this one is the check the requirement is written on.
 //
 // To re-watch: `git worktree add --detach <tmp> 01b2ca1`, copy this file into
-// `<tmp>/cadence-core/bin/`, run `node --test cadence-core/bin/trace-suggest.test.mjs`
+// `<tmp>/cadence-core/bin/`, run `node --test tests/trace-suggest.test.mjs`
 // from `<tmp>`, then `git worktree remove <tmp>`.
 //
 // The subject is the whole PATH rather than the pure function: the values a
@@ -822,7 +822,7 @@ const SPEND_EXCLUDES_READ = Array.isArray(traceSuggestModule.SPEND_EXCLUDES)
 // RETURN a `/cad-suggest` reader gets.
 
 test('SGT-01: `trace suggest` returns a direction, a current, and a proposed where the record prices one', async () => {
-  const { appendEvent } = await import('./lib/trace.mjs');
+  const { appendEvent } = await import('../cadence-core/bin/lib/trace.mjs');
   const { writeFileSync } = await import('node:fs');
   const dir = mkdtempSync(join(tmpdir(), 'cad-suggest-sgt-'));
   try {
@@ -915,7 +915,7 @@ test('MSR-02: the spend receipt names every excluded source, from the one export
 // in-dispatch re-reading, so the entry names a discipline remedy instead of
 // pointing at an unrelated key.
 
-import { IN_DISPATCH_FLOORS } from './lib/trace-suggest.mjs';
+import { IN_DISPATCH_FLOORS } from '../cadence-core/bin/lib/trace-suggest.mjs';
 
 /** The fold shape `lib/read-trace.mjs`'s `inDispatchReads` returns. */
 const inDispatch = (roles, extra = {}) => ({
@@ -1319,7 +1319,7 @@ test('R8: a scope where NO bracket carries a wall clock says nothing at all', ()
 // did - and the committed-fixture deepEqual is that same proof over a real
 // trace, which holds none either.
 
-import { MIN_OVERRIDES_FOR_AUTHORIZATION_INFO } from './lib/trace-suggest.mjs';
+import { MIN_OVERRIDES_FOR_AUTHORIZATION_INFO } from '../cadence-core/bin/lib/trace-suggest.mjs';
 
 /** An `outcome/override` receipt, with or without the id it descends from. */
 const override = (trigger, extra = {}) =>

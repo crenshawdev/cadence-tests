@@ -1,5 +1,5 @@
 // Zero-dep tests for `planning.mjs replay-check`. Run:
-// node --test 'cadence-core/bin/*.test.mjs'
+// node --test 'tests/*.test.mjs'
 //
 // These are the fixture tests phase 2's acceptance criteria could not have.
 // While the replay decision was prose in `workflows/execute.md`, AC1-AC5 were

@@ -1,5 +1,5 @@
 // Tests for lib/state-cursor.mjs, the STATE.md cursor parser planning-files
-// re-exports. Run: node --test cadence-core/bin/state-cursor.test.mjs
+// re-exports. Run: node --test tests/state-cursor.test.mjs
 //
 // Not named planning-*: test-groups.test.mjs pins the `planning` group to
 // exactly those files.
@@ -10,10 +10,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseCursor } from './lib/state-cursor.mjs';
-import * as planningFiles from './lib/planning-files.mjs';
+import { parseCursor } from '../cadence-core/bin/lib/state-cursor.mjs';
+import * as planningFiles from '../cadence-core/bin/lib/planning-files.mjs';
 
-const BIN = dirname(fileURLToPath(import.meta.url));
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 
 const LINES = [
   'Phase: 2.1 of 4 (Fixture phase)',

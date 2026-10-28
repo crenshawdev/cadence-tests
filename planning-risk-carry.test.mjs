@@ -1,6 +1,6 @@
 // Zero-dep tests for `planning.mjs risk-carry` - the risk_surface rulings out
 // of the phase directory a milestone close deletes (LND-02). Run:
-// node --test 'cadence-core/bin/*.test.mjs'
+// node --test 'tests/*.test.mjs'
 //
 // WHAT THIS SEAM HAS TO GET RIGHT, and why each arm below exists. The gate at
 // `land-cleanup.mjs gate` derives its close verdict from adjudication records,
@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { PLANNING, makeTree } from './planning.test.mjs';
 
 /** The close gate this carry exists to keep fed. */
-const LAND = fileURLToPath(new URL('./land-cleanup.mjs', import.meta.url));
+const LAND = fileURLToPath(new URL('../cadence-core/bin/land-cleanup.mjs', import.meta.url));
 /** A hermetic user-global config layer, so no arm reads the dev's real one. It
  * opts in to git.auto_close beside each fixture repo's own `true`: the gate
  * halts only when both layers do (D-02), and these arms are about the carry,

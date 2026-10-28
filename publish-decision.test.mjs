@@ -1,9 +1,9 @@
 // Zero-dep tests for lib/publish-decision.mjs (the pure git-publish core).
-// Run: node --test 'cadence-core/bin/*.test.mjs'. Only node: builtins, and the
+// Run: node --test 'tests/*.test.mjs'. Only node: builtins, and the
 // function is pure, so this needs no subprocess or live git.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { authorizationDetail, decidePublish, decideReap, tornLayerRefusal } from './lib/publish-decision.mjs';
+import { authorizationDetail, decidePublish, decideReap, tornLayerRefusal } from '../cadence-core/bin/lib/publish-decision.mjs';
 
 // lib/repo-auto-close.mjs `autoCloseLayers`' per-layer answer, one per state.
 const BOTH = { repo: 'set', global: 'set' };

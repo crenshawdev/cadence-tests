@@ -1,4 +1,4 @@
-// Zero-dep tests for review-provider.mjs. Run: node --test 'cadence-core/bin/*.test.mjs'
+// Zero-dep tests for review-provider.mjs. Run: node --test 'tests/*.test.mjs'
 // Three layers: unit tests import the pure helpers (no network, no side
 // effects - main() is guarded); CLI tests exercise the argument/key/payload
 // paths that fail BEFORE any provider call; and fault-injection tests exercise
@@ -28,7 +28,7 @@ import {
   readModelHints, detectEnvelope, resolveTimeoutMs,
   resolveMaxPromptTokens, estimatePromptTokens,
   __setTransportForTests, __runCommandForTests,
-} from './review-provider.mjs';
+} from '../cadence-core/bin/review-provider.mjs';
 // FINDING_SCHEMA reaches these tests through a NAMESPACE import rather than the
 // named list above, deliberately. A named import of a symbol the module does
 // not export is a LINK error - the whole file fails to load before a single
@@ -36,10 +36,10 @@ import {
 // runnable against the unpatched tree, where `FINDING_SCHEMA` was module-local.
 // Through a namespace it is simply `undefined` there, so the falsifier fails on
 // its assertions (what it is watching) instead of on module resolution.
-import * as reviewProvider from './review-provider.mjs';
-import { evaluateSchema } from './lib/schema-eval.mjs';
-import { renderCursor } from './lib/planning-files.mjs';
-import { appendEvent, renderTrace } from './lib/trace.mjs';
+import * as reviewProvider from '../cadence-core/bin/review-provider.mjs';
+import { evaluateSchema } from '../cadence-core/bin/lib/schema-eval.mjs';
+import { renderCursor } from '../cadence-core/bin/lib/planning-files.mjs';
+import { appendEvent, renderTrace } from '../cadence-core/bin/lib/trace.mjs';
 
 const FINDING_SCHEMA = reviewProvider.FINDING_SCHEMA;
 // The bounds FINDING_SCHEMA states, read OUT of it rather than restated here -
@@ -52,7 +52,7 @@ const MAX_FINDINGS = FINDING_SCHEMA?.properties?.findings?.maxItems;
 const MAX_FILE_CHARS = F_PROPS.file?.maxLength;
 const MAX_TEXT_CHARS = F_PROPS.claim?.maxLength;
 
-const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'review-provider.mjs');
+const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'review-provider.mjs');
 const dir = mkdtempSync(join(tmpdir(), 'cad-provider-'));
 
 /**
@@ -1229,7 +1229,7 @@ test('fault: the destination is the adapter base, and no environment variable mo
   // from the environment is what this guard exists to stop (see the test name and
   // the module header); anything else updates the count and the erase list
   // together, in the same commit, on purpose.
-  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'review-provider.mjs'), 'utf8');
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'review-provider.mjs'), 'utf8');
   const count = (s) => (s.match(/process\.env\b/g) || []).length;
   assert.equal(count(src), 3);
   const residue = src
@@ -1987,7 +1987,7 @@ test('CST-04: provider usage is its OWN denomination and reaches no role total (
 // WATCHED FAILING AT e1e6c0a, the tip of this plan's unpatched tree. Observed
 // there, with this file copied into that checkout:
 //
-//   $ node --test --test-name-pattern='RVP-01' cadence-core/bin/review-provider.test.mjs
+//   $ node --test --test-name-pattern='RVP-01' tests/review-provider.test.mjs
 //   AssertionError [ERR_ASSERTION]: a flooding provider must meet a bound
 //   Cadence owns, got: {"ok":false,"reason":"internal","detail":"Cannot read
 //   properties of null (reading 'output_text')"}
@@ -2076,7 +2076,7 @@ test('bound: a credential straddling the sanitize window does not reach the enve
 // `export` keyword on `bodyExcerpt`, so the copy carries no part of the repair):
 //
 //   $ node --test --test-name-pattern='EXP-02' \
-//       cadence-core/bin/review-provider.test.mjs
+//       tests/review-provider.test.mjs
 //   AssertionError [ERR_ASSERTION]: 73 bytes of the planted value rode the
 //   failure envelope: "d>, <redacted>, <redacted>, <redacted>, <redacted>,
 //   <redacted>, <redacted>, <redacted>, <redacted>, https://cad:SUPERSECRET_
@@ -2099,10 +2099,10 @@ test('bound: a credential straddling the sanitize window does not reach the enve
 // the figure the issue happened to observe (D-08).
 //
 // To re-watch it: `git worktree add --detach <tmp> ae73dd6`, copy BOTH
-// `cadence-core/bin/review-provider.test.mjs` AND
+// `review-provider.test.mjs` AND
 // `cadence-core/bin/review-provider.mjs` into that checkout's
 // `cadence-core/bin/`, run
-// `node --test --test-name-pattern='EXP-02' cadence-core/bin/review-provider.test.mjs`
+// `node --test --test-name-pattern='EXP-02' tests/review-provider.test.mjs`
 // there, then remove the worktree. The SECOND copy is not optional and is also
 // the reason task 1 of this plan changed nothing but an export keyword: without
 // it `bodyExcerpt` is module-private at ae73dd6 and the family fails on an
@@ -2178,7 +2178,7 @@ test('EXP-02: the same cut span at high magnitude - the class, not the issue fig
 // that checkout:
 //
 //   $ node --test --test-name-pattern='RVP-02: local validation' \
-//       cadence-core/bin/review-provider.test.mjs
+//       tests/review-provider.test.mjs
 //   AssertionError [ERR_ASSERTION]: a zero line number must not reach the
 //   caller as a finding, got: {"ok":true,"provider":"openai","model":
 //   "gpt-fault-fixture","findings":[{"file":"cadence-core/bin/
@@ -2205,7 +2205,7 @@ test('EXP-02: the same cut span at high magnitude - the class, not the issue fig
 // To re-watch it: `git worktree add --detach <tmp> <SHA>`, copy this file into
 // that checkout's `cadence-core/bin/` AND `cadence-core/bin/lib/schema-eval.mjs`
 // into that checkout's `cadence-core/bin/lib/`, run
-// `node --test --test-name-pattern='RVP-02' cadence-core/bin/review-provider.test.mjs`
+// `node --test --test-name-pattern='RVP-02' tests/review-provider.test.mjs`
 // there, then remove the worktree. The SECOND copy is not optional: the
 // evaluator cases earlier in this file `import` that module, so a checkout
 // carrying only the test file fails at module resolution before any assertion
@@ -2439,7 +2439,7 @@ test('key file: detect-models keeps its own warnings beside the mode warning',
 // model to relay it. decision-review.md's cross-model arm read the envelope and
 // dropped it; its only relay was for `route.mjs resolve`.
 test('prose that runs review-provider.mjs relays the envelope\'s warnings[]', () => {
-  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'cadence-core');
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core');
   const sites = [
     ['references', 'review-cross-model.md', 'review-provider.mjs" review'],
     ['references', 'consult.md', 'review-provider.mjs" consult'],

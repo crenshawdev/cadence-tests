@@ -1,5 +1,5 @@
 // Zero-dep tests for self-verify.mjs (the prose<->code drift linter). Run:
-// node --test 'cadence-core/bin/*.test.mjs'
+// node --test 'tests/*.test.mjs'
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -7,15 +7,15 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, cpSyn
 import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { rungBody, RUNG_FILES } from './lib/rung-agent.mjs';
-import { mergeWarningIssues } from './lib/merge-warnings.mjs';
-import { deferredReadIssues, DEFERRED_READS } from './lib/deferred-reads.mjs';
-import { referenceRouterIssues } from './lib/reference-routers.mjs';
-import { WAIVED } from './lib/include-consumers.mjs';
-import { GLOBAL_ONLY_KEYS, globalOnlyMarkerIssues } from './lib/global-only-keys.mjs';
-import { CONTRACTS, flagNames } from './lib/arg-contract.mjs';
+import { rungBody, RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
+import { mergeWarningIssues } from '../cadence-core/bin/lib/merge-warnings.mjs';
+import { deferredReadIssues, DEFERRED_READS } from '../cadence-core/bin/lib/deferred-reads.mjs';
+import { referenceRouterIssues } from '../cadence-core/bin/lib/reference-routers.mjs';
+import { WAIVED } from '../cadence-core/bin/lib/include-consumers.mjs';
+import { GLOBAL_ONLY_KEYS, globalOnlyMarkerIssues } from '../cadence-core/bin/lib/global-only-keys.mjs';
+import { CONTRACTS, flagNames } from '../cadence-core/bin/lib/arg-contract.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const VERIFY = join(HERE, 'self-verify.mjs');
 const REPO = join(HERE, '..', '..');
 
@@ -1434,7 +1434,7 @@ const mergeProblems = (root) =>
   run(['--root', root]).problems.filter((p) => p.kind === MERGE_KIND);
 
 const BARE_CALL = "// @ts-check\n// seam.mjs - a seam.\n'use strict';\n"
-  + "import { mergeLayers } from './lib/config-merge.mjs';\n"
+  + "import { mergeLayers } from '../cadence-core/bin/lib/config-merge.mjs';\n"
   + "const { config } = mergeLayers('.planning/config.json');\n"
   + 'emit({ ok: true, x: config.x });\n';
 
@@ -2649,7 +2649,7 @@ test("check 26: the git arm does not run the target repo's core.fsmonitor", () =
 
 // --- check 27: a preloaded contract carries the data-not-instructions sentence (D-08) ---
 
-import { DATA_RULE } from './lib/data-rule.mjs';
+import { DATA_RULE } from '../cadence-core/bin/lib/data-rule.mjs';
 
 const WITH_RULE = `---\nname: c\ndescription: d\nuser-invocable: false\n---\ncontract prose\n- ${DATA_RULE}\n`;
 const DATA_RULE_KIND = 'contract-lacks-data-rule';

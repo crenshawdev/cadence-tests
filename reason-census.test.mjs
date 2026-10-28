@@ -1,7 +1,7 @@
 // The refusal-VOCABULARY census (CAP-01/CAP-02, phase 3). One question, asked
 // forward: is every refusal `reason` token this tree carried before this phase
 // still spelled the same way?
-// Run: node --test cadence-core/bin/reason-census.test.mjs
+// Run: node --test tests/reason-census.test.mjs
 //
 // WHY IT EXISTS. This phase adds refusal arms to `cadence-core/bin/`, and a
 // phase that adds arms is a phase that can quietly rename or delete one on the
@@ -84,10 +84,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { refusalSites } from './lib/refusal-hints.mjs';
-import { skim } from './lib/skim.mjs';
+import { refusalSites } from '../cadence-core/bin/lib/refusal-hints.mjs';
+import { skim } from '../cadence-core/bin/lib/skim.mjs';
 
-const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
  * The refusal `reason` tokens the tree carried when this census was taken,

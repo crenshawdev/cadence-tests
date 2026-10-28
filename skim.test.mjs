@@ -9,9 +9,9 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { skim, skimStats, SYNTAX } from './lib/skim.mjs';
+import { skim, skimStats, SYNTAX } from '../cadence-core/bin/lib/skim.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 
 /** @param {string} s */
 const lines = (s) => s.split('\n').length;

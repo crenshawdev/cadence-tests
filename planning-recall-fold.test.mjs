@@ -1,6 +1,6 @@
 // Tests for the suffix fold in `tokenize()` (lib/bm25.mjs) and for what it does
 // to `planning.mjs recall`. Run:
-// node --test cadence-core/bin/planning-recall-fold.test.mjs
+// node --test tests/planning-recall-fold.test.mjs
 //
 // WHY A COMMITTED FIXTURE CORPUS, and not this repository's live `.planning/`
 // (D-05). The live corpus grows by every SUMMARY, UAT and CONTEXT a cycle
@@ -31,7 +31,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { STOPWORDS, buildIndex, tokenize } from './lib/bm25.mjs';
+import { STOPWORDS, buildIndex, tokenize } from '../cadence-core/bin/lib/bm25.mjs';
 import { makeTree } from './planning.test.mjs';
 import { recall } from './planning-recall.test.mjs';
 

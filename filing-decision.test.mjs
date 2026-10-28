@@ -1,6 +1,6 @@
 // Zero-dep tests for lib/filing-decision.mjs - the pure core of the filing
 // question (CAP-01, CAP-02).
-// Run: node --test cadence-core/bin/filing-decision.test.mjs.
+// Run: node --test tests/filing-decision.test.mjs.
 //
 // No temp directory, no spawn and no fixture file on disk: the module under
 // test does no I/O, so every case here is an object in, an object out. The one
@@ -15,9 +15,9 @@ import {
   fingerprintInTitle, HALTING_SEVERITIES, issueBody, issueTitle, normalizeDeclines,
   normalizeLookup,
   unfixedFindings, unfixedFromEntries, usableFixCommit,
-} from './lib/filing-decision.mjs';
-import { PROVIDER_TABLE } from './lib/forge-decision.mjs';
-import { REDACTION_MARK } from './lib/redact-url.mjs';
+} from '../cadence-core/bin/lib/filing-decision.mjs';
+import { PROVIDER_TABLE } from '../cadence-core/bin/lib/forge-decision.mjs';
+import { REDACTION_MARK } from '../cadence-core/bin/lib/redact-url.mjs';
 
 /** One finding, at the raised severity the case cares about. */
 const finding = (file, line, severity, claim) => ({

@@ -1,5 +1,5 @@
 // The stated table for the argument contract in lib/arg-contract.mjs (ARG-06).
-// Run: node --test cadence-core/bin/arg-contract.test.mjs
+// Run: node --test tests/arg-contract.test.mjs
 //
 // This tree's convention for a stated grammar is a unit table beside the seam
 // cases (plan-key.test.mjs, lease-grammar.test.mjs and planning-files.test.mjs
@@ -18,9 +18,9 @@ import { fileURLToPath } from 'node:url';
 import {
   evaluateFlag, evaluateRow, evaluatePresence, subcommandKey,
   DISPOSITIONS, TYPES, CONTRACTS, PRESENCE_RULES, flagNames,
-} from './lib/arg-contract.mjs';
+} from '../cadence-core/bin/lib/arg-contract.mjs';
 
-const MODULE_URL = new URL('./lib/arg-contract.mjs', import.meta.url).href;
+const MODULE_URL = new URL('../cadence-core/bin/lib/arg-contract.mjs', import.meta.url).href;
 
 /** A complete spec, so each row below states only the field it is about. */
 const spec = (over) => ({ required: false, type: 'string', value: 'refuse', bare: 'refuse', ...over });

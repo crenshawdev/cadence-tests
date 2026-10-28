@@ -1,11 +1,12 @@
 // The helper-definition census (COR-01, AC4): each shared contract below is
 // DEFINED exactly once under cadence-core/bin/, and the census names where that
-// one home is. Four rows are the helpers phase 3 extracted out of copies; the
+// one home is. The walk also covers this tests repository (listed as `tests/<name>`),
+// so a helper body pasted into a test is still caught. Four rows are the helpers phase 3 extracted out of copies; the
 // rest arrived from the other direction - a rule two seams had each written
 // their own way until they disagreed about a declaration.
 //
-// TREE-WIDE, over every .mjs file under cadence-core/bin/ - bins, lib/ and test
-// files alike. That is a deliberate deviation from the per-file `redactUrl`
+// TREE-WIDE, over every .mjs file under cadence-core/bin/ - bins and lib/ - and
+// every .mjs file in this tests repository. That is a deliberate deviation from the per-file `redactUrl`
 // precedent (git-publish.test.mjs, planning.test.mjs), which counts occurrences
 // inside ONE named file: a re-copy into a SIXTH file is invisible to any
 // file-scoped count, and the twelve copies this phase deleted accumulated in
@@ -32,15 +33,16 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const BIN = dirname(fileURLToPath(import.meta.url));
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
+const TESTS = dirname(fileURLToPath(import.meta.url));
 
-/** Every .mjs file under `dir`, recursively, as paths relative to BIN. */
-function everyModule(dir) {
+/** Every .mjs file under `dir`, recursively, as paths relative to `base`. */
+function everyModule(dir, base) {
   const out = [];
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...everyModule(full));
-    else if (entry.name.endsWith('.mjs')) out.push(relative(BIN, full));
+    if (entry.isDirectory()) out.push(...everyModule(full, base));
+    else if (entry.name.endsWith('.mjs')) out.push(relative(base, full));
   }
   return out;
 }
@@ -301,15 +303,20 @@ const HELPERS = [
   },
 ];
 
-const MODULES = everyModule(BIN);
-const SOURCE = new Map(MODULES.map((f) => [f, readFileSync(join(BIN, f), 'utf8')]));
+// Cadence's files keep their BIN-relative names, which the `home` of each row
+// is written in. The tests repository's files are listed as `tests/<name>`.
+const SOURCE = new Map([
+  ...everyModule(BIN, BIN).map((f) => [f, readFileSync(join(BIN, f), 'utf8')]),
+  ...everyModule(TESTS, TESTS).map((f) => [`tests/${f}`, readFileSync(join(TESTS, f), 'utf8')]),
+]);
+const MODULES = [...SOURCE.keys()];
 
-test('the census walks the whole bin tree, lib/ and test files included', () => {
+test('the census walks the whole bin tree, lib/, and the tests repository', () => {
   // A walk that silently reached nothing would make every arm below vacuous.
   assert.ok(MODULES.length > 60, `only ${MODULES.length} .mjs files found`);
   for (const expected of ['lib/seam-input.mjs', 'lib/arg-contract.mjs', 'lib/git-head.mjs',
     'git-guard.mjs', 'lib/lease-grammar.mjs', 'lib/file-transition.mjs',
-    'helper-census.test.mjs']) {
+    'tests/helper-census.test.mjs']) {
     assert.ok(MODULES.includes(expected), `${expected} missing from the walk`);
   }
 });

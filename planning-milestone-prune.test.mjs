@@ -1,5 +1,5 @@
 // Zero-dep tests for `planning.mjs milestone-prune - the seam's own --label guard, not lib/milestone-prune.mjs`. Run:
-// node --test 'cadence-core/bin/*.test.mjs'
+// node --test 'tests/*.test.mjs'
 //
 // Split out of planning.test.mjs in phase 4, verbatim: the arms, their fixture
 // builders and their comments are unchanged, only their home is. The shared

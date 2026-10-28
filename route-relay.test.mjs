@@ -1,6 +1,6 @@
 // Grammar tests for lib/route-relay.mjs - the rule behind self-verify's
 // `unrelayed-route-resolve` check. Run:
-// node --test cadence-core/bin/route-relay.test.mjs
+// node --test tests/route-relay.test.mjs
 //
 // ONE test() per grammar row, deliberately: a table asserted inside a single
 // test() with a sequential loop reports the loop's count, not the rows', so a
@@ -8,7 +8,7 @@
 // Only node: builtins, no subprocess - the lib is pure.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CODE, relayIssues } from './lib/route-relay.mjs';
+import { CODE, relayIssues } from '../cadence-core/bin/lib/route-relay.mjs';
 
 /** The plugin-root invocation form, exactly as a workflow writes it. */
 const ISSUE = 'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/route.mjs" resolve --role cad-verifier';

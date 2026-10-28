@@ -1,5 +1,5 @@
 // Zero-dep tests for lib/forge-decision.mjs (the setup-time forge question,
-// FRG-01). Run: node --test cadence-core/bin/forge-decision.test.mjs.
+// FRG-01). Run: node --test tests/forge-decision.test.mjs.
 //
 // No harness at all, which is the point of the split: the module is pure, so
 // every case here is a call and an assertion. The SEAM's own file proves the
@@ -14,9 +14,9 @@ import { fileURLToPath } from 'node:url';
 import {
   CREATE_TABLE, PROVIDER_TABLE, decideForge, forgeRecordComplete, installedProviders,
   isForgeSlug, originDefaults, ownerIsLoginUser, splitForgeHost, splitSlug,
-} from './lib/forge-decision.mjs';
+} from '../cadence-core/bin/lib/forge-decision.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 
 // --- the table: one vocabulary, shared with the schema and with HOST_TABLE ---
 
@@ -30,7 +30,7 @@ test('the provider names are HOST_TABLE\'s own keys, not a second spelling', asy
   // The persisted `git.forge_provider` is used DIRECTLY as a HOST_TABLE key at
   // land time, so a synonym here is a lookup miss there rather than a naming
   // preference. Asserted against the real table rather than a copy.
-  const { HOST_TABLE } = await import('./lib/issue-decision.mjs');
+  const { HOST_TABLE } = await import('../cadence-core/bin/lib/issue-decision.mjs');
   assert.deepEqual(Object.keys(PROVIDER_TABLE).sort(), Object.keys(HOST_TABLE).sort());
   for (const [provider, bin] of Object.entries(PROVIDER_TABLE)) {
     assert.equal(HOST_TABLE[provider].bin, bin, `${provider} drives ${bin} on both tables`);

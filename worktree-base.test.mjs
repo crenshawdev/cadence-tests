@@ -1,5 +1,5 @@
 // Zero-dep tests for worktree-base.mjs (the parallel-path preflight). Run:
-// node --test 'cadence-core/bin/*.test.mjs'. Every run is hermetic: the
+// node --test 'tests/*.test.mjs'. Every run is hermetic: the
 // managed and user layers are relocated onto temp paths so the dev's real
 // settings can never decide a test's verdict, and fixtures are plain temp
 // dirs (no git repo), so the seam falls back to --dir as the root.
@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SEAM = join(dirname(fileURLToPath(import.meta.url)), 'worktree-base.mjs');
+const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'worktree-base.mjs');
 const ABSENT = join(mkdtempSync(join(tmpdir(), 'cad-wb-')), 'absent.json');
 
 /** A project fixture; `files` maps a .claude/<name> to its raw contents. */

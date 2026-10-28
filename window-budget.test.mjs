@@ -1,6 +1,6 @@
 // Zero-dep tests for lib/window-budget.mjs and the `planning.mjs trace window`
 // seam (MSR-03).
-// Run: node --test 'cadence-core/bin/*.test.mjs'
+// Run: node --test 'tests/*.test.mjs'
 //
 // Two layers, matching the rest of the suite: the pure rule is exercised
 // directly on literal bracket rows, and the CLI is exercised through
@@ -8,7 +8,7 @@
 // the exit code a caller actually sees are what get asserted.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { windowBudget, CODES, NO_ROLE } from './lib/window-budget.mjs';
+import { windowBudget, CODES, NO_ROLE } from '../cadence-core/bin/lib/window-budget.mjs';
 
 /** A bracket row with the fields the rule reads, defaults filled in. */
 const row = (over) => ({
@@ -130,9 +130,9 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { appendEvent } from './lib/trace.mjs';
+import { appendEvent } from '../cadence-core/bin/lib/trace.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const PLANNING = join(HERE, 'planning.mjs');
 
 /** A fresh, empty planning root, and a global-config path that is not there. */
@@ -255,7 +255,7 @@ test('trace window: a bad --phase is ok:false / bad-args', () => {
 //
 // and with this file copied in, the case below dying on its first assertion:
 //
-//   $ node --test cadence-core/bin/window-budget.test.mjs
+//   $ node --test tests/window-budget.test.mjs
 //   ✖ falsifier: a crossing is reported per role and an under-ceiling
 //     dispatch is not (MSR-03)
 //     AssertionError [ERR_ASSERTION]:
@@ -276,7 +276,7 @@ test('trace window: a bad --phase is ok:false / bad-args', () => {
 // `git worktree add --detach <tmp> 9b1fe53`, copy this file into that
 // checkout's `cadence-core/bin/` ALONG WITH `lib/window-budget.mjs`, which the
 // unit tests at the head of this file import at load time and which nothing
-// below imports, `node --test cadence-core/bin/window-budget.test.mjs` there,
+// below imports, `node --test tests/window-budget.test.mjs` there,
 // then remove the worktree.
 
 test('falsifier: a crossing is reported per role and an under-ceiling dispatch is not (MSR-03)', () => {

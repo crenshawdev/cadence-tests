@@ -1,5 +1,5 @@
 // Parser-level tests for the PLAN.md frontmatter grammar in
-// lib/planning-files.mjs. Run: node --test cadence-core/bin/planning-files.test.mjs
+// lib/planning-files.mjs. Run: node --test tests/planning-files.test.mjs
 // This is the grammar table cadence-core/references/plan-frontmatter.md
 // states in prose - every shipped form, every closed defect, and the three
 // review-flagged unterminated-quote cases, ALONGSIDE (not instead of) the
@@ -24,9 +24,9 @@ import {
   parseArchiveRows, appendArchiveRows, parseFiledRows, appendFiledRow,
   parseDeclinedRows, appendDeclinedRow,
   parsePlanFiles, parseTaskRecordSnippets, CURSOR_STATUSES,
-} from './lib/planning-files.mjs';
+} from '../cadence-core/bin/lib/planning-files.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const LIB = join(HERE, 'lib', 'planning-files.mjs');
 
 /** A fresh scratch directory - atomicWrite does real I/O, so it needs one. */
@@ -447,13 +447,13 @@ test('planning-files: unterminated-frontmatter issue carries the opening fence l
 // --- the shipped template reads to exactly what it declares (Task 2) -------
 
 test('planning-files: the shipped templates/PLAN.md frontmatter reads empty and clean', () => {
-  const text = readFileSync(new URL('../templates/PLAN.md', import.meta.url), 'utf8');
+  const text = readFileSync(new URL('../cadence-core/templates/PLAN.md', import.meta.url), 'utf8');
   assert.deepEqual(readFrontmatterList(text, 'requirements'), { items: [], issues: [] });
   assert.deepEqual(readFrontmatterList(text, 'files'), { items: [], issues: [] });
 });
 
 test('planning-files: a path added under the template\'s bare files: block key is read, not dropped', () => {
-  const text = readFileSync(new URL('../templates/PLAN.md', import.meta.url), 'utf8')
+  const text = readFileSync(new URL('../cadence-core/templates/PLAN.md', import.meta.url), 'utf8')
     .replace(/^(files:.*)$/m, '$1\n  - src/a.rs');
   assert.deepEqual(readFrontmatterList(text, 'files'), { items: ['src/a.rs'], issues: [] });
 });
@@ -726,7 +726,7 @@ const FENCED_EXAMPLE_ROADMAP = [
 ].join('\n');
 
 test('classifyPhaseList: the shipped templates/ROADMAP.md is no-section, not two phantom phases', () => {
-  const text = readFileSync(new URL('../templates/ROADMAP.md', import.meta.url), 'utf8');
+  const text = readFileSync(new URL('../cadence-core/templates/ROADMAP.md', import.meta.url), 'utf8');
   assert.deepEqual(classifyPhaseList(text), { state: 'no-section', phases: [], issues: [] });
   assert.deepEqual(parseRoadmapPhases(text), []);
 });
@@ -1190,7 +1190,7 @@ const FENCED_INSIDE_ACTIVE = [
 ].join('\n');
 
 test('classifyActiveSection: the shipped templates/REQUIREMENTS.md declares nothing', () => {
-  const text = readFileSync(new URL('../templates/REQUIREMENTS.md', import.meta.url), 'utf8');
+  const text = readFileSync(new URL('../cadence-core/templates/REQUIREMENTS.md', import.meta.url), 'utf8');
   // `ids: null`, not `[]`: its only `## Active` sits inside the template's own
   // fence, so the heading is ABSENT to a fence-aware reader.
   assert.deepEqual(classifyActiveSection(text), { ids: null, issues: [] });

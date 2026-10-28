@@ -1,5 +1,5 @@
 // Tests for lib/retired-keys.mjs - the retired-vocabulary map both config
-// faces read. Run: node --test cadence-core/bin/retired-keys.test.mjs
+// faces read. Run: node --test tests/retired-keys.test.mjs
 //
 // ONE test() per row, deliberately: a table asserted inside a single test()
 // with a sequential loop reports the loop's count, not the rows', so a row that
@@ -10,11 +10,11 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { RETIRED_KEYS, retiredKeyError, retiredKeysIn } from './lib/retired-keys.mjs';
+import { RETIRED_KEYS, retiredKeyError, retiredKeysIn } from '../cadence-core/bin/lib/retired-keys.mjs';
 
 // --- the retired rail, pinned byte for byte (CER-01 AC4, D-03) ---------------
 
-const RETIRED_KEYS_FILE = fileURLToPath(new URL('./lib/retired-keys.mjs', import.meta.url));
+const RETIRED_KEYS_FILE = fileURLToPath(new URL('../cadence-core/bin/lib/retired-keys.mjs', import.meta.url));
 // sha256 of lib/retired-keys.mjs, re-cut by the v3.7.12 milestone's phase 3 under
 // its D-06 and D-07. Every assertion in this file reads message CONTENT, so the
 // eight `risk.override.*` rows could be edited, reworded or un-retired with the

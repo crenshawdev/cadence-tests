@@ -1,5 +1,5 @@
 // Zero-dep tests for weight.mjs (the context-weight seam). Run:
-// node --test 'cadence-core/bin/*.test.mjs'
+// node --test 'tests/*.test.mjs'
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const WEIGHT = join(HERE, 'weight.mjs');
 const REPO = join(HERE, '..', '..');
 

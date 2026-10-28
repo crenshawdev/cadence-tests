@@ -1,7 +1,7 @@
 // Tests for lib/repo-auto-close.mjs - the both-layer read of `git.auto_close`
 // that says the unattended close is authorized (D-02): true only when the
 // repository's .planning/config.json AND the user-global config both set it.
-// Run: node --test cadence-core/bin/repo-auto-close.test.mjs
+// Run: node --test tests/repo-auto-close.test.mjs
 //
 // ONE test() per row, deliberately, following global-only-keys.test.mjs: a
 // table asserted inside a single test() with a sequential loop reports the
@@ -36,7 +36,7 @@ function repo(body) {
 // CADENCE_GLOBAL_CONFIG is set before that import: the env var relocates the
 // user-global layer exactly as it does for every other reader.
 
-const LIB = pathToFileURL(join(import.meta.dirname, 'lib', 'repo-auto-close.mjs')).href;
+const LIB = pathToFileURL(join(import.meta.dirname, '..', 'cadence-core', 'bin', 'lib', 'repo-auto-close.mjs')).href;
 
 /** A user-global file holding `body` verbatim; its path. */
 function globalText(body) {

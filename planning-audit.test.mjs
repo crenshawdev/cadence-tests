@@ -1,7 +1,7 @@
 // Zero-dep tests for `planning.mjs audit` - the traceability gate, its
 // unseeded/unpicked and nonconforming_plans arms, version_drift, the
 // sanctioned rolled-over phase (DRF-02) and the tag-ownership rail (TAG-01).
-// Run: node --test 'cadence-core/bin/*.test.mjs'
+// Run: node --test 'tests/*.test.mjs'
 //
 // Split out of planning.test.mjs in phase 4, verbatim: the arms, their fixture
 // builders and their comments are unchanged, only their home is. The shared
@@ -537,7 +537,7 @@ test('audit: the v2.4.0 state of this repo (issue #87) fires - the regression pi
 // WATCHED FAILING AT caf3a23, the branch tip before this fix. Observed there,
 // with this file copied into that checkout's `cadence-core/bin/`:
 //
-//   $ node --test cadence-core/bin/planning.test.mjs
+//   $ node --test tests/planning.test.mjs
 //   x audit: a phase rolled forward - every row Deferred - does not hold the cycle open
 //     AssertionError [ERR_ASSERTION]: rolling work forward is a sanctioned close,
 //     not an open cycle under a published number
@@ -553,7 +553,7 @@ test('audit: the v2.4.0 state of this repo (issue #87) fires - the regression pi
 // that keeps the gate armed, and it must pass on BOTH trees.
 //
 // To re-watch: `git worktree add --detach <tmp> caf3a23`, copy this file into
-// `<tmp>/cadence-core/bin/`, run `node --test cadence-core/bin/planning.test.mjs`
+// `<tmp>/cadence-core/bin/`, run `node --test tests/planning.test.mjs`
 // from `<tmp>`, then `git worktree remove <tmp>`.
 
 /**
@@ -599,7 +599,7 @@ test('audit: the same phase with its rows still Pending keeps the gate armed', (
 // WATCHED FAILING AT 487e150, the branch tip before this fix. Observed there,
 // with this file copied into that checkout's `cadence-core/bin/`:
 //
-//   $ node --test cadence-core/bin/planning.test.mjs
+//   $ node --test tests/planning.test.mjs
 //   x audit: an enclosing repository's tags are not this project's (TAG-01)
 //     AssertionError [ERR_ASSERTION]: an unrelated umbrella repo's v9.9.0 is not
 //     a publication of this project
@@ -619,7 +619,7 @@ test('audit: the same phase with its rows still Pending keeps the gate armed', (
 // worktrees, cd5aed6), not the defect itself.
 //
 // To re-watch: `git worktree add --detach <tmp> 487e150`, copy this file into
-// `<tmp>/cadence-core/bin/`, run `node --test cadence-core/bin/planning.test.mjs`
+// `<tmp>/cadence-core/bin/`, run `node --test tests/planning.test.mjs`
 // from `<tmp>`, then `git worktree remove <tmp>`.
 
 test('audit: an enclosing repository\'s tags are not this project\'s (TAG-01)', () => {

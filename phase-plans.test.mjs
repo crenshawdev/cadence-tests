@@ -1,5 +1,5 @@
 // Tests for lib/phase-plans.mjs - the disk half of the computed risk floor.
-// Run: node --test cadence-core/bin/phase-plans.test.mjs
+// Run: node --test tests/phase-plans.test.mjs
 //
 // ONE test() per row (the route-cells.test.mjs convention), and every fixture is
 // built in its own mkdtempSync directory so no row can see another's tree.
@@ -10,8 +10,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   cursorPhase, declaredFilesIn, declaredPhaseFiles, declaredPlanFiles, phaseDirsIn,
-} from './lib/phase-plans.mjs';
-import { renderCursor } from './lib/planning-files.mjs';
+} from '../cadence-core/bin/lib/phase-plans.mjs';
+import { renderCursor } from '../cadence-core/bin/lib/planning-files.mjs';
 
 /** A fresh planning root. `plans` is keyed `<phase>/<filename>`. */
 function planningRoot(plans = {}, stateText = null) {

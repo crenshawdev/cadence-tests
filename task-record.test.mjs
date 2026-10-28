@@ -1,6 +1,6 @@
 // Tests for lib/task-record.mjs - where a `/cad-task` run's record lives and
 // what its bytes are.
-// Run: node --test cadence-core/bin/task-record.test.mjs
+// Run: node --test tests/task-record.test.mjs
 //
 // ONE test() per row (the route-cells.test.mjs convention), and every fixture is
 // built in its own mkdtempSync directory so no row can see another's tree.
@@ -16,8 +16,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   MAX_SLUG_LENGTH, RECORD_FILE, TASKS_DIR, isTaskSlug, renderTaskRecord, taskRecordsIn,
-} from './lib/task-record.mjs';
-import { parseCommitRows, taskDeclaredFiles } from './lib/why-record.mjs';
+} from '../cadence-core/bin/lib/task-record.mjs';
+import { parseCommitRows, taskDeclaredFiles } from '../cadence-core/bin/lib/why-record.mjs';
 
 /** A fresh planning root holding a record per slug. */
 function planningRoot(records = {}) {

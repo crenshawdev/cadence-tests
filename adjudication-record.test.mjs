@@ -1,6 +1,6 @@
 // Grammar tests for lib/adjudication-record.mjs - what makes a composed
 // adjudication payload a record, and what it refuses.
-// Run: node --test cadence-core/bin/adjudication-record.test.mjs
+// Run: node --test tests/adjudication-record.test.mjs
 //
 // ONE test() per rule, deliberately: a table of refusals asserted inside a
 // single test() with a sequential loop reports the loop's count, not the rows',
@@ -28,14 +28,14 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   buildEntries, deriveCounts, RAISED_SEVERITIES, RULINGS, HALTING_SEVERITIES,
-} from './lib/adjudication-record.mjs';
+} from '../cadence-core/bin/lib/adjudication-record.mjs';
 import {
   HALTING_SEVERITIES as FILING_HALTING_SEVERITIES, unfixedFindings, unfixedFromEntries,
   usableFixCommit,
-} from './lib/filing-decision.mjs';
-import { FINDING_SCHEMA } from './review-provider.mjs';
+} from '../cadence-core/bin/lib/filing-decision.mjs';
+import { FINDING_SCHEMA } from '../cadence-core/bin/review-provider.mjs';
 
-const PLANNING = join(dirname(fileURLToPath(import.meta.url)), 'planning.mjs');
+const PLANNING = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'planning.mjs');
 
 /** A finding as a reviewer returns one. */
 const finding = (over = {}) => ({

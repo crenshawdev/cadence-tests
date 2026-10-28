@@ -1,6 +1,6 @@
 // Grammar tests for lib/rung-agent.mjs - the rung->agent-file mapping rule
 // route.mjs and self-verify.mjs share. Run:
-// node --test cadence-core/bin/rung-agent.test.mjs
+// node --test tests/rung-agent.test.mjs
 //
 // ONE test() per grammar row, deliberately: a table asserted inside a single
 // test() with a sequential loop reports the loop's count, not the rows', so a
@@ -12,14 +12,14 @@ import {
   rungBody, rungBodyIssue, rungEffortIssue, rungPrefixIssues, RUNG_FILES, rungFile,
   rungFiles, effortEnumIssues, EFFORT_PREFIX, ROLES_PREFIX, ROLES_EFFORT_SUFFIX,
   RUNG_ORDER, rungOrderIssues, roleOfAgent, rungOfAgent,
-} from './lib/rung-agent.mjs';
-import * as readTrace from './lib/read-trace.mjs';
+} from '../cadence-core/bin/lib/rung-agent.mjs';
+import * as readTrace from '../cadence-core/bin/lib/read-trace.mjs';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SHIPPED = JSON.parse(
   readFileSync(join(REPO, 'cadence-core', 'config.schema.json'), 'utf8')).keys;
 const SHIPPED_ORDER = RUNG_ORDER;

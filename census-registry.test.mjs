@@ -23,13 +23,14 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isRefusedSpelling } from './lib/lease-grammar.mjs';
+import { isRefusedSpelling } from '../cadence-core/bin/lib/lease-grammar.mjs';
 import {
   CENSUSES, CENSUS_TOKEN, censusMarkersIn, censusIssues,
-} from './lib/census-registry.mjs';
+} from '../cadence-core/bin/lib/census-registry.mjs';
 
-const BIN = dirname(fileURLToPath(import.meta.url));
-const REPO = join(BIN, '..', '..');
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
+const TESTS = dirname(fileURLToPath(import.meta.url));
+const REPO = join(TESTS, '..');
 
 // --- arm (i): the shape of a row ---------------------------------------------
 
@@ -121,14 +122,14 @@ function everyModule(dir) {
   return out;
 }
 
-const MODULES = everyModule(BIN);
+const MODULES = [...everyModule(BIN), ...everyModule(TESTS)];
 
-test('the walk reaches the whole bin tree - more than 60 modules, lib/ and test files included', () => {
+test('the walk reaches the whole bin tree and the tests repository - more than 60 modules, lib/ and test files included', () => {
   // A walk that silently reached nothing would make the arm below pass by
   // measuring nothing, which is the exact failure a census exists against.
   assert.ok(MODULES.length > 60, `only ${MODULES.length} .mjs files found`);
   for (const expected of ['cadence-core/bin/lib/census-registry.mjs',
-    'cadence-core/bin/census-registry.test.mjs', 'cadence-core/bin/self-verify.mjs',
+    'tests/census-registry.test.mjs', 'cadence-core/bin/self-verify.mjs',
     'cadence-core/bin/planning/lease-check.mjs']) {
     assert.ok(MODULES.includes(expected), `${expected} missing from the walk`);
   }

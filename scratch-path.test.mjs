@@ -1,6 +1,6 @@
 // Zero-dep tests for lib/scratch-path.mjs - the per-run scratch rule
 // self-verify runs over every prose surface (check 21). Run:
-//   node --test cadence-core/bin/scratch-path.test.mjs
+//   node --test tests/scratch-path.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 //
 // This file owns the RULE and the six sites SCR-01 was filed against, in BOTH
@@ -12,7 +12,7 @@
 // that the live tree is clean, which is why nothing here reads a shipped file.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scratchPathIssues, CODES } from './lib/scratch-path.mjs';
+import { scratchPathIssues, CODES } from '../cadence-core/bin/lib/scratch-path.mjs';
 
 const X = 'cadence-core/workflows/x.md';
 /** The kinds reported over one synthetic surface, in the order they are found. */

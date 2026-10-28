@@ -1,5 +1,5 @@
 // Zero-dep tests for lib/release-decision.mjs (the pure release-bump core).
-// Run: node --test 'cadence-core/bin/*.test.mjs'. Only node: builtins, and the
+// Run: node --test 'tests/*.test.mjs'. Only node: builtins, and the
 // functions are pure, so this needs no subprocess or live git. Mirrors
 // close-decision.test.mjs.
 import { test } from 'node:test';
@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import {
   normalizeTargetVersion, compareVersions, decideManifestBump, prependChangelogEntry,
   promoteUnreleased,
-} from './lib/release-decision.mjs';
+} from '../cadence-core/bin/lib/release-decision.mjs';
 
 // --- normalizeTargetVersion -------------------------------------------------
 

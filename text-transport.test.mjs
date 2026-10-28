@@ -1,6 +1,6 @@
 // Zero-dep tests for lib/text-transport.mjs - the caller-derived-text register
 // and the pure rule self-verify runs over it (check 19). Run:
-//   node --test cadence-core/bin/text-transport.test.mjs
+//   node --test tests/text-transport.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 //
 // This file owns the RULE and the register's shape: what counts as a
@@ -12,7 +12,7 @@
 // the rule and never of someone's paragraph.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { textTransportIssues, TEXT_TRANSPORT, TEXT_FLAGS, CODES } from './lib/text-transport.mjs';
+import { textTransportIssues, TEXT_TRANSPORT, TEXT_FLAGS, CODES } from '../cadence-core/bin/lib/text-transport.mjs';
 
 /** A synthetic register row. */
 const row = (over = {}) => ({

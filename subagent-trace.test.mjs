@@ -20,7 +20,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { closeForStop } from './lib/subagent-trace.mjs';
+import { closeForStop } from '../cadence-core/bin/lib/subagent-trace.mjs';
 
 /** One `unpaired[]` row, the shape `renderTrace(...)` returns. */
 const open = (role, plan, ts, extra) => ({ corr: '2-abc1234', phase: '2', plan, ts, role, ...extra });

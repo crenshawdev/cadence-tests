@@ -1,6 +1,6 @@
 // Zero-dep tests for lib/report-rotation.mjs, the free-suffix picker an
 // executor consults before its first write to `<plandir>/reports/plan-<k>.md`.
-// Run: node --test 'cadence-core/bin/*.test.mjs' - CI's own glob.
+// Run: node --test 'tests/*.test.mjs' - CI's own glob.
 //
 // The module is pure, but the property that matters is a filesystem one: after
 // the caller acts on its answer, the previous run's bytes are still readable.
@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, existsSync, globSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, sep } from 'node:path';
-import { rotationTarget, isReportName } from './lib/report-rotation.mjs';
+import { rotationTarget, isReportName } from '../cadence-core/bin/lib/report-rotation.mjs';
 
 /** A fresh `<plandir>/reports/` holding `files` (name -> contents). */
 function makeReports(files = {}) {

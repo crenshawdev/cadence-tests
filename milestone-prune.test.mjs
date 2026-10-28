@@ -7,9 +7,9 @@ import { writeFileSync, mkdtempSync, mkdirSync, readFileSync, existsSync, symlin
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pruneRoadmap, archiveRequirements, completedPhases } from './lib/milestone-prune.mjs';
+import { pruneRoadmap, archiveRequirements, completedPhases } from '../cadence-core/bin/lib/milestone-prune.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const PLANNING = join(HERE, 'planning.mjs');
 
 const ROADMAP = `# Roadmap: Fixture

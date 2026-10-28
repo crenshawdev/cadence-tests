@@ -1,5 +1,5 @@
 // Zero-dep tests for `planning.mjs renumber`. Run:
-// node --test 'cadence-core/bin/*.test.mjs'
+// node --test 'tests/*.test.mjs'
 //
 // Split out of planning.test.mjs in phase 4, verbatim: the arms, their fixture
 // builders and their comments are unchanged, only their home is. The shared
@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync, chmodSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { classifyAcceptanceCriteria } from './lib/planning-files.mjs';
+import { classifyAcceptanceCriteria } from '../cadence-core/bin/lib/planning-files.mjs';
 import { PLANNING_DIR, makeTree, run, isEntryFile } from './planning.test.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
@@ -345,7 +345,7 @@ test('renumber remove: uncommitted work in phases/<at> is refused before any wri
 // WATCHED FAILING AT ae73dd6, the tip of this plan's unpatched tree. Observed
 // there, with this file copied into that checkout:
 //
-//   $ node --test --test-name-pattern='PHS-01' cadence-core/bin/planning.test.mjs
+//   $ node --test --test-name-pattern='PHS-01' tests/planning.test.mjs
 //   AssertionError [ERR_ASSERTION]: phases/3 must survive a git state that
 //   could not be read - apply returned {"ok":true,"ops":[{"rm":"phases/3"},
 //   {"edit":"ROADMAP.md","changes":1},{"edit":"REQUIREMENTS.md","changes":1},
@@ -505,7 +505,7 @@ test('renumber remove: a failure before ANY step says so, rather than claiming a
 // watch it records was re-run in full before this comment was written.
 // Observed there, with THIS FILE alone copied into that checkout:
 //
-//   $ node --test --test-name-pattern='PHS-01' cadence-core/bin/planning.test.mjs
+//   $ node --test --test-name-pattern='PHS-01' tests/planning.test.mjs
 //   AssertionError [ERR_ASSERTION]: the nested repository must stop the delete
 //   - got {"ok":true,"ops":[{"rm":"phases/3"},{"edit":"ROADMAP.md",
 //   "changes":1},{"edit":"REQUIREMENTS.md","changes":1},{"edit":"STATE.md",

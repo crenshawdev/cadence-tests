@@ -1,5 +1,5 @@
 // Zero-dep tests for git-guard.mjs (the PreToolUse hook). Run:
-// node --test 'cadence-core/bin/*.test.mjs'
+// node --test 'tests/*.test.mjs'
 //
 // What a command IS, is read by lib/git-segments.mjs and pinned in
 // git-segments.test.mjs. This file tests the HOOK: that a reading reaches the
@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const GUARD = join(dirname(fileURLToPath(import.meta.url)), 'git-guard.mjs');
+const GUARD = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'git-guard.mjs');
 
 // Hermetic global config (never read the dev's real one).
 const NO_GLOBAL = join(mkdtempSync(join(tmpdir(), 'cad-guard-')), 'no-global.json');

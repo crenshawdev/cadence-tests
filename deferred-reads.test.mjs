@@ -1,6 +1,6 @@
 // Zero-dep tests for lib/deferred-reads.mjs - the deferred-read register and
 // its region grammar as a pure function. Run:
-//   node --test cadence-core/bin/deferred-reads.test.mjs
+//   node --test tests/deferred-reads.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 //
 // self-verify.test.mjs already owns the four SHIPPED rows and the CLI wiring.
@@ -18,9 +18,9 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   deferredReadIssues, regionLabels, DEFERRED_READS, CODES,
-} from './lib/deferred-reads.mjs';
+} from '../cadence-core/bin/lib/deferred-reads.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const REPO = join(HERE, '..', '..');
 
 /** One Read sentence for a reference, in the shape the rule wants. */

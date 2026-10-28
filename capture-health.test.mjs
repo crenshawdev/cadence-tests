@@ -1,6 +1,6 @@
 // Zero-dep tests for lib/capture-health.mjs - the CAPTURE.md reading behind
 // `planning.mjs capture-check` and the phase-close assertion (CAP-01, CAP-03).
-// Run: node --test cadence-core/bin/capture-health.test.mjs
+// Run: node --test tests/capture-health.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 //
 // EVERY case here is a FIXTURE, and that is not a style choice. Measured on
@@ -10,8 +10,8 @@
 // planning-capture-check.test.mjs, where the config layer is.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { captureHealth } from './lib/capture-health.mjs';
-import { EMPTY_CAPTURE } from './lib/capture-file.mjs';
+import { captureHealth } from '../cadence-core/bin/lib/capture-health.mjs';
+import { EMPTY_CAPTURE } from '../cadence-core/bin/lib/capture-file.mjs';
 
 test('a freshly created queue counts ZERO substantive bullets', () => {
   // The exact bytes `appendCapture` writes when CAPTURE.md is absent. Three

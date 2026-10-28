@@ -1,5 +1,5 @@
 // Zero-dep tests for `planning.mjs trace ignore`. Run:
-// node --test 'cadence-core/bin/*.test.mjs'
+// node --test 'tests/*.test.mjs'
 //
 // Split out of planning.test.mjs in phase 4, verbatim: the arms, their fixture
 // builders and their comments are unchanged, only their home is. The shared
@@ -19,7 +19,7 @@ import { PLANNING, run, isEntryFile } from './planning.test.mjs';
 import {
   READS_CLAIM_FILE, READS_EVICT_TEMP_FILE, READS_FILE, READS_ROTATE_TEMP_FILE,
   ROTATED_READS_FILE, readsPath, rotatedReadsPath,
-} from './lib/read-trace.mjs';
+} from '../cadence-core/bin/lib/read-trace.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -241,7 +241,7 @@ test('trace ignore: the sibling rule names the file the writer actually creates'
   // The drift this derivation exists to prevent: a rule spelled by hand here
   // and a rotated path spelled in lib/trace.mjs are two statements of one fact,
   // and the day they disagree the ignore rule covers nothing.
-  const { ROTATED_TRACE_FILE, rotatedTracePath } = await import('./lib/trace.mjs');
+  const { ROTATED_TRACE_FILE, rotatedTracePath } = await import('../cadence-core/bin/lib/trace.mjs');
   const root = ignoreRoot();
   const r = traceIgnore(root);
   assert.equal(r.rotated_line, `.planning/${ROTATED_TRACE_FILE}`);
@@ -304,7 +304,7 @@ test('trace ignore: THIS repository already covers the reads sibling (D-11)', ()
   // The rule this repo carries by hand, asserted through git rather than by
   // reading `.gitignore`: its own record measured 93% full on 2026-08-28, so it
   // WILL rotate, and the sibling is what `git add .planning` would sweep in.
-  const repo = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
   for (const path of ['.planning/reads.1.jsonl', '.planning/reads.1.jsonl.claim',
     '.planning/reads.1.jsonl.claim.123.abc']) {
     assert.equal(ignoreSource(repo, path), '.gitignore', path);

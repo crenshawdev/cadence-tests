@@ -1,4 +1,4 @@
-// Zero-dep tests for planning.mjs. Run: node --test 'cadence-core/bin/*.test.mjs'
+// Zero-dep tests for planning.mjs. Run: node --test 'tests/*.test.mjs'
 // The JSON shapes asserted here ARE the interface contract - there is no
 // spec file beyond them. Only node: builtins, per the repo ethos.
 //
@@ -40,8 +40,8 @@ export function isEntryFile(url = import.meta.url) {
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile() ? nodeTest : () => {};
 
-export const PLANNING = join(dirname(fileURLToPath(import.meta.url)), 'planning.mjs');
-export const PLANNING_DIR = join(dirname(fileURLToPath(import.meta.url)), 'planning');
+export const PLANNING = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'planning.mjs');
+export const PLANNING_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'planning');
 
 /**
  * The seam's WHOLE source - the entry file plus every command module under

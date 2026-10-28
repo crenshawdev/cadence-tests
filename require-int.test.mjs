@@ -1,8 +1,8 @@
-// Reference-value tests for lib/require-int.mjs. Run: node --test cadence-core/bin/require-int.test.mjs
+// Reference-value tests for lib/require-int.mjs. Run: node --test tests/require-int.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { requireInt, requireCursorNumber, requirePhaseArg } from './lib/require-int.mjs';
+import { requireInt, requireCursorNumber, requirePhaseArg } from '../cadence-core/bin/lib/require-int.mjs';
 
 test('requireInt: accepts a clean integer string', () => {
   assert.deepEqual(requireInt('4'), { ok: true, value: 4 });

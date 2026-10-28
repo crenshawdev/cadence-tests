@@ -1,12 +1,12 @@
 // The surfaced-set rules in lib/cite-surfaced.mjs (RBK-01).
-// Run: node --test cadence-core/bin/cite-surfaced.test.mjs
+// Run: node --test tests/cite-surfaced.test.mjs
 // This tree's convention for a stated rule is a unit table beside the seam-level
 // cases (lease-grammar.test.mjs says so in its own header): the rows here are
 // the rule, and the `cite-count` cases in planning.test.mjs prove the seam
 // reaches it. Only node: builtins.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { surfacedRows, SURFACED_KINDS } from './lib/cite-surfaced.mjs';
+import { surfacedRows, SURFACED_KINDS } from '../cadence-core/bin/lib/cite-surfaced.mjs';
 
 /** A recall result row, in the `{score, source, phase?, snippet}` shape recall returns. */
 const row = (source, snippet, extra = {}) => ({ score: 1, source, snippet, ...extra });

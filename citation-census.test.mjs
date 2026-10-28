@@ -35,7 +35,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const BIN = dirname(fileURLToPath(import.meta.url));
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const ROOT = dirname(dirname(BIN));
 
 /** Every `.md` file under `dir`, recursively, as paths relative to ROOT. */

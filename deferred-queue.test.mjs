@@ -1,6 +1,6 @@
 // Grammar tests for lib/deferred-queue.mjs - what makes a deferred fire's
 // payload a queue member, and what it refuses.
-// Run: node --test cadence-core/bin/deferred-queue.test.mjs
+// Run: node --test tests/deferred-queue.test.mjs
 //
 // ONE test() per rule, deliberately: a table of refusals asserted inside a
 // single test() with a sequential loop reports the loop's count, not the rows',
@@ -14,8 +14,8 @@
 // takes, for the same reason: these cases need no repository and no subprocess.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildQueue, isQueueName, queueIdentity, queueName } from './lib/deferred-queue.mjs';
-import { buildEntries, recordName, RAISED_SEVERITIES } from './lib/adjudication-record.mjs';
+import { buildQueue, isQueueName, queueIdentity, queueName } from '../cadence-core/bin/lib/deferred-queue.mjs';
+import { buildEntries, recordName, RAISED_SEVERITIES } from '../cadence-core/bin/lib/adjudication-record.mjs';
 
 /** A finding as a reviewer returns one. */
 const finding = (over = {}) => ({

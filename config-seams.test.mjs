@@ -1,5 +1,5 @@
 // Zero-dep cross-seam config tests (phase 1, AC7). Run:
-// node --test 'cadence-core/bin/*.test.mjs'
+// node --test 'tests/*.test.mjs'
 //
 // One question per arm: does the seam act on the value `config.mjs get`
 // reports for a key that seam actually reads? No single config key is read by
@@ -54,7 +54,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isEntryFile } from './planning.test.mjs';
 
-const BIN = dirname(fileURLToPath(import.meta.url));
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const CONFIG = join(BIN, 'config.mjs');
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
@@ -237,7 +237,7 @@ const GLOBAL_ONLY_ROWS = [
  * reverting either fix alone turns an arm red.
  *
  * Built under mkdtemp like every other fixture here, never checked in: a hostile
- * config.json under bin/fixtures/ becomes input to this repository's own tooling
+ * config.json under fixtures/ becomes input to this repository's own tooling
  * runs. The key is written through a COMPUTED property, because `{__proto__: x}`
  * in JS source sets the prototype instead of creating the key an attacker ships
  * - and the spread below carries it on as an own data property for the same

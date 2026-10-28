@@ -1,6 +1,6 @@
 // Zero-dep tests for lib/include-consumers.mjs - the include-consumer rule as a
 // pure function. Run:
-//   node --test cadence-core/bin/include-consumers.test.mjs
+//   node --test tests/include-consumers.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 //
 // self-verify.test.mjs owns the CLI wiring and the live-tree assertion. This
@@ -16,9 +16,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { includeConsumerIssues, WAIVED, CODES } from './lib/include-consumers.mjs';
+import { includeConsumerIssues, WAIVED, CODES } from '../cadence-core/bin/lib/include-consumers.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const REPO = join(HERE, '..', '..');
 
 /** An empty temp root. */

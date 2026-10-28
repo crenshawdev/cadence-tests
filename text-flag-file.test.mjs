@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, chmodSync, accessSync, constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveTextFlag } from './lib/text-flag-file.mjs';
+import { resolveTextFlag } from '../cadence-core/bin/lib/text-flag-file.mjs';
 
 /** A temp file holding `body`, and its path. */
 function fixture(body) {

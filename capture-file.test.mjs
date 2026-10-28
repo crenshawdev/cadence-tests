@@ -1,5 +1,5 @@
 // Zero-dep tests for lib/capture-file.mjs - the ONE owner of CAPTURE.md file
-// I/O. Run: node --test cadence-core/bin/capture-file.test.mjs
+// I/O. Run: node --test tests/capture-file.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 //
 // The rows here are the WRITE side of the recall walk. What they pin is not
@@ -14,11 +14,11 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { appendCapture, CAPTURE_HEADINGS, CAPTURE_KINDS } from './lib/capture-file.mjs';
+import { appendCapture, CAPTURE_HEADINGS, CAPTURE_KINDS } from '../cadence-core/bin/lib/capture-file.mjs';
 
 const execFileP = promisify(execFile);
 
-const PLANNING = join(dirname(fileURLToPath(import.meta.url)), 'planning.mjs');
+const PLANNING = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'planning.mjs');
 
 /** A temp CAPTURE.md path; `body` written when given, absent otherwise. */
 function fixture(body) {

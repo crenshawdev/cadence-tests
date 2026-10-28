@@ -1,5 +1,5 @@
 // Zero-dep tests for forge.mjs (the setup-time forge seam, FRG-01).
-// Run: node --test cadence-core/bin/forge.test.mjs.
+// Run: node --test tests/forge.test.mjs.
 //
 // Harness: a temp directory holding a `.planning/config.json`, plus stub
 // executables in a temp dir prepended to the CHILD's PATH. PATH injection is
@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 import { stub } from './issue-check.test.mjs';
 
-const SEAM = join(dirname(fileURLToPath(import.meta.url)), 'forge.mjs');
+const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'forge.mjs');
 /** A user-global layer that does not exist, so a developer's own
  *  ~/.claude/cadence/config.json can never answer one of these cases. */
 const NO_GLOBAL = join(mkdtempSync(join(tmpdir(), 'cad-fg-')), 'no-global.json');
@@ -198,7 +198,7 @@ test('detect: the scaffolded template answers `ask` rather than defaulting a pro
   // templates/config.json ships the three keys at explicit null (CONTEXT D-10),
   // so a freshly scaffolded repository is visibly UNASKED. Read from the real
   // template, not a copy of it.
-  const template = join(dirname(fileURLToPath(import.meta.url)), '..', 'templates', 'config.json');
+  const template = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'templates', 'config.json');
   const dir = mkdtempSync(join(tmpdir(), 'cad-fg-tpl-'));
   mkdirSync(join(dir, '.planning'), { recursive: true });
   writeFileSync(join(dir, '.planning', 'config.json'), readFileSync(template, 'utf8'));

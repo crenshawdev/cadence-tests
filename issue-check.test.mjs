@@ -1,5 +1,5 @@
 // Zero-dep tests for issue-check.mjs (the /cad-land tracker-report seam,
-// LND-01). Run: node --test cadence-core/bin/issue-check.test.mjs.
+// LND-01). Run: node --test tests/issue-check.test.mjs.
 //
 // Harness: a REAL temp git repo per case (origin URL + commits referencing
 // issues), plus stub `gh` / `glab` / `tea` executables in a temp dir prepended
@@ -31,7 +31,7 @@ import { isEntryFile } from './planning.test.mjs';
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 
-const SEAM = join(dirname(fileURLToPath(import.meta.url)), 'issue-check.mjs');
+const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'issue-check.mjs');
 const NO_GLOBAL = join(mkdtempSync(join(tmpdir(), 'cad-ic-')), 'no-global.json');
 
 const GH_BODY = '[{"number":42,"state":"OPEN"},{"number":47,"state":"CLOSED"},{"number":99,"state":"OPEN"}]';

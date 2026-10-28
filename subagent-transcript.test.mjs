@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { terminalOf, cacheOf, effortOf, STOP_STATE } from './lib/subagent-transcript.mjs';
+import { terminalOf, cacheOf, effortOf, STOP_STATE } from '../cadence-core/bin/lib/subagent-transcript.mjs';
 
 /** One transcript line, in the host's own shape. */
 const line = (o) => JSON.stringify(o);

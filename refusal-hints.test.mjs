@@ -1,6 +1,6 @@
 // Zero-dep tests for lib/refusal-hints.mjs - the refusal-hint rule as a pure
 // function. Run:
-//   node --test cadence-core/bin/refusal-hints.test.mjs
+//   node --test tests/refusal-hints.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 //
 // self-verify.test.mjs owns the CLI wiring and the live-tree assertion. This
@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { refusalHintIssues, refusalSites, REGISTER, CODES } from './lib/refusal-hints.mjs';
+import { refusalHintIssues, refusalSites, REGISTER, CODES } from '../cadence-core/bin/lib/refusal-hints.mjs';
 
 /**
  * A fixture root whose `cadence-core/bin` holds the given `{relative-path:

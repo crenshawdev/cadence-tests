@@ -19,12 +19,12 @@ import {
   findPruneCommits, parsePruneRecords, PRUNE_ARGV,
   buildRecoveredIndex, mergeCommitIndexes, readPhaseRecords, closeOver,
   buildTaskIndex,
-} from './lib/why-corpus.mjs';
+} from '../cadence-core/bin/lib/why-corpus.mjs';
 import {
   decisionsFor, declaringTasks, parseCommitRows, parseDeviations, taskDeclaredFiles,
-} from './lib/why-record.mjs';
+} from '../cadence-core/bin/lib/why-record.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 /**
  * A planning root holding the phase directories `spec` names. Each value is
  * the SUMMARY.md body (or `null` for a directory with plans and no summary);

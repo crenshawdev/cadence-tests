@@ -2,7 +2,7 @@
 // `review.triggers.<t>.{gate,tier,effort}` rows in config.schema.json a usable
 // answer, now that the schema `default` IS the answer and no level-keyed grid
 // decides it.
-// Run: node --test cadence-core/bin/gate-agreement.test.mjs
+// Run: node --test tests/gate-agreement.test.mjs
 //
 // ONE test() per row, deliberately: a table asserted inside a single test()
 // with a sequential loop reports the loop's count, not the rows', so a row that
@@ -17,7 +17,7 @@
 // self-verify.test.mjs instead.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gateAgreementIssues, gateTriggers } from './lib/gate-agreement.mjs';
+import { gateAgreementIssues, gateTriggers } from '../cadence-core/bin/lib/gate-agreement.mjs';
 
 const GATES = ['off', 'advisory', 'deferred', 'blocking', 'adjudicated'];
 const TIERS = ['flagship', 'balanced', 'cheap'];

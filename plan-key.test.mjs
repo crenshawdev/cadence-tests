@@ -1,5 +1,5 @@
 // The stated table for the worker-key grammar in lib/plan-key.mjs (RSK-03).
-// Run: node --test cadence-core/bin/plan-key.test.mjs
+// Run: node --test tests/plan-key.test.mjs
 //
 // This tree's convention for a stated grammar is a unit table beside the
 // seam-level cases (lease-grammar.test.mjs and planning-files.test.mjs say so
@@ -19,7 +19,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { requirePlanKey } from './lib/plan-key.mjs';
+import { requirePlanKey } from '../cadence-core/bin/lib/plan-key.mjs';
 
 /** [value, accepted, why] - the grammar, stated once. */
 export const PLAN_KEYS = [
@@ -81,7 +81,7 @@ test('a refusal carries no value at all', () => {
 
 // --- both `risk-check` faces reach that grammar (RSK-03) --------------------
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const PLANNING = join(HERE, 'planning.mjs');
 /** A global config layer that does not exist, pinned in so a developer whose
  *  own ~/.config/cadence/config.json answers the surface question does not see

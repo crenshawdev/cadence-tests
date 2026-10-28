@@ -1,5 +1,5 @@
 // Zero-dep tests for `planning.mjs test-checks`. Run:
-// node --test cadence-core/bin/planning-test-checks.test.mjs
+// node --test tests/planning-test-checks.test.mjs
 //
 // The parse tests run `parseTestChecks` over strings; the CLI tests spawn the
 // seam over fixture plans on disk, since that spawned answer is what /cad-plan
@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PLANNING, isEntryFile } from './planning.test.mjs';
-import { parseTestChecks } from './planning/test-checks.mjs';
+import { parseTestChecks } from '../cadence-core/bin/planning/test-checks.mjs';
 
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 
@@ -222,7 +222,7 @@ test('a path it cannot read is refused naming that path, never as internal', () 
 // --- the planner's block and the parser are one grammar ----------------------
 
 test('a plan built from plan.md\'s <test_method> header rows and label line reads with no issue', () => {
-  const md = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'workflows', 'plan.md'), 'utf8');
+  const md = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'workflows', 'plan.md'), 'utf8');
   const block = md.slice(md.indexOf('<test_method>'), md.indexOf('</test_method>')).split('\n');
   const at = (prefix) => {
     const i = block.findIndex((l) => l.startsWith(prefix));
@@ -560,7 +560,7 @@ test('agreement: a report test-evidence rejects is outstanding to replay-check a
 // --- the executor's block and the report parse are one grammar ---------------
 
 test('a report built from execute.md\'s <test_evidence> header rows attaches its rows with no issue', () => {
-  const md = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'workflows', 'execute.md'), 'utf8');
+  const md = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'workflows', 'execute.md'), 'utf8');
   const block = md.slice(md.indexOf('<test_evidence>\n'), md.indexOf('</test_evidence>')).split('\n');
   const at = (prefix) => {
     const i = block.findIndex((l) => l.startsWith(prefix));

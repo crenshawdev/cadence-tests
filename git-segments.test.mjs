@@ -1,6 +1,6 @@
 // Zero-dep tests for lib/git-segments.mjs (the anchored reader that replaced
 // the deleted tokenizer). Run:
-// node --test 'cadence-core/bin/*.test.mjs'
+// node --test 'tests/*.test.mjs'
 //
 // The table below is the reader's whole stated behavior. Rows marked SILENT are
 // the accepted cost of deleting the parser, not oversights: each one is a shape
@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path, { join } from 'node:path';
 
-import { gitInvocations, gitVerbs, parentDir, planningRoot } from './lib/git-segments.mjs';
+import { gitInvocations, gitVerbs, parentDir, planningRoot } from '../cadence-core/bin/lib/git-segments.mjs';
 
 // --- The anchor: a segment counts only when its command word is `git`. -------
 

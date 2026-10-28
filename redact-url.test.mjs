@@ -9,7 +9,7 @@
 // alone, and it would make `detail` useless for the thing it exists for.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { redactUrl, redactCredentials, REDACTION_MARK } from './lib/redact-url.mjs';
+import { redactUrl, redactCredentials, REDACTION_MARK } from '../cadence-core/bin/lib/redact-url.mjs';
 
 /** The credential halves every arm below asserts are absent. */
 const USER = 'cad';

@@ -1,5 +1,5 @@
 // Zero-dep tests for `planning.mjs` on the plan file itself - plan-size, plan-overlap, the frontmatter grammar and the lease spellings. Run:
-// node --test 'cadence-core/bin/*.test.mjs'
+// node --test 'tests/*.test.mjs'
 //
 // Split out of planning.test.mjs in phase 4, verbatim: the arms, their fixture
 // builders and their comments are unchanged, only their home is. The shared

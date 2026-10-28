@@ -1,12 +1,12 @@
 // The declaration/path table for the lease grammar in lib/lease-grammar.mjs.
-// Run: node --test cadence-core/bin/lease-grammar.test.mjs
+// Run: node --test tests/lease-grammar.test.mjs
 // This tree's convention for a stated grammar is a unit table beside the
 // seam-level cases (planning-files.test.mjs says so in its own header): the
 // rows below are the grammar, and the `plan-overlap` / `lease-check` cases in
 // planning.test.mjs prove the two seams reach it. Only node: builtins.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { covers, intersects, isRefusedSpelling } from './lib/lease-grammar.mjs';
+import { covers, intersects, isRefusedSpelling } from '../cadence-core/bin/lib/lease-grammar.mjs';
 
 /** [declaration, path, covered, why] */
 const COVERS = [

@@ -1,7 +1,7 @@
 // Grammar tests for lib/risk-diff.mjs and the `risk-check` seam that feeds it -
 // whether a committed RANGE touched a risk surface, and the record that says so
 // was written.
-// Run: node --test cadence-core/bin/risk-diff.test.mjs
+// Run: node --test tests/risk-diff.test.mjs
 //
 // ONE test() per row, deliberately: a table asserted inside a single test()
 // with a sequential loop reports the loop's count, not the rows', so a row that
@@ -19,11 +19,11 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { scanDiff, scanDeclared } from './lib/risk-diff.mjs';
-import { CATEGORIES } from './lib/surface-scan.mjs';
-import { REVIEWER_TEXT_PATHSPECS } from './planning/risk-check.mjs';
+import { scanDiff, scanDeclared } from '../cadence-core/bin/lib/risk-diff.mjs';
+import { CATEGORIES } from '../cadence-core/bin/lib/surface-scan.mjs';
+import { REVIEWER_TEXT_PATHSPECS } from '../cadence-core/bin/planning/risk-check.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const PLANNING = join(HERE, 'planning.mjs');
 const ALL = [...CATEGORIES];
 
@@ -1907,10 +1907,14 @@ const CENSUS_SCOPES = [['secrets', 'destructive', 'untrusted_input'], ALL];
 
 test('the census: neither this file nor the detector matches the detector', () => {
   let ran = 0;
-  for (const rel of ['lib/risk-diff.mjs', 'risk-diff.test.mjs']) {
-    const body = readFileSync(join(HERE, rel), 'utf8');
+  const files = [
+    ['lib/risk-diff.mjs', join(HERE, 'lib', 'risk-diff.mjs'), 'cadence-core/bin/lib/risk-diff.mjs'],
+    ['risk-diff.test.mjs', fileURLToPath(import.meta.url), 'tests/risk-diff.test.mjs'],
+  ];
+  for (const [rel, file, label] of files) {
+    const body = readFileSync(file, 'utf8');
     for (const scope of CENSUS_SCOPES) {
-      const r = scanDiff(wholeFileAdd(`cadence-core/bin/${rel}`, body), scope);
+      const r = scanDiff(wholeFileAdd(label, body), scope);
       assert.equal(r.checked, true, `${rel} was not read as a diff at all`);
       assert.deepEqual(r.matches, [],
         `${rel} matched itself under ${scope.length} categories: ${JSON.stringify(r.matches)}`);

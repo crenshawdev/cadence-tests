@@ -1,9 +1,9 @@
 // Zero-dep tests for issue-filing.mjs (the filing seam, CAP-01/CAP-02).
-// Run: node --test cadence-core/bin/issue-filing.test.mjs.
+// Run: node --test tests/issue-filing.test.mjs.
 //
 // Harness: a temp repository holding a `.planning/config.json` with a persisted
 // forge record, plus stub executables in a temp dir PREPENDED to the child's
-// PATH - the pattern bin/forge.test.mjs and bin/issue-check.test.mjs already
+// PATH - the pattern forge.test.mjs and issue-check.test.mjs already
 // use, and for the same reason: PATH injection exercises the PRODUCTION
 // resolver (lib/on-path.mjs reads no Cadence override, deliberately) rather
 // than a test-only branch beside it. Nothing in the seam honours a test-only
@@ -28,9 +28,9 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { DECLINE_LABEL, fingerprint, issueTitle } from './lib/filing-decision.mjs';
+import { DECLINE_LABEL, fingerprint, issueTitle } from '../cadence-core/bin/lib/filing-decision.mjs';
 
-const SEAM = join(dirname(fileURLToPath(import.meta.url)), 'issue-filing.mjs');
+const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'issue-filing.mjs');
 
 /** A user-global layer that does not exist, so a developer's own
  *  ~/.claude/cadence/config.json can never answer one of these cases. */

@@ -1,5 +1,5 @@
 // Zero-dep tests for lib/issue-decision.mjs - the pure core of the /cad-land
-// tracker report (LND-01). Run: node --test cadence-core/bin/issue-decision.test.mjs.
+// tracker report (LND-01). Run: node --test tests/issue-decision.test.mjs.
 // Nothing here spawns a process: the module does no I/O, and the gitlab row is
 // proved against a CAPTURED sample of glab's documented JSON output precisely
 // because `glab` is absent on this machine.
@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   HOST_TABLE, classifyOrigin, teaLoginNameForHost, scanIssueRefs, partitionIssues, decideIssueCheck,
-} from './lib/issue-decision.mjs';
+} from '../cadence-core/bin/lib/issue-decision.mjs';
 
 // --- classifyOrigin: a SETUP-TIME DEFAULT BUILDER, not a land-time resolver --
 //

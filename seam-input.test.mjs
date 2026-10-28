@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { flagValue, missingFlagValue, readText } from './lib/seam-input.mjs';
+import { flagValue, missingFlagValue, readText } from '../cadence-core/bin/lib/seam-input.mjs';
 
 // --- flagValue: the one flag reader ------------------------------------------
 

@@ -1,5 +1,5 @@
 // Zero-dep tests for `planning.mjs debt-harvest`. Run:
-// node --test 'cadence-core/bin/*.test.mjs'
+// node --test 'tests/*.test.mjs'
 //
 // Split out of planning.test.mjs in phase 4, verbatim: the arms, their fixture
 // builders and their comments are unchanged, only their home is. The shared
@@ -14,7 +14,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { DEBT_TOKEN } from './lib/debt-markers.mjs';
+import { DEBT_TOKEN } from '../cadence-core/bin/lib/debt-markers.mjs';
 import { PLANNING, isEntryFile } from './planning.test.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */

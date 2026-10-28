@@ -1,7 +1,7 @@
 // Zero-dep tests for lib/capture-writers.mjs - the register of every prose site
 // that issues a `.planning/CAPTURE.md` write, and the pure rule self-verify
 // runs over it (check 23). Run:
-//   node --test cadence-core/bin/capture-writers.test.mjs
+//   node --test tests/capture-writers.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 //
 // This file owns the RULE and the register's shape: what counts as issuing a
@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   captureWriterIssues, CAPTURE_WRITERS, WRITE_FACES, CAPTURE_PATH, CODES,
-} from './lib/capture-writers.mjs';
+} from '../cadence-core/bin/lib/capture-writers.mjs';
 
 const SURFACE = 'cadence-core/workflows/x.md';
 

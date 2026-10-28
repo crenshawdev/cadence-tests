@@ -59,7 +59,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // The SHIPPED invocation spelling, and only it: a `${CLAUDE_PLUGIN_ROOT}`-rooted
 // `node` call on a script under cadence-core/bin. Prose naming a subcommand in

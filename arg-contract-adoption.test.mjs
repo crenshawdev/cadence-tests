@@ -1,5 +1,5 @@
 // The ADOPTION census for lib/arg-contract.mjs's `CONTRACTS` (ARG-06).
-// Run: node --test cadence-core/bin/arg-contract-adoption.test.mjs
+// Run: node --test tests/arg-contract-adoption.test.mjs
 //
 // arg-contract.test.mjs asks whether the table is well formed. This asks the
 // only other question that matters: does the SHIPPED CLI do what the row says.
@@ -40,9 +40,9 @@ import { mkdtempSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONTRACTS, flagNames } from './lib/arg-contract.mjs';
+import { CONTRACTS, flagNames } from '../cadence-core/bin/lib/arg-contract.mjs';
 
-const BIN = dirname(fileURLToPath(import.meta.url));
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 
 /**
  * One malformed sample per declared type: whitespace-only for `string` (the

@@ -1,5 +1,5 @@
 // Zero-dep tests for git-publish.mjs (the ONE publishing seam). Run:
-// node --test 'cadence-core/bin/*.test.mjs'. Hermetic: a local bare origin, no
+// node --test 'tests/*.test.mjs'. Hermetic: a local bare origin, no
 // network, and GIT_CONFIG_GLOBAL/SYSTEM=/dev/null so the dev's git config never
 // leaks into the fixtures (same discipline as git-guard.test.mjs).
 import { test } from 'node:test';
@@ -19,8 +19,8 @@ import { gitLayers } from './config-seams.test.mjs';
 // ran" into an assertion about the filesystem.
 import { stub } from './issue-check.test.mjs';
 
-const BIN = dirname(fileURLToPath(import.meta.url));
-const SEAM = join(dirname(fileURLToPath(import.meta.url)), 'git-publish.mjs');
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
+const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'git-publish.mjs');
 const NO_GLOBAL = join(mkdtempSync(join(tmpdir(), 'cad-pub-')), 'no-global.json');
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
 // The user-global half of the opt-in (D-02). Every arm that expects a push or

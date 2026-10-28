@@ -1,6 +1,6 @@
 // Zero-dep tests for lib/bulk-output.mjs - the bulk-tool-output register and
 // the pure rule self-verify runs over it (check 20). Run:
-//   node --test cadence-core/bin/bulk-output.test.mjs
+//   node --test tests/bulk-output.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 //
 // This file owns the RULE and the register's shape: what counts as a
@@ -12,7 +12,7 @@
 // never of someone's paragraph.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bulkOutputIssues, BULK_OUTPUT, BULK_SHAPES, CODES } from './lib/bulk-output.mjs';
+import { bulkOutputIssues, BULK_OUTPUT, BULK_SHAPES, CODES } from '../cadence-core/bin/lib/bulk-output.mjs';
 
 const X = 'cadence-core/workflows/x.md';
 

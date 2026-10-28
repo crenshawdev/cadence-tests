@@ -5,7 +5,7 @@
 // coercion proved only here is not proved to reach a decision.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveProtectedBranches } from './lib/protected-branches.mjs';
+import { resolveProtectedBranches } from '../cadence-core/bin/lib/protected-branches.mjs';
 
 test('an array passes through unchanged', () => {
   assert.deepEqual(resolveProtectedBranches({ protected_branches: ['release'] }), ['release']);

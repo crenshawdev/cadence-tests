@@ -1,6 +1,6 @@
 // Zero-dep tests for lib/reference-routers.mjs - the cold-branch register and
 // its three arms as a pure function. Run:
-//   node --test cadence-core/bin/reference-routers.test.mjs
+//   node --test tests/reference-routers.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 //
 // self-verify.test.mjs owns the LIVE tree - that the shipped routers really do
@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { referenceRouterIssues, ROUTERS, CODES } from './lib/reference-routers.mjs';
+import { referenceRouterIssues, ROUTERS, CODES } from '../cadence-core/bin/lib/reference-routers.mjs';
 
 /** A temp root carrying `cadence-core/references/`, so the rule engages. */
 function fixtureRoot() {

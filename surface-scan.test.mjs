@@ -1,5 +1,5 @@
 // Grammar tests for lib/surface-scan.mjs and the `detect-surfaces` seam that
-// feeds it. Run: node --test cadence-core/bin/surface-scan.test.mjs
+// feeds it. Run: node --test tests/surface-scan.test.mjs
 //
 // ONE test() per row, deliberately: a table asserted inside a single test()
 // with a sequential loop reports the loop's count, not the rows'.
@@ -15,9 +15,9 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scanTree, CATEGORIES, interviewOptions, OPTION_CAP } from './lib/surface-scan.mjs';
+import { scanTree, CATEGORIES, interviewOptions, OPTION_CAP } from '../cadence-core/bin/lib/surface-scan.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const PLANNING = join(HERE, 'planning.mjs');
 
 // --- the pure lib -------------------------------------------------------------

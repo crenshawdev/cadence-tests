@@ -3,14 +3,14 @@
 // lockfile, so the version on the command line is the only pin there is; an
 // unpinned install runs whatever the registry serves that day, in a job holding
 // a checkout. Lands in the `other` group (D-25). Run:
-// node --test cadence-core/bin/ci-install-pins.test.mjs
+// node --test tests/ci-install-pins.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const TEST_YML = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.github', 'workflows', 'test.yml');
+const TEST_YML = join(dirname(fileURLToPath(import.meta.url)), '..', '.github', 'workflows', 'test.yml');
 
 /**
  * Every package an `npm install` in a `run:` step names, as written. The command

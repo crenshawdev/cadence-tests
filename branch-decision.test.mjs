@@ -1,9 +1,9 @@
 // Zero-dep tests for lib/branch-decision.mjs (the pure two-tier branch core).
-// Run: node --test 'cadence-core/bin/*.test.mjs'. Only node: builtins, and the
+// Run: node --test 'tests/*.test.mjs'. Only node: builtins, and the
 // functions are pure, so this needs no subprocess or live git.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { integrationBranchName, decideBranch, activeVersion } from './lib/branch-decision.mjs';
+import { integrationBranchName, decideBranch, activeVersion } from '../cadence-core/bin/lib/branch-decision.mjs';
 
 // --- integrationBranchName --------------------------------------------------
 
@@ -270,7 +270,7 @@ test('activeVersion: the Active body ends at the next heading', () => {
 // WATCHED FAILING AT 2c88137, the branch tip before this fix. Observed there,
 // with this file copied into that checkout's `cadence-core/bin/`:
 //
-//   $ node --test cadence-core/bin/branch-decision.test.mjs
+//   $ node --test tests/branch-decision.test.mjs
 //   x activeVersion: an anchored token riding a wrapped line does not out-declare the milestone
 //     AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
 //     'v3.0.0' !== 'v3.2.0'
@@ -283,7 +283,7 @@ test('activeVersion: the Active body ends at the next heading', () => {
 // (a rejected anchor going null), not the defect itself.
 //
 // To re-watch: `git worktree add --detach <tmp> 2c88137`, copy this file into
-// `<tmp>/cadence-core/bin/`, run `node --test cadence-core/bin/branch-decision.test.mjs`
+// `<tmp>/cadence-core/bin/`, run `node --test tests/branch-decision.test.mjs`
 // from `<tmp>`, then `git worktree remove <tmp>`.
 
 test('activeVersion: an anchored token riding a wrapped line does not out-declare the milestone', () => {

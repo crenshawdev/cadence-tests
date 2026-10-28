@@ -16,11 +16,12 @@ import {
   contextDecisions, decisionsFor, MARKER_GAP, parseAdjudication, parseCommitRows,
   declaringTasks, parseDeviations, planTaskBodies, shaMatches, SURVIVED_RULING,
   taskDeclaredFiles,
-} from './lib/why-record.mjs';
-import { RULINGS } from './lib/adjudication-record.mjs';
-import { parseContextDecisions, parseSummarySnippets } from './lib/planning-files.mjs';
+} from '../cadence-core/bin/lib/why-record.mjs';
+import { RULINGS } from '../cadence-core/bin/lib/adjudication-record.mjs';
+import { parseContextDecisions, parseSummarySnippets } from '../cadence-core/bin/lib/planning-files.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
+const TESTS = dirname(fileURLToPath(import.meta.url));
 /** This repository's root: bin -> cadence-core -> root. */
 const ROOT = join(HERE, '..', '..');
 
@@ -585,7 +586,7 @@ test('a non-survived entry does not return', () => {
   // same bytes, committed here so a LATER close cannot delete them out from
   // under this case (D-05). Copying a real record is still reading a real
   // record - `fixtures/verbatim.trace.jsonl` is the same move.
-  const onDisk = readFileSync(join(HERE, 'fixtures', 'why.adjudication-v3.6.0-1-1.json'), 'utf8');
+  const onDisk = readFileSync(join(TESTS, 'fixtures', 'why.adjudication-v3.6.0-1-1.json'), 'utf8');
   const live = parseAdjudication(onDisk);
   assert.equal(live.ok, true);
   assert.equal(JSON.parse(onDisk).entries.length, 2);

@@ -1,6 +1,6 @@
 // Zero-dep tests that the per-run scratch READ-BACKS this repository's prose
 // prescribes actually refuse. Run:
-//   node --test cadence-core/bin/scratch-readback.test.mjs
+//   node --test tests/scratch-readback.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 //
 // WHY THIS EXISTS BESIDE scratch-path.test.mjs. That file proves a claim about
@@ -21,7 +21,7 @@
 // TWO OF THE SIX READ-BACKS NEED NOTHING HERE, and this is why. The cross-model
 // payload file is read by `review-provider.mjs --payload`, whose named
 // `bad-payload` refusal before any network call is already proved by
-// `cadence-core/bin/review-provider.test.mjs`'s malformed-payload row - and it
+// `review-provider.test.mjs`'s malformed-payload row - and it
 // answers in the stdout seam envelope by `lib/seam-io.mjs`'s convention rather
 // than on stderr, so asserting stderr there would assert the wrong contract.
 // The inline task diff is read by the same composer script this file already
@@ -34,7 +34,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 /** A shell-single-quoted `node -e` script. A single quote cannot appear inside one. */
 const NODE_E_RE = /node -e '([^']*)'/g;
 

@@ -1,5 +1,5 @@
 // Zero-dep tests for lib/on-path.mjs - the one executable-resolution site
-// (RCH-01). Run: node --test cadence-core/bin/on-path.test.mjs.
+// (RCH-01). Run: node --test tests/on-path.test.mjs.
 //
 // The module reads `process.env.PATH` at CALL time, so every row here builds a
 // real directory of real files and points PATH at it. That is deliberate: the
@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { executableIn, onPath } from './lib/on-path.mjs';
+import { executableIn, onPath } from '../cadence-core/bin/lib/on-path.mjs';
 
 /** A temp directory holding `files` as `{name: mode}`. */
 function binDir(files) {

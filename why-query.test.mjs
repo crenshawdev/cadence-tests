@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseQuery, probeArgv, bareArgv, lineArgv, comparandArgv, classifyResult, excludedFrom,
-} from './lib/why-query.mjs';
+} from '../cadence-core/bin/lib/why-query.mjs';
 
 // --- parseQuery: the accepted shapes ----------------------------------------
 

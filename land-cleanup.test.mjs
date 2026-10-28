@@ -1,5 +1,5 @@
 // Zero-dep tests for land-cleanup.mjs (the close-decision seam). Run:
-// node --test 'cadence-core/bin/*.test.mjs'. Fixture style mirrors
+// node --test 'tests/*.test.mjs'. Fixture style mirrors
 // git-branch.test.mjs: a temp .planning dir with config/PROJECT/ROADMAP, driven
 // through the seam with explicit --merged/--branch so no live git repo is needed.
 //
@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SEAM = join(dirname(fileURLToPath(import.meta.url)), 'land-cleanup.mjs');
+const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'land-cleanup.mjs');
 // Hermetic global config (never read the dev's real ~/.claude one).
 const NO_GLOBAL = join(mkdtempSync(join(tmpdir(), 'cad-lc-')), 'no-global.json');
 

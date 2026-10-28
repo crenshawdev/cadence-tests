@@ -1,8 +1,8 @@
-// Reference-value tests for lib/bm25.mjs. Run: node --test cadence-core/bin/bm25.test.mjs
+// Reference-value tests for lib/bm25.mjs. Run: node --test tests/bm25.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { tokenize, buildIndex, search } from './lib/bm25.mjs';
+import { tokenize, buildIndex, search } from '../cadence-core/bin/lib/bm25.mjs';
 
 test('tokenize: lowercases, splits on non-alphanumerics, drops stopwords', () => {
   assert.deepEqual(tokenize('Recall-Engine, for the Cadence Project!'),

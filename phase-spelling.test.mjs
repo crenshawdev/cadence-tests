@@ -32,7 +32,7 @@ import { fileURLToPath } from 'node:url';
 // is a no-op unless it IS the entry file.
 import { leaseRepo, leaseCheck, stage } from './planning-lease-check.test.mjs';
 
-const BIN = dirname(fileURLToPath(import.meta.url));
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const PLANNING = join(BIN, 'planning.mjs');
 
 /**

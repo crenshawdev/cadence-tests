@@ -1,6 +1,6 @@
 // Tests for lib/global-only-keys.mjs - the set of keys honoured from the
 // user-global layer alone, and the strip that enforces it (CFG-02).
-// Run: node --test cadence-core/bin/global-only-keys.test.mjs
+// Run: node --test tests/global-only-keys.test.mjs
 //
 // ONE test() per row, deliberately, following retired-keys.test.mjs: a table
 // asserted inside a single test() with a sequential loop reports the loop's
@@ -8,7 +8,7 @@
 // Only node: builtins, no subprocess - the lib is pure.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { GLOBAL_ONLY_KEYS, GLOBAL_SRC, stripGlobalOnly } from './lib/global-only-keys.mjs';
+import { GLOBAL_ONLY_KEYS, GLOBAL_SRC, stripGlobalOnly } from '../cadence-core/bin/lib/global-only-keys.mjs';
 
 const FILE = '/w/.planning/config.json';
 

@@ -12,7 +12,7 @@
 // shape, and they live in a test file rather than in the linter so the
 // decision stays intact.
 //
-// Run: node --test 'cadence-core/bin/*.test.mjs' - CI's own glob, which is why
+// Run: node --test 'tests/*.test.mjs' - CI's own glob, which is why
 // this is a top-level file and not one under lib/. tsconfig.ci.json excludes
 // *.test.mjs, so nothing here carries an @ts-check burden.
 import { test } from 'node:test';
@@ -22,12 +22,12 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { weighAll } from './lib/surface-weight.mjs';
-import { DEFERRED_READS, regionLabels } from './lib/deferred-reads.mjs';
-import { CATEGORIES, scanTree, interviewOptions } from './lib/surface-scan.mjs';
-import { RUNG_ORDER } from './lib/rung-agent.mjs';
+import { weighAll } from '../cadence-core/bin/lib/surface-weight.mjs';
+import { DEFERRED_READS, regionLabels } from '../cadence-core/bin/lib/deferred-reads.mjs';
+import { CATEGORIES, scanTree, interviewOptions } from '../cadence-core/bin/lib/surface-scan.mjs';
+import { RUNG_ORDER } from '../cadence-core/bin/lib/rung-agent.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const REPO = join(HERE, '..', '..');
 const ROUTE = join(HERE, 'route.mjs');
 
@@ -574,7 +574,7 @@ test('the turn bound: every rung file and the spawn-agent seam name one maxTurns
 // there, with this file copied into that checkout:
 //
 //   $ node --test --test-name-pattern='WIR-01' \
-//       cadence-core/bin/prose-agreement.test.mjs
+//       tests/prose-agreement.test.mjs
 //   AssertionError [ERR_ASSERTION]: execute.md labels a recovery arm "timeout
 //   or no report" - the seam has no timeout to recover from
 //     actual: 'timeout or no report',
@@ -1925,7 +1925,7 @@ test('MSR-01: the spawn seam\'s close-half rule states the turn count, its omiss
 // WATCHED FAILING AT 4b1d659, the tip of this plan's unpatched tree. Observed
 // there, with this file copied into that checkout's `cadence-core/bin/`:
 //
-//   $ node --test cadence-core/bin/prose-agreement.test.mjs
+//   $ node --test tests/prose-agreement.test.mjs
 //   x MSR-02: report.md names the seam's three excluded sources where it prints the spend figure
 //     ^ the case was RENAMED in v3.7.10 when the list went three to two; the
 //       recipe and the assertion that fails are unchanged, so a re-watch prints
@@ -1946,7 +1946,7 @@ test('MSR-01: the spawn seam\'s close-half rule states the turn count, its omiss
 // sentence unpatched `/cad-report` composes.
 //
 // To re-watch: `git worktree add --detach <tmp> 4b1d659`, copy this file into
-// `<tmp>/cadence-core/bin/`, run `node --test cadence-core/bin/prose-agreement.test.mjs`
+// `<tmp>/cadence-core/bin/`, run `node --test tests/prose-agreement.test.mjs`
 // from `<tmp>`, then `git worktree remove <tmp>`.
 //
 // This is the half of MSR-02 that lives in prose nothing executes.
@@ -1966,7 +1966,7 @@ test('MSR-01: the spawn seam\'s close-half rule states the turn count, its omiss
 // Both sites are asserted by their NAMED anchors - the shape block's spend line
 // and the `What that token line EXCLUDES` rule - never by the shape of the
 // sentences around them, so a rewrap that changed no fact stays green.
-import * as traceSuggestModule from './lib/trace-suggest.mjs';
+import * as traceSuggestModule from '../cadence-core/bin/lib/trace-suggest.mjs';
 
 const REPORT_EXCLUDES = Array.isArray(traceSuggestModule.SPEND_EXCLUDES)
   ? traceSuggestModule.SPEND_EXCLUDES
@@ -2008,7 +2008,7 @@ test('MSR-02: report.md names every excluded source the seam exports, where it p
 // there, with this file copied into that checkout's `cadence-core/bin/`:
 //
 //   $ node --test --test-name-pattern='TRN-02' \
-//       cadence-core/bin/prose-agreement.test.mjs
+//       tests/prose-agreement.test.mjs
 //   x TRN-02: the bulk-output rule is stated once, and every converted site
 //     performs it
 //     AssertionError [ERR_ASSERTION]: references/conventions.md states no
@@ -2020,7 +2020,7 @@ test('MSR-02: report.md names every excluded source the seam exports, where it p
 //   i pass 0
 //   i fail 1
 //
-// and `node --test cadence-core/bin/prose-agreement.test.mjs` exits 1 there.
+// and `node --test tests/prose-agreement.test.mjs` exits 1 there.
 //
 // Which is the defect exactly: the rule had no home, so no site could cite one
 // and all three read the whole render into the transcript. It stops at that
@@ -2041,7 +2041,7 @@ test('MSR-02: report.md names every excluded source the seam exports, where it p
 // appears somewhere" would go green on the day they diverged.
 //
 // To re-watch: `git worktree add --detach <tmp> 86cd45d`, copy this file into
-// `<tmp>/cadence-core/bin/`, run `node --test cadence-core/bin/prose-agreement.test.mjs`
+// `<tmp>/cadence-core/bin/`, run `node --test tests/prose-agreement.test.mjs`
 // from `<tmp>`, then `git worktree remove <tmp>`.
 
 /**
@@ -2121,7 +2121,7 @@ test('TRN-02: the bulk-output rule is stated once, and every converted site perf
 // WATCHED FAILING AT 617a2a1, the tip of this plan's unpatched tree. Observed
 // there, with this file copied into that checkout's `cadence-core/bin/`:
 //
-//   $ node --test cadence-core/bin/prose-agreement.test.mjs
+//   $ node --test tests/prose-agreement.test.mjs
 //   x PLN-01: the max_plan_tasks decision reads the same off the schema and the
 //     catalog
 //     AssertionError [ERR_ASSERTION]: config.schema.json's workflow.max_plan_tasks
@@ -2133,10 +2133,10 @@ test('TRN-02: the bulk-output rule is stated once, and every converted site perf
 //   i pass 28
 //   i fail 1
 //
-// and `node --test cadence-core/bin/prose-agreement.test.mjs` exits 1 there.
+// and `node --test tests/prose-agreement.test.mjs` exits 1 there.
 //
 // To re-watch: `git worktree add --detach <tmp> 617a2a1`, copy this file into
-// `<tmp>/cadence-core/bin/`, run `node --test cadence-core/bin/prose-agreement.test.mjs`
+// `<tmp>/cadence-core/bin/`, run `node --test tests/prose-agreement.test.mjs`
 // from `<tmp>`, then `git worktree remove <tmp>`.
 //
 // The defect this fails on: `workflow.max_plan_tasks` stated its MEANING on
@@ -2271,7 +2271,7 @@ test("SGT-01: the suggest seam's unset-layer defaults are config.schema.json's o
 // there, with this file copied into that checkout's `cadence-core/bin/`:
 //
 //   $ node --test --test-name-pattern='REL-01' \
-//       cadence-core/bin/prose-agreement.test.mjs
+//       tests/prose-agreement.test.mjs
 //   x REL-01: git.create_tag is read at one prose site, and its purpose names
 //     that site
 //     AssertionError [ERR_ASSERTION]: git.create_tag is read at 2 prose sites:
@@ -2281,7 +2281,7 @@ test("SGT-01: the suggest seam's unset-layer defaults are config.schema.json's o
 //   i pass 0
 //   i fail 1
 //
-// and `node --test cadence-core/bin/prose-agreement.test.mjs` exits 1 there.
+// and `node --test tests/prose-agreement.test.mjs` exits 1 there.
 //
 // Which is the defect exactly: `workflows/milestone.md` step 2 read the key as
 // the release-mode discriminator for a whole step, so setting it false skipped
@@ -2302,7 +2302,7 @@ test("SGT-01: the suggest seam's unset-layer defaults are config.schema.json's o
 // count that included them would be red forever for the wrong reason.
 //
 // To re-watch: `git worktree add --detach <tmp> c78cbdb`, copy this file into
-// `<tmp>/cadence-core/bin/`, run `node --test cadence-core/bin/prose-agreement.test.mjs`
+// `<tmp>/cadence-core/bin/`, run `node --test tests/prose-agreement.test.mjs`
 // from `<tmp>`, then `git worktree remove <tmp>`.
 
 /** A repo-relative, forward-slashed path for an absolute one under REPO. */
@@ -3831,7 +3831,7 @@ test('triage-gate.md: a risk_surface finding bound for a public repository is as
 // nobody maintains near-copies. Flattened so a rewrap stays green.
 
 test('the eight relay sites carry the data-not-instructions sentence', async () => {
-  const { DATA_RULE } = await import('./lib/data-rule.mjs');
+  const { DATA_RULE } = await import('../cadence-core/bin/lib/data-rule.mjs');
   const sites = [
     ['cadence-core', 'references', 'review-triggers.md'],
     ['cadence-core', 'references', 'triage-gate.md'],
@@ -3854,7 +3854,7 @@ test('the eight relay sites carry the data-not-instructions sentence', async () 
 // its sentence names neither a path nor a tool.
 
 test('the reviewer brief carries a path-free, tool-free data-not-instructions sentence', async () => {
-  const { BRIEF_DATA_RULE } = await import('./lib/data-rule.mjs');
+  const { BRIEF_DATA_RULE } = await import('../cadence-core/bin/lib/data-rule.mjs');
   assert.ok(flat(doc('cadence-core', 'references', 'reviewer-brief.md')).includes(BRIEF_DATA_RULE),
     'reviewer-brief.md does not carry the brief\'s data-not-instructions sentence');
   assert.ok(!BRIEF_DATA_RULE.includes('/'), 'the brief sentence holds a slash');

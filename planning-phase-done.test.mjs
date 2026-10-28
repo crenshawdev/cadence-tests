@@ -1,5 +1,5 @@
 // Zero-dep tests for `planning.mjs phase-done`. Run:
-// node --test 'cadence-core/bin/*.test.mjs'
+// node --test 'tests/*.test.mjs'
 //
 // Split out of planning.test.mjs in phase 4, verbatim: the arms, their fixture
 // builders and their comments are unchanged, only their home is. The shared
@@ -14,7 +14,7 @@ import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync, symlinkS
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { makeTree, run, isEntryFile } from './planning.test.mjs';
-import { EMPTY_CAPTURE } from './lib/capture-file.mjs';
+import { EMPTY_CAPTURE } from '../cadence-core/bin/lib/capture-file.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};

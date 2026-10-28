@@ -1,5 +1,5 @@
 // The stated table for lib/file-transition.mjs (JRN-01).
-// Run: node --test cadence-core/bin/file-transition.test.mjs
+// Run: node --test tests/file-transition.test.mjs
 //
 // The module runs an ordered step list and keeps a completed/failed record, so
 // every case below is built from THUNKS THAT RECORD what they did rather than
@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
-import { runTransition } from './lib/file-transition.mjs';
+import { runTransition } from '../cadence-core/bin/lib/file-transition.mjs';
 
 /**
  * Three steps whose keys are `'a'`, `'b'`, `'c'`, each pushing its own key

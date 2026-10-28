@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 // @ts-check
 // test.mjs - run the suite by GROUP, so editing one seam does not re-run the
-// others. `node --test cadence-core/bin/*.test.mjs` is still correct and still
-// what CI's full arm runs; this exists because the whole suite is ~26s and a
+// others. `node --test tests/*.test.mjs` is still correct, run from Cadence's
+// root, and still what CI's full arm runs; this exists because the whole suite is ~26s and a
 // routing change has no business re-running the git-publish seams.
 //
 // Groups are declared HERE rather than in a manifest beside this file: the one
-// other reader is `cadence-core/bin/test-groups.test.mjs`, which reads the
+// other reader is `test-groups.test.mjs`, which reads the
 // declaration below as SOURCE TEXT rather than importing it, and a second file
 // would be one more thing to keep in sync for no second consumer.
 //
 // ONE GROUP IS PINNED - `planning` - and the pin lives in
-// `cadence-core/bin/test-groups.test.mjs`: that group's list has to be exactly
+// `test-groups.test.mjs`: that group's list has to be exactly
 // the `planning-*.test.mjs` files on disk, in both directions, for the reason
-// its own group comment below states. `node cadence-core/bin/test.mjs planning`
+// its own group comment below states. `node tests/test.mjs planning`
 // is the documented way to run that seam, so a stem missing from it leaves the
 // bulk of the seam in `other` while the group still reports green.
 //
@@ -22,10 +22,11 @@
 // new test file runs from the moment it exists.
 //
 // Usage:
-//   node cadence-core/bin/test.mjs                 every group
-//   node cadence-core/bin/test.mjs routing         one group
-//   node cadence-core/bin/test.mjs routing prose   several
-//   node cadence-core/bin/test.mjs --list          the groups and their files
+// Run from Cadence's root, with the cadence-tests repository mounted at tests/:
+//   node tests/test.mjs                 every group
+//   node tests/test.mjs routing         one group
+//   node tests/test.mjs routing prose   several
+//   node tests/test.mjs --list          the groups and their files
 'use strict';
 
 import { mkdtempSync, readdirSync } from 'node:fs';

@@ -1,5 +1,5 @@
 // Zero-dep tests for lib/debt-markers.mjs - the CADENCE-DEBT grammar as a pure
-// function. Run: node --test cadence-core/bin/debt-markers.test.mjs
+// function. Run: node --test tests/debt-markers.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 //
 // The token is BUILT from the export rather than typed as a literal followed by
@@ -9,7 +9,7 @@
 // asserts, and this file must not be what breaks it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { debtMarkersIn, renderDebtSection, DEBT_TOKEN } from './lib/debt-markers.mjs';
+import { debtMarkersIn, renderDebtSection, DEBT_TOKEN } from '../cadence-core/bin/lib/debt-markers.mjs';
 
 /** A marker line, assembled so this file contains no literal marker. */
 const marker = (text, ceiling, trigger) => {

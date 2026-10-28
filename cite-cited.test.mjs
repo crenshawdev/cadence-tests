@@ -1,10 +1,10 @@
 // The cited-side grammar in lib/cite-cited.mjs (RBK-01).
-// Run: node --test cadence-core/bin/cite-cited.test.mjs
+// Run: node --test tests/cite-cited.test.mjs
 // A unit table beside the seam-level `cite-count` cases in planning.test.mjs,
 // the convention lease-grammar.test.mjs states. Only node: builtins.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { citedMentions } from './lib/cite-cited.mjs';
+import { citedMentions } from '../cadence-core/bin/lib/cite-cited.mjs';
 
 /** The scope one mention resolved to, for a plan whose own phase is `own`. */
 const scope = (text, own = '2') => citedMentions(text, own).map((m) => `${m.number}@${m.phase}`);

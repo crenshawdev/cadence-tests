@@ -1,6 +1,6 @@
 // Zero-dep tests for lib/read-trace.mjs - the per-tool-call read recorder as a
 // pure rule plus its guarded append. Run:
-//   node --test cadence-core/bin/read-trace.test.mjs
+//   node --test tests/read-trace.test.mjs
 // Only node: builtins, per the repo's zero-dep ethos.
 //
 // This file owns two things the hook itself cannot be trusted to prove: the
@@ -21,7 +21,7 @@ import {
   RECORDED_TOOLS, MAX_READS_BYTES, MAX_FILES_PER_CALL,
   rotatedReadsPath, readsClaimPath, isReadsRotationMarker, rotateReads,
   READS_MARKER_BYTES, MAX_ERROR_TEXT, errorFlagOf, errorTextOf, redactCause,
-} from './lib/read-trace.mjs';
+} from '../cadence-core/bin/lib/read-trace.mjs';
 
 const TS = '2026-08-14T00:00:00.000Z';
 const tmp = () => mkdtempSync(join(tmpdir(), 'cad-reads-'));
@@ -398,7 +398,7 @@ test('a leftover sibling beside a record UNDER the bound is left exactly where i
 
 import { spawn } from 'node:child_process';
 
-const READS_LIB = new URL('./lib/read-trace.mjs', import.meta.url).href;
+const READS_LIB = new URL('../cadence-core/bin/lib/read-trace.mjs', import.meta.url).href;
 
 /**
  * One child PROCESS appending one uniquely named record through the real
@@ -637,7 +637,7 @@ test('an unwritable root returns a reason rather than throwing', () => {
 
 // --- the summary ------------------------------------------------------------
 
-import { summarizeReads } from './lib/read-trace.mjs';
+import { summarizeReads } from '../cadence-core/bin/lib/read-trace.mjs';
 
 const rec = (agent, tool, target, bytes) => {
   const r = { ts: TS, agent, tool };
@@ -984,7 +984,7 @@ test('with no root in the options a target is recorded exactly as before', () =>
 });
 
 // The hook itself: a PostToolUse payload whose cwd is a fixture project.
-const HOOK = join(dirname(fileURLToPath(import.meta.url)), 'read-trace.mjs');
+const HOOK = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'read-trace.mjs');
 const REAL_PLUGIN = resolve(dirname(HOOK), '..', '..');
 
 function hookRecords(file_path) {
@@ -1047,8 +1047,8 @@ test('a corpus recorded before files existed yields no file measurement rather t
 // is confidently wrong rather than honestly absent. Pure by injection, so the
 // caller supplies the bracket rows and this needs no trace file.
 
-import { joinReads, HOST_AGENT_TYPES, roleOfAgent, rungOfAgent } from './lib/read-trace.mjs';
-import { RUNG_FILES } from './lib/rung-agent.mjs';
+import { joinReads, HOST_AGENT_TYPES, roleOfAgent, rungOfAgent } from '../cadence-core/bin/lib/read-trace.mjs';
+import { RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
 
 /** One paired bracket row, the shape `renderTrace(...).brackets` returns. */
 const span = (role, plan, from, to) => ({
@@ -1223,8 +1223,9 @@ import { execFileSync } from 'node:child_process';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const FIXTURES = join(HERE, 'fixtures');
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
+const TESTS = dirname(fileURLToPath(import.meta.url));
+const FIXTURES = join(TESTS, 'fixtures');
 const PLANNING = join(HERE, 'planning.mjs');
 
 /** A planning root holding both committed fixtures under their real names. */
@@ -1301,7 +1302,7 @@ test('seam: an empty record still says `no reads recorded yet` under the flag', 
 // opposite thing and cannot tell "20 times in one dispatch" from "once in each
 // of 20 dispatches".
 
-import { inDispatchReads } from './lib/read-trace.mjs';
+import { inDispatchReads } from '../cadence-core/bin/lib/read-trace.mjs';
 
 /** One file-carrying read by `agent` at `ts`. */
 const fileRead = (agent, ts, ...files) => read(agent, ts, { files });

@@ -1,9 +1,9 @@
 // Zero-dep tests for lib/close-decision.mjs (the pure land-cleanup + close core).
-// Run: node --test 'cadence-core/bin/*.test.mjs'. Only node: builtins, and the
+// Run: node --test 'tests/*.test.mjs'. Only node: builtins, and the
 // functions are pure, so this needs no subprocess or live git.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveReapBranch, decideCleanup, decideGateHalt } from './lib/close-decision.mjs';
+import { resolveReapBranch, decideCleanup, decideGateHalt } from '../cadence-core/bin/lib/close-decision.mjs';
 
 // --- resolveReapBranch ------------------------------------------------------
 

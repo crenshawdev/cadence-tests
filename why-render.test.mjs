@@ -6,9 +6,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { renderChain, DEFAULT_TOP } from './lib/why-render.mjs';
+import { renderChain, DEFAULT_TOP } from '../cadence-core/bin/lib/why-render.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
+const TESTS = dirname(fileURLToPath(import.meta.url));
 
 const OLD = { sha: 'a'.repeat(40), date: '2026-01-01T00:00:00-05:00', subject: 'older commit' };
 const NEW = { sha: 'b'.repeat(40), date: '2026-06-01T00:00:00-05:00', subject: 'newer commit' };
@@ -284,7 +285,7 @@ const BULK_OUTPUT_BYTES = 10000;
 /** The frozen worst measured case: the exact arguments the seam handed
  * `renderChain` for `lib/capture-file.mjs` with the cap lifted. Its own `note`
  * field says why it is frozen. */
-const WORST = JSON.parse(readFileSync(join(HERE, 'fixtures', 'why.chain-worst.json'), 'utf8'));
+const WORST = JSON.parse(readFileSync(join(TESTS, 'fixtures', 'why.chain-worst.json'), 'utf8'));
 
 /** Render the fixture at `top`, in the UTF-8 bytes the seam would emit. */
 const worstBytes = (top) => Buffer.byteLength(

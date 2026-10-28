@@ -1,9 +1,9 @@
 // Zero-dep tests for lib/dispatch-phrasing.mjs (the `unbatched-dispatch` rule).
 // One test per arm of the rule, each title naming the arm it pins. Run:
-// node --test 'cadence-core/bin/*.test.mjs'
+// node --test 'tests/*.test.mjs'
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dispatchPhrasingIssues } from './lib/dispatch-phrasing.mjs';
+import { dispatchPhrasingIssues } from '../cadence-core/bin/lib/dispatch-phrasing.mjs';
 
 test('the exact sentence #88 filed is one issue, and the detail carries its line', () => {
   const text = 'Some prose.\n\n### 4. Run the reviewers\n'
