@@ -10,7 +10,7 @@
 // a sibling that imports a fixture from here registers nothing twice.
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, accessSync, constants } from 'node:fs';
+import { writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, accessSync, constants, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeTree, run, today, isEntryFile } from './planning.test.mjs';
 
@@ -343,4 +343,78 @@ test('usage: unknown subcommand degrades, never crashes', () => {
   const r = run(['nonsense'], makeTree({}));
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'usage');
+});
+
+// --- cursor set: the Plan: line, derived from disk (phase 1, D-02, D-03, D-08) ---
+
+/** A tree whose phase 2 holds the named plan files, each headed `# Phase 2: X - Plan K: <name>`.
+ * `heads` maps a file to its full H1 line; a file not in it gets `Plan <k>: Name <k>`. */
+function planTree({ files, complete = [], heads = {} }) {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Auth' }] });
+  const pdir = join(dir, 'phases', '2');
+  mkdirSync(join(pdir, 'reports'), { recursive: true });
+  for (const f of files) {
+    const k = Number(/PLAN-(\d+)\.md/.exec(f)?.[1] ?? 1);
+    writeFileSync(join(pdir, f), `${heads[f] ?? `# Phase 2: Auth - Plan ${k}: Name ${k}`}\n\n## Tasks\n`);
+  }
+  for (const k of complete) writeFileSync(join(pdir, 'reports', `plan-${k}.md`), 'PLAN COMPLETE\nPlan: x\n');
+  return dir;
+}
+const SET = ['cursor', 'set', '--phase', '2', '--status', 'planned', '--next', '/cad-execute 2'];
+const stateLines = (dir) => readFileSync(join(dir, 'STATE.md'), 'utf8').split('\n');
+
+test('cursor set: the Plan: line names the lowest plan not complete, after Phase:', () => {
+  const dir = planTree({ files: ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'] });
+  const r = run(SET, dir);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.cursor.plan, { k: 1, j: 3, name: 'Name 1' });
+  const lines = stateLines(dir);
+  assert.equal(lines[2], 'Phase: 2 of 2 (Auth)');
+  assert.equal(lines[3], 'Plan: 1 of 3 (Name 1)');
+  assert.deepEqual(run(['cursor', 'get'], dir).plan, r.cursor.plan);
+
+  writeFileSync(join(dir, 'phases', '2', 'reports', 'plan-1.md'), 'PLAN COMPLETE\n');
+  const r2 = run(SET, dir);
+  assert.deepEqual(r2.cursor.plan, { k: 2, j: 3, name: 'Name 2' });
+  assert.equal(stateLines(dir)[3], 'Plan: 2 of 3 (Name 2)');
+  assert.deepEqual(run(['cursor', 'get'], dir).plan, r2.cursor.plan);
+});
+
+test('cursor set: every plan complete, or no plan files, writes the four 3.9.3 lines', () => {
+  const done = planTree({ files: ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'], complete: [1, 2, 3] });
+  const r = run(SET, done);
+  assert.ok(!('plan' in r.cursor));
+  assert.equal(readFileSync(join(done, 'STATE.md'), 'utf8'),
+    `# State\n\nPhase: 2 of 2 (Auth)\nStatus: planned\nNext: /cad-execute 2\nUpdated: ${r.cursor.updated}\n`);
+  assert.ok(!('plan' in run(['cursor', 'get'], done)));
+
+  const none = planTree({ files: [] });
+  const r2 = run(SET, none);
+  assert.ok(!('plan' in r2.cursor));
+  assert.equal(stateLines(none).length, 7);
+});
+
+test('cursor set: an unnamed plan writes Plan: K of J with no parentheses', () => {
+  const dir = planTree({
+    files: ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'], complete: [1],
+    heads: { 'PLAN-2.md': '# Phase 2: Auth - Plan 2' },
+  });
+  const r = run(SET, dir);
+  assert.deepEqual(r.cursor.plan, { k: 2, j: 3 });
+  assert.equal(stateLines(dir)[3], 'Plan: 2 of 3');
+  assert.deepEqual(run(['cursor', 'get'], dir).plan, { k: 2, j: 3 });
+});
+
+test('cursor set: K is the numeric minimum, not the first of the lexical sort', () => {
+  const files = Array.from({ length: 10 }, (_, i) => `PLAN-${i + 1}.md`);
+  const dir = planTree({ files, complete: [1] });
+  assert.deepEqual(run(SET, dir).cursor.plan, { k: 2, j: 10, name: 'Name 2' });
+  assert.equal(stateLines(dir)[3], 'Plan: 2 of 10 (Name 2)');
+});
+
+test('cursor set: a bare PLAN.md is plan 1 beside PLAN-2.md', () => {
+  const dir = planTree({ files: ['PLAN.md', 'PLAN-2.md'] });
+  assert.deepEqual(run(SET, dir).cursor.plan, { k: 1, j: 2, name: 'Name 1' });
+  writeFileSync(join(dir, 'phases', '2', 'reports', 'plan-1.md'), 'PLAN COMPLETE\n');
+  assert.deepEqual(run(SET, dir).cursor.plan, { k: 2, j: 2, name: 'Name 2' });
 });
