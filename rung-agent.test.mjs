@@ -565,6 +565,9 @@ test('roleOfAgent and rungOfAgent live here, read-trace re-exports them, and the
 // approved with the phase, as phase 3's re-pin of contract digests was. The
 // 30 agent files and the six contracts were re-pinned again when v3.9.1
 // removed the retired Excerpt tools from their tools lines and prose.
+// templates/PLAN.md and the planner contract were re-pinned once more when phase 1
+// of the v3.9.4 cycle added the plan-name slot to the plan heading (D-11) - a
+// deliberate change, approved with the phase.
 
 const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-assumptions-analyzer-high.md': '631826d54561635203c1f87d099837cac1066028ca968dfcdacdc41008a5c2d2',
@@ -598,11 +601,11 @@ const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-verifier-xhigh.md': '68d7da72dc62bc6d8d3a26ac2fb0055dfb0dbd1ddf1b4cb33974a0dd0033f0f6',
   'agents/cad-verifier.md': '6095b69815656da56a29b951a1ef6557a7e5a23d092601d0151f0ec509260681',
   'cadence-core/references/reviewer-brief.md': 'b20044897eba676b7de39bc1cd30e0960c9558cf70191d53b5fbc2798361e887',
-  'cadence-core/templates/PLAN.md': 'f20e93597ac87e8a682d0ba7323f8d20b179db6f8c161c6efce08d2638f9574f',
+  'cadence-core/templates/PLAN.md': '4a7fb5784ae799357e33a30b0ddd4d0754b0eed69f56e64f07fb255d06fc963d',
   'skills/cad-assumptions-analyzer-contract/SKILL.md': 'ee690d7178a35d274d8c895367f6476df2160baf1e65889b92d55af3e94233bc',
   'skills/cad-executor-contract/SKILL.md': '93cebb711020c131b0942d3e4136e0712c2096899c0efca4f04b57bbf1369e4d',
   'skills/cad-plan-checker-contract/SKILL.md': '67d601e639c06ae642256e95e613f6b3479523c7074ec0f106af5b5f32bc42ac',
-  'skills/cad-planner-contract/SKILL.md': '876395ae245b3369530465f4c70607f842f4e9c5f0410479d85d1c1fb7b745ab',
+  'skills/cad-planner-contract/SKILL.md': 'b9f4320cbc298f43c17c05acf0f5c0f9138c3e05c3ffc138c0773f97dd69b683',
   'skills/cad-reviewer-contract/SKILL.md': '9fc2606df77be23ba82b3ae335b70f456b89bfcdd3a7cd50d98615fb961cec57',
   'skills/cad-verifier-contract/SKILL.md': '93fdb990b7191a8d35e2114536a1f53b689a08304131e74ff59b202a75ede6c2',
 };
