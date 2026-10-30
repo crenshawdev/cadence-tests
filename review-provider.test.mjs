@@ -2290,7 +2290,7 @@ test('model id: detectEnvelope drops a non-conforming id and names each in warni
   // Only conforming ids: the envelope keeps its present shape, no warnings key.
   const clean = detectEnvelope('openai', ['gpt-6-astra']);
   assert.equal('warnings' in clean, false);
-  assert.deepEqual(clean.models, [{ id: 'gpt-6-astra', tier: null, high_effort: null }]);
+  assert.deepEqual(clean.models, [{ id: 'gpt-6-astra', tier: 'flagship', high_effort: true }]);
 });
 
 // --- Gemini: the model segment of the request path is percent-encoded (D-19) ---
