@@ -2517,3 +2517,34 @@ test('planning-files: CURSOR_STATUSES holds exactly its six values', () => {
   ]));
   assert.equal(CURSOR_STATUSES.length, 6);
 });
+
+// --- planName: the one reader of a plan heading (phase 1, D-09, D-10) --------
+
+test('planName: reads the name from every accepted heading shape', async () => {
+  const { planName } = await import('../cadence-core/bin/lib/planning-files.mjs');
+  assert.equal(planName('# Phase 3: Auth - Plan 2: The token store\n'), 'The token store');
+  assert.equal(planName('# Phase 3: Auth - Plan 2 of 3: The token store\n'), 'The token store');
+  assert.equal(planName('# Phase 3: Auth — Plan 2: The token store\n'), 'The token store');
+  assert.equal(planName('# Phase 3: Auth - Plan 2 (the token store)\n'), 'the token store');
+  assert.equal(
+    planName('---\r\nphase: 3\r\n---\r\n\r\n# Phase 3: Auth - Plan 2: The token store\r\n\r\n## Goal\r\n'),
+    'The token store');
+  assert.equal(planName('# Phase 8: Plan grammar, evidence map - Plan 1: Reader\n'), 'Reader');
+});
+
+test('planName: no name, no stand-in', async () => {
+  const { planName } = await import('../cadence-core/bin/lib/planning-files.mjs');
+  for (const text of [
+    '# Phase 3: Auth - Plan 2\n',
+    '# Phase 3: Auth - Plan\n',
+    '# Phase 3: Auth\n',
+    '# Phase 3: Auth – Plan 2: x\n',
+    '# Phase 3: Auth - Plan 2:\n',
+    '# Phase 3: Auth - Plan 2:   \n',
+    '# Phase 3: Auth Plan 2: x\n',
+    '# Phase 3: Auth - Plan: x\n',
+    '---\nphase: 3\n---\n\n## Tasks\n\n### Task 1: x\n',
+    '',
+  ]) assert.equal(planName(text), null, JSON.stringify(text));
+  for (const bad of [undefined, null, 5, {}, ['# a - Plan 1: x']]) assert.equal(planName(bad), null);
+});
