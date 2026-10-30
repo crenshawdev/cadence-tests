@@ -37,13 +37,13 @@ test('the register is frozen, rows and all', () => {
   }
 });
 
-// CADENCE-CENSUS: text-transport-register | asserts: the register is 36 rows, 20 of them derived
+// CADENCE-CENSUS: text-transport-register | asserts: the register is 37 rows, 20 of them derived
 test('the register pins its row count', () => {
   // The count is the enumeration's own claim: the phase examined these sites
   // and no others. Adding a site without deciding whether it is caller-derived
   // is exactly the drift the register exists against, so the number moves in
   // the commit that adds the row and never on its own.
-  assert.equal(TEXT_TRANSPORT.length, 36);
+  assert.equal(TEXT_TRANSPORT.length, 37);
   assert.equal(TEXT_TRANSPORT.filter((r) => r.derived).length, 20);
 });
 
