@@ -21,13 +21,15 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
  * A `.planning` tree for one phase.
  * `plans` names the plan files; `reports` maps plan number -> that report's
  * whole body, and a number left out has NO report file, which is the state a
- * genuine continuation is in.
+ * genuine continuation is in. `headings` maps a plan filename to its H1 line.
  */
-function tree({ phase = 2, plans = ['PLAN.md'], reports = {} } = {}) {
+function tree({ phase = 2, plans = ['PLAN.md'], reports = {}, headings = {} } = {}) {
   const dir = join(mkdtempSync(join(tmpdir(), 'cad-replay-')), '.planning');
   const pdir = join(dir, 'phases', String(phase));
   mkdirSync(pdir, { recursive: true });
-  for (const p of plans) writeFileSync(join(pdir, p), `---\nphase: ${phase}\nfiles: []\n---\n# plan\n`);
+  for (const p of plans) {
+    writeFileSync(join(pdir, p), `---\nphase: ${phase}\nfiles: []\n---\n${headings[p] ?? '# plan'}\n`);
+  }
   if (Object.keys(reports).length) mkdirSync(join(pdir, 'reports'), { recursive: true });
   for (const [k, body] of Object.entries(reports)) {
     writeFileSync(join(pdir, 'reports', `plan-${k}.md`), body);
@@ -173,6 +175,60 @@ test('a rotated sibling plan-<k>.<n>.md never decides the answer', () => {
 
   assert.equal(r.replay, false, 'plan-1.1.md is not plan-1.md');
   assert.deepEqual(r.dispatch_set, ['PLAN.md']);
+});
+
+// --- plan position: the count and each plan's name ---------------------------
+
+const named = {
+  'PLAN-1.md': '# Phase 2: X - Plan 1: Alpha',
+  'PLAN-2.md': '# Phase 2: X - Plan 2: Beta',
+  'PLAN-3.md': '# Phase 2: X - Plan 3: Gamma',
+};
+
+test('plan_count is every plan, each row carries k and its name, dispatch_set unchanged', () => {
+  const dir = tree({
+    plans: ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'],
+    headings: named,
+    reports: { 1: 'PLAN COMPLETE\n' },
+  });
+  const r = check(dir, ['--phase', '2']);
+
+  assert.equal(r.plan_count, 3);
+  assert.deepEqual(r.reports.map((x) => [x.k, x.name]), [[1, 'Alpha'], [2, 'Beta'], [3, 'Gamma']]);
+  assert.deepEqual(r.dispatch_set, ['PLAN-2.md', 'PLAN-3.md']);
+});
+
+test('plan_count under --rerun is still every plan', () => {
+  const dir = tree({
+    plans: ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'],
+    headings: named,
+    reports: { 1: 'PLAN COMPLETE\n' },
+  });
+  const r = check(dir, ['--phase', '2', '--rerun']);
+
+  assert.equal(r.plan_count, 3);
+  assert.deepEqual(r.dispatch_set, ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md']);
+});
+
+test('a plan headed "- Plan 2" has no name field on its row', () => {
+  const dir = tree({
+    plans: ['PLAN-1.md', 'PLAN-2.md'],
+    headings: { 'PLAN-1.md': named['PLAN-1.md'], 'PLAN-2.md': '# Phase 2: X - Plan 2' },
+  });
+  const r = check(dir, ['--phase', '2']);
+
+  assert.equal(r.reports[0].name, 'Alpha');
+  assert.equal('name' in r.reports[1], false);
+});
+
+test('a lone PLAN.md is plan 1 of 1 with its name', () => {
+  const dir = tree({ plans: ['PLAN.md'], headings: { 'PLAN.md': '# Phase 2: X - Plan 1: Y' } });
+  const r = check(dir, ['--phase', '2']);
+
+  assert.equal(r.plan_count, 1);
+  assert.equal(r.reports.length, 1);
+  assert.equal(r.reports[0].k, 1);
+  assert.equal(r.reports[0].name, 'Y');
 });
 
 // --- refusals ---------------------------------------------------------------
