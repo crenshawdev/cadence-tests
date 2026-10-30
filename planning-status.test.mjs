@@ -512,3 +512,52 @@ test('status: an unplanned phase has no plans and so takes no entry', () => {
   assert.equal(r.phases[0].status, 'unplanned');
   assert.deepEqual(r.outstanding, []);
 });
+
+// --- status: the plan position (phase 1, D-03, D-06, D-08, D-12) -----------------
+
+/** Phase 2 of a two-phase roadmap holding the named plan files, `# Phase 2: Auth - Plan K: Name K`. */
+function positionTree(files, complete = [], stateExtra = '') {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One', checked: true }, { n: 2, name: 'Auth' }],
+    phases: { 1: { plan: true, summary: true, uat: [{ status: 'pass' }] } } });
+  const pdir = join(dir, 'phases', '2');
+  mkdirSync(join(pdir, 'reports'), { recursive: true });
+  mkdirSync(join(dir, 'phases', '1', 'reports'), { recursive: true });
+  writeFileSync(join(dir, 'phases', '1', 'reports', 'plan-1.md'), 'PLAN COMPLETE\n');
+  for (const f of files) {
+    const k = Number(/PLAN-(\d+)\.md/.exec(f)?.[1] ?? 1);
+    writeFileSync(join(pdir, f), `# Phase 2: Auth - Plan ${k}: Name ${k}\n`);
+  }
+  for (const k of complete) writeFileSync(join(pdir, 'reports', `plan-${k}.md`), 'PLAN COMPLETE\n');
+  writeFileSync(join(dir, 'STATE.md'),
+    `# State\n\nPhase: 2 of 2 (Auth)\n${stateExtra}Status: planned\nNext: /cad-execute 2\nUpdated: 2026-01-01\n`);
+  return dir;
+}
+const phase2 = (r) => r.phases.find((p) => p.n === 2);
+
+test('status: a phase with an unfinished plan carries its derived position, and only then', () => {
+  const part = run(['status'], positionTree(['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'], [1]));
+  assert.deepEqual(phase2(part).plan, { k: 2, j: 3, name: 'Name 2' });
+  assert.ok(!('plan' in part.phases.find((p) => p.n === 1)));
+
+  const done = run(['status'], positionTree(['PLAN-1.md', 'PLAN-2.md'], [1, 2]));
+  assert.ok(!('plan' in phase2(done)));
+
+  const unplanned = run(['status'], positionTree([]));
+  assert.ok(!('plan' in phase2(unplanned)));
+
+  const ten = run(['status'], positionTree(Array.from({ length: 10 }, (_, i) => `PLAN-${i + 1}.md`), [1]));
+  assert.equal(phase2(ten).plan.k, 2);
+});
+
+test('status: the cursor block carries its Plan: line as written, and a mismatch with disk is not drift', () => {
+  const r = run(['status'], positionTree(['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'], [1], 'Plan: 1 of 3 (x)\n'));
+  assert.deepEqual(r.cursor.plan, { k: 1, j: 3, name: 'x' });
+  assert.deepEqual(phase2(r).plan, { k: 2, j: 3, name: 'Name 2' });
+  assert.equal(r.cursor.agrees, true);
+  assert.ok(!(r.drift || []).some((d) => d.kind === 'cursor'));
+});
+
+test('status: a four-line cursor block has exactly its five keys', () => {
+  const r = run(['status'], positionTree(['PLAN-1.md']));
+  assert.deepEqual(Object.keys(r.cursor).sort(), ['agrees', 'next', 'phase', 'status', 'updated']);
+});
