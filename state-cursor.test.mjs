@@ -80,3 +80,56 @@ test('a Next value led by a line separator parses as it did before the linear re
     assert.equal(parseCursor(STATE.replace('Status: planned', `Status: ${sep}planned`))?.status, 'planned');
   }
 });
+
+// --- the optional Plan: line (phase 1, D-01, D-06) -----------------------------
+
+const BALEY = '# State\n\n'
+  + "Phase: 8 of 8 (Plan grammar, evidence map and the planner's rules)\n"
+  + 'Status: planned\nNext: /cad-execute 8\nUpdated: 2026-10-23\n';
+const BALEY_FIELDS = {
+  phase: 8, total: 8, name: "Plan grammar, evidence map and the planner's rules",
+  status: 'planned', next: '/cad-execute 8', updated: '2026-10-23',
+};
+const withPlan = (line) => BALEY.replace(/(Phase: .*\n)/, `$1${line}\n`);
+
+test('a four-line cursor written by 3.9.3 parses to exactly its six fields, and cursor get adds no key', () => {
+  assert.deepEqual(parseCursor(BALEY), BALEY_FIELDS);
+  assert.ok(!('plan' in parseCursor(BALEY)));
+  const dir = mkdtempSync(join(tmpdir(), 'cad-cursor-'));
+  try {
+    mkdirSync(join(dir, '.planning'));
+    writeFileSync(join(dir, '.planning', 'STATE.md'), BALEY);
+    const out = JSON.parse(execFileSync(process.execPath,
+      [join(BIN, 'planning.mjs'), 'cursor', 'get', '--dir', join(dir, '.planning')], { encoding: 'utf8' }));
+    const { ok, ...fields } = out;
+    assert.equal(ok, true);
+    assert.deepEqual(fields, BALEY_FIELDS);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a Plan: line adds the plan field and changes no other field', () => {
+  const named = parseCursor(withPlan('Plan: 2 of 3 (The cursor seams)'));
+  assert.deepEqual(named, { ...BALEY_FIELDS, plan: { k: 2, j: 3, name: 'The cursor seams' } });
+  const bare = parseCursor(withPlan('Plan: 2 of 3'));
+  assert.deepEqual(bare, { ...BALEY_FIELDS, plan: { k: 2, j: 3 } });
+  assert.ok(!('name' in bare.plan));
+});
+
+test('renderCursor reproduces a five-line cursor, and a plan-less one is the 3.9.3 text', () => {
+  const five = withPlan('Plan: 2 of 3 (The cursor seams)');
+  assert.equal(planningFiles.renderCursor(parseCursor(five)), five);
+  const bare = withPlan('Plan: 2 of 3');
+  assert.equal(planningFiles.renderCursor(parseCursor(bare)), bare);
+  assert.equal(planningFiles.renderCursor(BALEY_FIELDS), BALEY);
+});
+
+test('a Plan: line outside the grammar is ignored, not a null cursor', () => {
+  for (const line of ['Plan: banana', 'Plan: 2 of', 'Plan: 2 of 3 ()x', ' Plan: 2 of 3']) {
+    assert.deepEqual(parseCursor(withPlan(line)), BALEY_FIELDS, line);
+  }
+});
+
+test('a phase name containing Plan never reads as a Plan: line', () => {
+  const text = BALEY.replace(/^Phase: .*$/m, 'Phase: 8 of 8 (Plan: 2 of 3 (x))');
+  assert.ok(!('plan' in parseCursor(text)));
+});

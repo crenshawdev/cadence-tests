@@ -1123,3 +1123,27 @@ test('renumber remove: a decimal in Next: never names the removed phase', () => 
   assert.equal(nextAfter('/cad-execute 2.1', ['remove', '--n', '2'], { phase: 1 }).r.warn, undefined);
   assert.doesNotMatch(nextAfter('/cad-execute 12.1', ['remove', '--n', '1'], { phase: 2 }).r.warn ?? '', /Next:/);
 });
+
+// --- the cursor's Plan: line rides through renumber untouched (phase 1, D-07) --
+
+test('renumber: a present Plan: line stays byte-identical across insert and remove', () => {
+  const planLine = 'Plan: 2 of 3 (The cursor seams)';
+  const setup = () => {
+    const dir = renumberTree();
+    const text = readFileSync(join(dir, 'STATE.md'), 'utf8')
+      .replace(/(Phase: .*\n)/, `$1${planLine}\n`);
+    writeFileSync(join(dir, 'STATE.md'), text);
+    return dir;
+  };
+  const insert = setup();
+  assert.equal(run(['renumber', 'insert', '--at', '2'], insert).ok, true);
+  const afterInsert = readFileSync(join(insert, 'STATE.md'), 'utf8');
+  assert.match(afterInsert, /^Phase: 3 of 4 \(Two\)\nPlan: 2 of 3 \(The cursor seams\)\nStatus:/m);
+  assert.ok(afterInsert.split('\n').includes(planLine));
+
+  const remove = setup();
+  assert.equal(run(['renumber', 'remove', '--n', '3'], remove).ok, true);
+  const afterRemove = readFileSync(join(remove, 'STATE.md'), 'utf8');
+  assert.match(afterRemove, /^Phase: 2 of 2 \(Two\)\nPlan: 2 of 3 \(The cursor seams\)\nStatus:/m);
+  assert.ok(afterRemove.split('\n').includes(planLine));
+});
