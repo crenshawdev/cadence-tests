@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PLANNING } from './planning.test.mjs';
+import { stub } from './issue-check.test.mjs';
 
 const POLICY = join('.github', 'cadence', 'coverage-policy.json');
 
@@ -184,4 +185,64 @@ test('check --base names a lowered threshold, a disabled metric and a new exclud
   const bad = policy(['check', '--base', 'no-such-ref'], root);
   assert.deepEqual([bad.ok, bad.reason], [false, 'bad-ref']);
   assert.ok(bad.hint);
+});
+
+// --- ci-status: required jobs for one commit, on recorded gh output ----------
+
+const SHA = 'ace48e6c1f0d';
+
+/** Recorded `gh api --paginate --jq` output: one compact object per check run. */
+const runs = (...rs) => rs.map(([name, status, conclusion]) => JSON.stringify({ name, status, conclusion })).join('\n');
+
+/** A GitHub project with a phase 1 checklist, and `gh` stubbed on PATH to print `body`. */
+function ciProject(body) {
+  const root = project({ scope: 'focused', required_jobs: ['node-test', 'self-verify'] },
+    { forge_provider: 'github', forge_repo: 'o/r' });
+  mkdirSync(join(root, '.planning', 'phases', '1'), { recursive: true });
+  writeFileSync(join(root, '.planning', 'phases', '1', 'UAT.md'),
+    '---\nstatus: testing\nphase: 1\nupdated: 2026-11-03\n---\n\n## Items\n\n'
+    + '### 1. Gate\nexpected: green\nstatus: pending_ci\njob: node-test\ncommit: ace48e6\n\n## Summary\n\ntotal: 1\n');
+  const bin = mkdtempSync(join(tmpdir(), 'cad-ci-bin-'));
+  stub(bin, 'gh', { body });
+  const log = join(bin, 'argv.log');
+  return { root, log, env: { PATH: `${bin}:${process.env.PATH}`, CAD_ARGV_LOG: log } };
+}
+
+function ciStatus({ root, env }, extra = []) {
+  return policy(['ci-status', '--commit', SHA, '--dir', join(root, '.planning'), ...extra], root, env);
+}
+
+const uatStatus = (root) => JSON.parse(execFileSync('node', [PLANNING, 'uat', 'status', '--phase', '1',
+  '--dir', join(root, '.planning')], { encoding: 'utf8' }));
+
+test('ci-status passes when every required job succeeded, matrix names included, and the phase records the commit', () => {
+  const p = ciProject(runs(['node-test (22, a)', 'completed', 'success'], ['node-test (24, b)', 'completed', 'success'],
+    ['self-verify', 'completed', 'success'], ['node-testing', 'completed', 'failure']));
+  const r = ciStatus(p, ['--phase', '1']);
+  assert.equal(r.answer, 'pass');
+  assert.equal(r.recorded, true);
+  assert.deepEqual(r.jobs.map((j) => [j.job, j.answer]), [['node-test', 'pass'], ['self-verify', 'pass']]);
+  const argv = readFileSync(p.log, 'utf8');
+  assert.match(argv, new RegExp(`repos/o/r/commits/${SHA}/check-runs`));
+  const after = uatStatus(p.root);
+  assert.equal(after.ci, SHA);
+  assert.equal(after.result, 'partial', 'recording the commit does not settle the pending_ci item');
+});
+
+test('ci-status fails when a required job failed, and records no commit', () => {
+  const p = ciProject(runs(['node-test (22, a)', 'completed', 'success'], ['node-test (24, b)', 'completed', 'failure'],
+    ['self-verify', 'completed', 'success']));
+  const r = ciStatus(p, ['--phase', '1']);
+  assert.equal(r.answer, 'fail');
+  assert.equal(r.recorded, undefined);
+  assert.equal(uatStatus(p.root).ci, undefined);
+});
+
+test('ci-status stays pending while a job has no finished run, re-reading under --wait', () => {
+  const p = ciProject(runs(['node-test (22, a)', 'completed', 'success'], ['self-verify', 'in_progress', null]));
+  const r = ciStatus(p, ['--wait', '1']);
+  assert.equal(r.answer, 'pending');
+  assert.equal(r.ok, true);
+  assert.equal(readFileSync(p.log, 'utf8').trim().split('\n').length, 2, 'one read, then one re-read after the bound');
+  assert.equal(ciStatus(ciProject(runs(['self-verify', 'completed', 'success']))).answer, 'pending', 'no run for node-test is not a pass');
 });
