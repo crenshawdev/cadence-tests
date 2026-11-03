@@ -958,6 +958,42 @@ test('uat status: complete only when every item passes or is skipped-with-reason
   assert.equal(complete.first_pending, undefined);
 });
 
+test('uat record: pending_ci keeps the phase partial, is never offered, and pass completes it', () => {
+  const dir = uatTree();
+  run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pass'], dir);
+  // Both fields or nothing: a pending_ci with no job writes no file change.
+  const file = join(dir, 'phases', '1', 'UAT.md');
+  const before = readFileSync(file, 'utf8');
+  const refused = run(['uat', 'record', '--phase', '1', '--item', '2', '--result', 'pending_ci',
+    '--commit', 'abc1234'], dir);
+  assert.equal(refused.ok, false);
+  assert.equal(readFileSync(file, 'utf8'), before);
+
+  const rec = run(['uat', 'record', '--phase', '1', '--item', '2', '--result', 'pending_ci',
+    '--job', 'node-test', '--commit', 'abc1234'], dir);
+  assert.equal(rec.counts.pending_ci, 1);
+  assert.equal(rec.next, null);
+  assert.match(readFileSync(file, 'utf8'), /status: pending_ci\njob: node-test\ncommit: abc1234\n/);
+  assert.match(readFileSync(file, 'utf8'), /^pending_ci: 1$/m);
+  const waiting = run(['uat', 'status', '--phase', '1'], dir);
+  assert.equal(waiting.result, 'partial');
+  assert.equal(waiting.first_pending, undefined);
+  assert.equal(waiting.ci, undefined);
+
+  // The same item moves to a later head by re-recording; the job reaches the file by path too.
+  const fields = join(dir, 'fields.json');
+  writeFileSync(fields, JSON.stringify({ job: 'node-test (24, review)', commit: 'def5678' }));
+  run(['uat', 'record', '--phase', '1', '--item', '2', '--result', 'pending_ci',
+    '--fields-file', fields], dir);
+  assert.match(readFileSync(file, 'utf8'), /job: node-test \(24, review\)\ncommit: def5678/);
+
+  run(['uat', 'record', '--phase', '1', '--item', '2', '--result', 'pass'], dir);
+  const done = run(['uat', 'status', '--phase', '1'], dir);
+  assert.equal(done.result, 'complete');
+  assert.equal(done.counts.pending_ci, undefined);
+  assert.doesNotMatch(readFileSync(file, 'utf8'), /^pending_ci:/m);
+});
+
 test('uat: missing checklist degrades to no-uat', () => {
   const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }] });
   const r = run(['uat', 'status', '--phase', '1'], dir);
