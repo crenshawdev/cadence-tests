@@ -569,8 +569,9 @@ test('roleOfAgent and rungOfAgent live here, read-trace re-exports them, and the
 // of the v3.9.4 cycle added the plan-name slot to the plan heading (D-11) - a
 // deliberate change, approved with the phase.
 // The planner contract was re-pinned again when phase 1 of the v3.11.0 cycle
-// added its gated testing-policy passage to the Verify bullet (D-19) - a
-// deliberate change, approved with the phase.
+// added its gated testing-policy passage to the Verify bullet (D-19), and the
+// executor contract with the same phase's gated passages beside the lean-build
+// read and the Verify step - each a deliberate change, approved with the phase.
 
 const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-assumptions-analyzer-high.md': '631826d54561635203c1f87d099837cac1066028ca968dfcdacdc41008a5c2d2',
@@ -606,7 +607,7 @@ const CONTRACT_SURFACE_DIGESTS = {
   'cadence-core/references/reviewer-brief.md': 'b20044897eba676b7de39bc1cd30e0960c9558cf70191d53b5fbc2798361e887',
   'cadence-core/templates/PLAN.md': '4a7fb5784ae799357e33a30b0ddd4d0754b0eed69f56e64f07fb255d06fc963d',
   'skills/cad-assumptions-analyzer-contract/SKILL.md': 'ee690d7178a35d274d8c895367f6476df2160baf1e65889b92d55af3e94233bc',
-  'skills/cad-executor-contract/SKILL.md': '93cebb711020c131b0942d3e4136e0712c2096899c0efca4f04b57bbf1369e4d',
+  'skills/cad-executor-contract/SKILL.md': '3c5482540f0d3193001fabebe08bb51b25afa8a059741612e4cdd11971d7004f',
   'skills/cad-plan-checker-contract/SKILL.md': '67d601e639c06ae642256e95e613f6b3479523c7074ec0f106af5b5f32bc42ac',
   'skills/cad-planner-contract/SKILL.md': 'b6aca8bc79bae4bd07bd422a6bb371c46c504aa51088325211b4e127d5c8ec7f',
   'skills/cad-reviewer-contract/SKILL.md': '9fc2606df77be23ba82b3ae335b70f456b89bfcdd3a7cd50d98615fb961cec57',
