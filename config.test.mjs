@@ -939,7 +939,9 @@ test('SCP-01: the SHIPPED keys carrying the marker are the ones that authorize, 
   // the user's half of a two-layer opt-in, so it must be settable there.
   const shipped = JSON.parse(readFileSync(join(dirname(CONFIG), '..', 'config.schema.json'), 'utf8')).keys;
   assert.deepEqual(Object.keys(shipped).filter((k) => shipped[k].repo_only === true),
-    ['git.forge_repo']);
+    ['git.forge_repo', 'testing.scope', 'testing.coverage.lines', 'testing.coverage.branches',
+      'testing.coverage.statements', 'testing.coverage.include', 'testing.coverage.exclude',
+      'testing.coverage.commands', 'testing.strong_areas', 'testing.required_jobs']);
 
   // The slug's two siblings are deliberately NOT here, and their absence is the
   // half of D-02 that a "mark the whole family" edit would quietly undo: naming
@@ -2021,4 +2023,15 @@ test('get: a malformed tier id in a layer comes back null with a warning naming 
   assert.equal(clean.values[good], 'gpt-5.1');
   assert.equal(clean.values['review.providers.gemini.tiers.cheap'], null);
   assert.equal((clean.warnings || []).some((w) => /model id/.test(w)), false);
+});
+
+// --- the testing policy keys (phase 1) ----------------------------------------
+
+test('set --global refuses every testing.* key and writes nothing', () => {
+  const gpath = join(dir, 'testing-global-refuse.json');
+  const r = run(['set', '--global', 'testing.scope=focused', 'testing.coverage.lines=10'], gpath);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'invalid');
+  assert.deepEqual(r.detail.map((d) => d.key), ['testing.scope', 'testing.coverage.lines']);
+  assert.equal(existsSync(gpath), false);
 });
