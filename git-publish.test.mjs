@@ -37,8 +37,8 @@ function git(args, opts = {}) {
 /** Run the seam; return the parsed JSON line. `globalCfg` sets CADENCE_GLOBAL_CONFIG.
  * The seam mirrors ok into the exit code (ok:false -> exit 1, lib/seam-io.mjs),
  * so a refuse makes execFileSync throw with the JSON still on e.stdout. */
-function seam(args, globalCfg = NO_GLOBAL) {
-  const opts = { encoding: 'utf8', env: { ...GIT_ENV, CADENCE_GLOBAL_CONFIG: globalCfg } };
+function seam(args, globalCfg = NO_GLOBAL, extraEnv = {}) {
+  const opts = { encoding: 'utf8', env: { ...GIT_ENV, CADENCE_GLOBAL_CONFIG: globalCfg, ...extraEnv } };
   let out;
   try { out = execFileSync('node', [SEAM, ...args], opts); }
   catch (e) { out = e.stdout; }
@@ -295,6 +295,50 @@ test('usage: the detail names all three subcommands', () => {
   assert.match(d.detail, /publish/);
   assert.match(d.detail, /reap/);
   assert.match(d.detail, /authorized/);
+});
+
+// --- the verification publish: local Git config is the only authorization (D-02) ---
+
+/** Set cadence.publishForVerification=true in the work repo's own .git/config. */
+const authorizeLocally = (dir) => git(['-C', dir, 'config', '--local', 'cadence.publishForVerification', 'true']);
+
+test('verify-publish: a local true pushes a non-protected branch, whatever git.auto_close says', () => {
+  const { dir, bare } = repo({ config: { git: { auto_close: false } } });
+  authorizeLocally(dir);
+  const d = seam(['verify-publish', '--dir', dir]);
+  assert.equal(d.ok, true);
+  assert.equal(d.action, 'published');
+  assert.equal(refExists(bare, INT_REF), true);
+});
+
+test('verify-publish: unset pushes nothing even with git.auto_close true in both layers', () => {
+  const { dir, bare } = repo();
+  const d = seam(['verify-publish', '--dir', dir], GLOBAL_ON_FILE);
+  assert.equal(d.ok, false);
+  assert.equal(d.reason, 'publish-not-authorized');
+  assert.match(d.hint, /\/cad-config --testing/);
+  assert.match(d.hint, /\/cad-land/);
+  assert.equal(refExists(bare, INT_REF), false);
+});
+
+test('verify-publish: a protected branch is refused even when authorized', () => {
+  const { dir, bare } = repo({ branch: 'main' });
+  authorizeLocally(dir);
+  const d = seam(['verify-publish', '--dir', dir]);
+  assert.equal(d.ok, false);
+  assert.equal(d.reason, 'protected-branch');
+  assert.equal(refExists(bare, 'refs/heads/main'), false);
+});
+
+test('verify-publish: GIT_DIR naming a repository that holds true authorizes nothing here', () => {
+  const unset = repo();
+  const holder = repo();
+  authorizeLocally(holder.dir);
+  const d = seam(['verify-publish', '--dir', unset.dir], NO_GLOBAL, { GIT_DIR: join(holder.dir, '.git') });
+  assert.equal(d.ok, false);
+  assert.equal(d.reason, 'publish-not-authorized');
+  assert.equal(refExists(unset.bare, INT_REF), false);
+  assert.equal(refExists(holder.bare, INT_REF), false);
 });
 
 // --- the two halves of the opt-in, and the sentence that names the missing one (D-02)
