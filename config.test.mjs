@@ -2035,3 +2035,24 @@ test('set --global refuses every testing.* key and writes nothing', () => {
   assert.deepEqual(r.detail.map((d) => d.key), ['testing.scope', 'testing.coverage.lines']);
   assert.equal(existsSync(gpath), false);
 });
+
+/**
+ * Write a two-layer fixture and read keys back through `get`.
+ * @param {string} label @param {any} repo @param {any} global @param {string[]} keys
+ */
+function getTesting(label, repo, global, keys) {
+  const repoFile = join(dir, `testing-${label}-repo.json`);
+  writeFileSync(repoFile, JSON.stringify(repo));
+  const globalFile = join(dir, `testing-${label}-global.json`);
+  if (global !== undefined) writeFileSync(globalFile, JSON.stringify(global));
+  return run(['get', '--file', repoFile, ...keys], globalFile);
+}
+
+test('get: a hand-edited user-global testing section never reaches the merged read', () => {
+  const r = getTesting('global-strip', {},
+    { testing: { scope: 'thorough', coverage: { lines: 5 } } },
+    ['testing.scope', 'testing.coverage.lines']);
+  assert.equal(r.values['testing.scope'], null);
+  assert.equal(r.values['testing.coverage.lines'], 85);
+  assert.equal((r.warnings || []).filter((w) => /section "testing"/.test(w)).length, 1);
+});
