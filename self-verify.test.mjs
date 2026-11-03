@@ -332,6 +332,7 @@ test('placeholder keys expand: <t> prose covers every trigger key', () => {
     '`git.on_land_cleanup` `git.auto_close` `git.issue_check`\n' +
     '`git.forge_provider` `git.forge_repo` `git.forge_host`\n' +
     '`planning.commit_docs` `planning.max_capture_bullets` `memory.backend`\n' +
+    '`testing.scope` `testing.coverage` `testing.strong_areas` `testing.required_jobs`\n' +
     '`risk.override.<surface>`\n');
   const r = run(['--root', root]);
   assert.equal(r.ok, true, JSON.stringify(r.problems));
