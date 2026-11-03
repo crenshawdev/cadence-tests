@@ -571,7 +571,9 @@ test('roleOfAgent and rungOfAgent live here, read-trace re-exports them, and the
 // The planner contract was re-pinned again when phase 1 of the v3.11.0 cycle
 // added its gated testing-policy passage to the Verify bullet (D-19), and the
 // executor contract with the same phase's gated passages beside the lean-build
-// read and the Verify step - each a deliberate change, approved with the phase.
+// read and the Verify step, and the verifier contract with its gated passages
+// at the UNCERTAIN classification, the full-suite run, the verdict and the
+// output - each a deliberate change, approved with the phase.
 
 const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-assumptions-analyzer-high.md': '631826d54561635203c1f87d099837cac1066028ca968dfcdacdc41008a5c2d2',
@@ -611,7 +613,7 @@ const CONTRACT_SURFACE_DIGESTS = {
   'skills/cad-plan-checker-contract/SKILL.md': '67d601e639c06ae642256e95e613f6b3479523c7074ec0f106af5b5f32bc42ac',
   'skills/cad-planner-contract/SKILL.md': 'b6aca8bc79bae4bd07bd422a6bb371c46c504aa51088325211b4e127d5c8ec7f',
   'skills/cad-reviewer-contract/SKILL.md': '9fc2606df77be23ba82b3ae335b70f456b89bfcdd3a7cd50d98615fb961cec57',
-  'skills/cad-verifier-contract/SKILL.md': 'd7aa230bdd7c27324120dc34b667412714657983d552cd5e3bb096ff40b93746',
+  'skills/cad-verifier-contract/SKILL.md': '94db1aea2a29fec8089968d5dc2d924eef68cb2400e82923e473ae7bbb2fb27e',
 };
 
 test('a switch\'s text written into a contract surface changes its 3.8.6 digest', () => {
