@@ -100,6 +100,19 @@ test('lcov: a branch miss fails; zero branches pass only with --branch in an acc
   assert.match(run('lcov', zero).out, /FAIL branches: threshold 85 but the report holds no branches/);
 });
 
+test('a missing threshold fails and names the metric; only an explicit 0 disables it', () => {
+  const r = run('python', py({ covered_branches: 9, num_branches: 10 }), { branches: undefined });
+  assert.equal(r.code, 1);
+  assert.match(r.out, /FAIL policy: branches threshold is missing/);
+  assert.doesNotMatch(r.out, /disabled/);
+});
+
+test('lcov: a report with no BRF record is a missing measurement, not zero branches', () => {
+  const r = run('lcov', 'SF:a.rs\nLF:10\nLH:10\nend_of_record\n', { commands: ['cargo +nightly llvm-cov --branch --lcov'] });
+  assert.equal(r.code, 1);
+  assert.match(r.out, /FAIL branches: threshold 85 but the report has no BRF branch records/);
+});
+
 test('unusable reports fail: a missing one and a malformed one', () => {
   const missing = run('python', null);
   assert.equal(missing.code, 1);

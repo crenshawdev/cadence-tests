@@ -135,6 +135,19 @@ test('check fails on an accepted command that only a comment holds, and the gate
   assert.match(r.detail, /accepted command "node --test/);
 });
 
+test('check fails when GitHub enforcement has no coverage command while a threshold is above 0', () => {
+  const root = agreeing();
+  const config = join(root, '.planning', 'config.json');
+  const edited = JSON.parse(readFileSync(config, 'utf8'));
+  edited.testing.coverage.commands = [];
+  writeFileSync(config, JSON.stringify(edited));
+  assert.equal(policy(['render'], root).ok, true);
+  const r = policy(['check'], root);
+  assert.equal(r.ok, false);
+  assert.equal(r.gate_found, false);
+  assert.match(r.detail, /testing\.coverage\.commands is empty/);
+});
+
 test('check reports enforcement unavailable off GitHub, and names a missing file', () => {
   const root = agreeing({ git: { forge_provider: 'gitlab' }, workflow: 'jobs: {}\n' });
   const r = policy(['check'], root);
