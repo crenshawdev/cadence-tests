@@ -499,7 +499,7 @@ const CALLSITES = [
   { file: 'seed-reqs.mjs', fn: 'cmdSeedReqs', ordinal: 1, disposition: 'unconditional',
     why: 'a WRITE face: the traceability rows it seeds carry the phase, so a lossy spelling is refused'
       + ' whatever is on disk (D-07)' },
-  { file: 'test-policy.mjs', fn: 'cmdCiStatus', ordinal: 1, disposition: 'tree-aware',
+  { file: 'testing-policy.mjs', fn: 'cmdCiStatus', ordinal: 1, disposition: 'tree-aware',
     why: 'reads and rewrites the phase UAT.md to record the commit' },
   { file: 'trace.mjs', fn: 'checkpointPlanTasks', ordinal: 1, disposition: 'exempt',
     why: 'the phase comes off a RECORD line, not off a flag - there is no caller to send back to a'
