@@ -150,3 +150,38 @@ test('check on a project with no accepted policy says so and points at /cad-conf
   assert.deepEqual([r.ok, r.accepted, r.publish_authorized], [true, false, false]);
   assert.match(r.hint, /\/cad-config --testing/);
 });
+
+// --- check --base: weakening against a ref ----------------------------------
+
+test('check --base names a lowered threshold, a disabled metric and a new exclude, and fails on none of them', () => {
+  const root = agreeing();
+  const git = (...a) => execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a]);
+  git('commit', '-q', '--allow-empty', '-m', 'before the policy');
+  git('tag', 'empty');
+  git('add', POLICY);
+  git('commit', '-q', '-m', 'policy');
+
+  const config = join(root, '.planning', 'config.json');
+  const edited = JSON.parse(readFileSync(config, 'utf8'));
+  Object.assign(edited.testing.coverage, { lines: 85, branches: 0, exclude: ['gen/**'] });
+  writeFileSync(config, JSON.stringify(edited));
+  writeFileSync(join(root, '.github', 'workflows', 'test.yml'),
+    WORKFLOW.replace('lines=90', 'lines=85').replace('branches=80', 'branches=0'));
+  assert.equal(policy(['render'], root).ok, true);
+
+  const r = policy(['check', '--base', 'HEAD'], root);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.base.changes, [
+    { kind: 'lowered', name: 'lines', from: 90, to: 85 },
+    { kind: 'disabled', name: 'branches', from: 80, to: 0 },
+    { kind: 'exclude_added', name: 'gen/**' },
+  ]);
+
+  const none = policy(['check', '--base', 'empty'], root);
+  assert.deepEqual([none.ok, none.base.found, none.base.changes], [true, false, []]);
+  assert.match(none.base.note, /absent or unreadable at empty/);
+
+  const bad = policy(['check', '--base', 'no-such-ref'], root);
+  assert.deepEqual([bad.ok, bad.reason], [false, 'bad-ref']);
+  assert.ok(bad.hint);
+});
