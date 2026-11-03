@@ -2056,3 +2056,21 @@ test('get: a hand-edited user-global testing section never reaches the merged re
   assert.equal(r.values['testing.coverage.lines'], 85);
   assert.equal((r.warnings || []).filter((w) => /section "testing"/.test(w)).length, 1);
 });
+
+const FOUR_SWITCHES = ['workflow.test_attack', 'workflow.test_evidence',
+  'workflow.check_inspection', 'workflow.independent_rerun'];
+const allOn = { test_attack: true, test_evidence: true, check_inspection: true, independent_rerun: true };
+
+test('get: an accepted testing.scope reads the four legacy switches false and names them', () => {
+  const r = getTesting('policy-on', { testing: { scope: 'focused' }, workflow: allOn }, undefined, FOUR_SWITCHES);
+  assert.deepEqual(Object.values(r.values), [false, false, false, false]);
+  for (const key of FOUR_SWITCHES) {
+    assert.equal((r.warnings || []).filter((w) => w.includes(`"${key}"`)).length, 1, key);
+  }
+});
+
+test('get: with testing.scope unset the four legacy switches read as configured and nothing warns', () => {
+  const r = getTesting('policy-off', { workflow: allOn }, undefined, FOUR_SWITCHES);
+  assert.deepEqual(Object.values(r.values), [true, true, true, true]);
+  assert.equal(r.warnings, undefined);
+});
