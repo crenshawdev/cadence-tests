@@ -573,7 +573,9 @@ test('roleOfAgent and rungOfAgent live here, read-trace re-exports them, and the
 // executor contract with the same phase's gated passages beside the lean-build
 // read and the Verify step, and the verifier contract with its gated passages
 // at the UNCERTAIN classification, the full-suite run, the verdict and the
-// output - each a deliberate change, approved with the phase.
+// output, and the reviewer and plan-checker contracts with one gated sentence
+// each about a test finding meeting the completion rule - each a deliberate
+// change, approved with the phase.
 
 const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-assumptions-analyzer-high.md': '631826d54561635203c1f87d099837cac1066028ca968dfcdacdc41008a5c2d2',
@@ -610,9 +612,9 @@ const CONTRACT_SURFACE_DIGESTS = {
   'cadence-core/templates/PLAN.md': '4a7fb5784ae799357e33a30b0ddd4d0754b0eed69f56e64f07fb255d06fc963d',
   'skills/cad-assumptions-analyzer-contract/SKILL.md': 'ee690d7178a35d274d8c895367f6476df2160baf1e65889b92d55af3e94233bc',
   'skills/cad-executor-contract/SKILL.md': '3c5482540f0d3193001fabebe08bb51b25afa8a059741612e4cdd11971d7004f',
-  'skills/cad-plan-checker-contract/SKILL.md': '67d601e639c06ae642256e95e613f6b3479523c7074ec0f106af5b5f32bc42ac',
+  'skills/cad-plan-checker-contract/SKILL.md': 'f84ccdfd51ff4389c0f54d70b11479b3673e8bdbe021ce0d8b33bfa62d9dcff5',
   'skills/cad-planner-contract/SKILL.md': 'b6aca8bc79bae4bd07bd422a6bb371c46c504aa51088325211b4e127d5c8ec7f',
-  'skills/cad-reviewer-contract/SKILL.md': '9fc2606df77be23ba82b3ae335b70f456b89bfcdd3a7cd50d98615fb961cec57',
+  'skills/cad-reviewer-contract/SKILL.md': 'a20b900ab73592135fe4dd9311e0298edef4c53ef332b04349154db36bfdf99d',
   'skills/cad-verifier-contract/SKILL.md': '94db1aea2a29fec8089968d5dc2d924eef68cb2400e82923e473ae7bbb2fb27e',
 };
 
