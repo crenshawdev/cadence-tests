@@ -45,6 +45,12 @@
 //                        amend. The `--inline` path adds NOTHING - it
 //                        references that step instead of restating the call,
 //                        which is what keeps this +1 and not +2.
+//   plan.md    14 -> 15  the testing policy's `test-policy check` at parse is a
+//                        NEW invocation (+1), run only when `testing.scope` is
+//                        set. Adding `testing.scope` to parse's wrapped
+//                        `config.mjs get` adds a KEY and no call (0), and the
+//                        `--inline` path adds NOTHING - it points at the
+//                        spawn_planner block instead of restating the call.
 //
 // The plan this file was written under - v3.3.0 phase 4's `PLAN-2`, task 6, at
 // `.planning/_archive-v3.3.0/4/PLAN-2.md` - stated 5 for `context.md`. That
@@ -93,7 +99,7 @@ const CENSUS = [
   },
   {
     file: join('cadence-core', 'workflows', 'plan.md'),
-    calls: 14,
+    calls: 15,
     note: 'status, config.mjs get, plan-size x2, recall, trace close x2, '
       + 'seed-reqs, cursor set (9), plus RBK-01\'s two read-back count points - '
       + '`cite-count --point planned` at count_planned and `cite-count --point '
@@ -106,6 +112,9 @@ const CENSUS = [
       + 'a plan that no longer exists. And one census gate, not two: '
       + 'inline_plan REFERENCES check_census and those two count steps rather '
       + 'than restating their calls, which is what holds this at 14 and not 17. '
+      + 'The fifteenth is the testing policy\'s `test-policy check` at parse, '
+      + 'the one new invocation that policy adds (+1; its `testing.scope` key '
+      + 'rides the existing config.mjs get). '
       + 'The resolve pair moved this row from 12 on 2026-08-25 (`08100808`) and '
       + 'added NO round-trip, which is the measurement that justifies the '
       + 're-pin: both sites already instructed the resolve in prose and already '
@@ -114,7 +123,7 @@ const CENSUS = [
       + 'seams.md to recover it. This counter reads literal command blocks, so '
       + 'what moved the number is a call that became literal, not a call that '
       + 'was added. '
-      + 'A fifteenth means a call came back - most likely a restated count or '
+      + 'A sixteenth means a call came back - most likely a restated count or '
       + 'a restated census call in inline_plan, a third resolve, or a '
       + '`trace append` beside the seam\'s own in-code outcome event.',
   },
@@ -137,7 +146,7 @@ test('the census counter is not dead: it joins continuations and ignores prose',
 // joins to its row. The header's arithmetic is that number's provenance, not a
 // second reading of the tree - which is what makes it a census and not the
 // derived measurement the registry exempts.
-// CADENCE-CENSUS: seam-call-counts | asserts: workflows/plan.md instructs exactly 14 seam invocations and workflows/context.md exactly 6
+// CADENCE-CENSUS: seam-call-counts | asserts: workflows/plan.md instructs exactly 15 seam invocations and workflows/context.md exactly 6
 for (const row of CENSUS) {
   test(`${row.file} instructs exactly ${row.calls} seam invocations`, () => {
     const text = readFileSync(join(REPO, row.file), 'utf8');
