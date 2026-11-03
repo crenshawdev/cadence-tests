@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PLANNING } from './planning.test.mjs';
@@ -62,4 +62,91 @@ test('render refuses with a hint when no policy was accepted, and writes nothing
   assert.match(r.hint, /\/cad-config --testing/);
   assert.equal(existsSync(join(root, POLICY)), false);
   assert.equal(policy(['bogus'], root).reason, 'usage');
+});
+
+// --- check: the config, the committed file and the workflow files ----------
+
+const COMMAND = 'node --test --test-coverage-lines={lines} --test-coverage-branches={branches}';
+
+/** The workflow step that runs COMMAND at 90 and 80, folded over three lines
+ *  the way a YAML `>` scalar is, so normalization is exercised by every arm. */
+const WORKFLOW = `jobs:
+  coverage:
+    steps:
+      - run: >
+          node --test
+          --test-coverage-lines=90
+          --test-coverage-branches=80
+`;
+
+/** A rendered project whose config, file and workflow agree. `workflow` and
+ *  `git` override the defaults; `src/a.js` is tracked so the include glob matches. */
+function agreeing({ workflow = WORKFLOW, git = { forge_provider: 'github' } } = {}) {
+  const root = project({
+    scope: 'focused',
+    coverage: { lines: 90, branches: 80, include: ['src/**'], commands: [COMMAND] },
+    required_jobs: ['coverage'],
+  }, git);
+  execFileSync('git', ['-C', root, 'init', '-q']);
+  mkdirSync(join(root, 'src'));
+  writeFileSync(join(root, 'src', 'a.js'), '');
+  execFileSync('git', ['-C', root, 'add', 'src/a.js']);
+  mkdirSync(join(root, '.github', 'workflows'), { recursive: true });
+  writeFileSync(join(root, '.github', 'workflows', 'test.yml'), workflow);
+  assert.equal(policy(['render'], root).ok, true);
+  return root;
+}
+
+test('check passes on an agreeing project and reports whether publishing is authorized here', () => {
+  const root = agreeing();
+  const r = policy(['check'], root);
+  assert.deepEqual([r.ok, r.accepted, r.enforcement, r.gate_found, r.problems, r.publish_authorized],
+    [true, true, 'available', true, [], false]);
+
+  execFileSync('git', ['-C', root, 'config', '--local', 'cadence.publishForVerification', 'true']);
+  assert.equal(policy(['check'], root).publish_authorized, true);
+
+  // Another repository's setting never speaks for this one, even when the
+  // environment points git at it (D-02).
+  const other = agreeing();
+  execFileSync('git', ['-C', other, 'config', '--local', 'cadence.publishForVerification', 'true']);
+  execFileSync('git', ['-C', root, 'config', '--local', '--unset', 'cadence.publishForVerification']);
+  assert.equal(policy(['check'], root, { GIT_DIR: join(other, '.git') }).publish_authorized, false);
+});
+
+test('check fails on a threshold mismatch between the config and the file', () => {
+  const root = agreeing();
+  const config = join(root, '.planning', 'config.json');
+  const edited = JSON.parse(readFileSync(config, 'utf8'));
+  edited.testing.coverage.lines = 95;
+  writeFileSync(config, JSON.stringify(edited));
+  const r = policy(['check'], root);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'policy-disagrees');
+  assert.match(r.detail, /testing\.coverage\.lines is 95 in the config and 90 in/);
+});
+
+test('check fails on an accepted command that only a comment holds, and the gate is not found', () => {
+  const root = agreeing({ workflow: WORKFLOW.replace(/^( {10}.*)$/gm, '#$1').replace('- run: >', '- run: echo') });
+  const r = policy(['check'], root);
+  assert.equal(r.ok, false);
+  assert.equal(r.gate_found, false);
+  assert.match(r.detail, /accepted command "node --test/);
+});
+
+test('check reports enforcement unavailable off GitHub, and names a missing file', () => {
+  const root = agreeing({ git: { forge_provider: 'gitlab' }, workflow: 'jobs: {}\n' });
+  const r = policy(['check'], root);
+  assert.deepEqual([r.ok, r.enforcement, r.gate_found], [true, 'unavailable', null]);
+  assert.match(r.note, /"gitlab"/);
+  rmSync(join(root, POLICY));
+  const gone = policy(['check'], root);
+  assert.equal(gone.ok, false);
+  assert.match(gone.detail, /coverage-policy\.json is missing/);
+});
+
+test('check on a project with no accepted policy says so and points at /cad-config --testing', () => {
+  const r = policy(['check'], project(null));
+  assert.deepEqual([r.ok, r.accepted, r.publish_authorized], [true, false, false]);
+  assert.match(r.hint, /\/cad-config --testing/);
 });
