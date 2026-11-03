@@ -666,3 +666,26 @@ test('test-evidence rejects a Red by: before row whose Red at is the commit the 
   const ok = judge(inRepo(FULL, body).plan);
   assert.equal(ok.ok, true, `a Red by: break row at its task's commit stands: ${JSON.stringify(ok)}`);
 });
+
+// --- an accepted testing policy removes the ceremony -------------------------
+
+test('test-evidence: with testing.scope set a bare PLAN COMPLETE stands, and with it unset it is rejected', () => {
+  const dir = makeTree({ roadmap: [{ n: 3, name: 'Three' }], phases: { 3: { plan: ['PLAN-1.md'] } } });
+  const pdir = join(dir, 'phases', '3');
+  const bare = report({ section: false });
+  const { plan: p, report: rp } = planWithReport(FULL, bare, pdir);
+  const judgeIn = () => run(['test-evidence', p], dir);
+
+  writeFileSync(join(dir, 'config.json'), JSON.stringify({ testing: { scope: 'focused' } }));
+  const accepted = judgeIn();
+  assert.deepEqual([accepted.ok, accepted.state], [true, 'nothing-required'], JSON.stringify(accepted));
+  assert.equal(readFileSync(rp, 'utf8'), bare);
+  assert.equal(run(['replay-check', '--phase', '3'], dir).replay, true);
+  assert.deepEqual(run(['status'], dir).outstanding, []);
+
+  writeFileSync(join(dir, 'config.json'), '{}');
+  const rejected = judgeIn();
+  assert.deepEqual([rejected.ok, rejected.reason], [false, 'evidence-short'], JSON.stringify(rejected));
+  assert.equal(readFileSync(rp, 'utf8').split('\n')[0], 'PLAN CHECKPOINT: blocked');
+  assert.equal(run(['replay-check', '--phase', '3'], dir).replay, false);
+});
