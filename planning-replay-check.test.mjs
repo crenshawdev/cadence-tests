@@ -10,7 +10,7 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { PLANNING, isEntryFile } from './planning.test.mjs';
@@ -258,4 +258,36 @@ test('no --phase refuses by name rather than guessing a phase', () => {
   assert.equal(r.reason, 'bad-args');
   assert.match(r.detail, /replay-check needs --phase/);
   assert.equal(r._exit, 1);
+});
+
+// AC3 (phase 1, retire the legacy test switches): a project with no
+// `testing.scope` and the four old keys still true gets no replacement step.
+// A plan's legacy `## Evidence map` and `## Tests` are inert text, and a report
+// with no `Test evidence:` section completes as it stands.
+test('a no-policy plan with legacy sections and no evidence section completes, report untouched', () => {
+  const phase = 3;
+  const legacy = '---\nphase: 3\nfiles: []\n---\n# Plan\n\n## Evidence map\n\n| Check | Task |\n|---|---|\n| AC1 | 1 |\n\n## Tests\n\n| Test | Task |\n|---|---|\n| a | 1 |\n';
+  const roadmap = '# Roadmap: Fixture\n\n## Overview\n\nx\n\n## Phases\n\n- [ ] **Phase 3: Three** - desc\n\n## Phase Details\n\n### Phase 3: Three\n**Goal:** goal 3\n**Depends on:** Nothing\n';
+  const settle = (body) => {
+    const dir = tree({ phase, reports: { 1: body } });
+    writeFileSync(join(dir, 'phases', String(phase), 'PLAN.md'), legacy);
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({
+      workflow: { test_attack: true, test_evidence: true, check_inspection: true, independent_rerun: true },
+    }));
+    writeFileSync(join(dir, 'ROADMAP.md'), roadmap);
+    const replay = check(dir, ['--phase', String(phase)]);
+    const status = JSON.parse(execFileSync('node', [PLANNING, 'status', '--dir', dir], { encoding: 'utf8' }));
+    return { dir, replay, status };
+  };
+
+  const body = 'PLAN COMPLETE\nTasks: 2 of 2\n\nDeviations: none\n';
+  const done = settle(body);
+  assert.equal(done.replay.replay, true);
+  assert.deepEqual(done.replay.dispatch_set, []);
+  assert.deepEqual(done.status.outstanding, []);
+  assert.equal(readFileSync(join(done.dir, 'phases', '3', 'reports', 'plan-1.md'), 'utf8'), body);
+
+  // Without this, an empty `outstanding` would pass on a phase `status` never saw.
+  const partial = settle(body.replace('PLAN COMPLETE', 'PLAN PARTIAL'));
+  assert.deepEqual(partial.status.outstanding, [{ phase, plans: ['PLAN.md'] }]);
 });
