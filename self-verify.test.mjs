@@ -2687,3 +2687,46 @@ test('check 27: the live tree files no data-rule problem and `checked` names the
   assert.ok(!r.problems.some((x) => x.kind === DATA_RULE_KIND), JSON.stringify(r.problems));
   assert.match(r.checked, /\bdata-rule\b/);
 });
+
+// --- check 28: each key's explain entries against the key --------------------
+// The two rules are pinned in setting-explanations.test.mjs. This side pins the
+// WIRING: a fixture schema on each failing rule reaches `problems` filed against
+// config.schema.json with the key named, and the live tree is clean.
+
+const EXPLAIN_KINDS = ['explained-value-refused', 'explained-value-missing'];
+
+/** A root holding only a schema whose one key is `spec`. @param {Record<string, any>} spec */
+function explainRoot(spec) {
+  const root = mkdtempSync(join(tmpdir(), 'cad-selfverify-explain-'));
+  mkdirSync(join(root, 'cadence-core'), { recursive: true });
+  writeFileSync(join(root, 'cadence-core', 'config.schema.json'), JSON.stringify({
+    keys: { 'demo.mode': { type: 'enum', values: ['a', 'b'], default: 'a', purpose: 'Demo', ...spec } },
+  }, null, 2));
+  return root;
+}
+
+test('check 28: an explained value the key refuses is filed against the schema, naming the key', () => {
+  const p = run(['--root', explainRoot({ explain: [{ value: 'a' }, { value: 'zzz' }] })]).problems
+    .filter((x) => EXPLAIN_KINDS.includes(x.kind));
+  assert.equal(p.length, 1, JSON.stringify(p));
+  assert.equal(p[0].kind, 'explained-value-refused');
+  assert.equal(p[0].file, 'cadence-core/config.schema.json');
+  assert.match(p[0].detail, /demo\.mode/);
+  assert.match(p[0].detail, /"zzz"/);
+});
+
+test('check 28: an allowed value with no entry on a walk key is filed against the schema, naming the key', () => {
+  const p = run(['--root', explainRoot({ question: 'Which mode?', explain: [{ value: 'a' }] })]).problems
+    .filter((x) => EXPLAIN_KINDS.includes(x.kind));
+  assert.equal(p.length, 1, JSON.stringify(p));
+  assert.equal(p[0].kind, 'explained-value-missing');
+  assert.equal(p[0].file, 'cadence-core/config.schema.json');
+  assert.match(p[0].detail, /demo\.mode/);
+  assert.match(p[0].detail, /"b"/);
+});
+
+test('check 28: the live tree files no explanation problem and `checked` names the check', () => {
+  const r = run([]);
+  assert.ok(!r.problems.some((x) => EXPLAIN_KINDS.includes(x.kind)), JSON.stringify(r.problems));
+  assert.match(r.checked, /\bsetting-explanations\b/);
+});
