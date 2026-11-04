@@ -2060,17 +2060,104 @@ test('get: a hand-edited user-global testing section never reaches the merged re
 const FOUR_SWITCHES = ['workflow.test_attack', 'workflow.test_evidence',
   'workflow.check_inspection', 'workflow.independent_rerun'];
 const allOn = { test_attack: true, test_evidence: true, check_inspection: true, independent_rerun: true };
+const retiredWarnings = (r, key) => (r.warnings || []).filter((w) => w.includes(`"${key}"`));
 
-test('get: an accepted testing.scope reads the four legacy switches false and names them', () => {
-  const r = getTesting('policy-on', { testing: { scope: 'focused' }, workflow: allOn }, undefined, FOUR_SWITCHES);
-  assert.deepEqual(Object.values(r.values), [false, false, false, false]);
+/** A retired-key text names the interview and both unset commands for its own key. */
+function assertNamesTheFix(w, key) {
+  assert.ok(w.includes('/cad-config --testing'), key);
+  assert.ok(w.includes(`config.mjs unset ${key}`), key);
+  assert.ok(w.includes(`config.mjs unset --global ${key}`), key);
+}
+function assertRetiredWarning(w, key) {
+  assert.match(w, /was retired in v3\.11\.1 and is ignored/, key);
+  assertNamesTheFix(w, key);
+}
+
+test('get: each of the four legacy switches in the repo layer warns once and names both unset commands', () => {
+  const r = getTesting('retired-repo', { workflow: allOn }, undefined, ['granularity']);
   for (const key of FOUR_SWITCHES) {
-    assert.equal((r.warnings || []).filter((w) => w.includes(`"${key}"`)).length, 1, key);
+    const w = retiredWarnings(r, key);
+    assert.equal(w.length, 1, `${key}: ${JSON.stringify(r.warnings)}`);
+    assertRetiredWarning(w[0], key);
   }
 });
 
-test('get: with testing.scope unset the four legacy switches read as configured and nothing warns', () => {
-  const r = getTesting('policy-off', { workflow: allOn }, undefined, FOUR_SWITCHES);
-  assert.deepEqual(Object.values(r.values), [true, true, true, true]);
+test('get: a legacy switch in the user-global layer warns once, and false is still a fault', () => {
+  const r = getTesting('retired-global', {}, { workflow: { test_evidence: false } }, ['granularity']);
+  const w = retiredWarnings(r, 'workflow.test_evidence');
+  assert.equal(w.length, 1, JSON.stringify(r.warnings));
+  assertRetiredWarning(w[0], 'workflow.test_evidence');
+  assert.equal(r.warnings.length, 1, JSON.stringify(r.warnings));
+});
+
+test('get: an accepted scope with a switch held warns once for it and says nothing reads false', () => {
+  const r = getTesting('retired-accepted', { testing: { scope: 'focused' }, workflow: { check_inspection: true } },
+    undefined, ['testing.scope']);
+  assert.equal(r.values['testing.scope'], 'focused');
+  assert.equal(r.warnings.length, 1, JSON.stringify(r.warnings));
+  assertRetiredWarning(r.warnings[0], 'workflow.check_inspection');
+  assert.doesNotMatch(r.warnings[0], /reads false/);
+});
+
+test('get: an accepted scope with none of the four held has no warnings key and returns none of them', () => {
+  const r = getTesting('retired-none', { testing: { scope: 'integrated' } }, undefined, ['testing.scope']);
+  assert.equal(r.ok, true);
   assert.equal(r.warnings, undefined);
+  assert.deepEqual(Object.keys(r.values), ['testing.scope']);
+  const keys = run(['keys']);
+  assert.equal(FOUR_SWITCHES.some((k) => JSON.stringify(keys).includes(`"${k}"`)), false);
+});
+
+test('get: a scope outside the three still draws its warning, and no retired-key one', () => {
+  const r = getTesting('invalid-scope', { testing: { scope: 'exhaustive' } }, undefined, ['testing.scope']);
+  const w = (r.warnings || []).filter((x) => /"testing\.scope" is "exhaustive"/.test(x));
+  assert.equal(w.length, 1, JSON.stringify(r.warnings));
+  assert.match(w[0], /not focused, integrated or thorough, so no testing policy is accepted/);
+  assert.equal(r.warnings.length, 1, JSON.stringify(r.warnings));
+});
+
+test('set and check refuse each legacy switch at either layer with the retired text, and write nothing', () => {
+  for (const key of FOUR_SWITCHES) {
+    const gpath = join(dir, `retired-set-${key}-global.json`);
+    const g = run(['set', '--global', `${key}=true`], gpath);
+    assert.equal(g.ok, false, key);
+    assert.equal(g.reason, 'invalid', key);
+    assert.equal(g.detail[0].key, key);
+    assertNamesTheFix(g.detail[0].error, key);
+    assert.match(g.detail[0].error, /^retired in v3\.11\.1: /);
+    assert.equal(existsSync(gpath), false, key);
+
+    const f = join(dir, `retired-set-${key}-repo.json`);
+    writeFileSync(f, '{"granularity":"fine"}');
+    const before = sha256(f);
+    const r = run(['set', '--file', f, `${key}=true`], gpath);
+    assert.equal(r.ok, false, key);
+    assert.equal(r.detail[0].error, g.detail[0].error, key);
+    assert.equal(sha256(f), before, key);
+
+    const c = run(['check', `${key}=true`], gpath);
+    assert.equal(c.ok, false, key);
+    assert.equal(c.detail[0].error, g.detail[0].error, key);
+  }
+});
+
+test('a file holding a legacy switch still takes a set of another key, and unset removes the switch at both layers', () => {
+  const f = join(dir, 'retired-held-repo.json');
+  const gpath = join(dir, 'retired-held-global.json');
+  writeFileSync(f, JSON.stringify({ workflow: { test_attack: true } }));
+  writeFileSync(gpath, JSON.stringify({ workflow: { independent_rerun: false } }));
+  const s = run(['set', '--file', f, 'granularity=fine'], gpath);
+  assert.equal(s.ok, true, JSON.stringify(s));
+  assert.equal(JSON.parse(readFileSync(f, 'utf8')).workflow.test_attack, true);
+  const sg = run(['set', '--global', 'granularity=coarse'], gpath);
+  assert.equal(sg.ok, true, JSON.stringify(sg));
+
+  const u = run(['unset', '--file', f, 'workflow.test_attack'], gpath);
+  assert.equal(u.ok, true, JSON.stringify(u));
+  assert.deepEqual(u.removed, ['workflow.test_attack']);
+  const ug = run(['unset', '--global', 'workflow.independent_rerun'], gpath);
+  assert.equal(ug.ok, true, JSON.stringify(ug));
+  assert.deepEqual(ug.removed, ['workflow.independent_rerun']);
+  const after = run(['get', '--file', f, 'granularity'], gpath);
+  assert.equal(after.warnings, undefined, JSON.stringify(after.warnings));
 });

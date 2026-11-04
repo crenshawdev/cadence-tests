@@ -55,7 +55,17 @@ const RETIRED_KEYS_FILE = fileURLToPath(new URL('../cadence-core/bin/lib/retired
 // `review.providers.openai.transport` joined this map in the commits that took
 // them out of the schema, so a config that still holds one (Baley's did) meets
 // a message naming the fix instead of a key read silently for nothing.
-const RETIRED_KEYS_SHA256 = '5e30c5d3da87dcf44742366e23718dabaec318f3d72049a194071eaf81718279';
+//
+// A FIFTH time, off
+// `5e30c5d3da87dcf44742366e23718dabaec318f3d72049a194071eaf81718279`, by decision: TST-06 (v3.11.1, phase 1) retired
+// the four legacy test switches, `workflow.test_attack`, `workflow.test_evidence`,
+// `workflow.check_inspection` and `workflow.independent_rerun`, with the evidence,
+// inspection and re-run steps they gated. Their four rows joined this map in the
+// commit that took them out of the schema and ended the read-false override, so a
+// config that still holds one meets a message naming `/cad-config --testing` and
+// both `config.mjs unset` commands instead of a key read silently for nothing. The
+// header comment's row count moved with them.
+const RETIRED_KEYS_SHA256 = '67e92e408f0e0a6c7f22222e15462e044cfb04893d6f0f93c41ea3ee22ecf55b';
 
 test('lib/retired-keys.mjs is byte-identical - the eight risk.override.* keys stay retired', () => {
   // WHAT THIS PROTECTS. D-03 keeps the retired family retired because a key
@@ -167,6 +177,41 @@ test('review.triggers.pre_ship.tier and .effort each name v3.2.0 too', () => {
   for (const k of ['review.triggers.pre_ship.tier', 'review.triggers.pre_ship.effort']) {
     assert.match(retiredKeyError(k), /retired in v3\.2\.0/, k);
   }
+});
+
+// --- the four legacy test switches (v3.11.1, TST-06) --------------------------
+
+/**
+ * One row's contract: retired in v3.11.1, no replacement key, and a detail that
+ * names the interview and both unset commands for that exact key.
+ * @param {string} key
+ */
+function assertLegacySwitchRow(key) {
+  const e = retiredKeyError(key);
+  assert.match(e, /^retired in v3\.11\.1: /);
+  assert.doesNotMatch(e, /use "/);
+  assert.ok(e.includes('/cad-config --testing'));
+  assert.ok(e.includes(`config.mjs unset ${key} `) || e.includes(`config.mjs unset ${key}\``));
+  assert.ok(e.includes(`config.mjs unset --global ${key}`));
+  const w = retiredKeysIn(Object.fromEntries([[key.split('.')[0], { [key.split('.')[1]]: false }]]));
+  assert.equal(w.length, 1, JSON.stringify(w));
+  assert.match(w[0], /was retired in v3\.11\.1 and is ignored/);
+}
+
+test('workflow.test_attack is retired in v3.11.1 and its detail names both unset commands', () => {
+  assertLegacySwitchRow('workflow.test_attack');
+});
+
+test('workflow.test_evidence is retired in v3.11.1 and its detail names both unset commands', () => {
+  assertLegacySwitchRow('workflow.test_evidence');
+});
+
+test('workflow.check_inspection is retired in v3.11.1 and its detail names both unset commands', () => {
+  assertLegacySwitchRow('workflow.check_inspection');
+});
+
+test('workflow.independent_rerun is retired in v3.11.1 and its detail names both unset commands', () => {
+  assertLegacySwitchRow('workflow.independent_rerun');
 });
 
 // --- retiredKeysIn: the read faces --------------------------------------------
