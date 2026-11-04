@@ -58,9 +58,7 @@ function copyReal(root, rel, edit = (t) => t) {
 /** The register block as it must appear in the lib source, byte for byte. */
 const REGISTER_SOURCE = `export const DEFERRED_READS = Object.freeze([
   Object.freeze({
-    // ONE consult site under seams.md's rule (step 3a or step 3b, never both),
-    // but TWO anchors here - each arm carries its own Read and deleting either
-    // silently loses that arm's rails.
+    // one consult site by seams.md's count, two anchors here: deleting either arm's Read loses that arm's rails
     skill: 'cad-land',
     reference: 'references/git-publish.md',
     anchors: Object.freeze(['3(a)', '3(b)']),
@@ -80,16 +78,11 @@ const REGISTER_SOURCE = `export const DEFERRED_READS = Object.freeze([
     file: 'cadence-core/workflows/context.md',
   }),
   Object.freeze({
-    // TWO rows, one reference. seams.md's "consulted at more than one distinct
-    // STEP stays eager" rule is per COMMAND: \`/cad-context\` and \`/cad-debug\`
-    // each reach recall at exactly one step of their own, so these are two
-    // independent one-site deferrals rather than one two-site reference. A
-    // maintainer who merges them into a single row loses one command's anchor.
+    // two rows, one reference: seams.md's rule is per command and each of these reaches recall at one step,
+    // so they're two one-site deferrals and merging them loses a command's anchor
     skill: 'cad-context',
     reference: 'references/recall.md',
-    // Anchored at \`spend_gate\`, not \`analyze\`: the recall substep moved ahead of
-    // the analyzer buy/skip decision because BOTH of its arms consume recalled
-    // memory, and the skip arm never enters \`analyze\` at all.
+    // spend_gate, not analyze: recall runs before the analyzer decision and the skip arm never enters analyze
     anchors: Object.freeze(['spend_gate']),
     read_paragraphs: 1,
     file: 'cadence-core/workflows/context.md',
