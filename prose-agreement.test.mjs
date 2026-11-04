@@ -2115,16 +2115,16 @@ function ceilingDecision(text) {
   };
 }
 
-test('PLN-01: the max_plan_tasks decision reads the same off the schema and the catalog', () => {
+test('PLN-01: the max_plan_tasks decision reads the same off the schema purpose and question', () => {
   const key = JSON.parse(doc('cadence-core', 'config.schema.json'))
     .keys['workflow.max_plan_tasks'];
   assert.ok(key, 'config.schema.json defines no workflow.max_plan_tasks');
   const schema = ceilingDecision(String(key.purpose));
-  const row = tableRow(
-    doc('cadence-core', 'references', 'config-catalog.md'), 'workflow.max_plan_tasks');
-  const catalog = ceilingDecision(row[2]);
+  assert.equal(typeof key.question, 'string',
+    'config.schema.json defines no question for workflow.max_plan_tasks');
+  const question = ceilingDecision(key.question);
 
-  // 1. The schema states the whole decision, not part of it.
+  // 1. The purpose states the whole decision, not part of it.
   for (const [field, value] of Object.entries(schema)) {
     assert.notEqual(value, null,
       `config.schema.json's workflow.max_plan_tasks purpose carries no ${field} - `
@@ -2132,21 +2132,20 @@ test('PLN-01: the max_plan_tasks decision reads the same off the schema and the 
       + 'so the ceiling is argued nowhere a check can read');
   }
 
-  // 2. The catalog row states the SAME decision. Compared as extractions, so a
-  //    figure changed on one surface and not the other is what fails, and the
+  // 2. The question states the SAME decision. Compared as extractions, so a
+  //    figure changed on one field and not the other is what fails, and the
   //    message carries both sides rather than the phrase that was looked for.
-  assert.deepEqual(catalog, schema,
-    'config-catalog.md and config.schema.json extract different max_plan_tasks '
-    + 'decisions - one of the two surfaces was edited alone, so a reader gets a '
-    + 'different argument depending on which one they opened');
+  assert.deepEqual(question, schema,
+    'the workflow.max_plan_tasks question and purpose extract different decisions '
+    + `(question ${JSON.stringify(question)}, purpose ${JSON.stringify(schema)}) - `
+    + 'one of the two fields was edited alone, so a reader gets a different '
+    + 'argument depending on which one they opened');
 
-  // 3. And the value the prose argues is the value the machine reads, on both
-  //    surfaces. Prose arguing for one number beside a default holding another
-  //    is worse than no prose: it is believed.
+  // 3. And the value the prose argues is the value the machine reads. Prose
+  //    arguing for one number beside a default holding another is worse than
+  //    no prose: it is believed.
   assert.equal(schema.landed, key.default,
     `the schema purpose argues for ${schema.landed} and its own default is ${key.default}`);
-  assert.equal(schema.landed, Number(row[4]),
-    `the decision lands on ${schema.landed} and config-catalog.md's Default column says ${row[4]}`);
 });
 
 // --- SGT-01: the suggest seam's unset-layer defaults, against the schema -----
