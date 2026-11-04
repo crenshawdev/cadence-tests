@@ -70,7 +70,12 @@ const RETIRED_KEYS_FILE = fileURLToPath(new URL('../cadence-core/bin/lib/retired
 // `67e92e408f0e0a6c7f22222e15462e044cfb04893d6f0f93c41ea3ee22ecf55b`, with every row's value unchanged:
 // SonarCloud failed the four legacy switch rows as duplication, because they differ
 // only in their key, so they now share one builder.
-const RETIRED_KEYS_SHA256 = 'bf8ffa275bd8d0f990e4a99d1bac9a0ec35ce7ed9eaefc9e7125ac892823c920';
+//
+// A SEVENTH time, off
+// `bf8ffa275bd8d0f990e4a99d1bac9a0ec35ce7ed9eaefc9e7125ac892823c920`, by decision: John asked for every comment in
+// the plugin to be rewritten shorter and in his voice, so the header and row comments in lib/retired-keys.mjs were
+// rewritten. No row's key, `replacement`, `since` or `detail` moved with them.
+const RETIRED_KEYS_SHA256 = 'f3fcc60a98ad9e863160549968912302710a7b3c260add1714a32dc908e59878';
 
 test('lib/retired-keys.mjs is byte-identical - the eight risk.override.* keys stay retired', () => {
   // WHAT THIS PROTECTS. D-03 keeps the retired family retired because a key
