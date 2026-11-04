@@ -424,8 +424,8 @@ test('every flag in every row declares a complete grammar', () => {
   // CADENCE-CENSUS: arg-contract-flag-entries | asserts: the CONTRACTS table declares 211 flag entries across 19 top-level rows
   // 203 since `route.mjs agent-type`; 202 since `config.mjs unset` joined the table with the same two rows its
   // `set` sibling carries (D-06). 201 and 19 since `test.mjs` left Cadence for the tests repository, taking its
-  // row (two `--list` entries) with it. 202 since `test-policy render` joined with `--root`; 203 with `test-policy check`; 204 with its `--base`; 206 with `uat record --job` and `--commit`; 210 with `test-policy ci-status`; 211 with `git-publish.mjs verify-publish --remote`.
-  assert.equal(entries, 211, `the table declares ${entries} flag entries`);
+  // row (two `--list` entries) with it. 202 since `test-policy render` joined with `--root`; 203 with `test-policy check`; 204 with its `--base`; 206 with `uat record --job` and `--commit`; 210 with `test-policy ci-status`; 211 with `git-publish.mjs verify-publish --remote`; 212 with `config.mjs keys --walk`.
+  assert.equal(entries, 212, `the table declares ${entries} flag entries`);
   assert.equal(Object.keys(CONTRACTS).length, 19, 'one row per top-level bin script');
 });
 

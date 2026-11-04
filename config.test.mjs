@@ -857,6 +857,34 @@ test('CADENCE_CONFIG_SCHEMA nonexistent degrades to ok:false, reason bad-schema,
   assert.equal(r.reason, 'bad-schema');
 });
 
+// --- keys --walk: the narrower read the /cad-config walk uses -----------------
+
+test('keys --walk returns only question-bearing keys in position order, typed entries kept', () => {
+  // Schema order (b, a, c, d) differs from position order (a, b, d), and `c` holds no question.
+  const fixture = join(dir, 'walk-schema.json');
+  const keys = {
+    b: { type: 'bool', default: false, purpose: 'b ref', question: 'Is b on?', section: 'Two', position: 2,
+      explain: [{ value: true, text: 'on' }, { value: false }] },
+    a: { type: 'enum', values: ['x', 'y', null], default: null, src: 'repo', purpose: 'a ref', question: 'Which a?', section: 'One', position: 1,
+      explain: [{ value: 'x', text: 'ex' }, { value: null, text: 'unset' }] },
+    c: { type: 'int', default: 1, purpose: 'c ref' },
+    d: { type: 'string_or_null', default: null, repo_only: true, purpose: 'd ref', question: 'What d?', section: 'Two', position: 3,
+      explain: [{ value: null, text: 'none' }], hint: 'shell string' },
+  };
+  writeFileSync(fixture, JSON.stringify({ keys }));
+  const walk = JSON.parse(runWithSchema(['keys', '--walk'], fixture).stdout);
+  assert.equal(walk.ok, true);
+  assert.deepEqual(walk.walk, [
+    { section: 'One', keys: [{ key: 'a', type: 'enum', src: 'repo', question: 'Which a?', explain: [['x', 'ex'], [null, 'unset']] }] },
+    { section: 'Two', keys: [
+      { key: 'b', type: 'bool', question: 'Is b on?', explain: [[true, 'on'], [false]] },
+      { key: 'd', type: 'string_or_null', repo_only: true, question: 'What d?', explain: [[null, 'none']], hint: 'shell string' },
+    ] },
+  ]);
+  // Bare `keys` is the whole map, untouched.
+  assert.deepEqual(JSON.parse(runWithSchema(['keys'], fixture).stdout), { ok: true, keys });
+});
+
 // --- the injection is GATED behind CADENCE_TEST_SEAM (EXP-01) ---------------
 
 test('CADENCE_CONFIG_SCHEMA without the sentinel is ignored; `keys` is the shipped set', () => {
