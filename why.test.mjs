@@ -560,7 +560,7 @@ test('every edge works on a phase whose directory is gone: decision, deviation a
 test('an artifact the recovered tree does not carry is a stated absence, not a failed entry', () => {
   // v3.5.5's phase 2 is recovered the same way and keeps no adjudication
   // record, so the review edge states that rather than dropping the entry.
-  const env = oneJsonLine(run(['cadence-core/bin/lib/issue-decision.mjs', '--dir', REPO]).stdout);
+  const env = oneJsonLine(run(['cadence-core/bin/lib/issue-decision.mjs', '--dir', REPO, '--top', '20']).stdout);
   const entry = entryFor(env.text, '45be702b328ee5b791fd77703aaf63595e8dc727');
   assert.match(entry, /^phase: v3\.5\.5 phase 2 \(recovered from [0-9a-f]{8}:\.planning\/phases\/2\)$/m);
   assert.match(entry, /^review: no adjudication record in this phase's directory$/m);
