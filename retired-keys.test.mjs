@@ -65,7 +65,12 @@ const RETIRED_KEYS_FILE = fileURLToPath(new URL('../cadence-core/bin/lib/retired
 // config that still holds one meets a message naming `/cad-config --testing` and
 // both `config.mjs unset` commands instead of a key read silently for nothing. The
 // header comment's row count moved with them.
-const RETIRED_KEYS_SHA256 = '67e92e408f0e0a6c7f22222e15462e044cfb04893d6f0f93c41ea3ee22ecf55b';
+//
+// A SIXTH time, off
+// `67e92e408f0e0a6c7f22222e15462e044cfb04893d6f0f93c41ea3ee22ecf55b`, with every row's value unchanged:
+// SonarCloud failed the four legacy switch rows as duplication, because they differ
+// only in their key, so they now share one builder.
+const RETIRED_KEYS_SHA256 = 'bf8ffa275bd8d0f990e4a99d1bac9a0ec35ce7ed9eaefc9e7125ac892823c920';
 
 test('lib/retired-keys.mjs is byte-identical - the eight risk.override.* keys stay retired', () => {
   // WHAT THIS PROTECTS. D-03 keeps the retired family retired because a key
