@@ -94,10 +94,10 @@ function extractGrammarOne() {
 const CITATIONS = [
   {
     surface: 'skills/cad-verifier-contract/SKILL.md',
-    citation: 'planning/uat.mjs:508-510',
+    citation: 'planning/uat.mjs:359-361',
     file: 'cadence-core/bin/planning/uat.mjs',
-    start: 508,
-    end: 510,
+    start: 359,
+    end: 361,
     symbol: 'atomicWrite',
   },
   // SPL-01 and SPL-02's two `planning/core.mjs` citations retired here at the
