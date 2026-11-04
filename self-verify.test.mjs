@@ -2730,3 +2730,62 @@ test('check 28: the live tree files no explanation problem and `checked` names t
   assert.ok(!r.problems.some((x) => EXPLAIN_KINDS.includes(x.kind)), JSON.stringify(r.problems));
   assert.match(r.checked, /\bsetting-explanations\b/);
 });
+
+// --- checks 1 to 3 over the schema's walk text (D-12) ------------------------
+// The lints themselves are pinned on prose above. These pin what the new input
+// brings: the question, an entry's text and a hint are read, `purpose` is not,
+// problems are filed against the schema with the key named, and the text is not
+// a reader for 1b.
+
+const SCHEMA_REL = 'cadence-core/config.schema.json';
+
+/** The three plants and the kind each must file. */
+const PLANTS = [
+  ['an unknown dotted key', 'See demo.nope for details.', 'unknown-config-key', /demo\.nope/],
+  ['a bad flag', 'Run config.mjs get --nope first.', 'unknown-flag', /--nope/],
+  ['a missing plugin path', 'Read ${CLAUDE_PLUGIN_ROOT}/no/such/file first.', 'missing-path', /no\/such\/file/],
+];
+
+/** A root whose only keys are `demo.mode` (carrying `fields`) and `demo.other`. @param {Record<string, any>} fields */
+function walkTextRoot(fields) {
+  const root = mkdtempSync(join(tmpdir(), 'cad-selfverify-walktext-'));
+  mkdirSync(join(root, 'cadence-core'), { recursive: true });
+  writeFileSync(join(root, 'cadence-core', 'config.schema.json'), JSON.stringify({
+    keys: {
+      'demo.mode': { type: 'enum', values: ['a', 'b'], default: 'a', purpose: 'Demo', ...fields },
+      'demo.other': { type: 'bool', default: false, purpose: 'Other' },
+    },
+  }, null, 2));
+  return root;
+}
+
+const SLOTS = {
+  question: (t) => ({ question: t }),
+  'an entry text': (t) => ({ question: 'Which?', explain: [{ value: 'a', text: t }, { value: 'b' }] }),
+  hint: (t) => ({ hint: t }),
+};
+
+for (const [slot, put] of Object.entries(SLOTS)) {
+  for (const [what, text, kind, token] of PLANTS) {
+    test(`checks 1-3: ${what} in ${slot} is filed against the schema, naming the key`, () => {
+      const hits = run(['--root', walkTextRoot(put(text))]).problems
+        .filter((x) => x.kind === kind && x.file === SCHEMA_REL);
+      assert.equal(hits.length, 1, JSON.stringify(hits));
+      assert.match(hits[0].detail, /^demo\.mode: /);
+      assert.match(hits[0].detail, token);
+    });
+  }
+}
+
+test('checks 1-3: the same three plants in a purpose report nothing', () => {
+  const purpose = PLANTS.map((p) => p[1]).join(' ');
+  const problems = run(['--root', walkTextRoot({ purpose })]).problems;
+  assert.deepEqual(problems.filter((x) => PLANTS.some((p) => p[2] === x.kind)), [],
+    JSON.stringify(problems));
+});
+
+test('checks 1-3: a key named only in another key\'s question still reads inert-config-key', () => {
+  const problems = run(['--root', walkTextRoot({ question: 'Does it matter without demo.other?' })]).problems;
+  assert.ok(problems.some((x) => x.kind === 'inert-config-key' && x.detail === 'demo.other'),
+    JSON.stringify(problems));
+});
