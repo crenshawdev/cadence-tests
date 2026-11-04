@@ -1,12 +1,16 @@
 // @ts-check
-// Tests for lib/skim.mjs. The load-bearing property is LINE FIDELITY: every
-// case asserts the output line count equals the input's, because a skim that
-// shifts lines hands an agent references that silently point at the wrong code.
+// Tests for lib/skim.mjs and its entry script. The load-bearing property is
+// LINE FIDELITY: every case asserts the output line count equals the input's,
+// because a skim that shifts lines hands an agent references that silently point
+// at the wrong code. The entry script is spawned, never imported: it reads
+// process.argv at top level.
 'use strict';
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { skim, skimStats, SYNTAX } from '../cadence-core/bin/lib/skim.mjs';
@@ -109,4 +113,46 @@ test('every shipped .mjs skims without losing a line', () => {
     }
   }
   assert.ok(checked > 20, `expected the real tree, saw ${checked} files`);
+});
+
+// The entry script, spawned with the inherited environment so a coverage run
+// keeps NODE_V8_COVERAGE and the child reports its lines.
+const SKIM = join(HERE, 'skim.mjs');
+
+/** @param {string[]} args */
+const runSkim = (args) => spawnSync(process.execPath, [SKIM, ...args], { encoding: 'utf8' });
+
+test('the entry script prints the source with comments gone and numbers intact', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'skim-'));
+  try {
+    const file = join(dir, 'a.mjs');
+    writeFileSync(file, 'const a = 1; // trailing\n// whole line\nconst b = 2;\n');
+    const r = runSkim([file]);
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, '1\tconst a = 1;\n2\t\n3\tconst b = 2;\n4\t');
+    const bare = runSkim([file, '--no-numbers']);
+    assert.equal(bare.stdout, 'const a = 1;\n\nconst b = 2;\n');
+    const stats = JSON.parse(execFileSync(process.execPath, [SKIM, file, '--stats'], { encoding: 'utf8' }));
+    assert.equal(stats.ok, true);
+    assert.equal(stats.file, file);
+    assert.equal(stats.lines_match, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the entry script refuses a missing argument, a missing file and an unsupported extension', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'skim-'));
+  try {
+    assert.equal(JSON.parse(runSkim([]).stdout).reason, 'missing-file');
+    assert.equal(JSON.parse(runSkim([join(dir, 'nope.mjs')]).stdout).reason, 'no-such-file');
+    const py = join(dir, 'a.py');
+    writeFileSync(py, 'x = 1\n');
+    const out = JSON.parse(runSkim([py]).stdout);
+    assert.equal(out.ok, false);
+    assert.equal(out.reason, 'unsupported-extension');
+    assert.equal(out.ext, '.py');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

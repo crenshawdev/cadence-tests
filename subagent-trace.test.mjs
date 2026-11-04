@@ -1,9 +1,10 @@
 // @ts-check
 // subagent-trace.test.mjs - the rule behind the `SubagentStop` hook, driven
-// against synthetic payload/render pairs. No hook, no filesystem, no host: the
-// rule is pure by construction (lib/subagent-trace.mjs's header) and this is
-// what proves it, because the live path can only be exercised by a real
-// subagent dispatch inside the host.
+// against synthetic payload/render pairs: the rule is pure by construction
+// (lib/subagent-trace.mjs's header) and these cases need no host. The foot of
+// the file spawns the hook itself against a fixture project, for the one thing
+// only the process boundary shows: silence on every stream, exit 0, and the
+// event it appends. The live path in a real subagent dispatch stays the host's.
 //
 // The answer is a LIST of events in append order (D-08), never `{...}|null`:
 // one stop can owe the record more than one event, and DO NOTHING is the
@@ -20,7 +21,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { closeForStop } from '../cadence-core/bin/lib/subagent-trace.mjs';
+import { appendEvent } from '../cadence-core/bin/lib/trace.mjs';
 
 /** One `unpaired[]` row, the shape `renderTrace(...)` returns. */
 const open = (role, plan, ts, extra) => ({ corr: '2-abc1234', phase: '2', plan, ts, role, ...extra });
@@ -798,4 +805,59 @@ test('stop: an effort does not buy a fact for a payload with no agent_id', () =>
       { transcript: atEffort('high', { stop: 'tool_use' }) }),
     [],
   );
+});
+
+// --- the hook as a process --------------------------------------------------
+// Spawned, never imported: the script ends in process.exit(0). The environment
+// is inherited so a coverage run keeps NODE_V8_COVERAGE.
+
+const HOOK = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'subagent-trace.mjs');
+
+/** A project with `.planning/` and one open executor dispatch; returns its dir and trace path. */
+function fixtureProject() {
+  const project = mkdtempSync(join(tmpdir(), 'subagent-trace-'));
+  const planning = join(project, '.planning');
+  mkdirSync(planning, { recursive: true });
+  appendEvent(planning, { phase: 1, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor' });
+  return { project, trace: join(planning, 'trace.jsonl') };
+}
+
+/** @param {string} trace @returns {any[]} */
+const events = (trace) => readFileSync(trace, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+
+/** @param {string} input */
+const runHook = (input) => spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8' });
+
+test('hook process: a Cadence stop exits 0 silently and appends a return adopting the open dispatch', () => {
+  const { project, trace } = fixtureProject();
+  try {
+    const [open] = events(trace);
+    const r = runHook(JSON.stringify({ cwd: project, agent_type: 'cadence:cad-executor-xhigh' }));
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, '');
+    assert.equal(r.stderr, '');
+    const all = events(trace);
+    assert.equal(all.length, 2);
+    assert.equal(all[1].event, 'return');
+    assert.equal(all[1].role, 'cad-executor');
+    assert.equal(all[1].corr, open.corr);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('hook process: a non-Cadence stop and malformed stdin exit 0 silently and append nothing', () => {
+  const { project, trace } = fixtureProject();
+  try {
+    const before = readFileSync(trace, 'utf8');
+    for (const input of [JSON.stringify({ cwd: project, agent_type: 'general-purpose' }), '{not json']) {
+      const r = runHook(input);
+      assert.equal(r.status, 0);
+      assert.equal(r.stdout, '');
+      assert.equal(r.stderr, '');
+    }
+    assert.equal(readFileSync(trace, 'utf8'), before);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
 });
