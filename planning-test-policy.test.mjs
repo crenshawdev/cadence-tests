@@ -259,3 +259,24 @@ test('ci-status stays pending while a job has no finished run, re-reading under 
   assert.equal(readFileSync(p.log, 'utf8').trim().split('\n').length, 2, 'one read, then one re-read after the bound');
   assert.equal(ciStatus(ciProject(runs(['self-verify', 'completed', 'success']))).answer, 'pending', 'no run for node-test is not a pass');
 });
+
+// --- a config that can't answer is not "no policy" ---------------------------
+
+test('a torn config or an invalid scope fails instead of reading as no policy', () => {
+  const torn = project(null);
+  writeFileSync(join(torn, '.planning', 'config.json'), '{"testing":{"scope":"focused"');
+  const t = policy(['check'], torn);
+  assert.deepEqual([t.ok, t.reason, t.accepted, t.gate_found], [false, 'config-unreadable', null, null]);
+  assert.deepEqual(t.problems, [t.detail]);
+  assert.equal(policy(['render'], torn).reason, 'config-unreadable');
+
+  const bogus = project({ scope: 'bogus' });
+  const b = policy(['check'], bogus);
+  assert.deepEqual([b.ok, b.reason], [false, 'invalid-scope']);
+  assert.match(b.detail, /"bogus"/);
+  assert.equal(policy(['ci-status', '--commit', SHA], bogus).reason, 'invalid-scope');
+  const read = JSON.parse(execFileSync('node', [join(PLANNING, '..', 'config.mjs'), 'get', 'testing.scope'], {
+    cwd: bogus, encoding: 'utf8', env: { ...process.env, CADENCE_GLOBAL_CONFIG: join(bogus, 'no-global.json') },
+  }));
+  assert.match(read.warnings.join(' '), /testing\.scope.*"bogus"/);
+});
