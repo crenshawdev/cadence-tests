@@ -2236,9 +2236,8 @@ test("SGT-01: the suggest seam's unset-layer defaults are config.schema.json's o
 // test would be a second copy of the fact rather than a check on it.
 //
 // Scoped to the prose READ sites, `cadence-core/workflows/` and `skills/`, and
-// deliberately NOT to `config.schema.json`, `references/config-catalog.md` or
-// `references/config-reach.md`: those three name every key by definition, so a
-// count that included them would be red forever for the wrong reason.
+// deliberately NOT to `config.schema.json` or `references/config-reach.md`:
+// those two name every key by definition, so a count that included them would be red forever for the wrong reason.
 //
 // To re-watch: `git worktree add --detach <tmp> c78cbdb`, copy this file into
 // `<tmp>/cadence-core/bin/`, run `node --test tests/prose-agreement.test.mjs`
