@@ -82,7 +82,7 @@ const WORKFLOW = `jobs:
 
 /** A rendered project whose config, file and workflow agree. `workflow` and
  *  `git` override the defaults; `src/a.js` is tracked so the include glob matches. */
-function agreeing({ workflow = WORKFLOW, git = { forge_provider: 'github' } } = {}) {
+function agreeing({ workflow = WORKFLOW, git = { forge_provider: 'github' }, tracked = true } = {}) {
   const root = project({
     scope: 'focused',
     coverage: { lines: 90, branches: 80, include: ['src/**'], commands: [COMMAND] },
@@ -95,6 +95,7 @@ function agreeing({ workflow = WORKFLOW, git = { forge_provider: 'github' } } = 
   mkdirSync(join(root, '.github', 'workflows'), { recursive: true });
   writeFileSync(join(root, '.github', 'workflows', 'test.yml'), workflow);
   assert.equal(policy(['render'], root).ok, true);
+  if (tracked) execFileSync('git', ['-C', root, 'add', POLICY]);
   return root;
 }
 
@@ -149,7 +150,7 @@ test('check fails when GitHub enforcement has no coverage command while a thresh
 });
 
 test('check reports enforcement unavailable off GitHub, and names a missing file', () => {
-  const root = agreeing({ git: { forge_provider: 'gitlab' }, workflow: 'jobs: {}\n' });
+  const root = agreeing({ git: { forge_provider: 'gitlab' }, workflow: 'jobs: {}\n', tracked: false });
   const r = policy(['check'], root);
   assert.deepEqual([r.ok, r.enforcement, r.gate_found], [true, 'unavailable', null]);
   assert.match(r.note, /"gitlab"/);
@@ -157,6 +158,12 @@ test('check reports enforcement unavailable off GitHub, and names a missing file
   const gone = policy(['check'], root);
   assert.equal(gone.ok, false);
   assert.match(gone.detail, /coverage-policy\.json is missing/);
+});
+
+test('check fails on a policy file git does not track, because CI and --base cannot read it', () => {
+  const r = policy(['check'], agreeing({ tracked: false }));
+  assert.deepEqual([r.ok, r.gate_found], [false, false]);
+  assert.match(r.detail, /not tracked by git/);
 });
 
 test('check on a project with no accepted policy says so and points at /cad-config --testing', () => {
@@ -178,7 +185,7 @@ test('an unset forge is unanswered, not another forge: check fails and ci-status
 // --- check --base: weakening against a ref ----------------------------------
 
 test('check --base names a lowered threshold, a disabled metric and a new exclude, and fails on none of them', () => {
-  const root = agreeing();
+  const root = agreeing({ tracked: false });
   const git = (...a) => execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a]);
   git('commit', '-q', '--allow-empty', '-m', 'before the policy');
   git('tag', 'empty');
