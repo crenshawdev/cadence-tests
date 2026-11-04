@@ -165,6 +165,16 @@ test('check on a project with no accepted policy says so and points at /cad-conf
   assert.match(r.hint, /\/cad-config --testing/);
 });
 
+test('an unset forge is unanswered, not another forge: check fails and ci-status says what to set', () => {
+  const root = agreeing({ git: { forge_repo: 'o/r' }, workflow: 'jobs: {}\n' });
+  const r = policy(['check'], root);
+  assert.deepEqual([r.ok, r.enforcement, r.gate_found], [false, 'unavailable', null]);
+  assert.match(r.detail, /git\.forge_provider is unset/);
+  const ci = policy(['ci-status', '--commit', 'ace48e6c1f0d'], root);
+  assert.equal(ci.answer, 'pending');
+  assert.match(ci.reason, /git\.forge_provider is unset/);
+});
+
 // --- check --base: weakening against a ref ----------------------------------
 
 test('check --base names a lowered threshold, a disabled metric and a new exclude, and fails on none of them', () => {
