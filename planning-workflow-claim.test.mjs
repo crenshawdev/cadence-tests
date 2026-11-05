@@ -31,11 +31,13 @@ function tree(repo, global) {
   return { root, git, dir: join(root, '.planning'), env: { ...process.env, CADENCE_GLOBAL_CONFIG: globalFile } };
 }
 
-async function cli(t, sub, label, dir = t.dir) {
+async function cli(t, sub, label, dir = t.dir, extra = []) {
   let stdout;
-  try { ({ stdout } = await run('node', [PLANNING, '--dir', dir, 'workflow-claim', sub, '--fire', label], { env: t.env, cwd: t.root })); } catch (e) { stdout = e.stdout; }
+  try { ({ stdout } = await run('node', [PLANNING, '--dir', dir, 'workflow-claim', sub, '--fire', label, ...extra], { env: t.env, cwd: t.root })); } catch (e) { stdout = e.stdout; }
   return JSON.parse(stdout);
 }
+
+const rel = (t, label, id, dir) => cli(t, 'release', label, dir, ['--id', id]);
 
 const claimFiles = (t) => readdirSync(join(t.root, '.git')).filter((f) => f.startsWith('cadence-workflow-claim'));
 
@@ -56,15 +58,49 @@ for (const [name, repo, global] of OFF_SHAPES) {
     assert.equal(b.launch, false);
     assert.equal(b.holder, 'diff-plan-1');
     assert.equal(typeof b.age_seconds, 'number');
-    assert.equal((await cli(t, 'release', 'diff-plan-2')).released, false);
-    assert.equal((await cli(t, 'take', 'diff-plan-2')).launch, false, 'the wrong label freed nothing');
-    assert.equal((await cli(t, 'release', 'diff-plan-1')).released, true);
-    assert.equal((await cli(t, 'release', 'diff-plan-1')).released, false, 'a retried release is fine');
+    assert.equal(typeof a.id, 'string'); assert.equal(b.holder_id, a.id); assert.equal(b.id, undefined);
+    assert.equal((await rel(t, 'diff-plan-2', 'not-the-id')).released, false);
+    assert.equal((await cli(t, 'take', 'diff-plan-2')).launch, false, 'the wrong id freed nothing');
+    assert.equal((await rel(t, 'diff-plan-1', a.id)).released, true);
+    assert.equal((await rel(t, 'diff-plan-1', a.id)).released, false, 'a retried release is fine');
     assert.equal((await cli(t, 'take', 'diff-plan-2')).launch, true);
     assert.equal(t.git('status', '--porcelain'), '');
     assert.deepEqual(claimFiles(t), ['cadence-workflow-claim'], 'no temp file is left beside the claim');
   });
 }
+
+test('off: a release with the old claim\'s id leaves a new claim on the same label alone', async () => {
+  const t = tree(null, null);
+  const old = await cli(t, 'take', 'analyzer-7');
+  assert.equal((await rel(t, 'analyzer-7', old.id)).released, true);
+  const fresh = await cli(t, 'take', 'analyzer-7');
+  assert.equal(fresh.launch, true); assert.notEqual(fresh.id, old.id);
+  const late = await rel(t, 'analyzer-7', old.id);
+  assert.equal(late.released, false); assert.equal(late.holder_id, fresh.id);
+  assert.equal((await cli(t, 'take', 'analyzer-8')).launch, false, 'the new claim is still held');
+  assert.equal((await rel(t, 'analyzer-7', fresh.id)).released, true);
+  assert.equal((await rel(t, 'analyzer-7', fresh.id)).released, false, 'a repeat is idempotent');
+  assert.deepEqual(claimFiles(t), []);
+});
+
+test('off: a claim with no id is freed only by --stale, never by an id', async () => {
+  const t = tree(null, null);
+  writeFileSync(join(t.root, '.git', 'cadence-workflow-claim'), JSON.stringify({ label: 'old-1', at: Date.now() - 5000 }));
+  const lose = await cli(t, 'take', 'new-1');
+  assert.equal(lose.launch, false); assert.equal(lose.holder, 'old-1'); assert.equal(lose.holder_id, null);
+  assert.equal((await rel(t, 'old-1', 'anything')).released, false);
+  assert.equal((await cli(t, 'release', 'old-1', t.dir, ['--stale'])).released, true);
+  assert.equal((await cli(t, 'take', 'new-1')).launch, true);
+  const live = await cli(t, 'take', 'new-2');
+  assert.equal(live.launch, false);
+  assert.equal((await cli(t, 'release', 'new-1', t.dir, ['--stale'])).released, false, '--stale never frees a claim that has an id');
+});
+
+test('a release with neither --id nor --stale is refused', async () => {
+  const t = tree(null, null);
+  const r = await cli(t, 'release', 'diff-plan-1');
+  assert.equal(r.ok, false); assert.equal(r.reason, 'bad-args');
+});
 
 test('on in both layers: two claims both launch and no file exists', async () => {
   const t = tree(ON, ON);
