@@ -175,6 +175,20 @@ test('review-panel: a voice whose wrapper launched keeps its envelope and model 
   assert.deepEqual([noLine.voices[0].envelope, noLine.voices[0].model], [undefined, undefined]);
 });
 
+test('review-panel: an ok:true reply with no findings array is a failed return that keeps the envelope, and with no other voice the fallback runs', async () => {
+  const h = host((label) => (label.startsWith('provider') ? { ok: true } : { findings: [] }));
+  const out = await runScript(PANEL, h, PROV_ARGS);
+  const v = out.voices[0];
+  assert.equal(v.ran, false);
+  assert.match(v.reason, /ok:true with no findings array/);
+  assert.deepEqual([v.envelope, v.model], ['/tmp/cad-x/openai.envelope.json', 'gpt-5']);
+  assert.deepEqual(out.voices.slice(1).map((x) => [x.voice, x.ran, x.fallback]), [['claude-subagent', true, true]]);
+  assert.equal(h.calls.filter((c) => c.opts.label.startsWith('reviewer')).length, 1, 'the fallback ran once');
+  // a real empty list is still a clean review, not a failed return
+  const clean = await runScript(PANEL, host(() => ({ ok: true, findings: [] })), PROV_ARGS);
+  assert.deepEqual([clean.voices.length, clean.voices[0].ran], [1, true]);
+});
+
 test('review-panel: a seam line naming CLAUDE_PLUGIN_ROOT, or no wrapper type, starts no agent for that provider', async () => {
   for (const bad of [
     { ...PROV_ARGS, providers: { openai: { ...PROV_ARGS.providers.openai, line: 'node "${CLAUDE_PLUGIN_ROOT}/x.mjs" review' } } },
