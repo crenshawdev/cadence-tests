@@ -538,3 +538,15 @@ test('analyzer: the workflow-run --analyzer line in context.md carries a literal
   assert.ok(!call.includes('$D'), 'a shell variable does not survive into the notice turn');
   assert.match(call, /--out-dir <[^>]+>/);
 });
+
+test('analyzer: a merged decision keeps two alternatives in reader order, and an Unclear item with none says None named.', async () => {
+  const h = readers({
+    similar: { assumptions: [assume('A', 'The seam owns the write', 'Likely', ['x.js'], { alternatives: ['one', 'two'] }), assume('A', 'Nobody knows', 'Unclear', ['y.js'], { alternatives: [] })], research: [] },
+    flow: { assumptions: [assume('A', 'the seam owns the write', 'Likely', ['z.js'], { alternatives: ['three', 'four'] })], research: [] },
+    keep: null,
+  });
+  const p = parseReport((await runScript(ANALYZER, h, AARGS)).report);
+  const items = p.areas.flatMap((x) => x.items);
+  assert.deepEqual(items.find((i) => i.decision === 'The seam owns the write').alternatives, ['one', 'two']);
+  assert.deepEqual(items.find((i) => i.decision === 'Nobody knows').alternatives, ['None named.']);
+});
