@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, existsSync, writeFileSync, mkdtempSync, symlinkSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { basename, join, dirname, relative } from 'node:path';
@@ -993,11 +993,11 @@ test('SCP-01: the SHIPPED keys carrying the marker are the ones that authorize, 
     assert.equal(shipped[k].repo_only, undefined, `${k} carries no repo_only marker`);
   }
 
-  // `src: "repo"` means "settable in either layer" and 32 keys carry it -
+  // `src: "repo"` means "settable in either layer" and 34 keys carry it -
   // `granularity` and `review.mode` among them, keys a user legitimately pins
   // machine-wide - so no key may inherit the refusal from it.
   const srcRepo = Object.keys(shipped).filter((k) => shipped[k].src === 'repo');
-  assert.equal(srcRepo.length, 32, JSON.stringify(srcRepo));
+  assert.equal(srcRepo.length, 34, JSON.stringify(srcRepo));
   for (const k of ['granularity', 'review.mode', 'git.auto_close']) {
     assert.ok(srcRepo.includes(k), `${k} carries src:"repo"`);
   }
@@ -2202,3 +2202,74 @@ test('a file holding a legacy switch still takes a set of another key, and unset
   const after = run(['get', '--file', f, 'granularity'], gpath);
   assert.equal(after.warnings, undefined, JSON.stringify(after.warnings));
 });
+
+// --- the two workflow switches: on only when both layers say so ----------------
+
+const WORKFLOW_SWITCHES = ['workflow.use_workflows', 'workflow.multi_workflow'];
+
+// Runs `workflow-layers` in a temporary repo. repo/global are objects (written as JSON), raw strings (written as
+// is, to make a torn layer) or undefined (no file). 'self' points the global path at the repo's own config.
+function workflowLayersFor(key, repo, global) {
+  const root = mkdtempSync(join(tmpdir(), 'cad-wf-'));
+  mkdirSync(join(root, '.planning'));
+  const repoFile = join(root, '.planning', 'config.json');
+  const put = (file, v) => { if (v !== undefined) writeFileSync(file, typeof v === 'string' ? v : JSON.stringify(v)); };
+  put(repoFile, repo);
+  const globalFile = global === 'self' ? repoFile : join(root, 'global.json');
+  if (global !== 'self') put(globalFile, global);
+  const env = { ...process.env, CADENCE_GLOBAL_CONFIG: globalFile };
+  const stdout = execFileSync('node', [CONFIG, 'workflow-layers'], { encoding: 'utf8', env, cwd: root });
+  const r = JSON.parse(stdout);
+  return { r, state: r.keys[key], root, repoFile, globalFile };
+}
+
+test('a workflow switch is on only when both layers set an explicit true', () => {
+  for (const key of WORKFLOW_SWITCHES) {
+    const on = {}; key.split('.').reduce((o, p, i, a) => (o[p] = i === a.length - 1 ? true : {}), on);
+    const str = {}; key.split('.').reduce((o, p, i, a) => (o[p] = i === a.length - 1 ? 'true' : {}), str);
+    const cases = [
+      ['neither', undefined, undefined, false],
+      ['repo only', on, undefined, false],
+      ['global only', undefined, on, false],
+      ['both', on, on, true],
+      ['truthy string in both', str, str, false],
+      ['global resolves to the repo config', on, 'self', false],
+      ['repo layer unreadable', '{ torn', on, false],
+      ['global layer unreadable', on, '[1]', false],
+    ];
+    for (const [label, repo, global, want] of cases) {
+      const { r, state, repoFile, globalFile } = workflowLayersFor(key, repo, global);
+      assert.equal(r.ok, true, `${key} ${label}`);
+      assert.equal(state.on, want, `${key} ${label}: ${JSON.stringify(state)}`);
+      if (label === 'repo layer unreadable') { assert.equal(state.repo, 'unreadable'); assert.deepEqual(r.unreadable, [repoFile]); }
+      if (label === 'global layer unreadable') { assert.equal(state.global, 'unreadable'); assert.deepEqual(r.unreadable, [globalFile]); }
+      if (label === 'global resolves to the repo config') assert.equal(r.shared, true);
+    }
+    // the merged read is why nothing decides on it: a repo-only true still reads true there
+    const { root } = workflowLayersFor(key, on, undefined);
+    const merged = JSON.parse(execFileSync('node', [CONFIG, 'get', '--file', join(root, '.planning', 'config.json'), key],
+      { encoding: 'utf8', env: { ...process.env, CADENCE_GLOBAL_CONFIG: join(root, 'none.json') } }));
+    assert.equal(merged.values[key], true);
+  }
+});
+
+test('the workflow switches default false, refuse a non-boolean, and warn in the walk', () => {
+  const got = run(['get', ...WORKFLOW_SWITCHES], join(dir, 'no-wf-global.json'));
+  for (const key of WORKFLOW_SWITCHES) {
+    assert.equal(got.values[key], false);
+    const bad = run(['set', '--file', join(dir, 'wf-bad.json'), `${key}=yes`], join(dir, 'no-wf-global.json'));
+    assert.equal(bad.ok, false);
+    assert.equal(bad.reason, 'invalid');
+  }
+  const walk = JSON.parse(run_raw(['keys', '--walk'])).walk.flatMap((g) => g.keys).filter((row) => WORKFLOW_SWITCHES.includes(row.key));
+  assert.equal(walk.length, 2);
+  for (const row of walk) {
+    const text = JSON.stringify(row);
+    assert.match(text, /usage/i, `${row.key} warns about usage`);
+    assert.match(text, /both set it/, `${row.key} says both layers are needed`);
+  }
+});
+
+function run_raw(args) {
+  return execFileSync('node', [CONFIG, ...args], { encoding: 'utf8', env: { ...process.env, CADENCE_GLOBAL_CONFIG: join(dir, 'no-wf-global.json') } });
+}
