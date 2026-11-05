@@ -565,3 +565,81 @@ test('workflow-run: once the notice\'s totals are on the record, a retry with a 
   assert.equal(out.brackets[0].tokens, 54242);
   assert.deepEqual(out.unpaired, []);
 });
+
+// --- the analyzer arm: a finished analyzer run to its report on disk -----------------------------------------------------------
+
+const REPORT = '## Assumptions\n\n### Area: Storage\n\n- **Decision:** Rows live in the run record, é\n  **Certainty:** Confident\n  **Evidence:** `a.js`\n  **If wrong:** a plan is rebuilt\n\n## Needs external research\n\nNone.\n';
+/** The fixture's run with three analyzer readers in place of its review rows, and the analyzer script's result. */
+function analyzerRun(result = { report: REPORT, nulls: [] }) {
+  const run = clone(FIXTURE);
+  const [first, second, third] = rowsOf(run);
+  for (const [row, label] of [[first, 'reader similar'], [second, 'reader flow'], [third, 'reader keep']]) {
+    row.label = label;
+    row.agentType = 'cadence:cad-assumptions-analyzer-high';
+  }
+  run.workflowName = 'analyzer';
+  run.result = result;
+  return run;
+}
+const analyze = (t, run, ...more) => {
+  const runFile = join(t.repo, 'run.json');
+  writeFileSync(runFile, typeof run === 'string' ? run : JSON.stringify(run));
+  return cli(t, ['workflow-run', '--phase', '1', '--analyzer', '--run-file', runFile, '--out-dir', t.out, '--payload-ref', '.planning/ROADMAP.md', ...more]);
+};
+
+test('workflow-run --analyzer: a run with a report writes it byte-identical to the file\'s result and prints its path and the readers that returned nothing', () => {
+  const t = tree();
+  const r = analyze(t, analyzerRun({ report: REPORT, nulls: ['behavior'] }));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(readFileSync(r.report, 'utf8'), REPORT);
+  assert.deepEqual(r.nulls, ['behavior']);
+  assert.equal(r.run_id, 'wf_9d70aeab-5d0');
+  assert.deepEqual(emptyOut(t), ['analysis.md'], 'the report is the only file, and no review payload is written');
+  // the flag works wherever it sits on the line
+  const t2 = tree();
+  const runFile = join(t2.repo, 'run.json');
+  writeFileSync(runFile, JSON.stringify(analyzerRun()));
+  const last = cli(t2, ['workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', t2.out, '--payload-ref', 'x', '--analyzer']);
+  assert.deepEqual([last.ok, readFileSync(last.report, 'utf8')], [true, REPORT]);
+});
+
+test('workflow-run --analyzer: a run with no report is ok:false under its own reason, names the readers, and writes no report', () => {
+  const t = tree();
+  const r = analyze(t, analyzerRun({ report: null, nulls: ['similar features', 'behavior', 'what must stay intact'] }));
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'analyzer-no-report');
+  assert.match(r.detail, /similar features, behavior, what must stay intact/);
+  assert.deepEqual(emptyOut(t), []);
+  // nothing in the report slot of any other shape reads as a report either
+  for (const result of [{ report: '  \n', nulls: [] }, { report: null, nulls: [] }]) {
+    assert.equal(analyze(tree(), analyzerRun(result)).reason, 'analyzer-no-report', JSON.stringify(result));
+  }
+});
+
+test('workflow-run --analyzer: a run that is not a finished analyzer run is refused with the reason the review arm gives', () => {
+  for (const [run, reason] of [
+    [KILLED, 'run-not-completed'],
+    [FIXTURE, 'run-bad-result'],
+    [analyzerRun('the analyzer started no agent'), 'run-bad-result'],
+    [analyzerRun({ report: 7, nulls: [] }), 'run-bad-result'],
+    [analyzerRun({ report: REPORT }), 'run-bad-result'],
+    ['{', 'run-not-json'],
+  ]) {
+    const t = tree();
+    const r = analyze(t, run);
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, reason, JSON.stringify(r));
+    assert.deepEqual(emptyOut(t), []);
+  }
+  // without the flag the same analyzer run is still judged as a review panel's
+  const t = tree();
+  const runFile = join(t.repo, 'run.json');
+  writeFileSync(runFile, JSON.stringify(analyzerRun()));
+  assert.equal(cli(t, ['workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', t.out, '--payload-ref', 'x']).reason, 'run-bad-result');
+});
+
+test('workflow-run --analyzer: the door asks for the same flags the review arm does', () => {
+  const t = tree();
+  assert.equal(cli(t, ['workflow-run', '--phase', '1', '--analyzer', '--run-file', 'x', '--out-dir', t.out]).reason, 'bad-args', 'no --payload-ref');
+  assert.equal(cli(t, ['workflow-run', '--analyzer', '--run-file', 'x', '--out-dir', t.out, '--payload-ref', 'y']).reason, 'bad-args', 'no --phase');
+});
