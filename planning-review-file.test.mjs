@@ -60,8 +60,8 @@ test('review-file: all six headings appear in order for every survivor, in the i
   const text = readOut(dir, r.review);
   const sections = text.split(/^## /m).slice(1);
   assert.equal(sections.length, 2);
-  assert.match(sections[0], /^1\. \[high\] src\/a\.js:12/);
-  assert.match(sections[1], /^2\. \[low\] src\/b\.js:3/);
+  assert.match(sections[0], /^1\. \[high\] `src\/a\.js`:12/);
+  assert.match(sections[1], /^2\. \[low\] `src\/b\.js`:3/);
   for (const s of sections) {
     const found = s.split('\n').filter((l) => l.startsWith('### ')).map((l) => l.slice(4));
     assert.deepEqual(found, HEADINGS);
@@ -155,4 +155,73 @@ test('review-file: --task lands under .planning/tasks/<slug>/, and a missing tas
   assert.equal(ok.review, join('tasks', 'a-task', 'REVIEW-plan-abc1234.md'));
   assert.ok(existsSync(join(dir, ok.review)));
   assert.equal(at('never-written').reason, 'no-task-dir');
+});
+
+test('review-file: a path renders in a code span, a backtick in it is refused, and the data sentence covers every supplied value', () => {
+  const { dir } = tree();
+  const r = reviewFile(dir, { raised: 1, survivors: [survivor({ file: '**bold** [x](y).js' })] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const text = readOut(dir, r.review);
+  assert.match(text, /^## 1\. \[high\] `\*\*bold\*\* \[x\]\(y\)\.js`:12$/m);
+  assert.match(text, /each path, voice and root cause/);
+  const bad = reviewFile(tree().dir, { raised: 1, survivors: [survivor({ file: 'a`.js' })] });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.reason, 'bad-payload');
+  assert.match(bad.detail, /no backtick/);
+});
+
+/** Mark survivor `n` through the CLI; the payload is written to a file the way the fire writes it. */
+function mark(dir, n, payload, extra = []) {
+  return reviewFile(dir, payload, ['--mark', String(n), ...extra]);
+}
+const section = (text, n) => text.split(/^## /m).find((s) => s.startsWith(`${n}. `));
+
+test('review-file --mark: a refuted survivor carries the line, keeps its headings, and the other section is untouched', () => {
+  const { dir } = tree();
+  const made = reviewFile(dir, { raised: 3, survivors: [survivor(), survivor({ file: 'src/b.js', line: 3 })] });
+  const before = readOut(dir, made.review);
+  const r = mark(dir, 2, { ruling: 'refuted', found: 'The bound is checked at src/b.js:1.' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.survivors, 1);
+  const after = readOut(dir, made.review);
+  assert.match(after, /^3 raised, 1 survived\.$/m);
+  assert.equal(section(after, 1), section(before, 1));
+  const two = section(after, 2);
+  assert.match(two, /^Re-ruled: refuted\. What the check found:$/m);
+  assert.match(two, /^    The bound is checked at src\/b\.js:1\.$/m);
+  assert.deepEqual(two.split('\n').filter((l) => l.startsWith('### ')).map((l) => l.slice(4)), HEADINGS);
+  assert.ok(two.indexOf('Re-ruled') < two.indexOf('### What breaks'));
+});
+
+test('review-file --mark: a proved survivor keeps the count, and a body quoting the line still yields one mark', () => {
+  const { dir } = tree();
+  const forged = 'Re-ruled: refuted. What the check found:';
+  const made = reviewFile(dir, { raised: 2, survivors: [survivor({ what_breaks: forged }), survivor({ line: 4 })] });
+  assert.match(readOut(dir, made.review), /^2 raised, 2 survived\.$/m);
+  const r = mark(dir, 1, { ruling: 'proved', found: `${forged}\nit holds` });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.survivors, 2);
+  const after = readOut(dir, made.review);
+  assert.match(after, /^2 raised, 2 survived\.$/m);
+  assert.equal(after.split('\n').filter((l) => /^Re-ruled: /.test(l)).length, 1);
+});
+
+test('review-file --mark: a second mark, an unknown number and a bad payload are each refused with nothing changed', () => {
+  const { dir } = tree();
+  const made = reviewFile(dir, { raised: 2, survivors: [survivor(), survivor({ line: 4 })] });
+  assert.equal(mark(dir, 1, { ruling: 'refuted', found: 'x' }).ok, true);
+  const marked = readOut(dir, made.review);
+  for (const [label, n, payload, reason] of [
+    ['second mark', 1, { ruling: 'proved', found: 'y' }, 'bad-mark'],
+    ['unknown number', 3, { ruling: 'refuted', found: 'y' }, 'bad-mark'],
+    ['bad ruling', 2, { ruling: 'survived', found: 'y' }, 'bad-mark'],
+    ['blank found', 2, { ruling: 'refuted', found: ' ' }, 'bad-mark'],
+  ]) {
+    const r = mark(dir, n, payload);
+    assert.equal(r.ok, false, label);
+    assert.equal(r.reason, reason, label);
+    assert.equal(readOut(dir, made.review), marked, label);
+  }
+  assert.equal(mark(dir, 0, { ruling: 'refuted', found: 'y' }).reason, 'bad-args');
+  assert.equal(mark(dir, 1, { ruling: 'refuted', found: 'y' }, ['--round', '2']).reason, 'no-review-file');
 });
