@@ -401,3 +401,129 @@ test('workflow-run: trace suggest and the window report run on that record and c
   assert.equal(w.unbudgeted['cad-reviewer'], undefined, 'the reviewer keeps its ceiling');
   assert.equal(w.compared, 1);
 });
+
+// --- a provider voice: the envelope on disk wins over the wrapper's retyping ---------------------------------
+
+/** The fixture's local voice replaced by one proved finding, plus an `openai` voice whose envelope is written (or not) beside the run. */
+function providerRun(t, retyped, env, verdicts, extra = {}) {
+  const run = runWith([finding('local one', 'medium')], [verdict('proved', { severity: 'medium' })]);
+  const envelope = join(t.repo, 'openai.envelope.json');
+  if (env !== null) writeFileSync(envelope, typeof env === 'string' ? env : JSON.stringify(env));
+  run.result.voices.push({ voice: 'openai', ran: true, model: 'gpt-5', result: { findings: retyped }, rulings: verdicts.map((ruling, index) => ({ index, finding: retyped[index], ruling })), envelope, ...extra });
+  return run;
+}
+const mine = (claim) => finding(claim, 'medium');
+const openaiRulings = (r) => readJson(r.payload).voices.find((v) => v.voice === 'openai').rulings;
+
+test('workflow-run: a retyped claim one character off loses to the envelope, lands unruled, and the record stores the envelope\'s claim once answered', () => {
+  const t = tree();
+  const real = mine('the bound is off by one');
+  const off = { ...real, claim: 'the bound is off by onE' };
+  const run = providerRun(t, [off, mine('second')], { ok: true, findings: [real, mine('second')] }, [verdict('proved', { severity: 'medium' }), verdict('proved', { severity: 'medium' })]);
+  const r = seam(t, run);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.counts, { raised: 3, survived: 2, downgraded: 0, refuted: 0, unruled: 1 });
+  assert.deepEqual([r.unruled[0].voice, r.unruled[0].index], ['openai', 0]);
+  assert.match(r.unruled[0].reason, /differs from the copy its checker read/);
+  assert.deepEqual(r.providers, [{ voice: 'openai', source: 'envelope' }]);
+  assert.equal(r.ready, false);
+  assert.equal(adjudicate(t, r.payload).ok, false, 'the record refuses the payload while the finding is unruled');
+  assert.equal(readJson(r.payload).voices[1].returned.findings[0].claim, 'the bound is off by one', 'returned is the envelope\'s');
+
+  const answered = seam(t, run, [{ voice: 'openai', index: 0, ruling: 'survived', ...texts() }]);
+  assert.equal(answered.ready, true, answered.not_ready);
+  assert.equal(adjudicate(t, answered.payload).ok, true);
+  const record = readJson(join(t.dir, 'phases', '1', 'ADJUDICATION-diff-abc1234.json'));
+  assert.equal(record.entries.find((e) => e.voice === 'openai' && e.claim.startsWith('the bound')).claim, 'the bound is off by one');
+});
+
+test('workflow-run: a finding the agent left out lands unruled, and a retyped one the envelope lacks is dropped and named', () => {
+  const t = tree();
+  const run = providerRun(t, [mine('kept'), mine('invented')], { ok: true, findings: [mine('kept'), mine('left out')] },
+    [verdict('proved', { severity: 'medium' }), verdict('proved', { severity: 'medium' })]);
+  const r = seam(t, run);
+  assert.deepEqual(r.counts, { raised: 3, survived: 2, downgraded: 0, refuted: 0, unruled: 1 });
+  assert.deepEqual([r.unruled[0].voice, r.unruled[0].index], ['openai', 1]);
+  assert.deepEqual(openaiRulings(r).map((x) => x.claim), ['kept']);
+  assert.equal(r.notes.length, 1);
+  assert.match(r.notes[0], /openai: the agent returned a finding the provider's own output does not hold, so it was dropped \(src\/a\.js:3\)/);
+});
+
+test('workflow-run: a missing or unreadable envelope uses the agent\'s return and says so; redactions and warnings reach the envelope', () => {
+  for (const env of [null, '{ torn', JSON.stringify({ ok: true, findings: 'x' })]) {
+    const t = tree();
+    const run = providerRun(t, [mine('only')], env, [verdict('proved', { severity: 'medium' })], { redactions: 3, warnings: ['key file is group-readable'] });
+    const r = seam(t, run);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(r.counts, { raised: 2, survived: 2, downgraded: 0, refuted: 0, unruled: 0 });
+    assert.deepEqual(r.providers, [{ voice: 'openai', source: 'agent-return', redactions: 3, warnings: ['key file is group-readable'] }]);
+    assert.match(r.notes[0], /openai: no readable envelope at .*openai\.envelope\.json, so the agent's own return was used/);
+  }
+  const t = tree();
+  const run = providerRun(t, [mine('only')], { ok: true, findings: [mine('only')], redactions: 2, warnings: ['from disk'] }, [verdict('proved', { severity: 'medium' })], { redactions: 9 });
+  assert.deepEqual(seam(t, run).providers, [{ voice: 'openai', source: 'envelope', redactions: 2, warnings: ['from disk'] }], 'the file\'s figures win');
+});
+
+test('workflow-run: an envelope that says ok:false drops the voice whatever the agent claimed', () => {
+  const t = tree();
+  const run = providerRun(t, [mine('claimed')], { ok: false, reason: 'transport' }, [verdict('proved', { severity: 'medium' })]);
+  const r = seam(t, run);
+  assert.deepEqual(r.voices, ['claude-subagent']);
+  assert.deepEqual(r.dropped, [{ voice: 'openai', reason: 'the provider\'s own output says transport' }]);
+  assert.deepEqual(r.counts, { raised: 1, survived: 1, downgraded: 0, refuted: 0, unruled: 0 });
+});
+
+// --- Plan 4's three confirmed defects ----------------------------------------------------------------------------
+
+test('workflow-run: a finding whose severity is not one of the four is refused run-bad-result, never a crash', () => {
+  for (const severity of [{ toString: null }, 'critical', 3, null]) {
+    const t = tree();
+    const run = runWith([{ ...finding('x'), severity }], [verdict('proved')]);
+    const r = seam(t, run);
+    assert.equal(r.ok, false, JSON.stringify(severity));
+    assert.equal(r.reason, 'run-bad-result');
+    assert.match(r.detail, /severity that is not one of/);
+    assert.deepEqual(emptyOut(t), []);
+  }
+  // the same door guards an envelope's findings: one with a bad severity makes the envelope unusable, not the call a crash
+  const t = tree();
+  const run = providerRun(t, [mine('only')], { ok: true, findings: [{ ...mine('only'), severity: { toString: null } }] }, [verdict('proved', { severity: 'medium' })]);
+  const r = seam(t, run);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.providers[0].source, 'agent-return');
+});
+
+test('workflow-run: a retry after a dispatch landed and its terminal did not writes only that terminal', () => {
+  const t = tree();
+  assert.equal(seam(t, FIXTURE).brackets.written, 3);
+  // lose one worker's terminal, the way a crash between the two appends would
+  const file = join(t.dir, 'trace.jsonl');
+  const lines = readFileSync(file, 'utf8').split('\n').filter(Boolean);
+  const victim = lines.map((l) => JSON.parse(l)).filter((e) => e.family === 'lifecycle' && e.event === 'return').pop();
+  writeFileSync(file, `${lines.filter((l) => { const e = JSON.parse(l); return !(e.family === 'lifecycle' && e.event === 'return' && e.plan === victim.plan); }).join('\n')}\n`);
+  assert.equal(render(t).unpaired.length, 1, 'the cut left one bracket open');
+
+  const again = seam(t, FIXTURE);
+  assert.deepEqual([again.brackets.written, again.brackets.already, again.brackets.failed], [1, 2, []]);
+  const out = render(t);
+  assert.deepEqual(out.unpaired, []);
+  assert.equal(out.brackets.length, 3);
+  assert.equal(rawEvents(t).filter((e) => e.family === 'lifecycle' && e.event === 'dispatch').length, 3, 'no second dispatch');
+});
+
+test('workflow-run: once the notice\'s totals are on the record, a retry with a readable file bills no agents on top', () => {
+  const t = tree();
+  const runFile = join(t.repo, 'wf_9d70aeab-5d0.json');
+  const args = ['workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', t.out, '--payload-ref', REF, '--notice-tokens', '54242', '--notice-turns', '11', '--notice-duration-ms', '6072'];
+  assert.equal(cli(t, args).reason, 'run-unreadable');
+  assert.equal(render(t).brackets.length, 1);
+
+  writeFileSync(runFile, JSON.stringify(FIXTURE));
+  const retry = cli(t, args);
+  assert.equal(retry.ok, true, JSON.stringify(retry));
+  assert.deepEqual([retry.brackets.source, retry.brackets.written, retry.brackets.already], ['run-file', 0, 3]);
+  const out = render(t);
+  assert.equal(out.brackets.length, 1, 'only the notice\'s bracket');
+  assert.equal(out.brackets[0].tokens, 54242);
+  assert.deepEqual(out.unpaired, []);
+});

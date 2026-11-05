@@ -108,7 +108,7 @@ test('review-panel: a checker that throws leaves null in its slot and its voice\
   assert.ok(h.logs.some((m) => /checker claude-subagent 2 failed/.test(m)));
 });
 
-test('review-panel: a reviewer that dies is named and the provider is a voice that did not run', async () => {
+test('review-panel: a reviewer that dies is named, and a provider with no seam line passed is a voice that did not run', async () => {
   const dead = host(() => null);
   const out = await runScript(PANEL, dead, ARGS);
   assert.equal(out.voices[0].ran, false);
@@ -118,6 +118,64 @@ test('review-panel: a reviewer that dies is named and the provider is a voice th
   assert.equal(prov.calls.length, 1);
   assert.equal(out2.voices[1].ran, false);
   assert.match(out2.voices[1].reason, /openai did not run/);
+});
+
+// --- a provider voice runs through a wrapper agent ---------------------------------------------------------------
+const LINE = 'node "/opt/cadence/cadence-core/bin/review-provider.mjs" review --provider openai --model gpt-5 --effort high --trigger diff --payload "/tmp/cad-x/payload.json"';
+const PROV_ARGS = {
+  ...ARGS, reviewers: ['openai'], wrapper_agent_type: 'cadence:cad-reviewer-low', model: 'sonnet',
+  providers: { openai: { line: LINE, envelope: '/tmp/cad-x/openai.envelope.json', timeout_ms: 560000, model: 'gpt-5' } },
+};
+const envelope = (more = {}) => ({ ok: true, findings: [find('p.js', 'provider one'), find('q.js', 'provider two')], ...more });
+
+test('review-panel: a provider voice starts one wrapper holding the exact line and timeout, with three tools denied, and its findings are checked', async () => {
+  const h = host((label) => (label.startsWith('provider') ? envelope({ redactions: 2, warnings: ['key file is group-readable'] }) : verdict('proved')));
+  const out = await runScript(PANEL, h, PROV_ARGS);
+  const wrappers = h.calls.filter((c) => c.opts.label.startsWith('provider '));
+  assert.equal(wrappers.length, 1);
+  const w = wrappers[0];
+  assert.ok(w.prompt.includes(LINE) && w.prompt.includes('560000') && w.prompt.includes('/tmp/cad-x/openai.envelope.json'));
+  assert.ok(!w.prompt.includes('${CLAUDE_PLUGIN_ROOT}') && !w.prompt.includes('CLAUDE_PLUGIN_ROOT'));
+  assert.deepEqual(w.opts.disallowedTools, ['Read', 'Glob', 'Grep']);
+  assert.equal(w.opts.agentType, 'cadence:cad-reviewer-low');
+  assert.equal(w.opts.model, 'sonnet');
+  assert.equal(w.opts.label, 'provider openai');
+  assert.equal(w.opts.schema.required.join(), 'ok');
+  assert.deepEqual(w.opts.schema.properties.findings, FINDING_SCHEMA.properties.findings, 'the findings shape is the reviewer schema\'s');
+  assert.deepEqual(Object.keys(w.opts.schema.properties), ['ok', 'reason', 'findings', 'redactions', 'warnings']);
+  assert.equal(h.calls.filter((c) => c.opts.label.startsWith('reviewer')).length, 0);
+  assert.equal(h.calls.filter((c) => c.opts.label.startsWith('checker openai')).length, 2, 'one checker per finding');
+  const v = out.voices[0];
+  assert.equal(v.ran, true, 'the fake host refused no spawn');
+  assert.deepEqual([v.model, v.envelope, v.redactions, v.warnings], ['gpt-5', '/tmp/cad-x/openai.envelope.json', 2, ['key file is group-readable']]);
+  assert.equal(v.rulings.length, 2);
+});
+
+test('review-panel: a provider that reports ok:false, or a wrapper that returns nothing, is named with its reason and starts no checker', async () => {
+  const refused = host((label) => (label.startsWith('provider') ? { ok: false, reason: 'no-key' } : assert.fail('a checker started')));
+  const a = await runScript(PANEL, refused, PROV_ARGS);
+  assert.deepEqual([a.voices[0].ran, a.voices[0].result], [false, null]);
+  assert.match(a.voices[0].reason, /no-key/);
+  const dead = host(() => { throw new Error('dead wrapper'); });
+  const b = await runScript(PANEL, dead, PROV_ARGS);
+  assert.equal(b.voices[0].ran, false);
+  assert.match(b.voices[0].reason, /wrapper returned nothing/);
+  assert.ok(dead.logs.some((m) => /provider openai failed/.test(m)));
+});
+
+test('review-panel: a seam line naming CLAUDE_PLUGIN_ROOT, or no wrapper type, starts no agent for that provider', async () => {
+  for (const bad of [
+    { ...PROV_ARGS, providers: { openai: { ...PROV_ARGS.providers.openai, line: 'node "${CLAUDE_PLUGIN_ROOT}/x.mjs" review' } } },
+    { ...PROV_ARGS, wrapper_agent_type: undefined },
+    { ...PROV_ARGS, providers: { openai: { ...PROV_ARGS.providers.openai, timeout_ms: 0 } } },
+    { ...PROV_ARGS, providers: { openai: { ...PROV_ARGS.providers.openai, model: '' } } },
+  ]) {
+    const h = host(() => assert.fail('an agent started'));
+    const out = await runScript(PANEL, h, bad);
+    assert.equal(h.calls.length, 0);
+    assert.equal(out.voices[0].ran, false);
+    assert.match(out.voices[0].reason, /openai did not run/);
+  }
 });
 
 test('review-panel: the finding reaches the checker as quoted data, and a checker holds no Bash', async () => {
@@ -158,23 +216,28 @@ test('review-panel: the schemas', async () => {
 });
 
 // Drift between the script's return and the seam that reads it would refuse every live run, so the real return goes through both.
-test('review-panel: its real return, placed in a run file, passes workflow-run and the record\'s own adjudication', async () => {
+test('review-panel: its real return, with a local voice and a provider voice, placed in a run file, passes workflow-run and the record\'s own adjudication', async () => {
   const mild = (file, claim, severity) => ({ file, line: 3, severity, claim, failure_scenario: `${claim} breaks` });
   const raised = [mild('a.js', 'first', 'medium'), mild('b.js', 'second', 'low'), mild('c.js', 'third', 'medium')];
+  const theirs = [mild('p.js', 'provider one', 'medium'), mild('q.js', 'provider two', 'low')];
+  const repo = mkdtempSync(join(tmpdir(), 'cad-wfs-'));
+  const envelopePath = join(repo, 'openai.envelope.json');
   const h = host((label) => {
     if (label.startsWith('reviewer')) return { findings: raised };
+    if (label.startsWith('provider')) { writeFileSync(envelopePath, JSON.stringify({ ok: true, model: 'gpt-5', findings: theirs })); return { ok: true, findings: theirs }; }
     if (label.endsWith(' 2')) return verdict('refuted', { counter_evidence: { file: 'b.js', line: 9 } });
     return label.endsWith(' 3') ? verdict('neither', { severity: 'medium' }) : verdict('proved', { severity: 'medium' });
   });
-  const out = JSON.parse(JSON.stringify(await runScript(PANEL, h, ARGS)));
+  const args = { ...PROV_ARGS, reviewers: ['claude-subagent', 'openai'], providers: { openai: { ...PROV_ARGS.providers.openai, envelope: envelopePath } } };
+  const out = JSON.parse(JSON.stringify(await runScript(PANEL, h, args)));
+  assert.deepEqual(out.voices.map((v) => [v.voice, v.ran]), [['claude-subagent', true], ['openai', true]]);
 
-  const repo = mkdtempSync(join(tmpdir(), 'cad-wfs-'));
   const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim();
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');
   mkdirSync(join(repo, '.planning', 'phases', '1'), { recursive: true });
-  writeFileSync(join(repo, 'f.js'), '1\n'); git('add', '-A'); git('commit', '-q', '-m', 'base');
+  writeFileSync(join(repo, 'f.js'), '1\n'); git('add', 'f.js'); git('commit', '-q', '-m', 'base');
   const base = git('rev-parse', 'HEAD');
-  writeFileSync(join(repo, 'f.js'), '2\n'); git('add', '-A'); git('commit', '-q', '-m', 'head');
+  writeFileSync(join(repo, 'f.js'), '2\n'); git('add', 'f.js'); git('commit', '-q', '-m', 'head');
   const head = git('rev-parse', 'HEAD');
 
   const fixture = JSON.parse(readFileSync(join(ROOT, 'tests', 'fixtures', 'workflow-run.completed.json'), 'utf8'));
@@ -185,11 +248,13 @@ test('review-panel: its real return, placed in a run file, passes workflow-run a
 
   const seam = call('workflow-run', '--phase', '1', '--run-file', join(repo, 'run.json'), '--out-dir', join(repo, 'scratch'), '--payload-ref', `${base}..${head}`);
   assert.equal(seam.ok, true, JSON.stringify(seam));
-  assert.deepEqual(seam.counts, { raised: 3, survived: 2, downgraded: 0, refuted: 1, unruled: 0 });
+  assert.deepEqual(seam.counts, { raised: 5, survived: 3, downgraded: 0, refuted: 2, unruled: 0 });
+  assert.deepEqual(seam.voices, ['claude-subagent', 'openai']);
+  assert.deepEqual(seam.providers, [{ voice: 'openai', source: 'envelope' }]);
   assert.equal(seam.ready, true, seam.not_ready);
   const adj = call('adjudication', '--phase', '1', '--trigger', 'diff', '--discriminator', 'abc1234', '--base', base, '--head', head, '--payload', seam.payload);
   assert.equal(adj.ok, true, JSON.stringify(adj));
-  assert.deepEqual(adj.counts, { raised: 3, survived: 2, downgraded: 0, refuted: 1 });
+  assert.deepEqual(adj.counts, { raised: 5, survived: 3, downgraded: 0, refuted: 2 });
   const rf = call('review-file', '--phase', '1', '--trigger', 'diff', '--discriminator', 'abc1234', '--base', base, '--head', head, '--payload', seam.review_input);
   assert.equal(rf.ok, true, JSON.stringify(rf));
 });
