@@ -189,6 +189,17 @@ test('review-panel: an ok:true reply with no findings array is a failed return t
   assert.deepEqual([clean.voices.length, clean.voices[0].ran], [1, true]);
 });
 
+test('review-panel: an envelope path outside the narrow class starts no wrapper and the voice is named as not run', async () => {
+  for (const envelope of ['/tmp/cad scratch/openai.envelope.json', '/tmp/x;rm/e.json', '/tmp/$HOME/e.json', "/tmp/it's/e.json"]) {
+    // the only agent that may start is the local fallback the emptied set owes
+    const h = host((label) => (label.startsWith('reviewer') ? { findings: [] } : assert.fail('a provider agent started')));
+    const out = await runScript(PANEL, h, { ...PROV_ARGS, providers: { openai: { ...PROV_ARGS.providers.openai, envelope } } });
+    assert.equal(out.voices[0].ran, false, envelope);
+    assert.match(out.voices[0].reason, /envelope path for openai holds a character outside/);
+    assert.equal(out.voices[0].envelope, undefined);
+  }
+});
+
 test('review-panel: a seam line naming CLAUDE_PLUGIN_ROOT, or no wrapper type, starts no agent for that provider', async () => {
   for (const bad of [
     { ...PROV_ARGS, providers: { openai: { ...PROV_ARGS.providers.openai, line: 'node "${CLAUDE_PLUGIN_ROOT}/x.mjs" review' } } },
