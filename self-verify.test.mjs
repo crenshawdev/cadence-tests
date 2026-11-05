@@ -161,8 +161,8 @@ function ladderAgents(omit = []) {
 
 /**
  * A full-tree fixture: has `.claude-plugin/plugin.json` (the isFullTree
- * marker) plus every always-expected input (#44) - the five core surface
- * dirs, `cadence-core/bin/weight-budgets.json`, `INTERNALS.md`, and the whole
+ * marker) plus every always-expected input (#44) - the six core surface
+ * dirs (workflows/ at plugin root among them), `cadence-core/bin/weight-budgets.json`, `INTERNALS.md`, and the whole
  * rung ladder RUNG_FILES names with a budget row per file - so a test can
  * delete/rename exactly one and assert the gate catches it, without the other
  * rows accumulating unrelated missing-input noise.
@@ -172,7 +172,7 @@ function fullFixture() {
   mkdirSync(join(root, '.claude-plugin'), { recursive: true });
   writeFileSync(join(root, '.claude-plugin', 'plugin.json'), '{}');
   for (const d of ['cadence-core/workflows', 'cadence-core/references',
-    'cadence-core/templates', 'cadence-core/bin', 'skills', 'agents']) {
+    'cadence-core/templates', 'cadence-core/bin', 'skills', 'agents', 'workflows']) {
     mkdirSync(join(root, d), { recursive: true });
   }
   cpSync(join(REPO, 'cadence-core', 'config.schema.json'),
@@ -2788,4 +2788,50 @@ test('checks 1-3: a key named only in another key\'s question still reads inert-
   const problems = run(['--root', walkTextRoot({ question: 'Does it matter without demo.other?' })]).problems;
   assert.ok(problems.some((x) => x.kind === 'inert-config-key' && x.detail === 'demo.other'),
     JSON.stringify(problems));
+});
+
+// --- workflow scripts at plugin root (D-21) ---
+
+const GOOD_SCRIPT = "export const meta = {\n  name: 'demo',\n  description: 'A demo.',\n};\n\nif (!args) return 'no args';\nawait agent('hi', {});\n";
+
+/** A fixture with one script in workflows/. @param {string} text */
+function scriptFixture(text) {
+  const root = fixture('');
+  mkdirSync(join(root, 'workflows'));
+  writeFileSync(join(root, 'workflows', 'demo.js'), text);
+  return root;
+}
+// the shipped schema is copied in and nothing in a fixture reads its keys, so every key reads inert; that is not under test
+const own = (r) => r.problems.filter((p) => p.kind !== 'inert-config-key');
+const kinds = (r) => own(r).map((p) => p.kind);
+
+test('workflow scripts: a clean script files nothing, and a tree with no workflows/ files nothing', () => {
+  const ok = run(['--root', scriptFixture(GOOD_SCRIPT)]);
+  assert.deepEqual(own(ok), [], JSON.stringify(own(ok)));
+  assert.match(ok.checked, /workflow-scripts/);
+  assert.deepEqual(own(run(['--root', fixture('')])), []);
+});
+
+test('workflow scripts: no args guard, a meta that calls a function, and an unknown workflow key each file their kind', () => {
+  const noGuard = run(['--root', scriptFixture(GOOD_SCRIPT.replace("if (!args) return 'no args';\n", ''))]);
+  assert.deepEqual(kinds(noGuard), ['workflow-no-args-guard']);
+  const late = run(['--root', scriptFixture(GOOD_SCRIPT.replace("if (!args) return 'no args';\nawait agent('hi', {});", "await agent('hi', {});\nif (!args) return 1;"))]);
+  assert.deepEqual(kinds(late), ['workflow-no-args-guard']);
+  const calls = run(['--root', scriptFixture(GOOD_SCRIPT.replace("description: 'A demo.'", "description: 'A '.concat('demo.')"))]);
+  assert.deepEqual(kinds(calls), ['workflow-meta-invalid']);
+  const noName = run(['--root', scriptFixture(GOOD_SCRIPT.replace("  name: 'demo',\n", ''))]);
+  assert.deepEqual(kinds(noName), ['workflow-meta-invalid']);
+  const notFirst = run(['--root', scriptFixture('// hi\n' + GOOD_SCRIPT)]);
+  assert.deepEqual(kinds(notFirst), ['workflow-meta-invalid']);
+  const unknownKey = run(['--root', scriptFixture(GOOD_SCRIPT + "// reads `workflow.no_such_switch`\n")]);
+  assert.deepEqual(kinds(unknownKey), ['unknown-config-key']);
+  const syntax = run(['--root', scriptFixture(GOOD_SCRIPT + 'const = ;\n')]);
+  assert.deepEqual(kinds(syntax), ['workflow-script-syntax']);
+});
+
+test('workflow scripts: a full tree missing workflows/ reports missing-input', () => {
+  const root = fullFixture();
+  rmSync(join(root, 'workflows'), { recursive: true });
+  const hit = run(['--root', root]).problems.find((p) => p.kind === 'missing-input' && p.file === 'workflows');
+  assert.ok(hit);
 });
