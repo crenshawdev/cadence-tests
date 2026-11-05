@@ -695,3 +695,73 @@ test('workflow-run --analyzer: with no readable rows the notice\'s totals bill o
   assert.deepEqual([out.brackets[0].role, out.brackets[0].tokens], ['cad-assumptions-analyzer', 900]);
   assert.deepEqual(out.unpaired, []);
 });
+
+// --- two runs of one trigger in one phase keep their records apart (D-02) ---------------------------------
+
+test('workflow-run: two overlapping runs of one trigger keep scratch files, brackets, records and review files apart', () => {
+  const t = tree();
+  const out2 = join(t.repo, 'scratch-2'); mkdirSync(out2);
+  // the same agent ids in both runs, so only the run id in the bracket key tells their brackets apart
+  const mk = (runId, claim, extra) => {
+    const run = runWith([finding(claim, 'low')], [verdict('proved', { severity: 'low', what_breaks: `${claim} breaks the row.` })]);
+    run.runId = runId;
+    for (const row of rowsOf(run)) { row.tokens += extra; row.toolCalls += extra / 100; row.durationMs += extra; }
+    return run;
+  };
+  const runs = [
+    { name: 'plan-1', out: t.out, run: mk('wf_first-run-0001', 'alpha claim', 0) },
+    { name: 'plan-2', out: out2, run: mk('wf_second-run-0002', 'beta claim', 1000) },
+  ];
+  for (const r of runs) {
+    const file = join(t.repo, `${r.name}.run.json`);
+    writeFileSync(file, JSON.stringify(r.run));
+    r.seam = cli(t, ['workflow-run', '--phase', '1', '--run-file', file, '--out-dir', r.out, '--payload-ref', `${t.base}..${t.head}`]);
+    assert.equal(r.seam.ok, true, JSON.stringify(r.seam));
+    assert.equal(r.seam.brackets.written, 3, 'the second run is not mistaken for the first\'s brackets');
+    assert.equal(r.seam.ready, true, r.seam.not_ready);
+  }
+  for (const r of runs) {
+    const common = ['--phase', '1', '--trigger', 'diff', '--discriminator', r.name, '--base', t.base, '--head', t.head];
+    assert.equal(cli(t, ['adjudication', ...common, '--payload', r.seam.payload]).ok, true);
+    assert.equal(cli(t, ['review-file', ...common, '--payload', r.seam.review_input]).ok, true);
+  }
+
+  // each fire has its own record and review file holding only its own finding
+  const phaseDir = join(t.dir, 'phases', '1');
+  const [a, b] = runs;
+  for (const [mine, other] of [[a, b], [b, a]]) {
+    const claim = mine === a ? 'alpha claim' : 'beta claim';
+    const otherClaim = mine === a ? 'beta claim' : 'alpha claim';
+    const record = readFileSync(join(phaseDir, `ADJUDICATION-diff-${mine.name}.json`), 'utf8');
+    const review = readFileSync(join(phaseDir, `REVIEW-diff-${mine.name}.md`), 'utf8');
+    for (const text of [record, review]) { assert.match(text, new RegExp(claim)); assert.doesNotMatch(text, new RegExp(otherClaim)); }
+    // neither scratch directory holds the other's files
+    for (const f of readdirSync(mine.out)) {
+      const text = readFileSync(join(mine.out, f), 'utf8');
+      assert.doesNotMatch(text, new RegExp(otherClaim), `${f} holds the other run's finding`);
+      assert.equal(text.includes(other.run.runId), false, `${f} names the other run`);
+    }
+  }
+
+  // the render shows a bracket per agent of both runs with each run's own figures, none unpaired, and the roles sum both
+  const out = render(t);
+  assert.deepEqual(out.unpaired, []);
+  assert.equal(out.brackets.length, 6);
+  for (const r of runs) {
+    for (const row of rowsOf(r.run)) {
+      const hits = out.brackets.filter((x) => x.agent_id === row.agentId && x.tokens === row.tokens);
+      assert.equal(hits.length, 1, `${row.agentId} has no bracket of its own at ${row.tokens} tokens`);
+      assert.equal(hits[0].turns, row.toolCalls);
+      assert.equal(hits[0].duration_ms, row.durationMs);
+    }
+  }
+  const reviewerRows = runs.flatMap((r) => rowsOf(r.run)).filter((row) => row.label.startsWith('reviewer '));
+  assert.deepEqual(out.roles['cad-reviewer'], { dispatches: 2, tokens: reviewerRows.reduce((n, x) => n + x.tokens, 0), turns: reviewerRows.reduce((n, x) => n + x.toolCalls, 0) });
+
+  // a second write under the same discriminator without --round is refused, not overwritten
+  const again = ['--phase', '1', '--trigger', 'diff', '--discriminator', a.name, '--base', t.base, '--head', t.head];
+  const before = readFileSync(join(phaseDir, `REVIEW-diff-${a.name}.md`), 'utf8');
+  assert.equal(cli(t, ['review-file', ...again, '--payload', b.seam.review_input]).reason, 'review-exists');
+  assert.equal(cli(t, ['adjudication', ...again, '--payload', b.seam.payload]).ok, false);
+  assert.equal(readFileSync(join(phaseDir, `REVIEW-diff-${a.name}.md`), 'utf8'), before);
+});
