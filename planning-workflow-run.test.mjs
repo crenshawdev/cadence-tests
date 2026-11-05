@@ -422,6 +422,17 @@ test('workflow-run: an unreadable run file with the notice\'s totals bills exact
   assert.deepEqual(b.roles['review-workflow'], { dispatches: 1, unrecorded: 1 });
 });
 
+test('workflow-run: a retry with the run file gone writes no notice bracket on top of agents already billed', () => {
+  const t = tree();
+  assert.equal(seam(t, FIXTURE).brackets.written, 3);
+  const r = cli(t, ['workflow-run', '--phase', '1', '--run-file', join(t.repo, 'wf_9d70aeab-5d0.json'), '--out-dir', t.out,
+    '--payload-ref', REF, '--notice-tokens', '54242', '--notice-turns', '11', '--notice-duration-ms', '6072']);
+  assert.equal(r.reason, 'run-unreadable');
+  assert.deepEqual([r.brackets.source, r.brackets.written, r.brackets.already], ['notice-totals', 0, 1]);
+  assert.equal(render(t).brackets.length, 3, 'the run is still billed per agent, once');
+  assert.ok(!rawEvents(t).some((e) => String(e.plan).endsWith('-notice')));
+});
+
 test('workflow-run: a killed run is refused and still bills every agent row, its unfinished one as a checkpoint', () => {
   const t = tree();
   const rows = rowsOf(KILLED);
