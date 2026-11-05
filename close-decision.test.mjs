@@ -313,3 +313,24 @@ test('gate: stays total on a non-array `unruled` or `overridden`', () => {
   assert.deepEqual(r.overridden, []);
   assert.deepEqual(decideGateHalt({}).overridden, []);
 });
+
+// the configured name stops applying after a confirmed merge (D-23)
+
+test('clear: a name set and a confirmed merge says clear, whether or not cleanup ran', () => {
+  const on = decideCleanup({ onLandCleanup: true, mergedIntoBase: true, branch: 'seldon/hardin', nameSet: true });
+  assert.equal(on.clearIntegrationName, true);
+  const off = decideCleanup({ onLandCleanup: false, mergedIntoBase: true, branch: null, nameSet: true });
+  assert.equal(off.action, 'skip');
+  assert.equal(off.clearIntegrationName, true);
+});
+
+test('clear: a name set but the merge unconfirmed does not clear, with cleanup on or off', () => {
+  assert.equal(decideCleanup({ onLandCleanup: true, mergedIntoBase: false, nameSet: true }).clearIntegrationName, false);
+  assert.equal(decideCleanup({ onLandCleanup: false, mergedIntoBase: false, nameSet: true }).clearIntegrationName, false);
+});
+
+test('clear: no name set never clears, merged or not', () => {
+  assert.equal(decideCleanup({ onLandCleanup: true, mergedIntoBase: true, branch: 'cadence/v1.0.0' }).clearIntegrationName, false);
+  assert.equal(decideCleanup({ onLandCleanup: true, mergedIntoBase: true, nameSet: false }).clearIntegrationName, false);
+  assert.equal(decideCleanup({}).clearIntegrationName, false);
+});

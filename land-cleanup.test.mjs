@@ -186,6 +186,37 @@ test('cleanup --merged true with the named branch already deleted by the host: r
   assert.equal(r.branch, null);
 });
 
+const GIT_BRANCH = join(dirname(SEAM), 'git-branch.mjs');
+const CONFIG = join(dirname(SEAM), 'config.mjs');
+
+test('the name is cleared after a confirmed merge: cleanup says so, and the next decide is cadence/<version> again', () => {
+  const dir = themedFixture({ base_branch: 'main', integration_branch_name: 'seldon/hardin' }, 'seldon/hardin');
+  const env = { ...process.env, CADENCE_GLOBAL_CONFIG: NO_GLOBAL };
+  const decideName = () => JSON.parse(execFileSync('node',
+    [GIT_BRANCH, 'decide', '--dir', dir, '--branch', 'main'], { encoding: 'utf8', env })).branch;
+  assert.equal(decideName(), 'seldon/hardin', 'the name applies through the land');
+  const r = seam(['cleanup', '--dir', dir]);
+  assert.equal(r.clearIntegrationName, true);
+  execFileSync('node', [CONFIG, 'unset', '--file', join(dir, '.planning', 'config.json'),
+    'git.integration_branch_name'], { encoding: 'utf8', env });
+  assert.equal(decideName(), 'cadence/v1.1.0-rc.2');
+});
+
+test('the name stays when the merge is unconfirmed, and with no name nothing clears', () => {
+  const named = themedFixture({ base_branch: 'main', integration_branch_name: 'seldon/hardin' }, 'seldon/hardin');
+  assert.equal(seam(['cleanup', '--dir', named, '--merged', 'false']).clearIntegrationName, false);
+  const plain = themedFixture({ base_branch: 'main' }, 'cadence/v1.1.0-rc.2');
+  assert.equal(seam(['cleanup', '--dir', plain]).clearIntegrationName, false);
+});
+
+test('with on_land_cleanup off a confirmed merge still clears the name', () => {
+  const dir = themedFixture({ base_branch: 'main', on_land_cleanup: false, integration_branch_name: 'seldon/hardin' },
+    'seldon/hardin');
+  const r = seam(['cleanup', '--dir', dir]);
+  assert.equal(r.action, 'skip');
+  assert.equal(r.clearIntegrationName, true);
+});
+
 test('a STRING protected_branches resolves base to that branch (#38, COR-01, D-07)', () => {
   // This seam's own per-consumer proof of the shared coercion
   // (lib/protected-branches.mjs). `base` falls back to protectedBranches[0],
