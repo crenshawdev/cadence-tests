@@ -13,6 +13,7 @@ import {
   rungFiles, effortEnumIssues, EFFORT_PREFIX, ROLES_PREFIX, ROLES_EFFORT_SUFFIX,
   RUNG_ORDER, rungOrderIssues, roleOfAgent, rungOfAgent,
 } from '../cadence-core/bin/lib/rung-agent.mjs';
+import { FINDING_SCHEMA } from '../cadence-core/bin/review-provider.mjs';
 import * as readTrace from '../cadence-core/bin/lib/read-trace.mjs';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -576,6 +577,9 @@ test('roleOfAgent and rungOfAgent live here, read-trace re-exports them, and the
 // output, and the reviewer and plan-checker contracts with one gated sentence
 // each about a test finding meeting the completion rule - each a deliberate
 // change, approved with the phase.
+// The reviewer brief and the reviewer contract were re-pinned together when phase 1 of
+// the Seldon cycle added the four reviewer rules to both (D-22) - a deliberate change,
+// approved with the phase.
 
 const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-assumptions-analyzer-high.md': '631826d54561635203c1f87d099837cac1066028ca968dfcdacdc41008a5c2d2',
@@ -608,13 +612,13 @@ const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-verifier-medium.md': '2dff0b655da3cd09c651e7dba18d7857c885af8dcf2e3408892460a2f181f9f0',
   'agents/cad-verifier-xhigh.md': '68d7da72dc62bc6d8d3a26ac2fb0055dfb0dbd1ddf1b4cb33974a0dd0033f0f6',
   'agents/cad-verifier.md': '6095b69815656da56a29b951a1ef6557a7e5a23d092601d0151f0ec509260681',
-  'cadence-core/references/reviewer-brief.md': 'b20044897eba676b7de39bc1cd30e0960c9558cf70191d53b5fbc2798361e887',
+  'cadence-core/references/reviewer-brief.md': '5c4998a37a4e89a95c2b9cd09d7408e7d79a73e0c76a499ffbfb400a8f937585',
   'cadence-core/templates/PLAN.md': '4a7fb5784ae799357e33a30b0ddd4d0754b0eed69f56e64f07fb255d06fc963d',
   'skills/cad-assumptions-analyzer-contract/SKILL.md': 'ee690d7178a35d274d8c895367f6476df2160baf1e65889b92d55af3e94233bc',
   'skills/cad-executor-contract/SKILL.md': '3c5482540f0d3193001fabebe08bb51b25afa8a059741612e4cdd11971d7004f',
   'skills/cad-plan-checker-contract/SKILL.md': 'f84ccdfd51ff4389c0f54d70b11479b3673e8bdbe021ce0d8b33bfa62d9dcff5',
   'skills/cad-planner-contract/SKILL.md': 'b6aca8bc79bae4bd07bd422a6bb371c46c504aa51088325211b4e127d5c8ec7f',
-  'skills/cad-reviewer-contract/SKILL.md': 'a20b900ab73592135fe4dd9311e0298edef4c53ef332b04349154db36bfdf99d',
+  'skills/cad-reviewer-contract/SKILL.md': 'f778be39fa193d843553d76128ced4489f97e348a25c60ed7934902b2e8a5bfb',
   'skills/cad-verifier-contract/SKILL.md': '4d7161a41fca476d10dfd6c39a34041b7353f5e9d2673fe60d9ff6bd11befa59',
 };
 
@@ -623,4 +627,24 @@ test('a switch\'s text written into a contract surface changes its 3.8.6 digest'
     const got = createHash('sha256').update(readFileSync(join(REPO, path))).digest('hex');
     assert.equal(got, want, `${path} no longer matches its v3.8.6 bytes`);
   }
+});
+
+// D-22 / AC6: the four reviewer rules sit in the brief and the contract in the same words, and the
+// findings schema keeps its five fields, because the rules ride inside `claim` and `failure_scenario`.
+const REVIEWER_RULES = [
+  'Say why the behavior is wrong: a documented requirement, the project\'s established behavior, or a concrete correctness or safety failure. If the expectation is only your own assumption, say that it is.',
+  'Keep bugs apart from improvements and preferences',
+  'Group findings that share one root cause',
+  'A missing test alone is never a defect, though an uncovered requirement or a measured coverage shortfall still draws a finding.',
+];
+const collapse = (t) => t.replace(/\s+/g, ' ');
+
+test('the reviewer brief and contract both state the four rules, and the schema keeps five fields', () => {
+  for (const path of ['cadence-core/references/reviewer-brief.md', 'skills/cad-reviewer-contract/SKILL.md']) {
+    const text = collapse(readFileSync(join(REPO, path), 'utf8'));
+    for (const rule of REVIEWER_RULES) assert.ok(text.includes(rule), `${path} is missing: ${rule}`);
+  }
+  assert.deepEqual(
+    Object.keys(FINDING_SCHEMA.properties.findings.items.properties).sort(),
+    ['claim', 'failure_scenario', 'file', 'line', 'severity']);
 });
