@@ -982,7 +982,7 @@ test('SCP-01: the SHIPPED keys carrying the marker are the ones that authorize, 
   // the user's half of a two-layer opt-in, so it must be settable there.
   const shipped = JSON.parse(readFileSync(join(dirname(CONFIG), '..', 'config.schema.json'), 'utf8')).keys;
   assert.deepEqual(Object.keys(shipped).filter((k) => shipped[k].repo_only === true),
-    ['git.forge_repo', 'testing.scope', 'testing.coverage.lines', 'testing.coverage.branches',
+    ['git.integration_branch_name', 'git.forge_repo', 'testing.scope', 'testing.coverage.lines', 'testing.coverage.branches',
       'testing.coverage.statements', 'testing.coverage.include', 'testing.coverage.exclude',
       'testing.coverage.commands', 'testing.strong_areas', 'testing.required_jobs']);
 
@@ -2291,6 +2291,26 @@ test('branch_name grammar: an accepted name is never one reap then refuses as ba
     const d = decideReap({ branch, currentBranch: 'main', protectedBranches: ['main'], exists: true });
     assert.notEqual(d.reason, 'bad-branch', branch);
   }
+});
+
+test('set: the integration branch key takes a themed name or null, refuses an option, and is repo-only', () => {
+  const key = 'git.integration_branch_name';
+  const gp = join(dir, 'no-global-ibn.json');
+  const repo = join(dir, 'ibn-repo.json');
+  writeFileSync(repo, '{}');
+  assert.equal(run(['set', '--file', repo, `${key}=${JSON.stringify('seldon/hardin')}`], gp).ok, true);
+  assert.equal(JSON.parse(readFileSync(repo, 'utf8')).git.integration_branch_name, 'seldon/hardin');
+  const refused = run(['set', '--file', repo, `${key}=${JSON.stringify('--output=x')}`], gp);
+  assert.equal(refused.ok, false);
+  assert.equal(refused.reason, 'invalid');
+  assert.equal(JSON.parse(readFileSync(repo, 'utf8')).git.integration_branch_name, 'seldon/hardin');
+  assert.equal(run(['set', '--file', repo, `${key}=null`], gp).ok, true);
+  assert.equal(JSON.parse(readFileSync(repo, 'utf8')).git.integration_branch_name, null);
+  const global = run(['set', '--global', `${key}=${JSON.stringify('seldon/hardin')}`], gp);
+  assert.equal(global.ok, false);
+  assert.equal(global.detail[0].key, key);
+  assert.match(global.detail[0].error, /--file/);
+  assert.equal(existsSync(gp), false);
 });
 
 function run_raw(args) {
