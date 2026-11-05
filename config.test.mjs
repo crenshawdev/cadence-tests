@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os';
 import { basename, join, dirname, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readLayer, GLOBAL_CONFIG } from '../cadence-core/bin/lib/config-merge.mjs';
+import { checkGrammar } from '../cadence-core/bin/lib/config-value.mjs';
+import { decideReap } from '../cadence-core/bin/lib/publish-decision.mjs';
 import { RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
 import { CONTRACTS } from '../cadence-core/bin/lib/arg-contract.mjs';
 
@@ -2267,6 +2269,27 @@ test('the workflow switches default false, refuse a non-boolean, and warn in the
     const text = JSON.stringify(row);
     assert.match(text, /usage/i, `${row.key} warns about usage`);
     assert.match(text, /both set it/, `${row.key} says both layers are needed`);
+  }
+});
+
+// --- branch names: the grammar behind the integration-branch key (D-23) ---
+
+const BRANCH_SPEC = { grammar: 'branch_name' };
+
+test('branch_name grammar: a themed name passes, what a shell or git would act on is refused', () => {
+  for (const ok of ['seldon/hardin', 'cadence/v4.0.0', 'release-2.x']) {
+    assert.equal(checkGrammar(BRANCH_SPEC, ok), null, ok);
+  }
+  for (const bad of ['-x', '--output=x', 'a b', '$(id)', 'a;b', 'a`id`', 'a..b', 'a/', 'a.lock', '']) {
+    assert.match(String(checkGrammar(BRANCH_SPEC, bad)), /branch name/, JSON.stringify(bad));
+  }
+});
+
+test('branch_name grammar: an accepted name is never one reap then refuses as bad-branch', () => {
+  for (const branch of ['seldon/hardin', 'cadence/v4.0.0', 'a.b_c-d/e']) {
+    assert.equal(checkGrammar(BRANCH_SPEC, branch), null, branch);
+    const d = decideReap({ branch, currentBranch: 'main', protectedBranches: ['main'], exists: true });
+    assert.notEqual(d.reason, 'bad-branch', branch);
   }
 });
 
