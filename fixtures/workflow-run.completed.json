@@ -1,0 +1,195 @@
+{
+  "runId": "wf_9d70aeab-5d0",
+  "timestamp": "2026-11-05T16:45:57.470Z",
+  "result": {
+    "voices": [
+      {
+        "voice": "claude-subagent",
+        "ran": true,
+        "result": {
+          "findings": [
+            {
+              "file": "src/a.js",
+              "line": 3,
+              "severity": "high",
+              "claim": "proved claim",
+              "failure_scenario": "proved claim breaks"
+            },
+            {
+              "file": "src/a.js",
+              "line": 3,
+              "severity": "high",
+              "claim": "refuted claim",
+              "failure_scenario": "refuted claim breaks"
+            },
+            {
+              "file": "src/a.js",
+              "line": 3,
+              "severity": "high",
+              "claim": "neither claim",
+              "failure_scenario": "neither claim breaks"
+            },
+            {
+              "file": "src/a.js",
+              "line": 3,
+              "severity": "high",
+              "claim": "null claim",
+              "failure_scenario": "null claim breaks"
+            }
+          ]
+        },
+        "rulings": [
+          {
+            "index": 0,
+            "finding": {
+              "file": "src/a.js",
+              "line": 3,
+              "severity": "high",
+              "claim": "proved claim",
+              "failure_scenario": "proved claim breaks"
+            },
+            "ruling": {
+              "ruling": "proved",
+              "severity": "high",
+              "what_breaks": "The loop skips the last row.",
+              "why_care": "A user loses a record.",
+              "what_triggers": "Any input of one row.",
+              "what_proves": "Reading the bound at line 3.",
+              "what_uncertain": "Supported by inspection.",
+              "recommendation": "Fix the bound."
+            }
+          },
+          {
+            "index": 1,
+            "finding": {
+              "file": "src/a.js",
+              "line": 3,
+              "severity": "high",
+              "claim": "refuted claim",
+              "failure_scenario": "refuted claim breaks"
+            },
+            "ruling": {
+              "ruling": "refuted",
+              "severity": "high",
+              "what_breaks": "The loop skips the last row.",
+              "why_care": "A user loses a record.",
+              "what_triggers": "Any input of one row.",
+              "what_proves": "Reading the bound at line 3.",
+              "what_uncertain": "Supported by inspection.",
+              "recommendation": "Fix the bound.",
+              "counter_evidence": {
+                "file": "src/b.js",
+                "line": 9,
+                "note": "The bound is checked there."
+              }
+            }
+          },
+          {
+            "index": 2,
+            "finding": {
+              "file": "src/a.js",
+              "line": 3,
+              "severity": "high",
+              "claim": "neither claim",
+              "failure_scenario": "neither claim breaks"
+            },
+            "ruling": {
+              "ruling": "neither",
+              "severity": "high",
+              "what_breaks": "The loop skips the last row.",
+              "why_care": "A user loses a record.",
+              "what_triggers": "Any input of one row.",
+              "what_proves": "Run it with a one-row input.",
+              "what_uncertain": "Supported by inspection.",
+              "recommendation": "Fix the bound."
+            }
+          },
+          {
+            "index": 3,
+            "finding": {
+              "file": "src/a.js",
+              "line": 3,
+              "severity": "high",
+              "claim": "null claim",
+              "failure_scenario": "null claim breaks"
+            },
+            "ruling": null
+          }
+        ]
+      }
+    ]
+  },
+  "agentCount": 3,
+  "durationMs": 6072,
+  "workflowName": "review-panel",
+  "status": "completed",
+  "startTime": 1793897151382,
+  "phases": [
+    {
+      "title": "Probe"
+    }
+  ],
+  "defaultModel": "claude-opus-5-5",
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Probe"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "provider openai",
+      "phaseIndex": 1,
+      "phaseTitle": "Probe",
+      "agentId": "a6ddc2f365ec9e152",
+      "model": "claude-sonnet-5-5",
+      "state": "done",
+      "startedAt": 1793897151418,
+      "queuedAt": 1793897151404,
+      "attempt": 1,
+      "lastProgressAt": 1793897155703,
+      "tokens": 33878,
+      "toolCalls": 4,
+      "durationMs": 4285
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "reviewer claude-subagent",
+      "phaseIndex": 1,
+      "phaseTitle": "Probe",
+      "agentId": "aa5c9b69246095aa9",
+      "agentType": "cadence:cad-reviewer-low",
+      "model": "claude-sonnet-5-5",
+      "state": "done",
+      "startedAt": 1793897151420,
+      "queuedAt": 1793897151404,
+      "attempt": 1,
+      "lastProgressAt": 1793897157468,
+      "tokens": 10189,
+      "toolCalls": 3,
+      "durationMs": 6048
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "checker claude-subagent 1",
+      "phaseIndex": 1,
+      "phaseTitle": "Probe",
+      "agentId": "a2439f0a1b5e3b49c",
+      "agentType": "cadence:cad-reviewer-low",
+      "model": "claude-sonnet-5-5",
+      "state": "done",
+      "startedAt": 1793897151420,
+      "queuedAt": 1793897151404,
+      "attempt": 1,
+      "lastProgressAt": 1793897155938,
+      "tokens": 10175,
+      "toolCalls": 4,
+      "durationMs": 4518
+    }
+  ],
+  "totalTokens": 54242,
+  "totalToolCalls": 11
+}

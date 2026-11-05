@@ -2,7 +2,9 @@
 // else, so the fake host below stands in for it and enforces what Claude Code 2.1.318 enforces on a spawn.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -153,4 +155,41 @@ test('review-panel: the schemas', async () => {
   assert.deepEqual(checker.properties.counter_evidence.required, ['file']);
   assert.deepEqual(Object.keys(checker.properties.counter_evidence.properties).sort(), ['file', 'line', 'note']);
   assert.ok(!checker.required.includes('counter_evidence'));
+});
+
+// Drift between the script's return and the seam that reads it would refuse every live run, so the real return goes through both.
+test('review-panel: its real return, placed in a run file, passes workflow-run and the record\'s own adjudication', async () => {
+  const mild = (file, claim, severity) => ({ file, line: 3, severity, claim, failure_scenario: `${claim} breaks` });
+  const raised = [mild('a.js', 'first', 'medium'), mild('b.js', 'second', 'low'), mild('c.js', 'third', 'medium')];
+  const h = host((label) => {
+    if (label.startsWith('reviewer')) return { findings: raised };
+    if (label.endsWith(' 2')) return verdict('refuted', { counter_evidence: { file: 'b.js', line: 9 } });
+    return label.endsWith(' 3') ? verdict('neither', { severity: 'medium' }) : verdict('proved', { severity: 'medium' });
+  });
+  const out = JSON.parse(JSON.stringify(await runScript(PANEL, h, ARGS)));
+
+  const repo = mkdtempSync(join(tmpdir(), 'cad-wfs-'));
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim();
+  git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');
+  mkdirSync(join(repo, '.planning', 'phases', '1'), { recursive: true });
+  writeFileSync(join(repo, 'f.js'), '1\n'); git('add', '-A'); git('commit', '-q', '-m', 'base');
+  const base = git('rev-parse', 'HEAD');
+  writeFileSync(join(repo, 'f.js'), '2\n'); git('add', '-A'); git('commit', '-q', '-m', 'head');
+  const head = git('rev-parse', 'HEAD');
+
+  const fixture = JSON.parse(readFileSync(join(ROOT, 'tests', 'fixtures', 'workflow-run.completed.json'), 'utf8'));
+  writeFileSync(join(repo, 'run.json'), JSON.stringify({ ...fixture, result: out }));
+  mkdirSync(join(repo, 'scratch'));
+  const planning = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
+  const call = (...a) => JSON.parse(execFileSync('node', [planning, '--dir', join(repo, '.planning'), ...a], { encoding: 'utf8', cwd: repo }));
+
+  const seam = call('workflow-run', '--phase', '1', '--run-file', join(repo, 'run.json'), '--out-dir', join(repo, 'scratch'));
+  assert.equal(seam.ok, true, JSON.stringify(seam));
+  assert.deepEqual(seam.counts, { raised: 3, survived: 2, downgraded: 0, refuted: 1, unruled: 0 });
+  assert.equal(seam.ready, true, seam.not_ready);
+  const adj = call('adjudication', '--phase', '1', '--trigger', 'diff', '--discriminator', 'abc1234', '--base', base, '--head', head, '--payload', seam.payload);
+  assert.equal(adj.ok, true, JSON.stringify(adj));
+  assert.deepEqual(adj.counts, { raised: 3, survived: 2, downgraded: 0, refuted: 1 });
+  const rf = call('review-file', '--phase', '1', '--trigger', 'diff', '--discriminator', 'abc1234', '--base', base, '--head', head, '--payload', seam.review_input);
+  assert.equal(rf.ok, true, JSON.stringify(rf));
 });

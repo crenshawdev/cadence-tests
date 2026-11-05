@@ -512,6 +512,8 @@ const CALLSITES = [
     why: 'the render arm scopes a .planning/trace.jsonl filter and resolves no phases/<N>/ path' },
   { file: 'trace.mjs', fn: 'cmdTrace', ordinal: 4, disposition: 'exempt',
     why: 'the window arm scopes a .planning/trace.jsonl filter and resolves no phases/<N>/ path' },
+  { file: 'workflow-run.mjs', fn: 'cmdWorkflowRun', ordinal: 1, disposition: 'exempt',
+    why: 'the phase scopes the run record the brackets join and names no phases/<N>/ path; it writes into the --out-dir it is given' },
   { file: 'uat.mjs', fn: 'cmdUat', ordinal: 1, disposition: 'tree-aware',
     why: 'reads the phase UAT.md and echoes phase: <value>' },
 ];
@@ -535,12 +537,12 @@ test('census: every phase-argument callsite under planning/ carries a dispositio
     'CALLSITES names a callsite the walk no longer finds - delete the row if the callsite is gone,'
     + ' or re-key it if its enclosing function was renamed.');
 
-  // CADENCE-CENSUS: phase-spelling-callsites | asserts: 24 phase-argument callsites under cadence-core/bin/planning/, 15 of them resolving a phases/<N>/ path - 13 through the tree-aware check and 2 through the unconditional one
-  assert.equal(found.length, 24, `callsite count moved: ${found.length}`);
+  // CADENCE-CENSUS: phase-spelling-callsites | asserts: 25 phase-argument callsites under cadence-core/bin/planning/, 15 of them resolving a phases/<N>/ path - 13 through the tree-aware check and 2 through the unconditional one
+  assert.equal(found.length, 25, `callsite count moved: ${found.length}`);
   const by = (d) => CALLSITES.filter((c) => c.disposition === d).length;
   assert.equal(by('tree-aware'), 13);
   assert.equal(by('unconditional'), 2);
-  assert.equal(by('exempt'), 9);
+  assert.equal(by('exempt'), 10);
 });
 
 test('census: every path-resolving callsite actually calls its check', () => {
