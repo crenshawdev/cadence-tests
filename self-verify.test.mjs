@@ -329,7 +329,7 @@ test('placeholder keys expand: <t> prose covers every trigger key', () => {
     '`git.protected_branches` `git.on_protected` `git.integration_branch`\n' +
     '`git.auto_branch` `git.base_branch` `git.create_tag`\n' +
     '`git.on_land_cleanup` `git.auto_close` `git.issue_check`\n' +
-    '`git.forge_provider` `git.forge_repo` `git.forge_host`\n' +
+    '`git.forge_provider` `git.forge_repo` `git.forge_host` `git.integration_branch_name`\n' +
     '`planning.commit_docs` `planning.max_capture_bullets` `memory.backend`\n' +
     '`testing.scope` `testing.coverage` `testing.strong_areas` `testing.required_jobs`\n' +
     '`risk.override.<surface>`\n');

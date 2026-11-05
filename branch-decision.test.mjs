@@ -115,10 +115,13 @@ test('milestone + protected + null name: auto/ask downgrade to a naming-problem 
 // asked: is THIS version already a tag?
 
 /** milestone + protected, with the repo's tag list in hand. */
-const withPublished = (autoBranch, integrationName, publishedVersions) => decideBranch({
-  mode: 'milestone', autoBranch, currentBranch: 'main',
-  protectedBranches: PROTECTED, integrationName, publishedVersions,
-});
+// the guard reads the version, not the name, so each call passes the version a `cadence/<version>` name carries
+const versionOf = (name) => (typeof name === 'string' && name.startsWith('cadence/') ? name.slice(8) : null);
+const withPublished = (autoBranch, integrationName, publishedVersions, version = versionOf(integrationName)) =>
+  decideBranch({
+    mode: 'milestone', autoBranch, currentBranch: 'main',
+    protectedBranches: PROTECTED, integrationName, version, publishedVersions,
+  });
 
 test('published: a milestone EQUAL to a published tag asks, naming both numbers, with branch null', () => {
   // The v2.4.0 collision (#87): the section still reads as open, the tag exists.
@@ -183,7 +186,7 @@ test('published: absent or unparseable comparands leave every arm exactly as it 
   // side all fall through to the ordinary arms.
   const equalName = 'cadence/v2.4.0';
   assert.equal(decideBranch({ mode: 'milestone', autoBranch: 'auto', currentBranch: 'main',
-    protectedBranches: PROTECTED, integrationName: equalName }).action, 'create', 'argument absent');
+    protectedBranches: PROTECTED, integrationName: equalName, version: 'v2.4.0' }).action, 'create', 'argument absent');
   assert.equal(withPublished('auto', equalName, null).action, 'create', 'null');
   assert.equal(withPublished('auto', equalName, []).action, 'create', 'no tags at all');
   assert.equal(withPublished('auto', equalName, ['']).action, 'create', 'empty tag');
@@ -209,12 +212,28 @@ test('published: a SCALAR tag spelling is read as a one-tag list, never as "no c
 test('published: off and trunk are untouched by the guard, even on a collision', () => {
   assert.equal(withPublished('off', 'cadence/v2.4.0', ['v2.4.0']).action, 'stay');
   assert.equal(decideBranch({ mode: 'trunk', autoBranch: 'auto', currentBranch: 'main',
-    protectedBranches: PROTECTED, integrationName: 'cadence/v2.4.0', publishedVersions: ['v2.4.0'] }).action,
+    protectedBranches: PROTECTED, integrationName: 'cadence/v2.4.0', version: 'v2.4.0',
+    publishedVersions: ['v2.4.0'] }).action,
   'stay');
   // Off the protected base the guard never runs either: creation already happened.
   assert.equal(decideBranch({ mode: 'milestone', autoBranch: 'auto', currentBranch: 'cadence/v2.4.0',
     protectedBranches: PROTECTED, integrationName: 'cadence/v2.4.0', publishedVersions: ['v2.4.0'] }).action,
   'stay');
+});
+
+test('published: the guard reads the version, so a themed name is held exactly like cadence/<version>', () => {
+  for (const arm of ['auto', 'ask']) {
+    const r = withPublished(arm, 'seldon/hardin', ['v4.0.0'], 'v4.0.0');
+    assert.equal(r.action, 'ask', arm);
+    assert.equal(r.branch, null, arm);
+    assert.match(r.reason, /already-published/);
+    assert.match(r.reason, /seldon\/hardin/, 'the reason names the branch');
+  }
+  // an untagged version, or no version at all, gives no guard answer
+  assert.equal(withPublished('auto', 'seldon/hardin', ['v3.9.0'], 'v4.0.0').action, 'create');
+  const none = withPublished('auto', 'seldon/hardin', ['v4.0.0'], null);
+  assert.equal(none.action, 'create');
+  assert.doesNotMatch(none.reason, /already-published/);
 });
 
 test('published: the naming-problem ask still wins over the published guard', () => {
