@@ -112,8 +112,10 @@ test('workflow-run: proved below the raised severity is downgraded and shown low
   assert.deepEqual(r.counts, { raised: 2, survived: 1, downgraded: 1, refuted: 0, unruled: 0 });
   assert.deepEqual(readJson(r.payload).voices[0].rulings.map((x) => x.ruling), ['downgraded', 'survived']);
   assert.deepEqual(readJson(r.review_input).survivors.map((s) => s.severity), ['blocker', 'low']);
-  assert.equal(r.ready, true, r.not_ready);
-  assert.equal(adjudicate(t, r.payload).ok, true);
+  assert.equal(r.ready, false, 'the one proved up to blocker is open');
+  const settled = seam(t, run, [{ voice: 'claude-subagent', index: 1, fix_commit: 'abc1234' }]);
+  assert.equal(settled.ready, true, settled.not_ready);
+  assert.equal(adjudicate(t, settled.payload).ok, true);
 });
 
 test('workflow-run: a medium its checker proves high shows high and is listed as needing an answer', () => {
@@ -143,6 +145,35 @@ test('workflow-run: a proved high needs an answer, and adjudication and unfixedF
   assert.equal(fixed.ready, true, fixed.not_ready);
   assert.deepEqual(fixed.needs_answer, []);
   assert.equal(adjudicate(t, fixed.payload).ok, true);
+});
+
+test('workflow-run: a blocker its checker proves high still needs an answer, and a fix or an override re-ruled survived settles it', () => {
+  const t = tree();
+  const run = runWith([finding('one', 'blocker')], [verdict('proved', { severity: 'high' })]);
+  const r = seam(t, run);
+  assert.deepEqual(r.counts, { raised: 1, survived: 0, downgraded: 1, refuted: 0, unruled: 0 });
+  assert.deepEqual(r.needs_answer.map((n) => [n.index, n.severity]), [[0, 'high']]);
+  assert.equal(r.ready, false);
+  assert.match(r.not_ready, /blocker or high/);
+
+  const fixed = seam(t, run, [{ voice: 'claude-subagent', index: 0, fix_commit: 'abc1234' }]);
+  assert.equal(fixed.ready, true, fixed.not_ready);
+  assert.deepEqual(fixed.needs_answer, []);
+  assert.equal(adjudicate(t, fixed.payload).ok, true);
+
+  const t2 = tree();
+  const over = seam(t2, run, [{ voice: 'claude-subagent', index: 0, ruling: 'survived', overridden: true }]);
+  assert.equal(over.ready, true, over.not_ready);
+  assert.deepEqual(over.needs_answer, []);
+  const adj = adjudicate(t2, over.payload);
+  assert.equal(adj.ok, true, JSON.stringify(adj));
+  const [entry] = readJson(join(t2.dir, 'phases', '1', 'ADJUDICATION-diff-abc1234.json')).entries;
+  assert.deepEqual([entry.ruling, entry.overridden], ['survived', true]);
+
+  // a blocker proved only medium leaves the halting severities and asks for nothing
+  const low = seam(tree(), runWith([finding('two', 'blocker')], [verdict('proved', { severity: 'medium' })]));
+  assert.deepEqual(low.needs_answer, []);
+  assert.equal(low.ready, true, low.not_ready);
 });
 
 test('workflow-run: a fix_commit, overridden: true and a refuted ruling with counter_evidence each settle a high', () => {
@@ -219,8 +250,8 @@ test('workflow-run: a refuted with no counter_evidence, a neither with no next c
 
   const fixed = seam(t, run, [
     { voice: 'claude-subagent', index: 0, ruling: 'refuted', counter_evidence: { file: 'src/b.js' } },
-    { voice: 'claude-subagent', index: 1, ruling: 'survived', what_proves: 'Run it with one row.' },
-    { voice: 'claude-subagent', index: 2, ruling: 'survived', why_care: 'A user loses a row.' },
+    { voice: 'claude-subagent', index: 1, ruling: 'survived', what_proves: 'Run it with one row.', fix_commit: 'abc1234' },
+    { voice: 'claude-subagent', index: 2, ruling: 'survived', why_care: 'A user loses a row.', fix_commit: 'abc1234' },
   ]);
   assert.equal(fixed.counts.unruled, 0, JSON.stringify(fixed.unruled));
   assert.equal(fixed.ready, true, fixed.not_ready);
