@@ -643,3 +643,55 @@ test('workflow-run --analyzer: the door asks for the same flags the review arm d
   assert.equal(cli(t, ['workflow-run', '--phase', '1', '--analyzer', '--run-file', 'x', '--out-dir', t.out]).reason, 'bad-args', 'no --payload-ref');
   assert.equal(cli(t, ['workflow-run', '--analyzer', '--run-file', 'x', '--out-dir', t.out, '--payload-ref', 'y']).reason, 'bad-args', 'no --phase');
 });
+
+// --- the analyzer's readers are billed ------------------------------------------------------------------------------------
+
+test('workflow-run --analyzer: three readers bill three brackets under the analyzer\'s role with their figures, none unpaired, whatever their rows say', () => {
+  const t = tree();
+  const run = analyzerRun({ report: REPORT, nulls: [] });
+  const rows = rowsOf(run);
+  delete rows[1].agentType;                  // a row the host gave no type: still the analyzer's
+  rows[2].agentType = 'cadence:cad-reviewer-low';
+  const r = analyze(t, run);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual([r.brackets.source, r.brackets.written, r.brackets.already, r.brackets.failed], ['run-file', 3, 0, []]);
+  const out = render(t);
+  assert.deepEqual(out.unpaired, []);
+  assert.equal(out.brackets.length, 3);
+  assert.ok(out.brackets.every((b) => b.role === 'cad-assumptions-analyzer'), JSON.stringify(out.brackets.map((b) => b.role)));
+  for (const row of rows) {
+    const b = out.brackets.find((x) => x.agent_id === row.agentId);
+    assert.deepEqual([b.tokens, b.turns, b.duration_ms, b.event], [row.tokens, row.toolCalls, row.durationMs, 'return']);
+  }
+  assert.deepEqual(out.roles['cad-assumptions-analyzer'], { dispatches: 3, tokens: rows.reduce((n, x) => n + x.tokens, 0), turns: rows.reduce((n, x) => n + x.toolCalls, 0) });
+  assert.equal(rawEvents(t).filter((e) => e.family === 'lifecycle' && e.event === 'dispatch').every((e) => e.read.length === 1 && e.read[0] === '.planning/ROADMAP.md' && !('reviewer' in e)), true);
+  // the ceiling for the analyzer's role is read against each reader, not against the sum
+  const w = cli(t, ['trace', 'window', '--phase', '1']);
+  assert.ok(JSON.stringify(w).includes('cad-assumptions-analyzer'), JSON.stringify(w));
+  // a second call bills nothing more
+  assert.deepEqual([analyze(t, run).brackets.written, render(t).brackets.length], [0, 3]);
+});
+
+test('workflow-run --analyzer: a run with no report is refused and still bills every reader, an unfinished one as a checkpoint', () => {
+  const t = tree();
+  const run = analyzerRun({ report: null, nulls: ['behavior'] });
+  rowsOf(run)[1].state = 'progress';
+  const r = analyze(t, run);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'analyzer-no-report');
+  assert.deepEqual([r.brackets.source, r.brackets.written], ['run-file', 3]);
+  const out = render(t);
+  assert.deepEqual(out.unpaired, []);
+  assert.deepEqual(out.brackets.map((b) => [b.role, b.event]).sort(), [['cad-assumptions-analyzer', 'checkpoint'], ['cad-assumptions-analyzer', 'return'], ['cad-assumptions-analyzer', 'return']]);
+  assert.deepEqual(emptyOut(t), []);
+});
+
+test('workflow-run --analyzer: with no readable rows the notice\'s totals bill one bracket under the analyzer\'s role', () => {
+  const t = tree();
+  const r = analyze(t, '{', '--notice-tokens', '900', '--notice-turns', '9', '--notice-duration-ms', '90');
+  assert.equal(r.reason, 'run-not-json');
+  assert.deepEqual([r.brackets.source, r.brackets.written], ['notice-totals', 1]);
+  const out = render(t);
+  assert.deepEqual([out.brackets[0].role, out.brackets[0].tokens], ['cad-assumptions-analyzer', 900]);
+  assert.deepEqual(out.unpaired, []);
+});
