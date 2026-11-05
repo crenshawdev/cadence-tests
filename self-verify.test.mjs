@@ -2817,6 +2817,12 @@ test('workflow scripts: no args guard, a meta that calls a function, and an unkn
   assert.deepEqual(kinds(noGuard), ['workflow-no-args-guard']);
   const late = run(['--root', scriptFixture(GOOD_SCRIPT.replace("if (!args) return 'no args';\nawait agent('hi', {});", "await agent('hi', {});\nif (!args) return 1;"))]);
   assert.deepEqual(kinds(late), ['workflow-no-args-guard']);
+  const saved = run(['--root', scriptFixture(GOOD_SCRIPT.replace("if (!args) return 'no args';", 'const saved = args;'))]);
+  assert.deepEqual(kinds(saved), ['workflow-no-args-guard']);
+  const aliased = run(['--root', scriptFixture(GOOD_SCRIPT.replace("if (!args) return 'no args';", "let a = args;\nif (!a) { return 'no args'; }"))]);
+  assert.deepEqual(kinds(aliased), []);
+  const throws = run(['--root', scriptFixture(GOOD_SCRIPT.replace("if (!args) return 'no args';", "if (!args) throw new Error('no args');"))]);
+  assert.deepEqual(kinds(throws), []);
   const calls = run(['--root', scriptFixture(GOOD_SCRIPT.replace("description: 'A demo.'", "description: 'A '.concat('demo.')"))]);
   assert.deepEqual(kinds(calls), ['workflow-meta-invalid']);
   const noName = run(['--root', scriptFixture(GOOD_SCRIPT.replace("  name: 'demo',\n", ''))]);
