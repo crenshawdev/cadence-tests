@@ -202,6 +202,20 @@ test('a survived blocker naming a fix commit is FIXED, and is in none of the thr
     { filing: 0, haltingSurvivors: 0, halting: 0 });
 });
 
+test('a survived blocker naming a usable fix_file is FIXED, and a junk one still halts', () => {
+  assert.deepEqual(sets(entry('blocker', { fix_file: 'local/x.cfg' })),
+    { filing: 0, haltingSurvivors: 0, halting: 0 });
+  assert.deepEqual(sets(entry('blocker', { fix_file: '/abs/x.cfg' })),
+    { filing: 0, haltingSurvivors: 0, halting: 1 });
+});
+
+test('unfixedFindings leaves a survived high with fix_file out of the set', () => {
+  const f = finding('src/x.js', 3, 'high', 'untracked file fixed');
+  const out = unfixedFindings(payload([[f, 'survived', { fix_commit: undefined, fix_file: 'local/x.cfg' }]]));
+  assert.equal(out.ok, true, out.detail);
+  assert.deepEqual(out.findings, []);
+});
+
 test('an OVERRIDDEN survived blocker with no commit is filed and named, never halting', () => {
   assert.deepEqual(sets(entry('blocker', { overridden: true })),
     { filing: 1, haltingSurvivors: 1, halting: 0 });

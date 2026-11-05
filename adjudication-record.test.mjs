@@ -231,7 +231,7 @@ test('AC3: a survived BLOCKER or HIGH with no fix commit is REFUSED', () => {
     const findings = [finding({ severity })];
     const res = buildEntries(payload(voice('openai', 'gpt-5', findings, [{ ruling: 'survived' }])));
     assert.equal(res.ok, false, `a survived ${severity} with no fix commit was accepted`);
-    assert.match(res.detail, /carries neither a usable fix_commit nor overridden: true/);
+    assert.match(res.detail, /carries none of a usable fix_commit, a fix_file or overridden: true/);
     assert.match(res.detail, /raised at blocker or high/,
       'the refusal has to name the severity gate, or a coordinator settling a medium goes '
       + 'hunting a commit id it was never being asked for');
@@ -246,7 +246,7 @@ test('a suspected finding keeps the survived shape: a high needs a commit or an 
   const high = [finding({ severity: 'high' })];
   const bare = buildEntries(payload(voice('openai', 'gpt-5', high, [{ ruling: 'survived' }])));
   assert.equal(bare.ok, false);
-  assert.match(bare.detail, /carries neither a usable fix_commit nor overridden: true/);
+  assert.match(bare.detail, /carries none of a usable fix_commit, a fix_file or overridden: true/);
   const overridden = buildEntries(payload(voice('openai', 'gpt-5', high, [{ ruling: 'survived', overridden: true }])));
   assert.equal(overridden.ok, true, overridden.detail);
   const medium = [finding({ severity: 'medium' })];
@@ -304,6 +304,41 @@ test('an overridden survived blocker citing a VALID fix commit carries both keys
   assert.equal(res.ok, true, res.detail);
   assert.equal(res.entries[0].overridden, true);
   assert.equal(res.entries[0].fix_commit, '1b34563');
+});
+
+// --- fix_file: the third way a survived blocker or high settles ---------------
+
+test('a survived high with fix_file builds and stores the key', () => {
+  const findings = [finding({ severity: 'high' })];
+  const res = buildEntries(payload(voice('openai', 'gpt-5', findings,
+    [{ ruling: 'survived', fix_file: 'notes/local.cfg' }])));
+  assert.equal(res.ok, true, res.detail);
+  assert.equal(res.entries[0].fix_file, 'notes/local.cfg');
+  assert.equal('fix_commit' in res.entries[0], false);
+  assert.equal('overridden' in res.entries[0], false);
+});
+
+test('fix_file is refused when absolute, climbing, blank or beside fix_commit', () => {
+  const findings = [finding({ severity: 'high' })];
+  const cases = [
+    ['/etc/passwd', /repo-relative/],
+    ['C:\\tmp\\x', /repo-relative/],
+    ['a/../../b', /\.\. segment/],
+    ['..\\b', /\.\. segment/],
+    ['   ', /non-blank/],
+    ['a\u0007b', /control character/],
+    [7, /non-blank/],
+  ];
+  for (const [bad, why] of cases) {
+    const res = buildEntries(payload(voice('openai', 'gpt-5', findings,
+      [{ ruling: 'survived', fix_file: bad }])));
+    assert.equal(res.ok, false, `fix_file ${JSON.stringify(bad)} was accepted`);
+    assert.match(res.detail, why);
+  }
+  const both = buildEntries(payload(voice('openai', 'gpt-5', findings,
+    [{ ruling: 'survived', fix_file: 'x.cfg', fix_commit: '1b34563' }])));
+  assert.equal(both.ok, false);
+  assert.match(both.detail, /fix_file beside fix_commit/);
 });
 
 test('the marker is not restricted to survived, nor to a severity', () => {

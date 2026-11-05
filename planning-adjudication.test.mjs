@@ -108,6 +108,39 @@ export function adjPayloadFile(repo, payload, name = 'payload.json') {
 const adjFiles = (dir, phase = 2) =>
   readdirSync(join(dir, 'phases', String(phase))).filter((f) => f.startsWith('ADJUDICATION')).sort();
 
+/** adjPayload with its one high settled by `fix_file` in place of the commit. */
+function fixFilePayload(fixFile) {
+  const p = adjPayload();
+  const ruling = p.voices[0].rulings[0];
+  delete ruling.fix_commit;
+  ruling.fix_file = fixFile;
+  return p;
+}
+
+test('adjudication: fix_file naming an ignored file is accepted and stored', () => {
+  const { repo, dir, base } = adjRepo();
+  writeFileSync(join(repo, '.gitignore'), 'local.cfg\n');
+  writeFileSync(join(repo, 'local.cfg'), 'k=1\n');
+  const payload = adjPayloadFile(repo, fixFilePayload('local.cfg'));
+  const r = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan',
+    '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const rec = JSON.parse(readFileSync(join(dir, r.record), 'utf8'));
+  assert.equal(rec.entries[0].fix_file, 'local.cfg');
+  assert.equal('fix_commit' in rec.entries[0], false);
+});
+
+test('adjudication: fix_file naming a tracked file is refused with its reason and writes nothing', () => {
+  const { repo, dir, base } = adjRepo();
+  const payload = adjPayloadFile(repo, fixFilePayload('src.js'));
+  const r = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan',
+    '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'fix-file-tracked');
+  assert.match(r.detail, /src\.js.*tracks/);
+  assert.deepEqual(adjFiles(dir), []);
+});
+
 test('adjudication: the record lands beside the sibling REVIEW discriminator (AC1)', () => {
   const { repo, dir, baseFull, headFull, base } = adjRepo();
   const payload = adjPayloadFile(repo, adjPayload());

@@ -22,7 +22,7 @@ const SIX = ['what_breaks', 'why_care', 'what_triggers', 'what_proves', 'what_un
 const HEADINGS = ['What breaks', 'Why I should care', 'What triggers it', 'What proves it', 'What is still uncertain', 'Your recommendation'];
 // the keys a record entry may carry today, from lib/adjudication-record.mjs and the seam that stores it
 const ENTRY_KEYS = new Set(['voice', 'model', 'file', 'line', 'severity', 'claim', 'failure_scenario', 'ruling', 'convergent',
-  'counter_evidence', 'fix_commit', 'overridden', 'citation_missing', 'base_id', 'head_id']);
+  'counter_evidence', 'fix_commit', 'fix_file', 'overridden', 'citation_missing', 'base_id', 'head_id']);
 
 /** A scratch repo with two commits, a phase 1 directory and an empty out directory for the seam. */
 function tree() {
@@ -135,7 +135,7 @@ test('workflow-run: a proved high needs an answer, and adjudication and unfixedF
   const r = seam(t, run);
   assert.deepEqual(r.needs_answer.map((n) => [n.voice, n.index, n.severity, n.suspected]), [['claude-subagent', 0, 'high', false]]);
   assert.equal(r.ready, false);
-  assert.match(r.not_ready, /neither a usable fix_commit nor overridden/);
+  assert.match(r.not_ready, /none of a usable fix_commit, a fix_file or overridden/);
   assert.equal(adjudicate(t, r.payload).ok, false);
   assert.equal(unfixedFindings(readJson(r.payload)).ok, false);
 
@@ -170,6 +170,18 @@ test('workflow-run: a fix_commit, overridden: true and a refuted ruling with cou
   assert.equal(bare.ready, false);
   assert.match(bare.unruled[0].reason, /counter_evidence\.file/);
   assert.equal(adjudicate(t2, bare.payload).ok, false);
+});
+
+test('workflow-run: a fix_file answer reaches the payload and settles a high', () => {
+  const t = tree();
+  const run = runWith([finding('one')], [verdict('proved')]);
+  const r = seam(t, run, [{ voice: 'claude-subagent', index: 0, fix_file: 'local.cfg' }]);
+  assert.equal(r.ready, true, r.not_ready);
+  assert.deepEqual(r.needs_answer, []);
+  assert.equal(readJson(r.payload).voices[0].rulings[0].fix_file, 'local.cfg');
+  assert.equal(adjudicate(t, r.payload).ok, true);
+  const bad = seam(tree(), run, [{ voice: 'claude-subagent', index: 0, fix_file: 7 }]);
+  assert.match(bad.detail || bad.reason || JSON.stringify(bad), /fix_file must be text/);
 });
 
 test('workflow-run: a null is ruled in one round and settled in the next, and a later settlement replaces the earlier', () => {
