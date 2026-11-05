@@ -75,7 +75,11 @@ const RETIRED_KEYS_FILE = fileURLToPath(new URL('../cadence-core/bin/lib/retired
 // `bf8ffa275bd8d0f990e4a99d1bac9a0ec35ce7ed9eaefc9e7125ac892823c920`, by decision: John asked for every comment in
 // the plugin to be rewritten shorter and in his voice, so the header and row comments in lib/retired-keys.mjs were
 // rewritten. No row's key, `replacement`, `since` or `detail` moved with them.
-const RETIRED_KEYS_SHA256 = 'f3fcc60a98ad9e863160549968912302710a7b3c260add1714a32dc908e59878';
+//
+// An EIGHTH time, off
+// `f3fcc60a98ad9e863160549968912302710a7b3c260add1714a32dc908e59878`, by decision: John said "shorten the comments", so
+// the header comment in lib/retired-keys.mjs was cut shorter. No row's key, `replacement`, `since` or `detail` moved.
+const RETIRED_KEYS_SHA256 = '027bdec35a9400fe7053dc6abc045f19b211b5e4fe9a257c96316105ac1414d9';
 
 test('lib/retired-keys.mjs is byte-identical - the eight risk.override.* keys stay retired', () => {
   // WHAT THIS PROTECTS. D-03 keeps the retired family retired because a key
