@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -49,7 +49,7 @@ function cli(t, args) {
 function seam(t, run, answers) {
   const runFile = join(t.repo, 'run.json');
   writeFileSync(runFile, typeof run === 'string' ? run : JSON.stringify(run));
-  const args = ['workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', t.out];
+  const args = ['workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', t.out, '--payload-ref', `${t.base}..${t.head}`];
   if (answers) {
     const af = join(t.repo, `answers-${readdirSync(t.repo).length}.json`);
     writeFileSync(af, JSON.stringify({ answers }));
@@ -234,7 +234,7 @@ test('workflow-run: a voice that did not run is named and dropped, and one that 
 test('workflow-run: each refusal gives its own reason and writes no payload or review input', () => {
   const big = ' '.repeat(8 * 1024 * 1024 + 1);
   const cases = [
-    ['run-unreadable', (t) => cli(t, ['workflow-run', '--phase', '1', '--run-file', join(t.repo, 'nope.json'), '--out-dir', t.out])],
+    ['run-unreadable', (t) => cli(t, ['workflow-run', '--phase', '1', '--run-file', join(t.repo, 'nope.json'), '--out-dir', t.out, '--payload-ref', 'a..b'])],
     ['run-too-large', (t) => seam(t, big)],
     ['run-not-json', (t) => seam(t, '{ not json')],
     ['run-not-completed', (t) => seam(t, { ...clone(FIXTURE), status: 'killed', result: null })],
@@ -274,8 +274,130 @@ test('workflow-run: bad answers are refused naming what is wrong, and nothing is
 
 test('workflow-run: flags it needs are refused at the door', () => {
   const t = tree();
-  assert.equal(cli(t, ['workflow-run', '--run-file', 'x', '--out-dir', t.out]).reason, 'bad-args');
-  assert.equal(cli(t, ['workflow-run', '--phase', '1', '--out-dir', t.out]).reason, 'bad-args');
-  assert.equal(cli(t, ['workflow-run', '--phase', '1', '--run-file', 'x']).reason, 'bad-args');
-  assert.equal(cli(t, ['workflow-run', '--phase', '1', '--run-file', 'x', '--out-dir', join(t.repo, 'missing')]).reason, 'bad-args');
+  const all = ['--phase', '1', '--run-file', 'x', '--out-dir', t.out, '--payload-ref', 'a..b'];
+  const without = (flag) => { const i = all.indexOf(flag); return all.filter((_, j) => j !== i && j !== i + 1); };
+  for (const flag of ['--phase', '--run-file', '--out-dir', '--payload-ref']) {
+    assert.equal(cli(t, ['workflow-run', ...without(flag)]).reason, 'bad-args', flag);
+  }
+  assert.equal(cli(t, ['workflow-run', ...all, '--out-dir', join(t.repo, 'missing')]).reason, 'bad-args');
+  assert.equal(cli(t, ['workflow-run', ...all, '--notice-tokens', '-5']).reason, 'bad-args');
+  assert.equal(cli(t, ['workflow-run', ...all, '--notice-turns', '1.5']).reason, 'bad-args');
+  assert.equal(existsSync(join(t.dir, 'trace.jsonl')), false, 'a refused call wrote no bracket');
+});
+
+// --- the brackets: one per workflow agent, billed from the run file ---------------------------------
+
+const KILLED = JSON.parse(readFileSync(join(ROOT, 'tests', 'fixtures', 'workflow-run.killed.json'), 'utf8'));
+const REF = 'abc1234..def5678';
+const render = (t) => cli(t, ['trace', 'render', '--phase', '1']);
+const rawEvents = (t) => cli(t, ['trace', 'render', '--phase', '1', '--events']).events;
+const rowsOf = (run) => run.workflowProgress.filter((r) => r.type === 'workflow_agent');
+
+test('workflow-run: three agents of three kinds, one not done, bill three brackets and leave nothing unpaired', () => {
+  const t = tree();
+  const run = clone(FIXTURE);
+  const [wrapper, reviewer, checker] = rowsOf(run);
+  wrapper.state = 'progress';
+  const r = seam(t, run);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual([r.brackets.source, r.brackets.written, r.brackets.already, r.brackets.failed], ['run-file', 3, 0, []]);
+
+  const out = render(t);
+  assert.deepEqual(out.unpaired, []);
+  const by = Object.fromEntries(out.brackets.map((b) => [b.role, b]));
+  assert.deepEqual(Object.keys(by).sort(), ['cad-reviewer', 'review-checker', 'review-provider-wrapper']);
+  for (const [role, row] of [['cad-reviewer', reviewer], ['review-checker', checker], ['review-provider-wrapper', wrapper]]) {
+    assert.equal(by[role].tokens, row.tokens, role);
+    assert.equal(by[role].turns, row.toolCalls, role);
+    assert.equal(by[role].duration_ms, row.durationMs, role);
+    assert.equal(by[role].agent_id, row.agentId, role);
+  }
+  // the checker's spend is apart from the reviewer's, so the reviewer role's total still means the reviewers
+  assert.deepEqual(out.roles['cad-reviewer'], { dispatches: 1, tokens: reviewer.tokens, turns: reviewer.toolCalls });
+  assert.equal(out.roles['review-checker'].tokens, checker.tokens);
+  assert.equal(by['review-provider-wrapper'].event, 'checkpoint', 'a not-done agent closes as a checkpoint');
+  assert.equal(by['cad-reviewer'].event, 'return');
+  assert.equal(by['review-checker'].event, 'return');
+
+  const events = rawEvents(t).filter((e) => e.family === 'lifecycle');
+  const dispatches = events.filter((e) => e.event === 'dispatch');
+  assert.equal(dispatches.length, 3);
+  assert.ok(dispatches.every((e) => e.plan.startsWith('wf_9d70aeab-5d0-') && e.read.length === 1 && e.read[0] === `${t.base}..${t.head}`), 'every key carries the run id and every read set is the payload reference');
+  assert.equal(new Set(dispatches.map((e) => e.plan)).size, 3);
+  assert.match(events.find((e) => e.event === 'checkpoint').detail, /state "progress"/);
+  assert.equal(dispatches.find((e) => e.role === 'cad-reviewer').reviewer, 'claude-subagent');
+});
+
+test('workflow-run: a second call for the same run writes no second set, and a later answers round adds none either', () => {
+  const t = tree();
+  assert.equal(seam(t, FIXTURE).brackets.written, 3);
+  const before = rawEvents(t).length;
+  const again = seam(t, FIXTURE, [{ voice: 'claude-subagent', index: 3, fix_commit: 'abc1234' }]);
+  assert.deepEqual([again.brackets.written, again.brackets.already], [0, 3]);
+  assert.equal(rawEvents(t).length, before);
+  assert.equal(render(t).brackets.length, 3);
+});
+
+test('workflow-run: an unreadable run file with the notice\'s totals bills exactly one bracket carrying them', () => {
+  const t = tree();
+  const call = () => cli(t, ['workflow-run', '--phase', '1', '--run-file', join(t.repo, 'wf_gone.json'), '--out-dir', t.out,
+    '--payload-ref', REF, '--notice-tokens', '54242', '--notice-turns', '11', '--notice-duration-ms', '6072']);
+  const r = call();
+  assert.equal(r.reason, 'run-unreadable');
+  assert.deepEqual([r.brackets.source, r.brackets.written], ['notice-totals', 1]);
+  assert.deepEqual(emptyOut(t), []);
+  const out = render(t);
+  assert.equal(out.brackets.length, 1);
+  assert.deepEqual([out.brackets[0].role, out.brackets[0].tokens, out.brackets[0].turns, out.brackets[0].duration_ms], ['review-workflow', 54242, 11, 6072]);
+  assert.deepEqual(out.unpaired, []);
+  assert.match(rawEvents(t).find((e) => e.event === 'return').detail, /completion notice/);
+  assert.equal(rawEvents(t).find((e) => e.event === 'dispatch').plan, 'wf_gone-notice', 'the run id comes from the file name');
+  assert.equal(call().brackets.written, 0, 'a retry bills it once');
+  assert.equal(render(t).brackets.length, 1);
+
+  // a readable file with no agent rows takes the same arm, and no totals means a bracket that says it is unrecorded
+  const t2 = tree();
+  const empty = { ...clone(FIXTURE), workflowProgress: [] };
+  const r2 = seam(t2, empty);
+  assert.equal(r2.ok, true);
+  assert.deepEqual([r2.brackets.source, r2.brackets.written], ['notice-totals', 1]);
+  const b = render(t2);
+  assert.equal(b.brackets[0].tokens, null);
+  assert.deepEqual(b.roles['review-workflow'], { dispatches: 1, unrecorded: 1 });
+});
+
+test('workflow-run: a killed run is refused and still bills every agent row, its unfinished one as a checkpoint', () => {
+  const t = tree();
+  const rows = rowsOf(KILLED);
+  assert.equal(rows.length, 7);
+  const r = seam(t, KILLED);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'run-not-completed');
+  assert.deepEqual([r.brackets.source, r.brackets.written], ['run-file', 7]);
+  assert.deepEqual(emptyOut(t), []);
+
+  const out = render(t);
+  assert.equal(out.brackets.length, 7);
+  assert.deepEqual(out.unpaired, []);
+  assert.deepEqual(out.brackets.filter((b) => b.event === 'checkpoint').map((b) => b.agent_id), [rows[6].agentId]);
+  // the figures are the run file's, so they sum to its own totals
+  assert.equal(out.roles['cad-assumptions-analyzer'].tokens, KILLED.totalTokens);
+  assert.equal(out.roles['cad-assumptions-analyzer'].turns, KILLED.totalToolCalls);
+  const unfinished = out.brackets.find((b) => b.agent_id === rows[6].agentId);
+  assert.equal('duration_ms' in unfinished, false, 'a figure the row lacks is left off, never 0');
+  assert.equal(seam(t, KILLED).brackets.written, 0);
+  assert.equal(render(t).brackets.length, 7);
+});
+
+test('workflow-run: trace suggest and the window report run on that record and count the new labels unbudgeted', () => {
+  const t = tree();
+  seam(t, FIXTURE);
+  const suggest = cli(t, ['trace', 'suggest', '--phase', '1']);
+  assert.equal(suggest.ok, true, JSON.stringify(suggest));
+  const w = cli(t, ['trace', 'window', '--phase', '1']);
+  assert.equal(w.ok, true, JSON.stringify(w));
+  assert.equal(w.unbudgeted['review-checker'], 1);
+  assert.equal(w.unbudgeted['review-provider-wrapper'], 1);
+  assert.equal(w.unbudgeted['cad-reviewer'], undefined, 'the reviewer keeps its ceiling');
+  assert.equal(w.compared, 1);
 });

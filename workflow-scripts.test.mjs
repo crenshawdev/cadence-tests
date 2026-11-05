@@ -183,7 +183,7 @@ test('review-panel: its real return, placed in a run file, passes workflow-run a
   const planning = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
   const call = (...a) => JSON.parse(execFileSync('node', [planning, '--dir', join(repo, '.planning'), ...a], { encoding: 'utf8', cwd: repo }));
 
-  const seam = call('workflow-run', '--phase', '1', '--run-file', join(repo, 'run.json'), '--out-dir', join(repo, 'scratch'));
+  const seam = call('workflow-run', '--phase', '1', '--run-file', join(repo, 'run.json'), '--out-dir', join(repo, 'scratch'), '--payload-ref', `${base}..${head}`);
   assert.equal(seam.ok, true, JSON.stringify(seam));
   assert.deepEqual(seam.counts, { raised: 3, survived: 2, downgraded: 0, refuted: 1, unruled: 0 });
   assert.equal(seam.ready, true, seam.not_ready);

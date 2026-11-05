@@ -1,0 +1,175 @@
+{
+  "runId": "wf_a3be590f-4b2",
+  "timestamp": "2026-11-05T17:23:00.980Z",
+  "result": null,
+  "agentCount": 7,
+  "durationMs": 1967508,
+  "error": "Error: Workflow aborted",
+  "workflowName": "spike-analyzer-split-subsystem",
+  "status": "killed",
+  "startTime": 1793897413461,
+  "phases": [
+    {
+      "title": "Scout"
+    },
+    {
+      "title": "Read"
+    },
+    {
+      "title": "Sweep"
+    },
+    {
+      "title": "Combine"
+    }
+  ],
+  "defaultModel": "claude-opus-5-5",
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Scout"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Read"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Sweep"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 4,
+      "title": "Combine"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "scout",
+      "phaseIndex": 1,
+      "phaseTitle": "Scout",
+      "agentId": "ac0ce2fc6777306d7",
+      "agentType": "cadence:cad-assumptions-analyzer-medium",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1793897413482,
+      "queuedAt": 1793897413474,
+      "attempt": 1,
+      "lastProgressAt": 1793897446598,
+      "tokens": 20084,
+      "toolCalls": 5,
+      "durationMs": 33116
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "read:Review dispatch: running the reviewers and combining their findings",
+      "phaseIndex": 2,
+      "phaseTitle": "Read",
+      "agentId": "ae8d661dcaf78930c",
+      "agentType": "cadence:cad-assumptions-analyzer",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1793897446614,
+      "queuedAt": 1793897446600,
+      "attempt": 1,
+      "lastProgressAt": 1793898228005,
+      "tokens": 209903,
+      "toolCalls": 41,
+      "durationMs": 781391
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "read:Finding format, reviewer rules and triage",
+      "phaseIndex": 2,
+      "phaseTitle": "Read",
+      "agentId": "a53e8670880eed03b",
+      "agentType": "cadence:cad-assumptions-analyzer",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1793897446614,
+      "queuedAt": 1793897446600,
+      "attempt": 1,
+      "lastProgressAt": 1793897988925,
+      "tokens": 157724,
+      "toolCalls": 36,
+      "durationMs": 542310
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "read:Subagent tracing and the run record",
+      "phaseIndex": 2,
+      "phaseTitle": "Read",
+      "agentId": "af7d43a65310bf189",
+      "agentType": "cadence:cad-assumptions-analyzer",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1793897446614,
+      "queuedAt": 1793897446601,
+      "attempt": 1,
+      "lastProgressAt": 1793898001973,
+      "tokens": 170892,
+      "toolCalls": 37,
+      "durationMs": 555358
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "read:Integration branch naming and land cleanup",
+      "phaseIndex": 2,
+      "phaseTitle": "Read",
+      "agentId": "a6035a1ad8f525003",
+      "agentType": "cadence:cad-assumptions-analyzer",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1793897446614,
+      "queuedAt": 1793897446601,
+      "attempt": 1,
+      "lastProgressAt": 1793897931603,
+      "tokens": 114879,
+      "toolCalls": 38,
+      "durationMs": 484988
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "sweep",
+      "phaseIndex": 3,
+      "phaseTitle": "Sweep",
+      "agentId": "ad13c73f61da7e4c3",
+      "agentType": "cadence:cad-assumptions-analyzer",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1793898228010,
+      "queuedAt": 1793898228007,
+      "attempt": 1,
+      "lastProgressAt": 1793898964836,
+      "tokens": 197633,
+      "toolCalls": 42,
+      "durationMs": 736826
+    },
+    {
+      "type": "workflow_agent",
+      "index": 7,
+      "label": "combine",
+      "phaseIndex": 4,
+      "phaseTitle": "Combine",
+      "agentId": "ab4a7fcd9120be6fe",
+      "agentType": "cadence:cad-assumptions-analyzer",
+      "model": "claude-opus-5-5",
+      "state": "progress",
+      "startedAt": 1793898964849,
+      "queuedAt": 1793898964838,
+      "attempt": 1,
+      "lastProgressAt": 1793899161720,
+      "tokens": 54228,
+      "toolCalls": 0
+    }
+  ],
+  "totalTokens": 925343,
+  "totalToolCalls": 199
+}
