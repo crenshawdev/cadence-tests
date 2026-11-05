@@ -580,6 +580,8 @@ test('roleOfAgent and rungOfAgent live here, read-trace re-exports them, and the
 // The reviewer brief and the reviewer contract were re-pinned together when phase 1 of
 // the Seldon cycle added the four reviewer rules to both (D-22) - a deliberate change,
 // approved with the phase.
+// The reviewer contract was re-pinned again when Plan 3 added its checker section and the envelope
+// exception to its two write rules (D-14) - a deliberate change, approved with the phase.
 
 const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-assumptions-analyzer-high.md': '631826d54561635203c1f87d099837cac1066028ca968dfcdacdc41008a5c2d2',
@@ -618,7 +620,7 @@ const CONTRACT_SURFACE_DIGESTS = {
   'skills/cad-executor-contract/SKILL.md': '3c5482540f0d3193001fabebe08bb51b25afa8a059741612e4cdd11971d7004f',
   'skills/cad-plan-checker-contract/SKILL.md': 'f84ccdfd51ff4389c0f54d70b11479b3673e8bdbe021ce0d8b33bfa62d9dcff5',
   'skills/cad-planner-contract/SKILL.md': 'b6aca8bc79bae4bd07bd422a6bb371c46c504aa51088325211b4e127d5c8ec7f',
-  'skills/cad-reviewer-contract/SKILL.md': 'f778be39fa193d843553d76128ced4489f97e348a25c60ed7934902b2e8a5bfb',
+  'skills/cad-reviewer-contract/SKILL.md': 'f232663f6c5705e0301e8851a2be12397efc1457959b66badf5b241762554658',
   'skills/cad-verifier-contract/SKILL.md': '4d7161a41fca476d10dfd6c39a34041b7353f5e9d2673fe60d9ff6bd11befa59',
 };
 
