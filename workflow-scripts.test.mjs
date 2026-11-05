@@ -163,6 +163,18 @@ test('review-panel: a provider that reports ok:false, or a wrapper that returns 
   assert.ok(dead.logs.some((m) => /provider openai failed/.test(m)));
 });
 
+test('review-panel: a voice whose wrapper launched keeps its envelope and model on every failed return, and one that never launched does not', async () => {
+  const kept = ['/tmp/cad-x/openai.envelope.json', 'gpt-5'];
+  for (const reply of [null, { ok: false, reason: 'no-key' }, { ok: false }]) {
+    const out = await runScript(PANEL, host(() => reply), PROV_ARGS);
+    const v = out.voices[0];
+    assert.equal(v.ran, false);
+    assert.deepEqual([v.envelope, v.model], kept);
+  }
+  const noLine = await runScript(PANEL, host(() => null), { ...PROV_ARGS, providers: { openai: { ...PROV_ARGS.providers.openai, timeout_ms: 0 } } });
+  assert.deepEqual([noLine.voices[0].envelope, noLine.voices[0].model], [undefined, undefined]);
+});
+
 test('review-panel: a seam line naming CLAUDE_PLUGIN_ROOT, or no wrapper type, starts no agent for that provider', async () => {
   for (const bad of [
     { ...PROV_ARGS, providers: { openai: { ...PROV_ARGS.providers.openai, line: 'node "${CLAUDE_PLUGIN_ROOT}/x.mjs" review' } } },

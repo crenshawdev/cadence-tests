@@ -473,6 +473,44 @@ test('workflow-run: an envelope that says ok:false drops the voice whatever the 
   assert.deepEqual(r.counts, { raised: 1, survived: 1, downgraded: 0, refuted: 0, unruled: 0 });
 });
 
+test('workflow-run: a voice whose wrapper returned nothing but whose envelope holds a high finding lands it unruled, and the review is not clean', () => {
+  const t = tree();
+  const run = runWith([], []);
+  const high = finding('saved before the wrapper died', 'high');
+  const env = join(t.repo, 'openai.envelope.json');
+  writeFileSync(env, JSON.stringify({ ok: true, findings: [high] }));
+  run.result.voices.push({ voice: 'openai', ran: false, reason: 'the provider wrapper returned nothing', result: null, rulings: [], envelope: env, model: 'gpt-5' });
+  const r = seam(t, run);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.dropped, []);
+  assert.deepEqual(r.voices, ['claude-subagent', 'openai']);
+  assert.deepEqual(r.counts, { raised: 1, survived: 0, downgraded: 0, refuted: 0, unruled: 1 });
+  assert.deepEqual([r.unruled[0].voice, r.unruled[0].index, r.unruled[0].severity === undefined], ['openai', 0, true]);
+  assert.match(r.unruled[0].reason, /no checker ruled/);
+  assert.match(r.notes[0], /openai: the wrapper did not answer \(the provider wrapper returned nothing\)/);
+  assert.equal(r.ready, false, 'a sibling\'s empty findings do not make the review clean');
+  assert.equal(adjudicate(t, r.payload).ok, false);
+
+  const answered = seam(t, run, [{ voice: 'openai', index: 0, ruling: 'survived', overridden: true, ...texts() }]);
+  assert.equal(answered.ready, true, answered.not_ready);
+  assert.equal(answered.needs_answer.length, 0);
+});
+
+test('workflow-run: a voice that did not run keeps today\'s named drop when its envelope is missing, torn or ok:false', () => {
+  for (const env of [null, '{ torn', { ok: false, reason: 'transport' }, { ok: true, findings: 'x' }]) {
+    const t = tree();
+    const run = runWith([finding('local one', 'medium')], [verdict('proved', { severity: 'medium' })]);
+    const file = join(t.repo, 'openai.envelope.json');
+    if (env !== null) writeFileSync(file, typeof env === 'string' ? env : JSON.stringify(env));
+    run.result.voices.push({ voice: 'openai', ran: false, reason: 'the provider wrapper returned nothing', result: null, rulings: [], envelope: file, model: 'gpt-5' });
+    const r = seam(t, run);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(r.voices, ['claude-subagent']);
+    assert.deepEqual(r.dropped, [{ voice: 'openai', reason: 'the provider wrapper returned nothing' }]);
+    assert.deepEqual(r.counts, { raised: 1, survived: 1, downgraded: 0, refuted: 0, unruled: 0 });
+  }
+});
+
 // --- Plan 4's three confirmed defects ----------------------------------------------------------------------------
 
 test('workflow-run: a finding whose severity is not one of the four is refused run-bad-result, never a crash', () => {
