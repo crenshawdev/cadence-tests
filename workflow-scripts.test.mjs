@@ -170,9 +170,10 @@ test('review-panel: a seam line naming CLAUDE_PLUGIN_ROOT, or no wrapper type, s
     { ...PROV_ARGS, providers: { openai: { ...PROV_ARGS.providers.openai, timeout_ms: 0 } } },
     { ...PROV_ARGS, providers: { openai: { ...PROV_ARGS.providers.openai, model: '' } } },
   ]) {
-    const h = host(() => assert.fail('an agent started'));
+    // the only agent that may start is the local fallback the emptied set owes
+    const h = host((label) => (label.startsWith('reviewer') ? null : assert.fail('a provider agent started')));
     const out = await runScript(PANEL, h, bad);
-    assert.equal(h.calls.length, 0);
+    assert.deepEqual(h.calls.map((c) => c.opts.label), ['reviewer claude-subagent']);
     assert.equal(out.voices[0].ran, false);
     assert.match(out.voices[0].reason, /openai did not run/);
   }
@@ -215,6 +216,67 @@ test('review-panel: the schemas', async () => {
   assert.ok(!checker.required.includes('counter_evidence'));
 });
 
+// --- an agent returning nothing changes no verdict ------------------------------------------------------------------
+
+test('review-panel: a null reviewer beside a live one is named, the live one\'s findings are checked and no fallback runs', async () => {
+  const h = host((label) => {
+    if (label.startsWith('reviewer')) return { findings: [find('a.js', 'one'), find('b.js', 'two')] };
+    if (label.startsWith('provider')) return null;
+    return verdict('proved');
+  });
+  const out = await runScript(PANEL, h, { ...PROV_ARGS, reviewers: ['claude-subagent', 'openai'] });
+  assert.deepEqual(out.voices.map((v) => [v.voice, v.ran]), [['claude-subagent', true], ['openai', false]]);
+  assert.match(out.voices[1].reason, /wrapper returned nothing/);
+  assert.equal(h.calls.filter((c) => c.opts.label.startsWith('reviewer')).length, 1, 'no fallback');
+  assert.equal(h.calls.filter((c) => c.opts.label.startsWith('checker')).length, 2);
+  assert.equal(out.voices[0].rulings.length, 2);
+});
+
+test('review-panel: every reviewer null runs the local fallback exactly once and its findings are checked', async () => {
+  const h = host((label) => {
+    if (label.startsWith('provider')) return null;
+    if (label.startsWith('reviewer')) return { findings: [find('a.js', 'one')] };
+    return verdict('proved');
+  });
+  const out = await runScript(PANEL, h, PROV_ARGS);
+  assert.equal(h.calls.filter((c) => c.opts.label.startsWith('reviewer')).length, 1);
+  assert.equal(h.calls.filter((c) => c.opts.label.startsWith('checker')).length, 1);
+  assert.deepEqual(out.voices.map((v) => [v.voice, v.ran, v.fallback === true]), [['openai', false, false], ['claude-subagent', true, true]]);
+  assert.equal(out.voices[1].rulings[0].ruling.ruling, 'proved');
+  assert.ok(h.logs.some((m) => /fallback runs once/.test(m)));
+
+  // the local reviewer dying is an emptied set too: one more try, and the dead first voice stays named
+  let seen = 0;
+  const h2 = host((label) => {
+    if (label.startsWith('reviewer')) return seen++ === 0 ? null : { findings: [] };
+    return assert.fail('no checker for no findings');
+  });
+  const out2 = await runScript(PANEL, h2, ARGS);
+  assert.deepEqual(out2.voices.map((v) => [v.ran, v.fallback === true]), [[false, false], [true, true]]);
+});
+
+test('review-panel: a fallback that also returns nothing returns no voice that ran and starts no checker', async () => {
+  const h = host(() => null);
+  const out = await runScript(PANEL, h, PROV_ARGS);
+  assert.equal(h.calls.filter((c) => c.opts.label.startsWith('reviewer')).length, 1, 'the fallback ran once and not again');
+  assert.equal(h.calls.filter((c) => c.opts.label.startsWith('checker')).length, 0);
+  assert.equal(out.voices.some((v) => v.ran), false);
+  assert.equal(out.voices.at(-1).fallback, true);
+  assert.match(out.voices.at(-1).reason, /returned nothing/);
+});
+
+test('review-panel: a checker that returns nothing and one that throws both leave null in their slots while the siblings are ruled', async () => {
+  const h = host((label) => {
+    if (label.startsWith('reviewer')) return { findings: [find('a.js', 'one'), find('b.js', 'two'), find('c.js', 'three')] };
+    if (label.endsWith(' 1')) return null;
+    if (label.endsWith(' 2')) throw new Error('dead agent');
+    return verdict('refuted', { counter_evidence: { file: 'c.js' } });
+  });
+  const out = await runScript(PANEL, h, ARGS);
+  assert.deepEqual(out.voices[0].rulings.map((r) => r.ruling && r.ruling.ruling), [null, null, 'refuted']);
+  assert.deepEqual(out.voices[0].rulings.map((r) => r.finding.claim), ['one', 'two', 'three'], 'a null slot keeps its finding');
+});
+
 // Drift between the script's return and the seam that reads it would refuse every live run, so the real return goes through both.
 test('review-panel: its real return, with a local voice and a provider voice, placed in a run file, passes workflow-run and the record\'s own adjudication', async () => {
   const mild = (file, claim, severity) => ({ file, line: 3, severity, claim, failure_scenario: `${claim} breaks` });
@@ -224,13 +286,19 @@ test('review-panel: its real return, with a local voice and a provider voice, pl
   const envelopePath = join(repo, 'openai.envelope.json');
   const h = host((label) => {
     if (label.startsWith('reviewer')) return { findings: raised };
+    if (label === 'provider gemini') return { ok: false, reason: 'no-key' };
+    if (label === 'checker openai 1') return null;
     if (label.startsWith('provider')) { writeFileSync(envelopePath, JSON.stringify({ ok: true, model: 'gpt-5', findings: theirs })); return { ok: true, findings: theirs }; }
     if (label.endsWith(' 2')) return verdict('refuted', { counter_evidence: { file: 'b.js', line: 9 } });
     return label.endsWith(' 3') ? verdict('neither', { severity: 'medium' }) : verdict('proved', { severity: 'medium' });
   });
-  const args = { ...PROV_ARGS, reviewers: ['claude-subagent', 'openai'], providers: { openai: { ...PROV_ARGS.providers.openai, envelope: envelopePath } } };
+  const args = { ...PROV_ARGS, reviewers: ['claude-subagent', 'openai', 'gemini'], providers: {
+    openai: { ...PROV_ARGS.providers.openai, envelope: envelopePath },
+    gemini: { ...PROV_ARGS.providers.openai, envelope: join(repo, 'gemini.envelope.json'), model: 'gemini-3' },
+  } };
   const out = JSON.parse(JSON.stringify(await runScript(PANEL, h, args)));
-  assert.deepEqual(out.voices.map((v) => [v.voice, v.ran]), [['claude-subagent', true], ['openai', true]]);
+  assert.deepEqual(out.voices.map((v) => [v.voice, v.ran]), [['claude-subagent', true], ['openai', true], ['gemini', false]]);
+  assert.equal(out.voices[1].rulings[0].ruling, null, 'a null checker leaves null in its slot');
 
   const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim();
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');
@@ -248,13 +316,30 @@ test('review-panel: its real return, with a local voice and a provider voice, pl
 
   const seam = call('workflow-run', '--phase', '1', '--run-file', join(repo, 'run.json'), '--out-dir', join(repo, 'scratch'), '--payload-ref', `${base}..${head}`);
   assert.equal(seam.ok, true, JSON.stringify(seam));
-  assert.deepEqual(seam.counts, { raised: 5, survived: 3, downgraded: 0, refuted: 2, unruled: 0 });
+  // the null checker's finding is in no count until answered, and the dropped voice is named
+  assert.deepEqual(seam.counts, { raised: 5, survived: 2, downgraded: 0, refuted: 2, unruled: 1 });
+  assert.deepEqual(seam.unruled.map((u) => [u.voice, u.index]), [['openai', 0]]);
+  assert.deepEqual(seam.dropped, [{ voice: 'gemini', reason: 'the provider reported no-key' }]);
   assert.deepEqual(seam.voices, ['claude-subagent', 'openai']);
-  assert.deepEqual(seam.providers, [{ voice: 'openai', source: 'envelope' }]);
-  assert.equal(seam.ready, true, seam.not_ready);
-  const adj = call('adjudication', '--phase', '1', '--trigger', 'diff', '--discriminator', 'abc1234', '--base', base, '--head', head, '--payload', seam.payload);
+  assert.equal(seam.ready, false);
+  const adjudicate = (payload) => {
+    try { return call('adjudication', '--phase', '1', '--trigger', 'diff', '--discriminator', 'abc1234', '--base', base, '--head', head, '--payload', payload); }
+    catch (e) { return JSON.parse(e.stdout); }
+  };
+  assert.equal(adjudicate(seam.payload).ok, false, 'the record refuses the payload while the null is unruled');
+
+  // the main session rules it from the code and fills its six headings, and the record then takes the payload
+  const answers = join(repo, 'answers.json');
+  const texts = Object.fromEntries(SIX.map((k) => [k, `${k} text`]));
+  writeFileSync(answers, JSON.stringify({ answers: [{ voice: 'openai', index: 0, ruling: 'survived', ...texts }] }));
+  const ruled = call('workflow-run', '--phase', '1', '--run-file', join(repo, 'run.json'), '--out-dir', join(repo, 'scratch'), '--payload-ref', `${base}..${head}`, '--answers-file', answers);
+  assert.deepEqual(ruled.counts, { raised: 5, survived: 3, downgraded: 0, refuted: 2, unruled: 0 });
+  assert.equal(ruled.ready, true, ruled.not_ready);
+  const adj = adjudicate(ruled.payload);
   assert.equal(adj.ok, true, JSON.stringify(adj));
   assert.deepEqual(adj.counts, { raised: 5, survived: 3, downgraded: 0, refuted: 2 });
-  const rf = call('review-file', '--phase', '1', '--trigger', 'diff', '--discriminator', 'abc1234', '--base', base, '--head', head, '--payload', seam.review_input);
+  const rf = call('review-file', '--phase', '1', '--trigger', 'diff', '--discriminator', 'abc1234', '--base', base, '--head', head, '--payload', ruled.review_input);
   assert.equal(rf.ok, true, JSON.stringify(rf));
+  const file = readFileSync(join(repo, '.planning', rf.review), 'utf8');
+  assert.equal(file.split('\n').filter((l) => l === '### What breaks').length, 3, 'the answered survivor has its headings in the review file');
 });
