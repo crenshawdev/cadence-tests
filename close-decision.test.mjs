@@ -44,6 +44,59 @@ test('reap: total on a non-array merged list', () => {
   assert.equal(resolveReapBranch('cadence/x', /** @type {any} */ (undefined)), null);
 });
 
+// the configured name (D-24): its own value, then its namespace, then the derived name, then cadence/* on its own
+
+test('reap, configured: a configured name that is merged is the one reaped', () => {
+  assert.equal(
+    resolveReapBranch(null, ['main', 'seldon/hardin', 'cadence/v1.0.0'], 'seldon/hardin'),
+    'seldon/hardin');
+  assert.equal(resolveReapBranch(null, ['main', 'hardin'], 'hardin'), 'hardin');
+});
+
+test('reap, configured: unmerged with one sibling in its namespace reaps the sibling', () => {
+  assert.equal(
+    resolveReapBranch(null, ['main', 'seldon/foundation', 'other/y'], 'seldon/hardin'),
+    'seldon/foundation');
+});
+
+test('reap, configured: two siblings reap nothing, even with one cadence/* merged', () => {
+  assert.equal(
+    resolveReapBranch('cadence/v1.0.0',
+      ['main', 'seldon/a', 'seldon/b', 'cadence/v1.0.0'], 'seldon/hardin'),
+    null);
+});
+
+test('reap, configured: no sibling and one cadence/* merged falls through to the cadence/* entry', () => {
+  assert.equal(
+    resolveReapBranch(null, ['main', 'other/y', 'cadence/v1.0.0'], 'seldon/hardin'),
+    'cadence/v1.0.0');
+});
+
+test('reap, configured: a name with no slash has no namespace, so other/y is no sibling', () => {
+  assert.equal(
+    resolveReapBranch(null, ['main', 'other/y', 'cadence/v1.0.0'], 'hardin'),
+    'cadence/v1.0.0');
+});
+
+test('reap, configured: the sibling step reads the part before the LAST slash', () => {
+  assert.equal(resolveReapBranch(null, ['main', 'a/b/x', 'a/y'], 'a/b/c'), 'a/b/x');
+});
+
+test('reap, configured unset: one merged cadence/* is still reaped (the default stays)', () => {
+  assert.equal(resolveReapBranch(null, ['main', 'cadence/v1.0.0'], null), 'cadence/v1.0.0');
+  assert.equal(resolveReapBranch(null, ['main', 'cadence/v1.0.0'], undefined), 'cadence/v1.0.0');
+});
+
+test('reap, configured unset: a themed branch merged with no config reaps nothing', () => {
+  assert.equal(resolveReapBranch(null, ['main', 'seldon/hardin'], null), null);
+});
+
+test('reap, no derived match: cadence/phase-1-plan-2 beside cadence/v4.0.0 still reaps nothing', () => {
+  assert.equal(
+    resolveReapBranch(null, ['main', 'cadence/phase-1-plan-2', 'cadence/v4.0.0'], null),
+    null);
+});
+
 // --- decideCleanup ----------------------------------------------------------
 
 test('cleanup on + merged: cleanup, reap true, return + pull', () => {

@@ -120,6 +120,72 @@ test('cleanup --merged false: cleanup but reap false (never reap an unmerged bra
   assert.equal(r.reap, false);
 });
 
+/** A real repo with `branch` merged into main, and `.planning/config.json` holding `gitConfig` as written. */
+function themedFixture(gitConfig, branch) {
+  const dir = fixture(gitConfig);
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a],
+    { stdio: 'ignore', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
+  g('init', '-q');
+  g('config', 'user.email', 'test@example.com');
+  g('config', 'user.name', 'test');
+  g('config', 'commit.gpgsign', 'false');
+  g('add', '-A');
+  g('commit', '-q', '-m', 'init');
+  g('branch', '-M', 'main');
+  g('checkout', '-q', '-b', branch);
+  writeFileSync(join(dir, 'work.txt'), 'x');
+  g('add', '-A');
+  g('commit', '-q', '-m', 'work');
+  g('checkout', '-q', 'main');
+  g('merge', '-q', '--no-ff', '-m', 'merge', branch);
+  return dir;
+}
+
+const PUBLISH = join(dirname(SEAM), 'git-publish.mjs');
+const branchesOf = (dir) => execFileSync('git', ['-C', dir, 'branch', '--format=%(refname:short)'],
+  { encoding: 'utf8' }).split('\n').filter(Boolean);
+
+test('cleanup with git.integration_branch_name set and merged: reaps that branch, and git-publish reap deletes it', () => {
+  const dir = themedFixture({ base_branch: 'main', integration_branch_name: 'seldon/hardin' }, 'seldon/hardin');
+  const r = seam(['cleanup', '--dir', dir]);
+  assert.equal(r.reap, true);
+  assert.equal(r.branch, 'seldon/hardin');
+  const out = JSON.parse(execFileSync('node', [PUBLISH, 'reap', '--dir', dir, '--branch', r.branch],
+    { encoding: 'utf8', env: { ...process.env, CADENCE_GLOBAL_CONFIG: NO_GLOBAL } }));
+  assert.equal(out.action, 'reaped');
+  assert.ok(!branchesOf(dir).includes('seldon/hardin'));
+});
+
+test('cleanup with the name set but the merged branch a sibling in its namespace: reaps the sibling', () => {
+  const dir = themedFixture({ base_branch: 'main', integration_branch_name: 'seldon/hardin' }, 'seldon/foundation');
+  const r = seam(['cleanup', '--dir', dir]);
+  assert.equal(r.reap, true);
+  assert.equal(r.branch, 'seldon/foundation');
+});
+
+test('cleanup with no name set and a themed branch merged: reaps nothing', () => {
+  const dir = themedFixture({ base_branch: 'main' }, 'seldon/hardin');
+  const r = seam(['cleanup', '--dir', dir]);
+  assert.equal(r.reap, false);
+  assert.equal(r.branch, null);
+});
+
+test('cleanup with a flag-shaped name in a hand-edited layer: never the branch, named in warnings', () => {
+  const dir = themedFixture({ base_branch: 'main', integration_branch_name: '-D' }, 'cadence/v1.1.0-rc.2');
+  const r = seam(['cleanup', '--dir', dir]);
+  assert.notEqual(r.branch, '-D');
+  assert.equal(r.branch, 'cadence/v1.1.0-rc.2', 'treated as unset, so the cadence/* default applies');
+  assert.ok(r.warnings.some((w) => w.includes('git.integration_branch_name')), JSON.stringify(r.warnings));
+});
+
+test('cleanup --merged true with the named branch already deleted by the host: reaps nothing', () => {
+  const dir = themedFixture({ base_branch: 'main', integration_branch_name: 'seldon/hardin' }, 'seldon/hardin');
+  execFileSync('git', ['-C', dir, 'branch', '-D', 'seldon/hardin'], { stdio: 'ignore' });
+  const r = seam(['cleanup', '--dir', dir, '--merged', 'true']);
+  assert.equal(r.reap, false);
+  assert.equal(r.branch, null);
+});
+
 test('a STRING protected_branches resolves base to that branch (#38, COR-01, D-07)', () => {
   // This seam's own per-consumer proof of the shared coercion
   // (lib/protected-branches.mjs). `base` falls back to protectedBranches[0],
