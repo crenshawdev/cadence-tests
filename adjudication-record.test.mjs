@@ -241,6 +241,20 @@ test('AC3: a survived BLOCKER or HIGH with no fix commit is REFUSED', () => {
   }
 });
 
+test('a suspected finding keeps the survived shape: a high needs a commit or an override, a medium needs neither', () => {
+  // Suspected is heading text only, so what the record sees is a survived ruling with no fix commit
+  const high = [finding({ severity: 'high' })];
+  const bare = buildEntries(payload(voice('openai', 'gpt-5', high, [{ ruling: 'survived' }])));
+  assert.equal(bare.ok, false);
+  assert.match(bare.detail, /carries neither a usable fix_commit nor overridden: true/);
+  const overridden = buildEntries(payload(voice('openai', 'gpt-5', high, [{ ruling: 'survived', overridden: true }])));
+  assert.equal(overridden.ok, true, overridden.detail);
+  const medium = [finding({ severity: 'medium' })];
+  const kept = buildEntries(payload(voice('openai', 'gpt-5', medium, [{ ruling: 'survived' }])));
+  assert.equal(kept.ok, true, kept.detail);
+  assert.deepEqual(deriveCounts(kept.entries), { raised: 1, survived: 1, downgraded: 0, refuted: 0 });
+});
+
 // --- the override marker: the second way a survived blocker settles ----------
 
 test('an OVERRIDDEN survived blocker with no fix commit is accepted, and stores no commit id', () => {
