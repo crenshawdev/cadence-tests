@@ -2829,6 +2829,18 @@ test('workflow scripts: no args guard, a meta that calls a function, and an unkn
   assert.deepEqual(kinds(syntax), ['workflow-script-syntax']);
 });
 
+test('workflow scripts: a template in meta is refused unevaluated, so a getter in it cannot hang the check', () => {
+  const evil = "p: `${Object.defineProperty(Object.prototype, 'name', { get() { while (true) {} } })}`,";
+  for (const member of [evil, 'p: `plain`,']) {
+    const root = scriptFixture(GOOD_SCRIPT.replace("  description: 'A demo.',\n", `  description: 'A demo.',\n  ${member}\n`));
+    // a hang is the failure, so the child gets a deadline of its own
+    let out;
+    try { out = execFileSync('node', [VERIFY, '--root', root], { encoding: 'utf8', timeout: 20000 }); }
+    catch (e) { assert.ok(!e.killed && e.stdout, 'the check hung or died'); out = e.stdout; }
+    assert.deepEqual(kinds(JSON.parse(out)), ['workflow-meta-invalid']);
+  }
+});
+
 test('workflow scripts: a full tree missing workflows/ reports missing-input', () => {
   const root = fullFixture();
   rmSync(join(root, 'workflows'), { recursive: true });
