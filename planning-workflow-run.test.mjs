@@ -111,9 +111,22 @@ test('workflow-run: proved below the raised severity is downgraded and shown low
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(r.counts, { raised: 2, survived: 1, downgraded: 1, refuted: 0, unruled: 0 });
   assert.deepEqual(readJson(r.payload).voices[0].rulings.map((x) => x.ruling), ['downgraded', 'survived']);
-  assert.deepEqual(readJson(r.review_input).survivors.map((s) => s.severity), ['medium', 'low']);
+  assert.deepEqual(readJson(r.review_input).survivors.map((s) => s.severity), ['blocker', 'low']);
   assert.equal(r.ready, true, r.not_ready);
   assert.equal(adjudicate(t, r.payload).ok, true);
+});
+
+test('workflow-run: a medium its checker proves high shows high and is listed as needing an answer', () => {
+  const t = tree();
+  const r = seam(t, runWith([finding('rerank', 'medium')], [verdict('proved', { severity: 'high' })]));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(readJson(r.review_input).survivors.map((s) => s.severity), ['high']);
+  assert.deepEqual(r.needs_answer.map((n) => [n.index, n.severity]), [[0, 'high']]);
+  // the record's verbatim half keeps the raised severity
+  assert.equal(readJson(r.payload).voices[0].returned.findings[0].severity, 'medium');
+  const fixed = seam(t, runWith([finding('rerank', 'medium')], [verdict('proved', { severity: 'high' })]),
+    [{ voice: 'claude-subagent', index: 0, fix_commit: 'abc1234' }]);
+  assert.deepEqual(fixed.needs_answer, []);
 });
 
 test('workflow-run: a proved high needs an answer, and adjudication and unfixedFindings both refuse until it settles', () => {
