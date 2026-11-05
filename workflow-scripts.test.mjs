@@ -550,3 +550,12 @@ test('analyzer: a merged decision keeps two alternatives in reader order, and an
   assert.deepEqual(items.find((i) => i.decision === 'The seam owns the write').alternatives, ['one', 'two']);
   assert.deepEqual(items.find((i) => i.decision === 'Nobody knows').alternatives, ['None named.']);
 });
+
+test('review-workflow.md composes the string artifact the script requires, from the refs object', () => {
+  const doc = readFileSync(join(ROOT, 'cadence-core', 'references', 'review-workflow.md'), 'utf8');
+  const bullet = doc.split('\n').find((l) => l.startsWith('- `artifact`'));
+  assert.ok(bullet, 'the args list has an artifact bullet');
+  // the refs string is written as `git diff` then `<base_ref>..<head_ref>`, since bulk-output reads a whole call in prose as an issued one
+  assert.ok(bullet.includes('`git diff` then a space, then `<base_ref>..<head_ref>`'), 'a refs fire passes the diff command as text');
+  assert.ok(bullet.includes('--cached') && bullet.includes('On a path fire'), 'a staged scope and a path fire are named too');
+});
