@@ -2277,10 +2277,11 @@ test('the workflow switches default false, refuse a non-boolean, and warn in the
 const BRANCH_SPEC = { grammar: 'branch_name' };
 
 test('branch_name grammar: a themed name passes, what a shell or git would act on is refused', () => {
-  for (const ok of ['seldon/hardin', 'cadence/v4.0.0', 'release-2.x']) {
+  for (const ok of ['seldon/hardin', 'cadence/v4.0.0', 'release-2.x', 'a.b/c.d']) {
     assert.equal(checkGrammar(BRANCH_SPEC, ok), null, ok);
   }
-  for (const bad of ['-x', '--output=x', 'a b', '$(id)', 'a;b', 'a`id`', 'a..b', 'a/', 'a.lock', '']) {
+  for (const bad of ['-x', '--output=x', 'a b', '$(id)', 'a;b', 'a`id`', 'a..b', 'a/', 'a.lock', '',
+    'release/v1.', 'release/.hidden', 'a/.b/c', 'v1.']) {
     assert.match(String(checkGrammar(BRANCH_SPEC, bad)), /branch name/, JSON.stringify(bad));
   }
 });
