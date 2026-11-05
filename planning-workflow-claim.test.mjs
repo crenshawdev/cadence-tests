@@ -102,6 +102,18 @@ test('a release with neither --id nor --stale is refused', async () => {
   assert.equal(r.ok, false); assert.equal(r.reason, 'bad-args');
 });
 
+test('a claim taken with the setting off is freed by its id after the setting turns on', async () => {
+  const t = tree(null, null);
+  const a = await cli(t, 'take', 'diff-plan-1');
+  assert.equal(a.launch, true);
+  writeFileSync(join(t.root, '.planning', 'config.json'), JSON.stringify(ON));
+  writeFileSync(t.env.CADENCE_GLOBAL_CONFIG, JSON.stringify(ON));
+  const taken = await cli(t, 'take', 'diff-plan-2');
+  assert.equal(taken.launch, true); assert.equal(taken.id, undefined, 'a take under the setting holds nothing and prints no id');
+  assert.equal((await rel(t, 'diff-plan-1', a.id)).released, true);
+  assert.deepEqual(claimFiles(t), []);
+});
+
 test('on in both layers: two claims both launch and no file exists', async () => {
   const t = tree(ON, ON);
   assert.equal((await cli(t, 'take', 'diff-plan-1')).launch, true);
