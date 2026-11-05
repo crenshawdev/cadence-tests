@@ -27,7 +27,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { closeForStop } from '../cadence-core/bin/lib/subagent-trace.mjs';
-import { appendEvent } from '../cadence-core/bin/lib/trace.mjs';
+import { appendEvent, renderTrace } from '../cadence-core/bin/lib/trace.mjs';
 
 /** One `unpaired[]` row, the shape `renderTrace(...)` returns. */
 const open = (role, plan, ts, extra) => ({ corr: '2-abc1234', phase: '2', plan, ts, role, ...extra });
@@ -860,4 +860,50 @@ test('hook process: a non-Cadence stop and malformed stdin exit 0 silently and a
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
+});
+
+// --- a workflow agent's stop closes no one else's bracket --------------------
+
+// The host keeps a workflow agent's transcript under `subagents/workflows/`. Its dispatch is written after the run, from
+// the run file, so at its stop the only open dispatch of its role is some OTHER worker's, and gate 2b would adopt it.
+const WORKFLOW_STOP = {
+  agent_type: 'cadence:cad-reviewer-low',
+  agent_id: 'wf-agent-1',
+  agent_transcript_path: '/home/u/.claude/projects/p/s1/subagents/workflows/wf_abc/agent-wf-agent-1.jsonl',
+};
+const ORDINARY_STOP = { ...WORKFLOW_STOP, agent_transcript_path: '/home/u/.claude/projects/p/s1/subagents/agent-wf-agent-1.jsonl' };
+
+/** A real trace holding one open `cad-reviewer` dispatch, a panel's own, and the render the hook would read. */
+function openReviewer() {
+  const root = mkdtempSync(join(tmpdir(), 'cad-wfstop-'));
+  appendEvent(root, { phase: '1', family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
+  appendEvent(root, { phase: '1', family: 'lifecycle', event: 'dispatch', plan: 'cad-reviewer', role: 'cad-reviewer' });
+  return { root, render: renderTrace(root) };
+}
+
+test('stop: a workflow agent with one open dispatch of its role closes nothing, whatever the transcript says', () => {
+  const { root, render: r } = openReviewer();
+  assert.equal(r.unpaired.length, 1, 'the fixture holds one open dispatch');
+  const events = closeForStop(WORKFLOW_STOP, r, { transcript: billedStop('end_turn') });
+  assert.equal(events.some((e) => ['return', 'checkpoint', 'escalation'].includes(e.event)), false, JSON.stringify(events));
+  assert.deepEqual(events.map((e) => e.event), ['worker_cache'], 'it states only the cache figures');
+  for (const e of events) appendEvent(root, e);
+  const after = renderTrace(root);
+  assert.equal(after.unpaired.length, 1, 'the other worker\'s dispatch is still open');
+  assert.equal(after.brackets.length, 0);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('stop: the same stop with an ordinary transcript path still closes the one open dispatch', () => {
+  const { root, render: r } = openReviewer();
+  const events = closeForStop(ORDINARY_STOP, r, { transcript: billedStop('end_turn') });
+  assert.deepEqual(events.map((e) => e.event), ['return']);
+  for (const e of events) appendEvent(root, e);
+  assert.equal(renderTrace(root).unpaired.length, 0);
+  // no path at all, and a path that only resembles the directory, are the ordinary case too
+  const { agent_transcript_path: _gone, ...bare } = WORKFLOW_STOP;
+  for (const payload of [bare, { ...WORKFLOW_STOP, agent_transcript_path: '/x/subagents/workflows-old/a.jsonl' }, { ...WORKFLOW_STOP, agent_transcript_path: 7 }]) {
+    assert.deepEqual(closeForStop(payload, r, { transcript: billedStop('end_turn') }).map((e) => e.event), ['return'], JSON.stringify(payload));
+  }
+  rmSync(root, { recursive: true, force: true });
 });
