@@ -141,6 +141,14 @@ test('AC3: a partially reported phase skips only the plans that finished', () =>
 
 // --- AC4: --rerun -----------------------------------------------------------
 
+test('a phase past nine plans lists and dispatches PLAN-10 after PLAN-9, in number order', () => {
+  const plans = ['PLAN-1.md', 'PLAN-2.md', 'PLAN-9.md', 'PLAN-10.md', 'PLAN-11.md'];
+  const r = check(tree({ plans }), ['--phase', '2']);
+
+  assert.deepEqual(r.reports.map((p) => p.plan), plans);
+  assert.deepEqual(r.dispatch_set, plans);
+});
+
 test('AC4: --rerun clears the replay and widens the dispatch set to every plan', () => {
   const dir = tree({
     plans: ['PLAN-1.md', 'PLAN-2.md'],

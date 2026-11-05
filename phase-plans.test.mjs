@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, symlinkSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  cursorPhase, declaredFilesIn, declaredPhaseFiles, declaredPlanFiles, phaseDirsIn,
+  byPlanNumber, cursorPhase, declaredFilesIn, declaredPhaseFiles, declaredPlanFiles, phaseDirsIn,
 } from '../cadence-core/bin/lib/phase-plans.mjs';
 import { renderCursor } from '../cadence-core/bin/lib/planning-files.mjs';
 
@@ -29,6 +29,18 @@ function planningRoot(plans = {}, stateText = null) {
 const plan = (...files) =>
   `---\nphase: 9\nplan: 1\nrequirements:\n  - STK-03\nfiles:\n${
     files.map((f) => `  - ${f}\n`).join('')}---\n\n# Plan\n`;
+
+// --- byPlanNumber ------------------------------------------------------------
+
+test('byPlanNumber orders plans by number, so PLAN-10 follows PLAN-9', () => {
+  const names = ['PLAN-1.md', 'PLAN-2.md', 'PLAN-9.md', 'PLAN-10.md', 'PLAN-11.md'];
+  assert.deepEqual([...names].reverse().sort(byPlanNumber), names);
+});
+
+test('byPlanNumber keeps PLAN.md beside PLAN-1.md in one fixed order either way round', () => {
+  assert.deepEqual(['PLAN.md', 'PLAN-1.md'].sort(byPlanNumber), ['PLAN-1.md', 'PLAN.md']);
+  assert.deepEqual(['PLAN-1.md', 'PLAN.md'].sort(byPlanNumber), ['PLAN-1.md', 'PLAN.md']);
+});
 
 // --- cursorPhase -------------------------------------------------------------
 

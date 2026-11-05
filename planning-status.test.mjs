@@ -501,10 +501,18 @@ test('status: a planned phase that has run nothing is outstanding in full', () =
   });
   const r = run(['status'], dir);
   assert.equal(r.phases[0].status, 'planned', JSON.stringify(r.phases));
-  // Byte order, so `PLAN-2.md` precedes `PLAN.md` (`-` sorts under `.`): the
-  // one `.sort()` both `derivePhases` and `listPlanFiles` apply, which is why
+  // Plan-number order, so the bare `PLAN.md` (plan 1) precedes `PLAN-2.md`: the
+  // one comparator both `derivePhases` and `listPlanFiles` apply, which is why
   // this list and `replay-check`'s dispatch set stay deep-equal above.
-  assert.deepEqual(r.outstanding, [{ phase: 1, plans: ['PLAN-2.md', 'PLAN.md'] }]);
+  assert.deepEqual(r.outstanding, [{ phase: 1, plans: ['PLAN.md', 'PLAN-2.md'] }]);
+});
+
+test('status: a phase past nine plans lists and leaves outstanding PLAN-10 after PLAN-9, in number order', () => {
+  const names = ['PLAN-1.md', 'PLAN-2.md', 'PLAN-9.md', 'PLAN-10.md', 'PLAN-11.md'];
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: names } } });
+  const r = run(['status'], dir);
+  assert.deepEqual(r.phases[0].plans, names, JSON.stringify(r.phases[0].plans));
+  assert.deepEqual(r.outstanding, [{ phase: 1, plans: names }], JSON.stringify(r.outstanding));
 });
 
 test('status: an unplanned phase has no plans and so takes no entry', () => {
