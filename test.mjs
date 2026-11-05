@@ -70,7 +70,7 @@ const GROUPS = Object.freeze({
     'planning-replay-check', 'planning-risk-carry',
     'planning-renumber', 'planning-review-file', 'planning-seed-reqs', 'planning-status',
     'planning-task-record', 'planning-test-policy', 'planning-trace-ignore',
-    'planning-uat', 'planning-workflow-run',
+    'planning-uat', 'planning-workflow-claim', 'planning-workflow-run',
     'trace', 'bm25', 'debt-markers'],
   // The prose<->code drift linters. Slow because they read the whole tree.
   prose: ['self-verify', 'prose-agreement', 'weight', 'deferred-reads',

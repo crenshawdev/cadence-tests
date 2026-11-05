@@ -421,11 +421,11 @@ test('every flag in every row declares a complete grammar', () => {
     }
   }
   // The walk reached the whole table, so no arm above is vacuous.
-  // CADENCE-CENSUS: arg-contract-flag-entries | asserts: the CONTRACTS table declares 229 flag entries across 19 top-level rows
+  // CADENCE-CENSUS: arg-contract-flag-entries | asserts: the CONTRACTS table declares 231 flag entries across 19 top-level rows
   // 203 since `route.mjs agent-type`; 202 since `config.mjs unset` joined the table with the same two rows its
   // `set` sibling carries (D-06). 201 and 19 since `test.mjs` left Cadence for the tests repository, taking its
-  // row (two `--list` entries) with it. 202 since `test-policy render` joined with `--root`; 203 with `test-policy check`; 204 with its `--base`; 206 with `uat record --job` and `--commit`; 210 with `test-policy ci-status`; 211 with `git-publish.mjs verify-publish --remote`; 212 with `config.mjs keys --walk`; 220 with `planning.mjs review-file`, whose eight flags are the record's and the queue member's; 224 with `planning.mjs workflow-run`; 228 with its `--payload-ref` and three notice totals; 229 with its `--analyzer`.
-  assert.equal(entries, 229, `the table declares ${entries} flag entries`);
+  // row (two `--list` entries) with it. 202 since `test-policy render` joined with `--root`; 203 with `test-policy check`; 204 with its `--base`; 206 with `uat record --job` and `--commit`; 210 with `test-policy ci-status`; 211 with `git-publish.mjs verify-publish --remote`; 212 with `config.mjs keys --walk`; 220 with `planning.mjs review-file`, whose eight flags are the record's and the queue member's; 224 with `planning.mjs workflow-run`; 228 with its `--payload-ref` and three notice totals; 229 with its `--analyzer`; 231 with `planning.mjs workflow-claim take|release`, one `--label` each.
+  assert.equal(entries, 231, `the table declares ${entries} flag entries`);
   assert.equal(Object.keys(CONTRACTS).length, 19, 'one row per top-level bin script');
 });
 
