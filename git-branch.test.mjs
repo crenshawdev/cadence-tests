@@ -195,6 +195,52 @@ test('published: an enclosing repository\'s tags are not this project\'s (TAG-01
   assert.equal(r.branch, 'cadence/v0.1.0');
 });
 
+// --- git.integration_branch_name: the configured name (AC7, D-23, D-24) -----
+
+const THEMED = { integration_branch: 'milestone', auto_branch: 'auto', integration_branch_name: 'seldon/hardin' };
+
+test('branch name: the key set to a themed name creates that branch; unset keeps cadence/<version>', () => {
+  const themed = decide(fixture(THEMED, 'v4.0.0'), 'main');
+  assert.equal(themed.action, 'create');
+  assert.equal(themed.branch, 'seldon/hardin');
+  const { integration_branch_name: _drop, ...unset } = THEMED;
+  const plain = decide(fixture(unset, 'v4.0.0'), 'main');
+  assert.equal(plain.action, 'create');
+  assert.equal(plain.branch, 'cadence/v4.0.0');
+});
+
+test('branch name: a version already tagged asks under either name, never a create', () => {
+  const { integration_branch_name: _drop, ...unset } = THEMED;
+  for (const cfg of [THEMED, unset]) {
+    const r = decide(taggedFixture(cfg, 'v4.0.0', ['v4.0.0']), 'main');
+    assert.equal(r.action, 'ask', JSON.stringify(cfg));
+    assert.equal(r.branch, null);
+    assert.match(r.reason, /already-published/);
+  }
+});
+
+test('branch name: a hand-edited bad value asks, names the key and never creates under it', () => {
+  for (const bad of ['--x', 'a b', '$(id)', 'a..b', 5]) {
+    const r = decide(fixture({ ...THEMED, integration_branch_name: bad }, 'v4.0.0'), 'main');
+    assert.equal(r.action, 'ask', String(bad));
+    assert.equal(r.branch, null, String(bad));
+    assert.match(r.reason, /naming-problem.*git\.integration_branch_name/, String(bad));
+  }
+});
+
+test('branch name: a themed name with no version in the prose still creates under that name', () => {
+  const dir = fixture(THEMED);
+  writeFileSync(join(dir, '.planning', 'PROJECT.md'), '### Active\n\nnothing yet\n');
+  writeFileSync(join(dir, '.planning', 'ROADMAP.md'), '# Roadmap\n');
+  const r = decide(dir, 'main');
+  assert.equal(r.action, 'create');
+  assert.equal(r.branch, 'seldon/hardin');
+});
+
+test('branch name: off a protected base the themed key still stays', () => {
+  assert.equal(decide(fixture(THEMED, 'v4.0.0'), 'seldon/hardin').action, 'stay');
+});
+
 // --- the read-only tags arm (REL-01) ----------------------------------------
 //
 // `workflows/milestone.md` step 2 asks "has this project ever tagged" to tell a

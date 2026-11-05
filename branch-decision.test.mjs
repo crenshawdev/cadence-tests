@@ -3,7 +3,7 @@
 // functions are pure, so this needs no subprocess or live git.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { integrationBranchName, decideBranch, activeVersion } from '../cadence-core/bin/lib/branch-decision.mjs';
+import { integrationBranchName, configuredNameProblem, decideBranch, activeVersion } from '../cadence-core/bin/lib/branch-decision.mjs';
 
 // --- integrationBranchName --------------------------------------------------
 
@@ -34,6 +34,18 @@ test('name: null when neither prose surface carries a version (never invent one)
 
 test('name: a plain semver without a prerelease suffix still parses', () => {
   assert.equal(integrationBranchName('### Active\n\nshipping `v1.2.0` now\n', ''), 'cadence/v1.2.0');
+});
+
+test('name: a configured name wins, and one failing the grammar is null with a sentence, never the default', () => {
+  const project = '### Active\n\n`v4.0.0`\n';
+  assert.equal(integrationBranchName(project, '', 'seldon/hardin'), 'seldon/hardin');
+  assert.equal(integrationBranchName(project, '', null), 'cadence/v4.0.0');
+  assert.equal(integrationBranchName(project, '', undefined), 'cadence/v4.0.0');
+  assert.equal(integrationBranchName('', '', 'seldon/hardin'), 'seldon/hardin');
+  assert.equal(integrationBranchName(project, '', '--x'), null);
+  assert.match(configuredNameProblem('--x'), /git\.integration_branch_name/);
+  assert.equal(configuredNameProblem(null), null);
+  assert.equal(configuredNameProblem('seldon/hardin'), null);
 });
 
 // --- decideBranch -----------------------------------------------------------
