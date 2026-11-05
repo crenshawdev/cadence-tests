@@ -55,6 +55,8 @@
 //                        workflow-layers` for the both-layer read and `planning.mjs workflow-run --analyzer` on the
 //                        notice. Both sit on a branch that is off by default; the old path's six are untouched, and the
 //                        branch adds no call to it.
+//   context.md  8 -> 9   the same branch claims before it launches (D-02): `planning.mjs workflow-claim take` is the
+//                        ninth. Its release is named in backticks and is not a counted call.
 //
 // The plan this file was written under - v3.3.0 phase 4's `PLAN-2`, task 6, at
 // `.planning/_archive-v3.3.0/4/PLAN-2.md` - stated 5 for `context.md`. That
@@ -94,10 +96,10 @@ function seamCalls(text) {
 const CENSUS = [
   {
     file: join('cadence-core', 'workflows', 'context.md'),
-    calls: 8,
+    calls: 9,
     note: 'cursor get, the batched config.mjs get, recall, trace close, '
       + 'criteria-size, cursor set, plus the workflow branch\'s `config.mjs '
-      + 'workflow-layers` and `workflow-run --analyzer` (+2, off by default). A ninth means a call came back - most '
+      + 'workflow-layers` and `workflow-run --analyzer` (+2, off by default), plus its `workflow-claim take` (+1). A tenth means a call came back - most '
       + 'likely a second config.mjs get at the commit step, which is the '
       + 'round-trip task 4 removed by folding planning.commit_docs into the '
       + 'spend_gate batch.',

@@ -33,7 +33,7 @@ function tree(repo, global) {
 
 async function cli(t, sub, label, dir = t.dir) {
   let stdout;
-  try { ({ stdout } = await run('node', [PLANNING, '--dir', dir, 'workflow-claim', sub, '--label', label], { env: t.env, cwd: t.root })); } catch (e) { stdout = e.stdout; }
+  try { ({ stdout } = await run('node', [PLANNING, '--dir', dir, 'workflow-claim', sub, '--fire', label], { env: t.env, cwd: t.root })); } catch (e) { stdout = e.stdout; }
   return JSON.parse(stdout);
 }
 
@@ -91,7 +91,7 @@ test('off: an executor worktree sees the same claim', async () => {
   assert.equal(r.launch, false); assert.equal(r.holder, 'diff-plan-1');
 });
 
-test('a blank or missing label is refused, and outside a repository nothing is claimed', async () => {
+test('a missing label is refused, and outside a repository nothing is claimed', async () => {
   const t = tree(null, null);
   const none = JSON.parse((await run('node', [PLANNING, '--dir', t.dir, 'workflow-claim', 'take'], { env: t.env, cwd: t.root }).catch((e) => e)).stdout || '{}');
   assert.equal(none.ok, false);
