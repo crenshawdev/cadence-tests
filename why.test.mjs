@@ -488,7 +488,7 @@ test('a commit whose phase directory exists in NO on-disk tier still names its p
   // `cadence-core/bin/lib/release-decision.mjs` was last touched by v3.5.9's
   // phase 1, which closed with `--mode delete`: there is no `phases/1` holding
   // it (the live one is v3.6.0's) and no `_archive-v3.5.9/` at all.
-  const env = oneJsonLine(run(['cadence-core/bin/lib/release-decision.mjs', '--dir', REPO]).stdout);
+  const env = oneJsonLine(run(['cadence-core/bin/lib/release-decision.mjs', '--dir', REPO, '--top', '20']).stdout);
   assert.equal(env.ok, true);
   assert.deepEqual(env.warnings, []);
   const entry = entryFor(env.text, '73aa7bba503efb228c1b423c3d93cce87494036d');
