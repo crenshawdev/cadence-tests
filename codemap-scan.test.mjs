@@ -302,3 +302,90 @@ test('a torn index.json is a fresh cut, not a failure', () => {
   writeFileSync(mapFile(root, 'index.json'), '{"modules": [');
   assert.equal(codemap(root, 'scan').modules, 1);
 });
+
+// --- status: built, stale, unbuilt, and no reader --------------------------------------------------------------------
+
+const KB = (n) => 'x'.repeat(n * 1024);
+/** a/ holds 80 KiB of text and a binary file, b/ holds 100 KiB, so the two are separate modules; .planning has its own */
+function mapped() {
+  const t = repo({ 'a/1.js': KB(50), 'a/2.js': KB(30), 'b/3.js': KB(100), '.planning/STATE.md': 's\n' });
+  writeFileSync(join(t.root, 'a', 'img.bin'), Buffer.from([0, 1, 2]));
+  t.git('add', '-A'); t.git('commit', '-q', '-m', 'more');
+  assert.equal(codemap(t.root, 'scan').modules, 3);
+  return t;
+}
+const moduleHolding = (root, path) => modulesOf(root).find((m) => m.paths.includes(path));
+/** Writes an entry for each named module (default all) from the hashes the last scan recorded. */
+function build(root, names = modulesOf(root).map((m) => m.name)) {
+  const hashes = Object.fromEntries(index(root).rows.map((r) => [r.path, r.hash]));
+  for (const m of modulesOf(root).filter((x) => names.includes(x.name))) {
+    writeFileSync(mapFile(root, m.entry), JSON.stringify({ built_from: Object.fromEntries(m.paths.map((p) => [p, hashes[p]])) }));
+  }
+}
+
+test('status reads only the edited file\'s module as stale, and undoing the edit returns it to built', () => {
+  const { root } = mapped();
+  build(root);
+  const clean = codemap(root, 'status');
+  assert.deepEqual([clean.built, clean.stale, clean.unbuilt, clean.no_reader], [2, 0, 0, 1]);
+  writeFileSync(join(root, 'a', '1.js'), KB(50) + 'y');
+  const edited = codemap(root, 'status');
+  assert.deepEqual([edited.built, edited.stale, edited.stale_modules], [1, 1, [moduleHolding(root, 'a/1.js').name]]);
+  writeFileSync(join(root, 'a', '1.js'), KB(50));
+  assert.equal(codemap(root, 'status').stale, 0);
+});
+
+test('a committed edit with an entry built from the new hash reads built', () => {
+  const { root, git } = mapped();
+  writeFileSync(join(root, 'a', '1.js'), KB(50) + 'z');
+  git('commit', '-qam', 'edit');
+  codemap(root, 'scan');
+  assert.equal(codemap(root, 'status').unbuilt, 2, 'no entries yet');
+  build(root);
+  const r = codemap(root, 'status');
+  assert.deepEqual([r.built, r.stale], [2, 0]);
+});
+
+test('a file added to a built module and one removed from it both read stale', () => {
+  const { root, git } = mapped();
+  build(root);
+  writeFileSync(join(root, 'a', 'new.js'), 'n\n');
+  git('add', 'a/new.js');
+  assert.deepEqual(codemap(root, 'status').stale_modules, [moduleHolding(root, 'a/1.js').name]);
+  git('reset', '-q', 'a/new.js'); execFileSync('rm', [join(root, 'a', 'new.js')]);
+  assert.equal(codemap(root, 'status').stale, 0);
+  git('rm', '-q', 'a/2.js');
+  assert.deepEqual(codemap(root, 'status').stale_modules, [moduleHolding(root, 'a/1.js').name]);
+});
+
+test('a module with no entry or a torn one reads unbuilt, never stale, and a no-reader module is in neither list', () => {
+  const { root } = mapped();
+  build(root, [moduleHolding(root, 'a/1.js').name]);
+  let r = codemap(root, 'status');
+  assert.deepEqual([r.built, r.stale, r.unbuilt, r.unbuilt_modules], [1, 0, 1, [moduleHolding(root, 'b/3.js').name]]);
+  writeFileSync(mapFile(root, moduleHolding(root, 'a/1.js').entry), '{"built_from": {');
+  r = codemap(root, 'status');
+  assert.deepEqual([r.stale, r.unbuilt, r.no_reader], [0, 2, 1]);
+  const planning = moduleHolding(root, '.planning/STATE.md').name;
+  assert.ok(!r.unbuilt_modules.includes(planning) && !r.stale_modules.includes(planning));
+});
+
+test('scan prices a launch by the stale and unbuilt modules and the text bytes a reader would open', () => {
+  const { root } = mapped();
+  let r = codemap(root, 'scan');
+  assert.deepEqual([r.modules, r.readers, r.reader_bytes], [3, 2, (50 + 30 + 100) * 1024], 'no entries: every reader module, text only');
+  assert.equal(r.bytes, (50 + 30 + 100) * 1024 + 3 + 2, 'the total counts every byte, the picture and STATE.md too');
+  build(root);
+  assert.deepEqual([codemap(root, 'scan').readers, codemap(root, 'scan').reader_bytes], [0, 0]);
+  writeFileSync(join(root, 'a', '2.js'), KB(30) + 'y');
+  r = codemap(root, 'scan');
+  assert.deepEqual([r.readers, r.reader_bytes], [1, (50 + 30) * 1024 + 1], 'the binary file in that module is not counted');
+});
+
+test('status with no index answers ok:false, names codemap scan, and writes nothing', () => {
+  const { root } = repo({ 'a.js': 'a\n' });
+  const r = codemap(root, 'status');
+  assert.equal(r.ok, false);
+  assert.match(r.hint, /codemap scan/);
+  assert.equal(existsSync(join(root, '.planning')), false);
+});
