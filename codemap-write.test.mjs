@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +15,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PLANNING = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
 const { entryFile, ENTRY_FILE } = await import(join(ROOT, 'cadence-core', 'bin', 'lib', 'codemap-partition.mjs'));
 const { ENTRY_SCHEMA } = await import(join(ROOT, 'cadence-core', 'bin', 'lib', 'codemap-entry.mjs'));
+const { writeLaunch, scratchNames } = await import(join(ROOT, 'cadence-core', 'bin', 'lib', 'codemap-launch.mjs'));
 const { MAX_RUN_BYTES } = await import(join(ROOT, 'cadence-core', 'bin', 'lib', 'workflow-run.mjs'));
 
 const pad = (n = 90 * 1024) => `${'x'.repeat(80)}\n`.repeat(Math.ceil(n / 81));
@@ -464,4 +465,150 @@ test('a diff is only offered where the old blob still resolves: on top of an unc
   const gone = itemOf(launchOf(out2).items.find((x) => x.name === 'm2').item);
   assert.deepEqual([gone.refresh, 'diff' in gone], ['whole', false]);
   assert.equal(existsSync(join(out2, `${entryFile('m2').slice(0, -5)}.diff`)), false);
+});
+
+// --- fix pass: one row never sinks the rest, and a read runs no program and opens nothing it should not ---------------
+
+/** An entry with an own key spelled as JSON text, since `__proto__` set on an object literal is no key at all. */
+const withKey = (e, key, valueText) => JSON.parse(`${JSON.stringify(e).slice(0, -1)},${JSON.stringify(key)}:${valueText}}`);
+
+test('a key named like an inherited property refuses its module and no other, and an unprintable name in the launch file is cut', () => {
+  const root = fixture();
+  scan(root);
+  const good = entry('m3', 'delta');
+  const evidenceKey = entry('m2', 'gamma');
+  evidenceKey.invariants[0].evidence[0] = JSON.parse('{"path":"m2/main.js","hasOwnProperty":{}}');
+  const bads = [withKey(entry('m2', 'gamma'), 'constructor', '{}'), withKey(entry('m2', 'gamma'), 'toString', '{"a":1}'),
+    withKey(entry('m2', 'gamma'), '__proto__', '{}'), evidenceKey];
+  for (const bad of bads) {
+    const r = write(root, runFile([mod(root, 'm1', entry('m1', 'alpha')), mod(root, 'm2', bad), mod(root, 'm3', good)]));
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual([r.written_modules, r.refused_modules.map((x) => x.name)], [['m1', 'm3'], ['m2']]);
+    assert.match(r.refused_modules[0].why, /unknown key|lacks/);
+    assert.equal(r.brackets.source, 'run-file');
+  }
+  assert.deepEqual(status(root).stale_modules, [], 'the others were written');
+
+  const launch = join(scratch(), 'launch.json');
+  writeFileSync(launch, JSON.stringify({ items: [{ name: 'z'.repeat(5000), built_from: {} }] }));
+  const r = write(root, runFile([mod(root, 'm1', entry('m1', 'alpha'))]), '--launch-file', launch);
+  assert.equal(r.missing, 1);
+  assert.equal(r.missing_modules[0].length, 200, 'a name from the launch file is cut like a refused one');
+});
+
+test('a missing --run-file is bad-args and bills nothing', () => {
+  const root = fixture();
+  scan(root);
+  const r = planning(root, 'codemap', 'write', '--notice-tokens', '54242');
+  assert.deepEqual([r.ok, r.reason], [false, 'bad-args']);
+  assert.equal(render0(root).brackets.length, 0);
+});
+
+/** A git program that records that it ran, and a path to look for the record at. A clean filter passes its input through; a transport just fails. */
+function probe(name) {
+  const dir = scratch();
+  const marker = join(dir, 'ran');
+  const prog = join(dir, `${name}.sh`);
+  writeFileSync(prog, `#!/bin/sh\necho ran >> "${marker}"\n${name === 'clean' ? 'cat' : 'exit 1'}\n`);
+  chmodSync(prog, 0o755);
+  return { prog, marker };
+}
+
+test('the diff runs no clean filter a tracked .gitattributes and the config name, and still carries the hunks', () => {
+  const root = fixture();
+  writeFileSync(join(root, 'm2', '.gitattributes'), '* filter=probe\n');
+  gitIn(root, 'add', 'm2/.gitattributes'); gitIn(root, 'commit', '-q', '-m', 'attributes');
+  built(root);
+  const { prog, marker } = probe('clean');
+  gitIn(root, 'config', 'filter.probe.clean', prog);
+  writeFileSync(join(root, 'm2', 'main.js'), 'export function gamma() { return 1; }\n');
+  const out = scratch();
+  assert.equal(status(root, '--out-dir', out).ok, true);
+  const item = itemOf(launchOf(out).items.find((x) => x.name === 'm2').item);
+  assert.equal(item.refresh, 'diff');
+  assert.match(readFileSync(item.diff, 'utf8'), /^\+export function gamma\(\) \{ return 1; \}$/m);
+  assert.equal(existsSync(marker), false, 'the configured filter program never ran');
+});
+
+test('looking for a missing old blob runs no transport program a promisor remote names', () => {
+  const root = fixture();
+  scan(root);
+  writeFileSync(join(root, 'm2', 'main.js'), 'export function gamma() { return 1; }\n');
+  scan(root);
+  assert.equal(write(root, runFile([mod(root, 'm2', entry('m2', 'gamma'))])).written, 1);
+  writeFileSync(join(root, 'm2', 'main.js'), 'export function gamma() { return 2; }\n');
+  const { prog, marker } = probe('ssh');
+  gitIn(root, 'config', 'core.repositoryformatversion', '1');
+  gitIn(root, 'config', 'extensions.partialclone', 'lazyprobe');
+  gitIn(root, 'config', 'remote.lazyprobe.promisor', 'true');
+  gitIn(root, 'config', 'remote.lazyprobe.url', 'ssh://example.invalid/x.git');
+  gitIn(root, 'config', 'core.sshCommand', prog);
+  const out = scratch();
+  assert.equal(status(root, '--out-dir', out).ok, true);
+  const item = itemOf(launchOf(out).items.find((x) => x.name === 'm2').item);
+  assert.equal(item.refresh, 'whole', 'the hash nothing stored is not found');
+  assert.equal(existsSync(marker), false, 'the configured transport never ran');
+});
+
+test('a launch item names only what is safe to open: tests that are regular files under the root, and added and removed paths that cannot lead out', () => {
+  const root = fixture();
+  nestedTests(root);
+  writeFileSync(join(root, 'tests', 'bar.test.mjs'), "import { alpha } from '../m1/main.js';\nalpha();\n");
+  gitIn(join(root, 'tests'), 'add', '-A'); gitIn(join(root, 'tests'), 'commit', '-q', '-m', 'bar');
+  built(root);
+  // a stored index a clone supplies: a climb, an absolute path, a missing file, a quoted spelling, a file behind a linked directory
+  const outside = scratch();
+  writeFileSync(join(outside, 'x.test.mjs'), 'x\n');
+  symlinkSync(outside, join(root, 'tests', 'linked'));
+  const idx = index(root);
+  const m1row = idx.rows.find((r) => r.path === 'm1/main.js');
+  m1row.pinned_by = { files: [...(m1row.pinned_by?.files || []), '../../etc/hostname', '/etc/hostname', 'tests/../../x', 'tests/gone.test.mjs', '"q.test.mjs', 'tests/linked/x.test.mjs'] };
+  writeFileSync(join(root, '.planning', 'codemap', 'index.json'), JSON.stringify(idx));
+  // foo.test.mjs was a regular file when scanned and is a link now
+  rmSync(join(root, 'tests', 'foo.test.mjs'));
+  symlinkSync('/etc/hostname', join(root, 'tests', 'foo.test.mjs'));
+  writeFileSync(join(root, 'm1', 'main.js'), 'export function alpha() { return 1; }\n');
+  const out = scratch();
+  assert.equal(status(root, '--out-dir', out).ok, true);
+  const item = itemOf(launchOf(out).items.find((x) => x.name === 'm1').item);
+  assert.deepEqual(item.tests, [join(root, 'tests', 'bar.test.mjs')]);
+
+  // m2 gains a tracked symlink and a regular file; its stored entry names a key that climbs and one that is gone
+  symlinkSync('/etc/hostname', join(root, 'm2', 'leak'));
+  writeFileSync(join(root, 'm2', 'new.js'), 'export function fresh() {}\n');
+  gitIn(root, 'add', '-A'); gitIn(root, 'commit', '-q', '-m', 'more');
+  const file = entryPath(root, 'm2');
+  const old = JSON.parse(readFileSync(file, 'utf8'));
+  old.built_from['../../x'] = 'a'.repeat(40);
+  old.built_from['m2/gone.js'] = 'b'.repeat(40);
+  writeFileSync(file, JSON.stringify(old));
+  assert.equal(status(root, '--out-dir', out).ok, true);
+  const m2 = itemOf(launchOf(out).items.find((x) => x.name === 'm2').item);
+  assert.deepEqual(m2.added, [join(root, 'm2', 'new.js')], 'a symlink is pinned and not named');
+  assert.deepEqual(m2.removed, ['m2/gone.js'], 'root-relative, and the climbing key is dropped');
+  assert.equal(m2.read.some((p) => p.endsWith('leak')), false);
+});
+
+test('a quoted spelling of a path is pinned and never listed to open, whether it is read or added', () => {
+  const root = scratch();
+  const quoted = '"m/caf\\351.js"';
+  const hash = 'c'.repeat(40);
+  const rows = [{ path: 'm/a.js', kind: 'text', hash, bytes: 5 }, { path: quoted, kind: 'text', hash, bytes: 5 }];
+  const out = scratch();
+  writeLaunch({ root, outDir: out, rows, indexRows: [], modules: [{ name: 'm', paths: ['m/a.js', quoted], entry: { built_from: { 'm/a.js': 'd'.repeat(40) } } }] });
+  const item = itemOf(join(out, scratchNames('m').item));
+  assert.deepEqual([item.read, item.added], [[join(root, 'm', 'a.js')], []]);
+  assert.deepEqual(Object.keys(item.built_from).sort(), [quoted, 'm/a.js'].sort());
+});
+
+test('a symbol over the schema bound is not offered as citable', () => {
+  const root = fixture();
+  const long = 'a'.repeat(130);
+  writeFileSync(join(root, 'm1', 'main.js'), `export function ${long}() {}\nexport function alpha() {}\n`);
+  gitIn(root, 'add', '-A'); gitIn(root, 'commit', '-q', '-m', 'long');
+  scan(root);
+  const out = scratch();
+  status(root, '--out-dir', out);
+  const item = itemOf(launchOf(out).items.find((x) => x.name === 'm1').item);
+  assert.deepEqual(item.symbols, { [join(root, 'm1', 'main.js')]: ['alpha'] });
 });
