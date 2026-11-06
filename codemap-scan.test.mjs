@@ -652,7 +652,7 @@ test('an index over 128 MiB is named by status and is a fresh cut for scan', () 
   const r = codemap(root, 'status');
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'index-too-large');
-  assert.match(r.hint, /re-cuts the modules every run/);
+  assert.match(r.hint, /codemap scan/);
   const s = codemap(root, 'scan');
   assert.equal(s.ok, true);
   assert.equal(codemap(root, 'status').ok, true, 'the scan wrote a readable index over it');

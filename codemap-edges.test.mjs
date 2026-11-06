@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -258,4 +258,128 @@ test('a generic stem named by more tests than the cap comes back approximate wit
   assert.equal(p.approximate, true);
   assert.equal(p.total, 12);
   assert.equal(p.files.length, 10);
+});
+
+/** One CLI call on `codemap`, parsed; `env` adds to the environment. */
+function cli(root, args, env = {}) {
+  let out;
+  try {
+    out = execFileSync('node', [PLANNING, '--dir', join(root, '.planning'), 'codemap', ...args], { cwd: root, encoding: 'utf8', stdio: 'pipe', maxBuffer: 1 << 28, env: { ...process.env, ...env } });
+  } catch (e) { out = e.stdout; }
+  return JSON.parse(out);
+}
+
+test('an index that would pass 128 MiB sheds its edges, says so, and status and slice still answer', () => {
+  // 16 files declare the same names, 10 callers and 10 specs sit under ~3,200 B paths: ten of each per symbol is 64 KB a symbol
+  const names = Array.from({ length: 140 }, (_, i) => `sym${i}`);
+  const deep = (tag) => [`${tag}${'d'.repeat(250 - tag.length)}`, ...'efghijklmno'.split('').map((c) => c.repeat(250)), 'p'.repeat(200)].join('/');
+  const files = {};
+  for (let i = 0; i < 16; i++) files[`def${i}.js`] = `${names.map((n) => `export function ${n}() {}`).join('\n')}\n`;
+  for (let i = 0; i < 10; i++) files[`${deep(`a${i}`)}/c.js`] = `${names.join(';')};\n`;
+  for (let i = 0; i < 10; i++) files[`spec/${deep(`b${i}`)}/s.test.js`] = `${names.join(';')};\n`;
+  const { root } = repo(files);
+  const r = cli(root, ['scan']);
+  assert.equal(r.ok, true);
+  assert.equal(r.edges_shed, true);
+  assert.equal(r.symbols_shed, undefined);
+  const file = join(root, '.planning', 'codemap', 'index.json');
+  assert.ok(statSync(file).size < 128 * 1024 * 1024);
+  const i = JSON.parse(readFileSync(file, 'utf8'));
+  assert.equal(i.edges_shed, true);
+  assert.ok(i.rows.every((x) => !x.pinned_by && !x.imports && (x.symbols || []).every((s) => !s.callers && !s.pinned_by)));
+  assert.equal(rowOf(root, 'def0.js').symbols.length, 140, 'the symbols stayed');
+  assert.equal(cli(root, ['status']).ok, true);
+  const s = cli(root, ['slice', '--files', 'def0.js']);
+  assert.equal(s.ok, true);
+  assert.equal(s.edges_shed, true, 'a row with no callers is not read as unused');
+  assert.equal(s.rows[0].path, 'def0.js');
+});
+
+test('a name or stem held by more than 100 files keeps its edges, with its own file out of each list', () => {
+  const mk = (n) => {
+    const files = { 'src/user.js': 'run();\n', 'spec/index.test.js': 'run();\n// index\n' };
+    for (let i = 0; i < n; i++) files[`pkg${String(i).padStart(3, '0')}/index.js`] = 'export function run() {}\n';
+    const { root } = repo(files);
+    assert.equal(scan(root).ok, true);
+    return root;
+  };
+  const many = mk(101);
+  for (const [pkg, listed] of [['pkg000', 9], ['pkg050', 10]]) {
+    const c = symOf(many, `${pkg}/index.js`, 'run').callers;
+    assert.equal(c.approximate, true);
+    assert.equal(c.total, 101, '100 other holders and src/user.js');
+    assert.equal(c.files.length, listed);
+    assert.ok(!c.files.includes(`${pkg}/index.js`), 'never its own caller');
+    assert.deepEqual(symOf(many, `${pkg}/index.js`, 'run').pinned_by, { files: ['spec/index.test.js'], total: 1, approximate: true });
+    assert.deepEqual(rowOf(many, `${pkg}/index.js`).pinned_by, { files: ['spec/index.test.js'], total: 1, approximate: true });
+  }
+  const few = mk(100);
+  assert.equal(symOf(few, 'pkg000/index.js', 'run').callers.total, 100);
+  assert.deepEqual(rowOf(few, 'pkg000/index.js').pinned_by.files, ['spec/index.test.js']);
+  // a name is counted by files: one file declaring `handle` 101 times does not take it from an unrelated file
+  const gen = repo({ 'gen/x.py': 'def handle():\n  pass\n'.repeat(101), 'src/real.py': 'def handle():\n  pass\n', 'src/c.py': 'handle()\n' });
+  scan(gen.root);
+  assert.equal(symOf(gen.root, 'src/real.py', 'handle').callers.total, 2);
+});
+
+test('a nested clone of 400 text files of 1,000,000 B scans within a 256 MiB heap', () => {
+  const { root } = repo({ '.gitignore': 'tests/\n', 'src/a.mjs': 'export function a() {}\n' });
+  const clone = join(root, 'tests');
+  mkdirSync(clone);
+  execFileSync('git', ['-C', clone, 'init', '-q']);
+  const one = join(clone, 'f000.test.mjs');
+  writeFileSync(one, 'abcdefghi '.repeat(100000));
+  const sha = execFileSync('git', ['-C', clone, 'hash-object', '-w', one], { encoding: 'utf8' }).trim();
+  const lines = [];
+  for (let i = 0; i < 400; i++) {
+    const name = `f${String(i).padStart(3, '0')}.test.mjs`;
+    if (i) linkSync(one, join(clone, name));
+    lines.push(`100644 ${sha}\t${name}`);
+  }
+  execFileSync('git', ['-C', clone, 'update-index', '--add', '--index-info'], { input: `${lines.join('\n')}\n` });
+  const r = cli(root, ['scan'], { NODE_OPTIONS: '--max-old-space-size=256' });
+  assert.equal(r.ok, true);
+  assert.equal(JSON.parse(readFileSync(join(root, '.planning', 'codemap', 'index.json'), 'utf8')).nested_paths.length, 400);
+});
+
+test('. .. ./ ../ and a trailing slash resolve to the directory\'s index', () => {
+  const { root } = repo({
+    'a/index.js': 'export const a = 1;\n', 'lib/index.ts': 'export const l = 1;\n', 'index.js': 'export const top = 1;\n',
+    'a/b.js': "import x from '.';\n", 'a/b2.js': "import x from './';\n",
+    'a/c/d.ts': "import x from '..';\n", 'a/c/d2.ts': "import x from '../';\n",
+    'e.js': "import x from './lib/';\nimport y from './lib';\n", 'f.js': "import x from '.';\n", 'g.js': "import x from '..';\nimport y from 'lib/';\n",
+  });
+  scan(root);
+  for (const p of ['a/b.js', 'a/b2.js']) assert.deepEqual(importsOf(root, p).items, [{ path: 'a/index.js' }], p);
+  for (const p of ['a/c/d.ts', 'a/c/d2.ts']) assert.deepEqual(importsOf(root, p).items, [{ path: 'a/index.js' }], p);
+  assert.deepEqual(importsOf(root, 'e.js').items, [{ path: 'lib/index.ts' }]);
+  assert.deepEqual(importsOf(root, 'f.js').items, [{ path: 'index.js' }]);
+  assert.deepEqual(importsOf(root, 'g.js').items, [{ text: '..' }, { text: 'lib/' }], 'out of the repository, and not relative');
+});
+
+test('a non-ASCII letter makes a word, so fooébar is no caller of foo and a test naming ../données.py pins it', () => {
+  const { root } = repo({
+    'src/lib.mjs': 'export function foo() {}\n', 'src/other.mjs': 'const fooébar = 1;\n', 'src/données.py': 'x = 1\n',
+    'spec/a.test.mjs': "import '../données.py';\n", 'spec/b.test.mjs': 'const fooébar = 2;\n',
+  });
+  scan(root);
+  assert.equal(symOf(root, 'src/lib.mjs', 'foo').callers, undefined);
+  assert.equal(symOf(root, 'src/lib.mjs', 'foo').pinned_by, undefined);
+  assert.deepEqual(rowOf(root, 'src/données.py').pinned_by, { files: ['spec/a.test.mjs'], total: 1, approximate: true });
+});
+
+test('an importer whose name is quoted still resolves its relative import, in a quoted directory too', () => {
+  const { root, git } = repo({ 'src/dep.mjs': 'export const d = 1;\n' });
+  const put = (name, text) => {
+    const rel = Buffer.from(name, 'latin1');
+    mkdirSync(Buffer.concat([Buffer.from(`${root}/`), rel.subarray(0, rel.lastIndexOf('/'))]), { recursive: true });
+    writeFileSync(Buffer.concat([Buffer.from(`${root}/`), rel]), text);
+  };
+  put('src/\xff.mjs', "import './dep.mjs';\n");
+  put('d\xe9/x.mjs', "import './dep.mjs';\n");
+  put('d\xe9/dep.mjs', 'export const e = 1;\n');
+  git('add', '-A');
+  scan(root);
+  assert.deepEqual(importsOf(root, '"src/\\377.mjs"').items, [{ path: 'src/dep.mjs' }]);
+  assert.deepEqual(importsOf(root, '"d\\351/x.mjs"').items, [{ path: '"d\\351/dep.mjs"' }]);
 });

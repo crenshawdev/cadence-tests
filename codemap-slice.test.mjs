@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PLANNING = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
 const { entryFile } = await import(join(ROOT, 'cadence-core', 'bin', 'lib', 'codemap-partition.mjs'));
+const { slice: sliceOf } = await import(join(ROOT, 'cadence-core', 'bin', 'lib', 'codemap-slice.mjs'));
 
 function repo(files = {}) {
   const root = mkdtempSync(join(tmpdir(), 'cad-slice-'));
@@ -186,4 +187,81 @@ test('two calls print identical bytes', () => {
   const { root } = repo(files);
   scan(root);
   assert.equal(slice(root, '--terms', 'm').out, slice(root, '--terms', 'm').out);
+});
+
+test('twenty entries with 600 B module names still print at or under 10,000 bytes', () => {
+  const files = {};
+  for (let i = 0; i < 20; i++) files[`mod${String(i).padStart(2, '0')}${'a'.repeat(245)}/${'b'.repeat(250)}/${'c'.repeat(90)}/x.txt`] = big();
+  const { root } = repo(files);
+  scan(root);
+  for (const p of Object.keys(files)) build(root, p, { summary: 'y'.repeat(12000) });
+  const { out, json } = slice(root, '--terms', 'mod');
+  assert.ok(size(out) <= 10000, `${size(out)} B`);
+  assert.equal(json.total, 20);
+  assert.equal(json.truncated, true);
+  assert.equal(json.entries, undefined);
+  assert.ok(Buffer.byteLength(JSON.stringify(json.entries_omitted)) <= 4000, 'the list has a byte budget');
+  assert.ok(json.entries_omitted.length < 20);
+  assert.equal(json.entries_omitted.length + json.entries_omitted_more, 20, 'every other one is counted');
+  for (const o of json.entries_omitted) assert.ok(existsSync(join(root, o.file)));
+});
+
+test('a row whose file left the repository is stale, though its module is gone with it', () => {
+  const { root, git } = repo({ 'one/a.txt': big(), 'two/b.txt': big() });
+  scan(root);
+  build(root, 'two/b.txt', { summary: 'two' });
+  assert.equal(slice(root, '--files', 'two/b.txt').json.rows[0].stale, undefined);
+  git('rm', '-q', 'two/b.txt'); git('commit', '-q', '-m', 'drop');
+  const r = slice(root, '--files', 'two/b.txt').json;
+  assert.equal(r.total, 1);
+  assert.equal(r.rows[0].stale, true);
+  assert.equal(r.entries, undefined);
+  assert.equal(slice(root, '--files', 'one/a.txt').json.rows[0].stale, undefined, 'a file still there is not marked');
+});
+
+test('50,000 matched rows are cut after the first that fit, with the true total', () => {
+  const rows = [];
+  const symbols = Array.from({ length: 5 }, (_, i) => ({ name: `s${i}`, kind: 'function', line: i + 1, approximate: true }));
+  for (let i = 0; i < 50000; i++) rows.push({ path: `pkg/f${String(i).padStart(5, '0')}.js`, kind: 'text', hash: 'a'.repeat(40), bytes: 10, symbols });
+  const t = Date.now();
+  const body = sliceOf({
+    rows, modules: [{ name: 'pkg', paths: rows.map((r) => r.path) }], states: new Map([['pkg', 'unbuilt']]), entries: new Map(),
+    select: { files: [], symbols: [], terms: ['pkg'] }, entryPath: (m) => m, current: new Set(rows.map((r) => r.path)),
+  });
+  assert.ok(Date.now() - t < 3000, `took ${Date.now() - t} ms`);
+  assert.equal(body.total, 50000);
+  assert.equal(body.truncated, true);
+  assert.ok(body.rows.length > 0 && body.rows.length < 50000);
+  assert.equal(body.rows[0].path, 'pkg/f00000.js');
+  assert.ok(Buffer.byteLength(JSON.stringify({ ok: true, ...body })) + 1 <= 10000);
+});
+
+test('--terms searches an entry\'s string values and not its field names or its JSON escapes', () => {
+  const { root } = repo({ 'one/a.txt': big(), 'two/b.txt': big() });
+  scan(root);
+  build(root, 'one/a.txt', { summary: 'say "hello there" to C:\\temp\nnext line' });
+  build(root, 'two/b.txt', { summary: 'nothing' });
+  const paths = (term) => slice(root, '--terms', term).json.rows.map((x) => x.path);
+  assert.deepEqual(paths('summary'), [], 'a field name is no text');
+  assert.deepEqual(paths('say "hello'), ['one/a.txt']);
+  assert.deepEqual(paths('c:\\temp'), ['one/a.txt']);
+  assert.deepEqual(paths('nnext'), [], 'an escape is no text');
+  assert.deepEqual(paths('NEXT line'), ['one/a.txt']);
+  assert.deepEqual(paths('nothing'), ['two/b.txt']);
+});
+
+test('an index whose rows or symbols are not objects with a path answers no-index', () => {
+  const { root } = repo({ 'a.mjs': 'export function a() {}\n' });
+  scan(root);
+  const file = join(root, '.planning', 'codemap', 'index.json');
+  const good = index(root);
+  for (const bad of [{ rows: [null], modules: [] }, { rows: [{ path: 1 }], modules: [] }, { rows: [{ path: 'a.mjs', symbols: 'x' }], modules: [] },
+    { rows: [{ path: 'a.mjs', symbols: [null] }], modules: [] }, { rows: [[]], modules: [] }]) {
+    writeFileSync(file, JSON.stringify(bad));
+    const r = slice(root, '--files', 'a.mjs').json;
+    assert.equal(r.ok, false, JSON.stringify(bad));
+    assert.equal(r.reason, 'no-index');
+  }
+  writeFileSync(file, JSON.stringify(good));
+  assert.equal(slice(root, '--files', 'a.mjs').json.ok, true);
 });
