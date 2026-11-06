@@ -1,0 +1,158 @@
+// Zero-dep tests for lib/config-layers.mjs and the `config.mjs layers` read behind the /cad-config menu.
+// The lib cases run the real mergeLayers over fixture files, with a small hand-written schema so every
+// expectation is computed by hand. The CLI cases run the shipped schema over temp repos.
+import { test, before } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const CONFIG = join(ROOT, 'cadence-core', 'bin', 'config.mjs');
+const tmp = mkdtempSync(join(tmpdir(), 'cad-layers-'));
+const GLOBAL = join(tmp, 'global.json');
+// config-merge reads this at import, so it is set before the dynamic imports below
+process.env.CADENCE_GLOBAL_CONFIG = GLOBAL;
+
+let mergeLayers;
+let layerRows;
+before(async () => {
+  ({ mergeLayers } = await import('../cadence-core/bin/lib/config-merge.mjs'));
+  ({ layerRows } = await import('../cadence-core/bin/lib/config-layers.mjs'));
+});
+
+const SCHEMA = {
+  'a.x': { type: 'int', default: 1, section: 'One', position: 1, question: 'x?' },
+  'a.y': { type: 'string', default: 'd', section: 'One', position: 2, question: 'y?' },
+  'workflow.test_command': { type: 'string', default: null, src: 'global', section: 'One', position: 3, question: 't?' },
+  'review.reviewers': { type: 'array_enum', default: ['claude-subagent'], section: 'One', position: 4, question: 'r?' },
+  'git.a': { type: 'string', default: 'ga', section: 'Two', position: 5, question: 'ga?' },
+  'git.b': { type: 'string', default: 'gb', section: 'Two', position: 6, question: 'gb?' },
+  'testing.scope': { type: 'string', default: null, section: 'Two', position: 7, question: 's?' },
+  'b.z': { type: 'bool', default: false, section: 'Two', purpose: 'hidden' },
+  'workflow.use_workflows': { type: 'bool', default: false, section: 'Two', position: 8, question: 'u?' },
+  'model.m': { type: 'string', default: null, grammar: 'model_id', section: 'Two', position: 9, question: 'm?' },
+};
+
+// Writes the two layers (an object is JSON, a string goes in raw, null leaves the file absent), runs the real merge
+// and the rule. `answers` is the both-layer map the CLI builds from the two layer reads.
+function read({ global = null, repo = null, answers = {} }) {
+  const repoFile = join(tmp, 'repo.json');
+  for (const [file, body] of [[GLOBAL, global], [repoFile, repo]]) {
+    if (body === null) rmSync(file, { force: true });
+    else writeFileSync(file, typeof body === 'string' ? body : JSON.stringify(body));
+  }
+  const merged = mergeLayers(repoFile);
+  return layerRows({ keys: SCHEMA, merged, files: { repo: repoFile, global: GLOBAL }, both: answers });
+}
+const rowOf = (r, key) => r.rows.find((x) => x.key === key);
+
+test('ordinary keys: repo beats global beats the default, and only a differing repo value beats', () => {
+  const r = read({ global: { a: { x: 7, y: 'g' } }, repo: { a: { x: 5 } } });
+  assert.deepEqual([rowOf(r, 'a.x').winner, rowOf(r, 'a.x').value], ['repo', 5]);
+  assert.deepEqual([rowOf(r, 'a.y').winner, rowOf(r, 'a.y').value], ['global', 'g']);
+  assert.deepEqual([rowOf(r, 'git.a').winner, rowOf(r, 'git.a').value], ['default', 'ga']);
+  const one = r.groups.find((g) => g.name === 'One');
+  assert.deepEqual([one.repo, one.global, one.beating, one.at_default], [1, 2, 1, 0]);
+});
+
+test('equal values in both layers beat nothing', () => {
+  const r = read({ global: { a: { x: 5 } }, repo: { a: { x: 5 } } });
+  assert.equal(r.totals.beating, 0);
+  assert.deepEqual([r.totals.repo, r.totals.global], [1, 1]);
+});
+
+test('a repo null wins the merge and the value in force falls to the schema default', () => {
+  const r = read({ global: { a: { x: 7 } }, repo: { a: { x: null } } });
+  assert.deepEqual([rowOf(r, 'a.x').winner, rowOf(r, 'a.x').value], ['repo', 1]);
+  assert.equal(r.totals.beating, 1);
+});
+
+test('a repo {"git": null} over global git.* values reads the default and is named', () => {
+  const r = read({ global: { git: { a: 'G' } }, repo: { git: null } });
+  assert.deepEqual([rowOf(r, 'git.a').winner, rowOf(r, 'git.a').value], ['repo', 'ga']);
+  assert.equal(rowOf(r, 'git.a').repo.state, 'unset');
+  assert.equal(r.totals.repo, 0);
+  assert.match(r.warnings.join('\n'), /"git" is not an object/);
+});
+
+test('a repo value for a global-only key is ignored; the global value runs', () => {
+  const r = read({ global: { workflow: { test_command: 'npm t' } }, repo: { workflow: { test_command: 'rm -rf /' } } });
+  const row = rowOf(r, 'workflow.test_command');
+  assert.deepEqual([row.repo.state, row.repo.value], ['ignored', 'rm -rf /']);
+  assert.deepEqual([row.winner, row.value], ['global', 'npm t']);
+  assert.equal(r.totals.repo, 0);
+});
+
+test('a null repo value on a global-only key is the template shipping it, not an ignored value', () => {
+  const r = read({ repo: { workflow: { test_command: null } } });
+  assert.equal(rowOf(r, 'workflow.test_command').repo.state, 'unset');
+});
+
+test('a global testing value is ignored; the repo value is the policy', () => {
+  const r = read({ global: { testing: { scope: 'thorough' } }, repo: { testing: { scope: 'focused' } } });
+  const row = rowOf(r, 'testing.scope');
+  assert.deepEqual([row.global.state, row.repo.state, row.winner, row.value], ['ignored', 'set', 'repo', 'focused']);
+  assert.equal(read({ global: { testing: { scope: 'thorough' } } }).rows.find((x) => x.key === 'testing.scope').winner, 'default');
+});
+
+test('a both-layer key has no winner, is on only by the answer, and never beats', () => {
+  const alone = read({ repo: { workflow: { use_workflows: true } }, answers: { 'workflow.use_workflows': { on: false } } });
+  const row = rowOf(alone, 'workflow.use_workflows');
+  assert.deepEqual([row.value, row.winner, row.repo.state, row.global.state], [false, null, 'set', 'unset']);
+  const both = read({
+    global: { workflow: { use_workflows: true } }, repo: { workflow: { use_workflows: false } },
+    answers: { 'workflow.use_workflows': { on: true } },
+  });
+  assert.equal(rowOf(both, 'workflow.use_workflows').value, true);
+  assert.equal(both.totals.beating, 0);
+});
+
+test('review.reviewers drops a cross-model name the global layer does not name', () => {
+  let r = read({ repo: { review: { reviewers: ['claude-subagent', 'openai'] } } });
+  assert.deepEqual([rowOf(r, 'review.reviewers').value, rowOf(r, 'review.reviewers').dropped], [['claude-subagent'], ['openai']]);
+  r = read({ repo: { review: { reviewers: ['openai'] } } });
+  assert.deepEqual(rowOf(r, 'review.reviewers').value, ['claude-subagent']);
+  r = read({ global: { review: { reviewers: ['openai'] } }, repo: { review: { reviewers: ['claude-subagent', 'openai'] } } });
+  assert.deepEqual([rowOf(r, 'review.reviewers').value, rowOf(r, 'review.reviewers').dropped],
+    [['claude-subagent', 'openai'], undefined]);
+});
+
+test('a layer in tornLayers reads unreadable, names the file and is never counted as 0', () => {
+  const r = read({ global: '{ not json', repo: { a: { x: 5 } } });
+  assert.deepEqual(r.unreadable, [{ layer: 'global', file: GLOBAL }]);
+  assert.deepEqual(rowOf(r, 'a.x').global, { state: 'unreadable', file: GLOBAL });
+  assert.deepEqual([r.totals.global, r.totals.beating, r.totals.repo], ['unreadable', 'unreadable', 1]);
+  assert.equal(rowOf(r, 'a.x').winner, 'repo');
+});
+
+test('a hostile __proto__ leaf stays inert and is named, not counted', () => {
+  const r = read({ repo: '{"__proto__": {"polluted": 1}, "a": {"x": 2}}' });
+  assert.equal({}.polluted, undefined);
+  assert.equal(Object.getPrototypeOf(rowOf(r, 'a.x')), Object.prototype);
+  assert.equal(rowOf(r, 'a.x').value, 2);
+  assert.equal(r.totals.repo, 1);
+  assert.match(r.warnings.join('\n'), /__proto__\.polluted/);
+});
+
+test('retired and unknown keys stay out of every count and come back as warnings', () => {
+  const r = read({ repo: { stakes: 'x', bogus: 1, a: { x: 3 } } });
+  assert.equal(r.totals.repo, 1);
+  assert.match(r.warnings.join('\n'), /"stakes" was retired/);
+  assert.match(r.warnings.join('\n'), /"bogus" is not a setting/);
+});
+
+test('a stored value that is not a model id reads as null and is named', () => {
+  const r = read({ repo: { model: { m: 'a b' } } });
+  assert.equal(rowOf(r, 'model.m').value, null);
+  assert.equal(rowOf(r, 'model.m').unusable, true);
+  assert.match(r.warnings.join('\n'), /model\.m: the stored value is not a model id/);
+});
+
+test('groups come in walk order, shown rows by position and Advanced rows last', () => {
+  const r = read({});
+  assert.deepEqual(r.groups.map((g) => [g.n, g.name, g.settings, g.advanced]), [[1, 'One', 4, 0], [2, 'Two', 6, 1]]);
+  assert.deepEqual(r.rows.filter((x) => x.group === 'Two').map((x) => x.key).at(-1), 'b.z');
+});
