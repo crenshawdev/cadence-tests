@@ -97,8 +97,9 @@ function runFile(modules, over = {}, name = 'wf_test') {
   return file;
 }
 const write = (root, file, ...rest) => planning(root, 'codemap', 'write', '--run-file', file, ...rest);
-/** A module as the script returns it: its name, the hashes pinned at launch and the entry. */
-const mod = (root, name, e) => ({ name, built_from: builtFrom(root, name), entry: e });
+/** A module as the script returns it: its name, its item file, the hashes pinned at launch and the entry. */
+const itemFile = (name) => `/scratch/${name}.item.json`;
+const mod = (root, name, e) => ({ name, item: itemFile(name), built_from: builtFrom(root, name), entry: e });
 /** Write one module's entry through the seam and answer the verdict on it. */
 function tryEntry(root, name, e) {
   const r = write(root, runFile([mod(root, name, e)]));
@@ -220,7 +221,7 @@ test('the launch file is checked: a changed hash, a dropped module and an extra 
   const root = fixture();
   scan(root);
   const launch = (items) => { const f = join(scratch(), 'launch.json'); writeFileSync(f, JSON.stringify({ root, items })); return f; };
-  const item = (name) => ({ name, built_from: builtFrom(root, name), item: '/x' });
+  const item = (name) => ({ name, built_from: builtFrom(root, name), item: itemFile(name) });
   const typo = item('m2');
   typo.built_from = { ...typo.built_from, 'm2/main.js': '0'.repeat(40) };
   const run = runFile([mod(root, 'm1', entry('m1', 'alpha')), mod(root, 'm2', entry('m2', 'gamma')), mod(root, 'm3', entry('m3', 'delta'))]);
@@ -240,6 +241,22 @@ test('the launch file is checked: a changed hash, a dropped module and an extra 
   const blind = write(root, run, '--launch-file', broken);
   assert.deepEqual([blind.ok, blind.launch_check, blind.written], [true, 'not-run', 3]);
   assert.match(blind.launch_note, /not compared/);
+});
+
+test('the launch file\'s item path is compared too: a mistyped one and a row with none refuse that module only, and the others are written', () => {
+  const root = fixture();
+  scan(root);
+  const f = join(scratch(), 'launch.json');
+  writeFileSync(f, JSON.stringify({ root, items: ['m1', 'm2', 'm3'].map((name) => ({ name, built_from: builtFrom(root, name), item: itemFile(name) })) }));
+  const typo = { ...mod(root, 'm2', entry('m2', 'gamma')), item: '/scratch/m2.item.jsoo' };
+  const none = mod(root, 'm3', entry('m3', 'delta'));
+  delete none.item;
+  const r = write(root, runFile([mod(root, 'm1', entry('m1', 'alpha')), typo, none]), '--launch-file', f);
+  assert.deepEqual([r.launch_check, r.written_modules, r.refused_modules.map((x) => x.name)], ['ran', ['m1'], ['m2', 'm3']]);
+  for (const x of r.refused_modules) assert.match(x.why, /item differs from the launch file/);
+  assert.deepEqual(entryFiles(root), [entryFile('m1')], 'neither refused module was stored as built');
+  const blind = write(root, runFile([typo]));
+  assert.equal(blind.written, 1, 'without a launch file nothing compares the item');
 });
 
 test('an entry is bounded so a Baley-sized build fits the run file: the worst case is under 52 KiB and 148 of them fit MAX_RUN_BYTES', () => {

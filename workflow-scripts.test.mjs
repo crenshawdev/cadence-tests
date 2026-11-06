@@ -442,6 +442,16 @@ test('code-map: no args, malformed args, no modules and a zero batch size start 
   }
 });
 
+test('code-map: a module named by whitespace alone is a directory name and starts its reader', async () => {
+  const names = [' ', '\t', '\u00a0', '\u3000', '\ufeff'];
+  const h = host(() => entryFor('x'));
+  const out = await runScript(MAP, h, { ...MAP_ARGS, items: names.map((n) => mod(n)) });
+  assert.equal(h.calls.length, names.length);
+  assert.deepEqual(out.modules.map((m) => m.name), names);
+  const none = host(() => assert.fail('an agent started'));
+  assert.equal(typeof await runScript(MAP, none, { ...MAP_ARGS, items: [mod('')] }), 'string', 'an empty name still is no module');
+});
+
 test('code-map: three modules start three readers with Bash denied, the given rung and a label naming the module, and a null model sends none', async () => {
   const h = host((label) => entryFor(label.slice('map '.length)));
   const out = await runScript(MAP, h, MAP_ARGS);
@@ -466,7 +476,7 @@ test('code-map: a reader that throws or returns nothing costs its own module, an
   const args = JSON.stringify(MAP_ARGS);
   const out = await runScript(MAP, h, args);
   assert.deepEqual(out.modules.map((m) => [m.name, m.entry === null]), [['m1', true], ['m2', true], ['m3', false]]);
-  for (const [i, m] of out.modules.entries()) assert.deepEqual(m.built_from, MAP_ARGS.items[i].built_from, 'a dead module keeps its pinned hashes');
+  for (const [i, m] of out.modules.entries()) assert.deepEqual([m.built_from, m.item], [MAP_ARGS.items[i].built_from, MAP_ARGS.items[i].item], 'a dead module keeps its pinned hashes and item');
   assert.ok(h.logs.some((m) => /reader m1 failed: dead agent/.test(m)));
 });
 
@@ -491,6 +501,7 @@ test('code-map: the return carries args\'s hashes, symlink included, whatever a 
   const items = [mod('m1')];
   const out = await runScript(MAP, h, { ...MAP_ARGS, items });
   assert.deepEqual(out.modules[0].built_from, { 'm1/a.js': H(1), 'm1/link': H(2) });
+  assert.equal(out.modules[0].item, items[0].item, 'the item path comes from args too, for codemap write to compare');
   assert.notEqual(out.modules[0].built_from, items[0].built_from, 'a copy, so nothing downstream edits the launch');
 });
 
