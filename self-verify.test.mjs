@@ -2726,6 +2726,57 @@ test('check 28: the live tree files no explanation problem and `checked` names t
   assert.match(r.checked, /\bsetting-explanations\b/);
 });
 
+// --- check 29: each key's applies_when against the keys it names ------------
+// The rule is pinned in setting-conditions.test.mjs. This side pins the wiring: a fixture on each failing rule
+// reaches `problems` filed against config.schema.json with the key named, a dead key in `interacts` files
+// `unknown-config-key`, and the live tree is clean.
+
+const WHEN_KINDS = ['applies-when-unknown-key', 'applies-when-value-refused', 'applies-when-malformed'];
+
+/** A root whose schema holds a gate and a tier carrying `fields`. @param {Record<string, any>} fields */
+function whenRoot(fields) {
+  const root = mkdtempSync(join(tmpdir(), 'cad-selfverify-when-'));
+  mkdirSync(join(root, 'cadence-core'), { recursive: true });
+  writeFileSync(join(root, 'cadence-core', 'config.schema.json'), JSON.stringify({
+    keys: {
+      'demo.gate': { type: 'enum', values: ['off', 'on'], default: 'off', purpose: 'Gate' },
+      'demo.tier': { type: 'string', default: 'x', purpose: 'Tier', ...fields },
+    },
+  }, null, 2));
+  return root;
+}
+const whenProblems = (fields) => run(['--root', whenRoot(fields)]).problems;
+
+test('check 29: a condition naming a missing key is filed against the schema, naming both keys', () => {
+  const p = whenProblems({ applies_when: [{ key: 'demo.gone', not: 'off' }] }).filter((x) => WHEN_KINDS.includes(x.kind));
+  assert.equal(p.length, 1, JSON.stringify(p));
+  assert.equal(p[0].kind, 'applies-when-unknown-key');
+  assert.equal(p[0].file, 'cadence-core/config.schema.json');
+  assert.match(p[0].detail, /demo\.tier/);
+  assert.match(p[0].detail, /demo\.gone/);
+});
+
+test('check 29: a compared value the named key refuses is filed, and a good condition files nothing', () => {
+  const bad = whenProblems({ applies_when: [{ key: 'demo.gate', not: 'of' }] }).filter((x) => WHEN_KINDS.includes(x.kind));
+  assert.equal(bad.length, 1, JSON.stringify(bad));
+  assert.equal(bad[0].kind, 'applies-when-value-refused');
+  assert.match(bad[0].detail, /demo\.gate/);
+  assert.deepEqual(whenProblems({ applies_when: [{ key: 'demo.gate', not: 'off' }] }).filter((x) => WHEN_KINDS.includes(x.kind)), []);
+});
+
+test('check 29: a dead key in interacts files unknown-config-key against the schema', () => {
+  const p = whenProblems({ interacts: 'Works with demo.nope when it is on.' }).filter((x) => x.kind === 'unknown-config-key');
+  assert.equal(p.length, 1, JSON.stringify(p));
+  assert.equal(p[0].file, 'cadence-core/config.schema.json');
+  assert.match(p[0].detail, /demo\.tier: demo\.nope/);
+});
+
+test('check 29: the live tree files no condition problem and `checked` names the check', () => {
+  const r = run([]);
+  assert.ok(!r.problems.some((x) => WHEN_KINDS.includes(x.kind)), JSON.stringify(r.problems));
+  assert.match(r.checked, /\bsetting-conditions\b/);
+});
+
 // --- checks 1 to 3 over the schema's walk text (D-12) ------------------------
 // The lints themselves are pinned on prose above. These pin what the new input
 // brings: the question, an entry's text and a hint are read, `purpose` is not,
