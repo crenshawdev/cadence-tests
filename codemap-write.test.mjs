@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -335,4 +335,133 @@ test('an unreadable run file with the notice\'s totals bills one cad-mapper brac
   const bad = write(root, gone, '--notice-tokens', '1.5');
   assert.deepEqual([bad.ok, bad.reason], [false, 'bad-args']);
   assert.equal(render0(root).brackets.length, 1, 'a refused call billed nothing more');
+});
+
+// --- codemap status --out-dir: what a launch needs (D-03, D-14) ---------------------------------------------------------
+
+/** Scan, then write a valid entry for the three source modules, so each is built from the content the repository holds now. */
+function built(root) {
+  scan(root);
+  const r = write(root, runFile(['m1', 'm2', 'm3'].map((n) => mod(root, n, entry(n, FN[n])))));
+  assert.equal(r.written, 3, JSON.stringify(r));
+}
+const launchOf = (out) => JSON.parse(readFileSync(join(out, 'launch.json'), 'utf8'));
+const itemOf = (item) => JSON.parse(readFileSync(item, 'utf8'));
+const statBytes = (f) => statSync(f).size;
+const hashNow = (root, p) => gitIn(root, 'hash-object', '--no-filters', p).trim();
+
+test('one module edited after its entry was built: the launch file holds that module only, small, with its hashes pinned now and a diff of the change', () => {
+  const root = fixture();
+  built(root);
+  writeFileSync(join(root, 'm2', 'main.js'), 'export function gamma() { return 1; }\n');
+  const out = scratch();
+  const objects = gitIn(root, 'count-objects', '-v');
+  const s = status(root, '--out-dir', out);
+  assert.equal(s.ok, true, JSON.stringify(s));
+  assert.equal(gitIn(root, 'count-objects', '-v'), objects, 'the call stored no object');
+
+  const launch = launchOf(out);
+  assert.equal(launch.root, root);
+  assert.equal(launch.items.length, 1);
+  const [it] = launch.items;
+  assert.deepEqual(Object.keys(it).sort(), ['built_from', 'item', 'name']);
+  assert.equal(it.name, 'm2');
+  assert.equal(it.built_from['m2/main.js'], hashNow(root, 'm2/main.js'), 'pinned now, not at the build');
+  assert.equal(it.built_from['m2/pad.txt'], hashNow(root, 'm2/pad.txt'));
+  assert.deepEqual([s.launch.file, s.launch.items, s.launch.bytes], [join(out, 'launch.json'), 1, statBytes(join(out, 'launch.json'))]);
+  assert.equal(s.launch.reader_bytes, s.reader_bytes);
+  assert.equal(JSON.stringify(s).includes('built_from'), false, 'the envelope never carries the items');
+
+  const item = itemOf(it.item);
+  assert.equal(item.refresh, 'diff');
+  assert.deepEqual(item.read, [join(root, 'm2', 'main.js'), join(root, 'm2', 'pad.txt')]);
+  assert.deepEqual(item.changed, [join(root, 'm2', 'main.js')]);
+  assert.equal(itemOf(item.old_entry).purpose, 'm2 holds gamma', 'the old entry is copied beside it');
+  const diff = readFileSync(item.diff, 'utf8');
+  assert.match(diff, /^-export function gamma\(\) \{\}$/m);
+  assert.match(diff, /^\+export function gamma\(\) \{ return 1; \}$/m);
+  assert.match(diff, /^### m2\/main\.js$/m);
+  assert.equal(diff.includes('pad'), false, 'an unchanged file is not in the diff');
+});
+
+test('an unbuilt module carries no old entry, a module starting no reader never appears, and a missing out-dir is refused with nothing written', () => {
+  const root = fixture();
+  nestedTests(root);
+  scan(root);
+  const out = scratch();
+  const s = status(root, '--out-dir', out);
+  const launch = launchOf(out);
+  assert.deepEqual(launch.items.map((x) => x.name), ['m1', 'm2', 'm3'], 'blob is binary-only and starts no reader');
+  const item = itemOf(launch.items[0].item);
+  assert.equal('old_entry' in item || 'refresh' in item || 'diff' in item, false);
+  assert.equal(s.readers, 3);
+  // the nested clone's test that names alpha pins m1, as an absolute path
+  assert.deepEqual(item.tests, [join(root, 'tests', 'foo.test.mjs')]);
+
+  const gone = join(scratch(), 'nowhere');
+  const refused = status(root, '--out-dir', gone);
+  assert.deepEqual([refused.ok, refused.reason], [false, 'bad-args']);
+  assert.equal(existsSync(gone), false);
+});
+
+test('a reader is told only what it may open and cite: a symlink and a binary are pinned and not read, a changed symlink is named and never diffed', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cad-write-mix-'));
+  gitIn(root, 'init', '-q'); gitIn(root, 'config', 'user.email', 't@example.com'); gitIn(root, 'config', 'user.name', 'T');
+  mkdirSync(join(root, 'mix'));
+  writeFileSync(join(root, 'mix', 'a.js'), 'export function alpha() {\n  function inner() {}\n  return inner;\n}\n');
+  writeFileSync(join(root, 'mix', 'b.bin'), Buffer.from([1, 0, 2, 0]));
+  symlinkSync('/etc/hostname', join(root, 'mix', 'link'));
+  gitIn(root, 'add', '-A'); gitIn(root, 'commit', '-q', '-m', 'base');
+  scan(root);
+  const out = scratch();
+  status(root, '--out-dir', out);
+  const first = itemOf(launchOf(out).items[0].item);
+  assert.deepEqual(first.read, [join(root, 'mix', 'a.js')], 'only the regular text file is opened');
+  assert.deepEqual(Object.keys(launchOf(out).items[0].built_from).sort(), ['mix/a.js', 'mix/b.bin', 'mix/link'], 'all three are pinned');
+  // alpha is held, and the helper nested inside it is not, so a reader that cites it would sink its whole module
+  assert.deepEqual(first.symbols, { [join(root, 'mix', 'a.js')]: ['alpha'] });
+  const cited = (symbol) => write(root, runFile([mod(root, 'mix', entry('mix', 'alpha', { invariants: [{ claim: 'c', evidence: [{ path: join(root, 'mix', 'a.js'), symbol }] }] }))]));
+  assert.equal(cited('inner').refused, 1);
+  assert.equal(cited('alpha').written, 1);
+
+  rmSync(join(root, 'mix', 'link'));
+  symlinkSync('/etc/passwd', join(root, 'mix', 'link'));
+  status(root, '--out-dir', out);
+  const item = itemOf(launchOf(out).items[0].item);
+  assert.deepEqual(item.changed, [join(root, 'mix', 'link')]);
+  assert.equal(item.refresh, 'diff');
+  assert.equal(readFileSync(item.diff, 'utf8').includes('passwd'), false, 'the link is named and not diffed');
+});
+
+test('a diff is only offered where the old blob still resolves: on top of an uncommitted edit, and after the blob is garbage collected, the reader reads the whole module', () => {
+  const root = fixture();
+  // an uncommitted edit is what the entry is built from, so its hash is one nothing stored
+  scan(root);
+  writeFileSync(join(root, 'm2', 'main.js'), 'export function gamma() { return 1; }\n');
+  scan(root);
+  assert.equal(write(root, runFile([mod(root, 'm2', entry('m2', 'gamma'))])).written, 1);
+  writeFileSync(join(root, 'm2', 'main.js'), 'export function gamma() { return 2; }\n');
+  const out = scratch();
+  status(root, '--out-dir', out);
+  const item = itemOf(launchOf(out).items.find((x) => x.name === 'm2').item);
+  assert.deepEqual([item.refresh, 'diff' in item, item.changed], ['whole', false, [join(root, 'm2', 'main.js')]]);
+  assert.ok(item.old_entry);
+
+  // a committed edit built from, then the commit thrown away and its objects pruned
+  const lost = fixture();
+  writeFileSync(join(lost, 'm2', 'main.js'), 'export function gamma() { return 3; }\n');
+  gitIn(lost, 'commit', '-q', '-am', 'edit');
+  scan(lost);
+  const old = builtFrom(lost, 'm2')['m2/main.js'];
+  assert.equal(write(lost, runFile([mod(lost, 'm2', entry('m2', 'gamma'))])).written, 1);
+  gitIn(lost, 'reset', '-q', '--hard', 'HEAD~1');
+  gitIn(lost, 'reflog', 'expire', '--expire=now', '--all');
+  gitIn(lost, 'gc', '-q', '--prune=now');
+  assert.throws(() => gitIn(lost, 'cat-file', '-e', old), 'the blob is gone, and git diff alone would answer fatal: bad object');
+  const out2 = scratch();
+  const s = status(lost, '--out-dir', out2);
+  assert.equal(s.ok, true, JSON.stringify(s));
+  const gone = itemOf(launchOf(out2).items.find((x) => x.name === 'm2').item);
+  assert.deepEqual([gone.refresh, 'diff' in gone], ['whole', false]);
+  assert.equal(existsSync(join(out2, `${entryFile('m2').slice(0, -5)}.diff`)), false);
 });
