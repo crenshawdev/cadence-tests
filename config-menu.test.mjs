@@ -96,3 +96,16 @@ test('leaving a group runs the walk follow-ups', () => {
   assert.match(s, /\*\*Worktree base ref\*\* when `parallelization\.use_worktrees` is on/);
   assert.match(s, /\*\*Wrap-up\*\*'s dangling enrollment check/);
 });
+
+test('the list and the block both name the read\'s applies answer, and the block prints the no-effect and works-with lines', () => {
+  const s = flat(section(MENU_MD, 'A group'));
+  assert.match(s, /`repo` and `applies`\)/);
+  assert.match(s, /A row whose `applies` is false is marked `\(no effect right now\)`/);
+  assert.match(s, /When `applies` is false, add `No effect right now:` with each sentence of `no_effect`/);
+  assert.match(s, /Add `Works with:` with the `interacts` text and each of `works_with` as its key beside its value/);
+});
+
+test('a setting with no effect can still be picked, and the block says so', () => {
+  const s = flat(section(MENU_MD, 'A group'));
+  assert.match(s, /A setting with no effect can still be picked, because it may be set up ahead of its gate, so end that line with "You can still set it now\."/);
+});
