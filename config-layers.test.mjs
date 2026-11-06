@@ -156,3 +156,125 @@ test('groups come in walk order, shown rows by position and Advanced rows last',
   assert.deepEqual(r.groups.map((g) => [g.n, g.name, g.settings, g.advanced]), [[1, 'One', 4, 0], [2, 'Two', 6, 1]]);
   assert.deepEqual(r.rows.filter((x) => x.group === 'Two').map((x) => x.key).at(-1), 'b.z');
 });
+
+// --- the CLI, on the shipped schema ------------------------------------------
+
+function repoFixture(repo, global) {
+  const root = mkdtempSync(join(tmp, 'cli-'));
+  mkdirSync(join(root, '.planning'));
+  if (repo !== undefined) {
+    writeFileSync(join(root, '.planning', 'config.json'), typeof repo === 'string' ? repo : JSON.stringify(repo));
+  }
+  const g = join(root, 'g.json');
+  if (global !== undefined) writeFileSync(g, typeof global === 'string' ? global : JSON.stringify(global));
+  return { root, g };
+}
+function cli({ root, g }, args) {
+  const env = { ...process.env, CADENCE_GLOBAL_CONFIG: g };
+  let stdout;
+  try { stdout = execFileSync('node', [CONFIG, ...args], { encoding: 'utf8', env, cwd: root }); }
+  catch (e) { stdout = e.stdout; }
+  return { raw: stdout, json: JSON.parse(stdout) };
+}
+const TEMPLATE = join(ROOT, 'cadence-core', 'templates', 'config.json');
+function templateFixture(global) {
+  const f = repoFixture(undefined, global);
+  copyFileSync(TEMPLATE, join(f.root, '.planning', 'config.json'));
+  return f;
+}
+
+test('layers: use_workflows set in only the repo reads off with no winner; a repo test_command reads ignored', () => {
+  const f = repoFixture({ workflow: { use_workflows: true, test_command: 'make' } }, { workflow: { test_command: 'npm t' } });
+  const { json } = cli(f, ['layers', '--key', 'workflow.use_workflows']);
+  assert.deepEqual([json.row.value, json.row.winner], [false, null]);
+  assert.equal(json.row.repo.state, 'set');
+  const t = cli(f, ['layers', '--key', 'workflow.test_command']).json.row;
+  assert.deepEqual([t.repo.state, t.value, t.winner], ['ignored', 'npm t', 'global']);
+});
+
+test('layers: a fresh template repo sets 43, all 43 the shipped default', () => {
+  const { json } = cli(templateFixture(), ['layers']);
+  assert.equal(json.totals.settings, 94);
+  assert.equal(json.totals.repo, 43);
+  assert.equal(json.totals.at_default, 43);
+  assert.equal(json.totals.global, 0);
+  assert.equal(json.groups.length, 6);
+});
+
+test('layers: a corrupt global file is named as unreadable and no global count says 0', () => {
+  const f = templateFixture('{ nope');
+  const { json } = cli(f, ['layers']);
+  assert.deepEqual(json.unreadable, [{ layer: 'global', file: f.g }]);
+  assert.equal(json.totals.global, 'unreadable');
+  assert.ok(json.groups.every((g) => g.global === 'unreadable'));
+  assert.equal(json.totals.repo, 43);
+});
+
+test('layers: each row value equals config.mjs get, group totals sum, and the selectors cover every key once', () => {
+  const f = repoFixture(
+    { granularity: 'fine', git: { create_tag: false }, review: { mode: 'adjudicated' }, workflow: { max_plan_tasks: 5 } },
+    { granularity: 'coarse', git: { create_tag: true, on_land_cleanup: false }, parallelization: { enabled: false } },
+  );
+  const bare = cli(f, ['layers']).json;
+  for (const k of ['settings', 'advanced', 'repo', 'global', 'beating', 'at_default']) {
+    assert.equal(bare.groups.reduce((n, g) => n + g[k], 0), bare.totals[k], k);
+  }
+  const seen = [];
+  let shown = 0;
+  for (const g of bare.groups) {
+    const a = cli(f, ['layers', '--group', g.name]).json;
+    const adv = cli(f, ['layers', '--group', g.name, '--advanced']).json;
+    assert.deepEqual(adv.rows.map((r) => r.key), a.advanced, g.name);
+    assert.ok(adv.rows.every((r) => typeof r.purpose === 'string'), g.name);
+    seen.push(...a.rows.map((r) => r.key), ...adv.rows.map((r) => r.key));
+    shown += a.rows.length;
+    const got = cli(f, ['get', ...a.rows.map((r) => r.key)]).json.values;
+    for (const r of a.rows) {
+      // review.reviewers is the one row `get` cannot match: it also drops the names global does not list
+      if (r.key !== 'review.reviewers') assert.deepEqual(r.value, got[r.key], r.key);
+    }
+  }
+  const all = Object.keys(cli(f, ['keys']).json.keys);
+  assert.deepEqual([...seen].sort(), [...all].sort());
+  assert.equal(new Set(seen).size, all.length);
+  assert.equal(shown + bare.totals.advanced, all.length);
+  assert.ok(Math.max(...bare.groups.map((g) => g.settings - g.advanced)) <= 16);
+});
+
+test('layers: the bare, group and Advanced answers stay under the 10,000 B threshold', () => {
+  const f = templateFixture({ granularity: 'coarse' });
+  const bare = cli(f, ['layers']);
+  assert.ok(bare.raw.length < 10000, `bare ${bare.raw.length}`);
+  for (const g of bare.json.groups) {
+    for (const extra of [[], ['--advanced']]) {
+      const r = cli(f, ['layers', '--group', g.name, ...extra]);
+      assert.ok(r.raw.length < 10000, `${g.name} ${extra} ${r.raw.length}`);
+    }
+  }
+});
+
+test('layers: a key answer carries the setting text', () => {
+  const { json } = cli(templateFixture(), ['layers', '--key', 'git.auto_close']);
+  assert.deepEqual([json.row.type, json.row.src], ['bool', 'repo']);
+  assert.equal(typeof json.row.question, 'string');
+  assert.equal(typeof json.row.purpose, 'string');
+  assert.ok(Array.isArray(json.row.explain));
+});
+
+test('layers: every refusal names a next step', () => {
+  const f = templateFixture();
+  for (const args of [['layers', '--group', 'Nope'], ['layers', '--key', 'nope.key'], ['layers', '--advanced'],
+    ['layers', '--group'], ['layers', 'stray'], ['layers', '--group', 'Testing', '--key', 'granularity']]) {
+    const { json } = cli(f, args);
+    assert.equal(json.ok, false, args.join(' '));
+    assert.equal(typeof json.hint, 'string', args.join(' '));
+  }
+});
+
+test('get and keys --walk keep their output', () => {
+  const f = templateFixture();
+  const walk = cli(f, ['keys', '--walk']).raw;
+  assert.ok(walk.length < 25000, `${walk.length}`);
+  const got = cli(f, ['get', 'granularity']).json;
+  assert.deepEqual(Object.keys(got).sort(), ['ok', 'source', 'values']);
+});
