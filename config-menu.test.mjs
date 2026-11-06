@@ -2,12 +2,15 @@
 // these hold what a rewrite could quietly lose; the live run is checked at /cad-verify.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG_MD = readFileSync(join(ROOT, 'cadence-core', 'workflows', 'config.md'), 'utf8');
+const CONFIG_MJS = join(ROOT, 'cadence-core', 'bin', 'config.mjs');
 const MENU_MD = readFileSync(join(ROOT, 'cadence-core', 'workflows', 'config-menu.md'), 'utf8');
 
 // whitespace collapsed, so a re-wrap of the prose breaks no pin
@@ -217,4 +220,50 @@ test('a typed value reaches the preview and set through a scratch file, in a pic
   assert.match(step4, /write each changed value as JSON to its own file in a directory this run made/);
   assert.match(step4, /pass the preview and `set` each key as `<key>="\$\(cat <path>\)"`/);
   assert.ok(step4.indexOf('mktemp -d') < step4.indexOf('config.mjs preview'));
+});
+
+// The route is prose a model follows, so the fixture proves the one read it hangs on and the prose pins what each answer routes to.
+function readSwitch(repo, global) {
+  const root = mkdtempSync(join(tmpdir(), 'cad-switch-'));
+  try {
+    mkdirSync(join(root, '.planning'));
+    if (repo !== undefined) writeFileSync(join(root, '.planning', 'config.json'), JSON.stringify(repo));
+    const g = join(root, 'g.json');
+    if (global !== undefined) writeFileSync(g, JSON.stringify(global));
+    const out = execFileSync('node', [CONFIG_MJS, 'get', 'workflow.config_menu'],
+      { encoding: 'utf8', cwd: root, env: { ...process.env, CADENCE_GLOBAL_CONFIG: g } });
+    return JSON.parse(out).values['workflow.config_menu'];
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+test('workflow.config_menu reads false when unset and true when the repo or the global layer sets it', () => {
+  assert.equal(readSwitch({}), false);
+  assert.equal(readSwitch({ workflow: { config_menu: true } }), true);
+  assert.equal(readSwitch({}, { workflow: { config_menu: true } }), true);
+  assert.equal(readSwitch({ workflow: { config_menu: false } }, { workflow: { config_menu: true } }), false);
+});
+
+test('with the switch off no arguments opens the walk, with it on the opening screen, and a sentence is refused with the command', () => {
+  const route = flat(section(CONFIG_MD, '1. Route'));
+  assert.match(route, /read the switch \(a repo value counts\)/);
+  assert.match(route, /config\.mjs" get workflow\.config_menu/);
+  assert.match(route, /- `true`: the arms above work as written/);
+  assert.match(route, /Not `true` \(the default is `false`\): empty goes to \*\*Interactive menu \(no args\)\*\*, the walk, exactly as `\/cad-config` did before the menu/);
+  assert.match(route, /A sentence, or a pick of a group, is not taken: say in one line that the menu is off, give `\/cad-config workflow\.config_menu=true` as the command that turns it on/);
+  assert.match(route, /A flag, `--walk` and `<key>=<value>` never read the switch/);
+  assert.match(route, /- Empty: Read the same file and follow its \*\*Opening screen\*\*/);
+  assert.match(flat(section(CONFIG_MD, 'Interactive menu (no args)')), /with no arguments while `workflow\.config_menu` is off/);
+  assert.match(flat(MENU_MD), /only while `workflow\.config_menu` is true/);
+});
+
+test('the docs and the skill say the menu is opt-in and how to turn it on', () => {
+  const read = (...p) => readFileSync(join(ROOT, ...p), 'utf8');
+  for (const [name, text] of [['skill', read('skills', 'cad-config', 'SKILL.md')],
+    ['guide', read('docs', 'guide', 'configuration', 'index.md')],
+    ['commands', read('docs', 'guide', 'reference', 'commands.md')],
+    ['COMMANDS', read('cadence-core', 'references', 'COMMANDS.md')]]) {
+    assert.match(flat(text), /workflow\.config_menu/, `${name} does not name the switch`);
+    assert.match(flat(text), /off( by default)?/i, `${name} does not say it is off`);
+  }
+  assert.match(flat(read('docs', 'guide', 'configuration', 'index.md')), /`\/cadence:cad-config workflow\.config_menu=true`|\/cadence:cad-config workflow\.config_menu=true/);
 });
