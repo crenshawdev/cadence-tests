@@ -138,3 +138,39 @@ test('the planner contract, the planner rungs, the plan skill and the testing po
     join('cadence-core', 'references', 'test-policy.md'), ...rungs.map((f) => join('agents', f))];
   for (const f of files) assert.doesNotMatch(readFileSync(join(ROOT, f), 'utf8'), WHOLE_MAP, f);
 });
+
+// --- /cad-context: the analyzer's dispatch carries the same block -----------------------------------------------
+
+const CONTEXT_MD = readFileSync(join(ROOT, 'cadence-core', 'workflows', 'context.md'), 'utf8');
+const stepOf = (text, name) => {
+  const start = text.indexOf(`<step name="${name}">`);
+  assert.notEqual(start, -1, `no ${name} step`);
+  return text.slice(start, text.indexOf('</step>', start));
+};
+const blockOf = (text) => text.match(/<code_map>\n[^\n]+\n<\/code_map>/)?.[0];
+
+test('spend_gate reads the switch in its one config.mjs get, and analyze scans before the payload and carries the block', () => {
+  const gate = stepOf(CONTEXT_MD, 'spend_gate');
+  assert.match(gate.match(/config\.mjs" get \\\n((?:  .*\n)+)```/)[1], /\bplanning\.code_map\b/);
+  assert.equal((gate.match(/config\.mjs" get/g) || []).length, 1);
+  const analyze = stepOf(CONTEXT_MD, 'analyze');
+  const order = [analyze.indexOf('planning.mjs" codemap scan'), analyze.indexOf('<code_map>'), analyze.indexOf('Prompt payload:')];
+  assert.ok(order.every((i) => i !== -1), `a piece of analyze is missing: ${order}`);
+  assert.equal((analyze.match(/codemap scan/g) || []).length, 1);
+  assert.ok(order[0] < order[2], 'the scan comes before the payload is assembled');
+  const flatAnalyze = analyze.replace(/\s+/g, ' ');
+  assert.match(flatAnalyze, /add the block below to the payload, after `<recalled_memory>` and before its last line/);
+  assert.match(flatAnalyze, /On `ok:false`, or output that won't parse, print nothing about it, leave the block out and dispatch the analyzer anyway/);
+});
+
+test('the analyzer\'s block equals /cad-plan\'s byte for byte, and context.md adds no workflow word', () => {
+  const block = blockOf(CONTEXT_MD);
+  assert.ok(block, 'no block in context.md');
+  assert.equal(block, blockOf(PLAN_MD));
+  assert.doesNotMatch(CONTEXT_MD, /Workflow|workflow-run|workflow-claim|workflow-layers/);
+});
+
+test('the analyzer\'s contract is untouched by the code map', () => {
+  const contract = readFileSync(join(ROOT, 'skills', 'cad-assumptions-analyzer-contract', 'SKILL.md'), 'utf8');
+  assert.doesNotMatch(contract, /code[ _]map|codemap/i);
+});
