@@ -649,6 +649,20 @@ test('workflow-run: a run holding the analyzer\'s result shape is refused run-ba
   assert.deepEqual(emptyOut(t), [], 'no payload, no review input and no report');
 });
 
+// --- the code map has no arm here (Phase 3, D-16): `codemap write` reads its runs --------------------------------------------
+
+test('workflow-run: a code map run is refused run-bad-result and bills its agents like any other run', () => {
+  const t = tree();
+  const run = clone(FIXTURE);
+  run.workflowName = 'code-map';
+  run.result = { modules: [{ name: 'src', built_from: {}, entry: null }] };
+  const r = seam(t, run);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'run-bad-result', JSON.stringify(r));
+  assert.equal(r.brackets.written, 3);
+  assert.deepEqual(emptyOut(t), [], 'no payload and no review input');
+});
+
 // --- two runs of one trigger in one phase keep their records apart (D-02) ---------------------------------
 
 test('workflow-run: two overlapping runs of one trigger keep scratch files, brackets, records and review files apart', () => {

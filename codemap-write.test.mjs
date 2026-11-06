@@ -279,3 +279,60 @@ test('the map is not recalled and not in the why corpus', () => {
     assert.equal(readFileSync(join(ROOT, 'cadence-core', 'bin', f), 'utf8').split('\n').filter((l) => l.includes('codemap')).length, 0, f);
   }
 });
+
+// --- the run is billed before it is judged (D-16) ---------------------------------------------------------------------
+
+const render0 = (root) => planning(root, 'trace', 'render', '--phase', '0');
+const events0 = (root) => planning(root, 'trace', 'render', '--phase', '0', '--events').events.filter((e) => e.family === 'lifecycle');
+
+test('a run with two agent rows bills two brackets under phase 0 with each row\'s figures, and a second call bills none and rewrites the same entries', () => {
+  const root = fixture();
+  scan(root);
+  const file = runFile([mod(root, 'm1', entry('m1', 'alpha')), mod(root, 'm2', entry('m2', 'gamma'))]);
+  const first = write(root, file);
+  assert.deepEqual([first.brackets.source, first.brackets.written, first.brackets.already, first.brackets.failed], ['run-file', 2, 0, []]);
+  const out = render0(root);
+  assert.deepEqual(out.unpaired, []);
+  assert.equal(out.brackets.length, 2);
+  for (const [i, b] of [...out.brackets].sort((a, c) => a.tokens - c.tokens).entries()) {
+    assert.deepEqual([b.tokens, b.turns, b.duration_ms, b.agent_id], [1000 * (i + 1), 10 + i + 1, 5000 * (i + 1), `agent${i + 1}`]);
+  }
+  const dispatches = events0(root).filter((e) => e.event === 'dispatch');
+  assert.ok(dispatches.every((e) => e.plan.startsWith('wf_test-') && e.read.length === 1 && e.read[0] === '.planning/codemap/index.json'), 'the worker key carries the run id and the read set is the index');
+  const written = readFileSync(entryPath(root, 'm1'), 'utf8');
+
+  const before = events0(root).length;
+  const again = write(root, file);
+  assert.deepEqual([again.brackets.written, again.brackets.already], [0, 2]);
+  assert.equal(events0(root).length, before, 'a retry writes no second set');
+  assert.equal(readFileSync(entryPath(root, 'm1'), 'utf8'), written, 'and the same entries');
+});
+
+test('a killed run is still billed and writes no entry, and an agent that was not done closes as a checkpoint', () => {
+  const root = fixture();
+  scan(root);
+  const modules = [mod(root, 'm1', entry('m1', 'alpha'))];
+  const r = write(root, runFile(modules, { status: 'killed', workflowProgress: [row(1, { state: 'killed' })] }));
+  assert.deepEqual([r.ok, r.reason, r.brackets.written], [false, 'run-not-completed', 1]);
+  assert.equal(entryFiles(root).length, 0);
+  const b = events0(root).find((e) => e.event === 'checkpoint');
+  assert.match(b.detail, /state "killed"/);
+  assert.equal(render0(root).unpaired.length, 0);
+  // a refusal further on says what was billed too
+  const bad = write(root, runFile(modules, { result: { nothing: 1 }, workflowProgress: [row(1)] }, 'wf_other'));
+  assert.deepEqual([bad.reason, bad.brackets.written], ['run-bad-result', 1]);
+});
+
+test('an unreadable run file with the notice\'s totals bills one cad-mapper bracket, and a bad total is refused before anything is billed', () => {
+  const root = fixture();
+  scan(root);
+  const gone = join(scratch(), 'wf_gone.json');
+  const r = write(root, gone, '--notice-tokens', '54242', '--notice-turns', '11', '--notice-duration-ms', '6072');
+  assert.deepEqual([r.ok, r.reason, r.brackets.source, r.brackets.written], [false, 'run-unreadable', 'notice-totals', 1]);
+  const out = render0(root);
+  assert.equal(out.brackets.length, 1);
+  assert.deepEqual([out.brackets[0].role, out.brackets[0].tokens, out.brackets[0].turns, out.brackets[0].duration_ms], ['cad-mapper', 54242, 11, 6072]);
+  const bad = write(root, gone, '--notice-tokens', '1.5');
+  assert.deepEqual([bad.ok, bad.reason], [false, 'bad-args']);
+  assert.equal(render0(root).brackets.length, 1, 'a refused call billed nothing more');
+});
