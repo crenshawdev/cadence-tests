@@ -47,10 +47,11 @@ function nestedTests(root) {
 }
 
 /** One CLI call: the parsed answer and the exit code. */
-function planning(root, ...args) {
+function planning(root, ...args) { return planningWith({}, root, ...args); }
+function planningWith(env, root, ...args) {
   let out; let code = 0;
   try {
-    out = execFileSync('node', [PLANNING, '--dir', join(root, '.planning'), ...args], { cwd: root, encoding: 'utf8', stdio: 'pipe' });
+    out = execFileSync('node', [PLANNING, '--dir', join(root, '.planning'), ...args], { cwd: root, encoding: 'utf8', stdio: 'pipe', env: { ...process.env, ...env } });
   } catch (e) { out = e.stdout; code = e.status; }
   return { ...JSON.parse(out), _exit: code };
 }
@@ -530,6 +531,33 @@ test('the diff runs no clean filter a tracked .gitattributes and the config name
   assert.equal(existsSync(marker), false, 'the configured filter program never ran');
 });
 
+/** The filter scenario of the test above, run with `env` in the launch's environment; the marker says whether the program ran. */
+function filterRun(env) {
+  const root = fixture();
+  writeFileSync(join(root, 'm2', '.gitattributes'), '* filter=probe\n');
+  gitIn(root, 'add', 'm2/.gitattributes'); gitIn(root, 'commit', '-q', '-m', 'attributes');
+  built(root);
+  const { prog, marker } = probe('clean');
+  gitIn(root, 'config', 'filter.probe.clean', prog);
+  mkdirSync(join(root, 'tmp'));
+  writeFileSync(join(root, 'm2', 'main.js'), 'export function gamma() { return 1; }\n');
+  const out = scratch();
+  const s = planningWith(env(root), root, 'codemap', 'status', '--out-dir', out);
+  assert.equal(s.ok, true, JSON.stringify(s));
+  const item = itemOf(launchOf(out).items.find((x) => x.name === 'm2').item);
+  assert.equal(item.refresh, 'diff');
+  assert.match(readFileSync(item.diff, 'utf8'), /^\+export function gamma\(\) \{ return 1; \}$/m);
+  return existsSync(marker);
+}
+
+test('the diff runs no clean filter when TMPDIR is relative and names a directory inside the repository', () => {
+  assert.equal(filterRun(() => ({ TMPDIR: 'tmp' })), false, 'the configured filter program never ran');
+});
+
+test('the diff runs no clean filter when the environment aims git at the repository with an absolute GIT_DIR', () => {
+  assert.equal(filterRun((root) => ({ GIT_DIR: join(root, '.git') })), false, 'the configured filter program never ran');
+});
+
 test('looking for a missing old blob runs no transport program a promisor remote names', () => {
   const root = fixture();
   scan(root);
@@ -587,6 +615,37 @@ test('a launch item names only what is safe to open: tests that are regular file
   assert.deepEqual(m2.added, [join(root, 'm2', 'new.js')], 'a symlink is pinned and not named');
   assert.deepEqual(m2.removed, ['m2/gone.js'], 'root-relative, and the climbing key is dropped');
   assert.equal(m2.read.some((p) => p.endsWith('leak')), false);
+});
+
+/** The tests list of m1's item after its stored row names `files` as pins, with one real test file beside them. */
+function testsFor(files) {
+  const root = fixture();
+  nestedTests(root);
+  built(root);
+  writeFileSync(join(root, '.env'), 'TOKEN=secret\n');
+  writeFileSync(join(root, 'a\\b.test.mjs'), 'x\n');
+  writeFileSync(join(root, 'm1', 'notes.txt'), 'x\n');
+  const idx = index(root);
+  const m1row = idx.rows.find((r) => r.path === 'm1/main.js');
+  m1row.pinned_by = { files: [...(m1row.pinned_by?.files || []), ...files] };
+  writeFileSync(join(root, '.planning', 'codemap', 'index.json'), JSON.stringify(idx));
+  writeFileSync(join(root, 'm1', 'main.js'), 'export function alpha() { return 1; }\n');
+  const out = scratch();
+  const st = status(root, '--out-dir', out);
+  assert.equal(st.ok, true, JSON.stringify(st));
+  return itemOf(launchOf(out).items.find((x) => x.name === 'm1').item).tests;
+}
+
+test('a stored pin is listed only when it is a test file: .git/config, .env, a source file and anything under a .git directory are dropped', () => {
+  const tests = testsFor(['.git/config', 'tests/../.git/config', '.git/HEAD', '.env', 'm1/notes.txt', 'tests/.git/config']);
+  assert.deepEqual(tests.map((t) => t.slice(t.indexOf('/tests/') + 1)).filter((t) => t.startsWith('tests/')), ['tests/foo.test.mjs']);
+  assert.equal(tests.length, 1);
+});
+
+test('a stored pin holding a backslash is dropped, since a native join could read it as a separator', () => {
+  const tests = testsFor(['a\\b.test.mjs', '..\\private\\x.test.mjs']);
+  assert.equal(tests.length, 1);
+  assert.match(tests[0], /foo\.test\.mjs$/);
 });
 
 test('a quoted spelling of a path is pinned and never listed to open, whether it is read or added', () => {
