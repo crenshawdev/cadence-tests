@@ -633,134 +633,20 @@ test('workflow-run: once the notice\'s totals are on the record, a retry with a 
   assert.deepEqual(out.unpaired, []);
 });
 
-// --- the analyzer arm: a finished analyzer run to its report on disk -----------------------------------------------------------
+// --- the analyzer arm is gone ---------------------------------------------------------------------------------------------
 
-const REPORT = '## Assumptions\n\n### Area: Storage\n\n- **Decision:** Rows live in the run record, é\n  **Certainty:** Confident\n  **Evidence:** `a.js`\n  **If wrong:** a plan is rebuilt\n\n## Needs external research\n\nNone.\n';
-/** The fixture's run with three analyzer readers in place of its review rows, and the analyzer script's result. */
-function analyzerRun(result = { report: REPORT, nulls: [] }) {
+test('workflow-run: a run holding the analyzer\'s result shape is refused run-bad-result even with --analyzer passed, and writes no payload', () => {
+  // the contract never refuses an undeclared flag at runtime, so the review arm has to be the one that says no
+  const t = tree();
   const run = clone(FIXTURE);
-  const [first, second, third] = rowsOf(run);
-  for (const [row, label] of [[first, 'reader similar'], [second, 'reader flow'], [third, 'reader keep']]) {
-    row.label = label;
-    row.agentType = 'cadence:cad-assumptions-analyzer-high';
-  }
   run.workflowName = 'analyzer';
-  run.result = result;
-  return run;
-}
-const analyze = (t, run, ...more) => {
+  run.result = { report: '## Assumptions\n\nNone.\n', nulls: [] };
   const runFile = join(t.repo, 'run.json');
-  writeFileSync(runFile, typeof run === 'string' ? run : JSON.stringify(run));
-  return cli(t, ['workflow-run', '--phase', '1', '--analyzer', '--run-file', runFile, '--out-dir', t.out, '--payload-ref', '.planning/ROADMAP.md', ...more]);
-};
-
-test('workflow-run --analyzer: a run with a report writes it byte-identical to the file\'s result and prints its path and the readers that returned nothing', () => {
-  const t = tree();
-  const r = analyze(t, analyzerRun({ report: REPORT, nulls: ['behavior'] }));
-  assert.equal(r.ok, true, JSON.stringify(r));
-  assert.equal(readFileSync(r.report, 'utf8'), REPORT);
-  assert.deepEqual(r.nulls, ['behavior']);
-  assert.equal(r.run_id, 'wf_9d70aeab-5d0');
-  assert.deepEqual(emptyOut(t), ['analysis.md'], 'the report is the only file, and no review payload is written');
-  // the flag works wherever it sits on the line
-  const t2 = tree();
-  const runFile = join(t2.repo, 'run.json');
-  writeFileSync(runFile, JSON.stringify(analyzerRun()));
-  const last = cli(t2, ['workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', t2.out, '--payload-ref', 'x', '--analyzer']);
-  assert.deepEqual([last.ok, readFileSync(last.report, 'utf8')], [true, REPORT]);
-});
-
-test('workflow-run --analyzer: a run with no report is ok:false under its own reason, names the readers, and writes no report', () => {
-  const t = tree();
-  const r = analyze(t, analyzerRun({ report: null, nulls: ['similar features', 'behavior', 'what must stay intact'] }));
+  writeFileSync(runFile, JSON.stringify(run));
+  const r = cli(t, ['workflow-run', '--phase', '1', '--analyzer', '--run-file', runFile, '--out-dir', t.out, '--payload-ref', '.planning/ROADMAP.md']);
   assert.equal(r.ok, false);
-  assert.equal(r.reason, 'analyzer-no-report');
-  assert.match(r.detail, /similar features, behavior, what must stay intact/);
-  assert.deepEqual(emptyOut(t), []);
-  // nothing in the report slot of any other shape reads as a report either
-  for (const result of [{ report: '  \n', nulls: [] }, { report: null, nulls: [] }]) {
-    assert.equal(analyze(tree(), analyzerRun(result)).reason, 'analyzer-no-report', JSON.stringify(result));
-  }
-});
-
-test('workflow-run --analyzer: a run that is not a finished analyzer run is refused with the reason the review arm gives', () => {
-  for (const [run, reason] of [
-    [KILLED, 'run-not-completed'],
-    [FIXTURE, 'run-bad-result'],
-    [analyzerRun('the analyzer started no agent'), 'run-bad-result'],
-    [analyzerRun({ report: 7, nulls: [] }), 'run-bad-result'],
-    [analyzerRun({ report: REPORT }), 'run-bad-result'],
-    ['{', 'run-not-json'],
-  ]) {
-    const t = tree();
-    const r = analyze(t, run);
-    assert.equal(r.ok, false);
-    assert.equal(r.reason, reason, JSON.stringify(r));
-    assert.deepEqual(emptyOut(t), []);
-  }
-  // without the flag the same analyzer run is still judged as a review panel's
-  const t = tree();
-  const runFile = join(t.repo, 'run.json');
-  writeFileSync(runFile, JSON.stringify(analyzerRun()));
-  assert.equal(cli(t, ['workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', t.out, '--payload-ref', 'x']).reason, 'run-bad-result');
-});
-
-test('workflow-run --analyzer: the door asks for the same flags the review arm does', () => {
-  const t = tree();
-  assert.equal(cli(t, ['workflow-run', '--phase', '1', '--analyzer', '--run-file', 'x', '--out-dir', t.out]).reason, 'bad-args', 'no --payload-ref');
-  assert.equal(cli(t, ['workflow-run', '--analyzer', '--run-file', 'x', '--out-dir', t.out, '--payload-ref', 'y']).reason, 'bad-args', 'no --phase');
-});
-
-// --- the analyzer's readers are billed ------------------------------------------------------------------------------------
-
-test('workflow-run --analyzer: three readers bill three brackets under the analyzer\'s role with their figures, none unpaired, whatever their rows say', () => {
-  const t = tree();
-  const run = analyzerRun({ report: REPORT, nulls: [] });
-  const rows = rowsOf(run);
-  delete rows[1].agentType;                  // a row the host gave no type: still the analyzer's
-  rows[2].agentType = 'cadence:cad-reviewer-low';
-  const r = analyze(t, run);
-  assert.equal(r.ok, true, JSON.stringify(r));
-  assert.deepEqual([r.brackets.source, r.brackets.written, r.brackets.already, r.brackets.failed], ['run-file', 3, 0, []]);
-  const out = render(t);
-  assert.deepEqual(out.unpaired, []);
-  assert.equal(out.brackets.length, 3);
-  assert.ok(out.brackets.every((b) => b.role === 'cad-assumptions-analyzer'), JSON.stringify(out.brackets.map((b) => b.role)));
-  for (const row of rows) {
-    const b = out.brackets.find((x) => x.agent_id === row.agentId);
-    assert.deepEqual([b.tokens, b.turns, b.duration_ms, b.event], [row.tokens, row.toolCalls, row.durationMs, 'return']);
-  }
-  assert.deepEqual(out.roles['cad-assumptions-analyzer'], { dispatches: 3, tokens: rows.reduce((n, x) => n + x.tokens, 0), turns: rows.reduce((n, x) => n + x.toolCalls, 0) });
-  assert.equal(rawEvents(t).filter((e) => e.family === 'lifecycle' && e.event === 'dispatch').every((e) => e.read.length === 1 && e.read[0] === '.planning/ROADMAP.md' && !('reviewer' in e)), true);
-  // the ceiling for the analyzer's role is read against each reader, not against the sum
-  const w = cli(t, ['trace', 'window', '--phase', '1']);
-  assert.ok(JSON.stringify(w).includes('cad-assumptions-analyzer'), JSON.stringify(w));
-  // a second call bills nothing more
-  assert.deepEqual([analyze(t, run).brackets.written, render(t).brackets.length], [0, 3]);
-});
-
-test('workflow-run --analyzer: a run with no report is refused and still bills every reader, an unfinished one as a checkpoint', () => {
-  const t = tree();
-  const run = analyzerRun({ report: null, nulls: ['behavior'] });
-  rowsOf(run)[1].state = 'progress';
-  const r = analyze(t, run);
-  assert.equal(r.ok, false);
-  assert.equal(r.reason, 'analyzer-no-report');
-  assert.deepEqual([r.brackets.source, r.brackets.written], ['run-file', 3]);
-  const out = render(t);
-  assert.deepEqual(out.unpaired, []);
-  assert.deepEqual(out.brackets.map((b) => [b.role, b.event]).sort(), [['cad-assumptions-analyzer', 'checkpoint'], ['cad-assumptions-analyzer', 'return'], ['cad-assumptions-analyzer', 'return']]);
-  assert.deepEqual(emptyOut(t), []);
-});
-
-test('workflow-run --analyzer: with no readable rows the notice\'s totals bill one bracket under the analyzer\'s role', () => {
-  const t = tree();
-  const r = analyze(t, '{', '--notice-tokens', '900', '--notice-turns', '9', '--notice-duration-ms', '90');
-  assert.equal(r.reason, 'run-not-json');
-  assert.deepEqual([r.brackets.source, r.brackets.written], ['notice-totals', 1]);
-  const out = render(t);
-  assert.deepEqual([out.brackets[0].role, out.brackets[0].tokens], ['cad-assumptions-analyzer', 900]);
-  assert.deepEqual(out.unpaired, []);
+  assert.equal(r.reason, 'run-bad-result', JSON.stringify(r));
+  assert.deepEqual(emptyOut(t), [], 'no payload, no review input and no report');
 });
 
 // --- two runs of one trigger in one phase keep their records apart (D-02) ---------------------------------

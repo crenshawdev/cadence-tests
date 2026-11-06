@@ -71,15 +71,15 @@ for (const [name, repo, global] of OFF_SHAPES) {
 
 test('off: a release with the old claim\'s id leaves a new claim on the same label alone', async () => {
   const t = tree(null, null);
-  const old = await cli(t, 'take', 'analyzer-7');
-  assert.equal((await rel(t, 'analyzer-7', old.id)).released, true);
-  const fresh = await cli(t, 'take', 'analyzer-7');
+  const old = await cli(t, 'take', 'diff-7');
+  assert.equal((await rel(t, 'diff-7', old.id)).released, true);
+  const fresh = await cli(t, 'take', 'diff-7');
   assert.equal(fresh.launch, true); assert.notEqual(fresh.id, old.id);
-  const late = await rel(t, 'analyzer-7', old.id);
+  const late = await rel(t, 'diff-7', old.id);
   assert.equal(late.released, false); assert.equal(late.holder_id, fresh.id);
-  assert.equal((await cli(t, 'take', 'analyzer-8')).launch, false, 'the new claim is still held');
-  assert.equal((await rel(t, 'analyzer-7', fresh.id)).released, true);
-  assert.equal((await rel(t, 'analyzer-7', fresh.id)).released, false, 'a repeat is idempotent');
+  assert.equal((await cli(t, 'take', 'diff-8')).launch, false, 'the new claim is still held');
+  assert.equal((await rel(t, 'diff-7', fresh.id)).released, true);
+  assert.equal((await rel(t, 'diff-7', fresh.id)).released, false, 'a repeat is idempotent');
   assert.deepEqual(claimFiles(t), []);
 });
 

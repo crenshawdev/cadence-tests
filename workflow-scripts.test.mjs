@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -381,168 +381,6 @@ test('review-panel: its real return, with a local voice and a provider voice, pl
   assert.equal(file.split('\n').filter((l) => l === '### What breaks').length, 3, 'the answered survivor has its headings in the review file');
 });
 
-// --- the analyzer reads three angles and renders the contract's report ---------------------------------------------
-const ANALYZER = readFileSync(join(ROOT, 'workflows', 'analyzer.js'), 'utf8');
-const CONTRACT = readFileSync(join(ROOT, 'skills', 'cad-assumptions-analyzer-contract', 'SKILL.md'), 'utf8');
-// the skeleton the contract states, and the labels it spells, so the parser below is read from the contract and not from the script
-const SKELETON = CONTRACT.match(/<output_format>[\s\S]*?```\n([\s\S]*?)```/)[1];
-const LABELS = Object.fromEntries([...SKELETON.matchAll(/\*\*(Decision|Certainty|Evidence|If wrong|Alternatives):\*\*/g)].map((m) => [m[1], m[1]]));
-
-/** Read a report back the way close_gray_areas does: areas, then items with their labelled fields, then the research list. */
-function parseReport(md) {
-  assert.ok(SKELETON.includes('## Assumptions') && SKELETON.includes('### Area: <area name>') && SKELETON.includes('## Needs external research'));
-  assert.deepEqual(Object.keys(LABELS), ['Decision', 'Certainty', 'Evidence', 'If wrong', 'Alternatives']);
-  const lines = md.split('\n');
-  assert.equal(lines[0], '## Assumptions');
-  const out = { areas: [], research: [] };
-  let area = null; let item = null; let inResearch = false;
-  for (const l of lines.slice(1)) {
-    let m;
-    if (l === '## Needs external research') { inResearch = true; continue; }
-    if (inResearch) { if (l.startsWith('- ')) out.research.push(l.slice(2)); else if (l === 'None.') out.research.push(null); continue; }
-    if ((m = l.match(/^### Area: (.+)$/))) { area = { name: m[1], items: [] }; out.areas.push(area); item = null; }
-    else if ((m = l.match(/^- \*\*Decision:\*\* (.+)$/))) { item = { decision: m[1], alternatives: null }; area.items.push(item); }
-    else if ((m = l.match(/^ {2}\*\*Certainty:\*\* (Confident|Likely|Unclear)$/))) item.certainty = m[1];
-    else if ((m = l.match(/^ {2}\*\*Evidence:\*\* (.+)$/))) item.evidence = [...m[1].matchAll(/`([^`]+)`/g)].map((x) => x[1]);
-    else if ((m = l.match(/^ {2}\*\*If wrong:\*\* (.+)$/))) item.if_wrong = m[1];
-    else if (l === '  **Alternatives:**') item.alternatives = [];
-    else if ((m = l.match(/^ {2}- (.+)$/))) item.alternatives.push(m[1]);
-    else assert.equal(l.trim(), '', `a line outside the skeleton: ${l}`);
-  }
-  return out;
-}
-
-const assume = (area, decision, certainty, evidence, more = {}) => ({
-  area, decision, certainty, evidence, if_wrong: `${decision} is wrong and a plan is rebuilt`, alternatives: certainty === 'Confident' ? [] : ['the other way'], ...more,
-});
-const AARGS = { phase: '1', phase_name: 'Review findings', goal: 'Someone reading a review decides.', prior_decisions: 'D-01 switch', search_terms: 'review, analyzer', agent_type: 'cad-assumptions-analyzer-high', model: null };
-const reader = (angle, ...assumptions) => (label) => (label === `reader ${angle}` ? { assumptions, research: [] } : undefined);
-/** One reply per reader, by label. */
-const readers = (by) => host((label) => by[label.replace('reader ', '')]);
-
-test('analyzer: no args, or malformed args, start no agent', async () => {
-  for (const bad of [undefined, null, 'not json', '{', 42, {}, { ...AARGS, agent_type: '' }, { ...AARGS, goal: undefined }, { ...AARGS, phase: undefined }, { ...AARGS, search_terms: 3 }]) {
-    const h = host(() => assert.fail('an agent started'));
-    const out = await runScript(ANALYZER, h, bad);
-    assert.equal(h.calls.length, 0);
-    assert.match(out, /started no agent/);
-  }
-});
-
-test('analyzer: exactly three readers run on the resolved type, each held to its angle and to 5 to 15 files, and no combine agent follows', async () => {
-  const h = readers({ similar: { assumptions: [assume('A', 'one', 'Confident', ['a.js'])], research: [] }, flow: { assumptions: [], research: [] }, keep: { assumptions: [], research: [] } });
-  await runScript(ANALYZER, h, { ...AARGS, model: 'sonnet' });
-  assert.deepEqual(h.calls.map((c) => c.opts.label).sort(), ['reader flow', 'reader keep', 'reader similar']);
-  for (const c of h.calls) {
-    assert.equal(c.opts.agentType, 'cad-assumptions-analyzer-high');
-    assert.equal(c.opts.model, 'sonnet');
-    assert.match(c.prompt, /5 to 15 .*files/);
-    assert.ok(c.prompt.includes('Phase 1: Review findings') && c.prompt.includes('<phase_goal>Someone reading a review decides.</phase_goal>') && c.prompt.includes('D-01 switch'));
-    assert.ok(!c.prompt.includes('<recalled_memory>'), 'no recalled memory, no block');
-    for (const k of ['assumptions', 'research']) assert.ok(c.opts.schema.required.includes(k));
-  }
-  const prompts = new Set(h.calls.map((c) => c.prompt));
-  assert.equal(prompts.size, 3, 'each reader has its own angle');
-  const none = readers({});
-  await runScript(ANALYZER, none, { ...AARGS, recalled_memory: 'a snippet - D.md, phase 2' });
-  assert.ok(none.calls.every((c) => !('model' in c.opts) && c.prompt.includes('<recalled_memory>a snippet - D.md, phase 2</recalled_memory>')));
-});
-
-test('analyzer: the schema carries the contract\'s fields and its certainty words', async () => {
-  const h = readers({});
-  await runScript(ANALYZER, h, AARGS);
-  const item = h.calls[0].opts.schema.properties.assumptions.items;
-  assert.deepEqual(item.required, ['area', 'decision', 'certainty', 'evidence', 'if_wrong', 'alternatives']);
-  assert.deepEqual(item.properties.certainty.enum, ['Confident', 'Likely', 'Unclear']);
-  assert.ok(item.properties.evidence.minItems >= 1, 'no citation, no assumption');
-  assert.equal(item.properties.alternatives.maxItems, 2);
-});
-
-test('analyzer: a fixture of mixed certainties renders to the contract\'s skeleton and reads back whole', async () => {
-  const h = readers({
-    similar: { assumptions: [assume('Storage', 'Rows live in the run record', 'Confident', ['a.js', 'b.js']), assume('Storage', 'Reports are Markdown', 'Likely', ['c.md'])], research: ['Host stability: not in the repo'] },
-    flow: { assumptions: [assume('Entry', 'The skill is the entry', 'Unclear', ['d.md'], { alternatives: ['a hook', 'a command'] })], research: ['Host stability: not in the repo', 'Limits: sizes unknown'] },
-    keep: { assumptions: [assume('Entry', 'Budgets move with the text', 'Confident', ['w.json'])], research: [] },
-  });
-  const out = await runScript(ANALYZER, h, AARGS);
-  assert.deepEqual(out.nulls, []);
-  const p = parseReport(out.report);
-  assert.deepEqual(p.areas.map((x) => x.name), ['Storage', 'Entry']);
-  assert.deepEqual(p.areas[0].items.map((i) => [i.decision, i.certainty, i.evidence, i.if_wrong]), [
-    ['Rows live in the run record', 'Confident', ['a.js', 'b.js'], 'Rows live in the run record is wrong and a plan is rebuilt'],
-    ['Reports are Markdown', 'Likely', ['c.md'], 'Reports are Markdown is wrong and a plan is rebuilt'],
-  ]);
-  assert.deepEqual(p.areas[1].items.map((i) => [i.decision, i.certainty, i.evidence]), [['The skill is the entry', 'Unclear', ['d.md']], ['Budgets move with the text', 'Confident', ['w.json']]]);
-  // Alternatives only where the contract allows them
-  assert.deepEqual(p.areas.flatMap((x) => x.items).map((i) => i.alternatives), [null, ['the other way'], ['a hook', 'a command'], null]);
-  assert.deepEqual(p.research, ['Host stability: not in the repo', 'Limits: sizes unknown'], 'a topic two readers raised is listed once');
-});
-
-test('analyzer: a Confident item carries no Alternatives even when its reader sent some, and a multi-line value stays on its line', async () => {
-  const h = readers({ similar: { assumptions: [assume('A', 'multi\nline  decision', 'Confident', ['a.js', 'we`ird.js'], { alternatives: ['x'], if_wrong: 'it\n\nbreaks' })], research: [] }, flow: null, keep: null });
-  const out = await runScript(ANALYZER, h, AARGS);
-  const [item] = parseReport(out.report).areas[0].items;
-  assert.deepEqual([item.decision, item.alternatives, item.evidence, item.if_wrong], ['multi line decision', null, ['a.js', 'weird.js'], 'it breaks']);
-});
-
-test('analyzer: identical decisions merge with every distinct path, different ones do not', async () => {
-  const h = readers({
-    similar: { assumptions: [assume('A', 'The seam owns the write', 'Likely', ['x.js', 'y.js']), assume('A', 'Budgets are ceilings', 'Confident', ['w.json'])], research: [] },
-    flow: { assumptions: [assume('B', '  the SEAM owns the write ', 'Confident', ['y.js', 'z.js'], { alternatives: ['a hook'] }), assume('B', 'The seam owns every write', 'Likely', ['q.js'])], research: [] },
-    keep: { assumptions: [], research: [] },
-  });
-  const p = parseReport((await runScript(ANALYZER, h, AARGS)).report);
-  const all = p.areas.flatMap((x) => x.items.map((i) => ({ area: x.name, ...i })));
-  assert.equal(all.length, 3, 'one merge, and the near-duplicate stays separate for close_gray_areas');
-  const merged = all.find((i) => i.decision === 'The seam owns the write');
-  assert.equal(merged.area, 'A', 'it sits where it was first raised');
-  assert.deepEqual(merged.evidence, ['x.js', 'y.js', 'z.js']);
-  assert.equal(merged.certainty, 'Likely', 'the less certain reading stands');
-  assert.deepEqual(merged.alternatives, ['the other way', 'a hook']);
-  assert.ok(all.some((i) => i.decision === 'The seam owns every write'));
-});
-
-test('analyzer: no research topics gives None.', async () => {
-  const out = await runScript(ANALYZER, readers({ similar: { assumptions: [assume('A', 'one', 'Confident', ['a.js'])], research: [] }, flow: null, keep: null }), AARGS);
-  assert.deepEqual(parseReport(out.report).research, [null]);
-  assert.ok(out.report.endsWith('## Needs external research\n\nNone.\n'));
-});
-
-test('analyzer: one null reader still gives a report and names it, a thrown one the same', async () => {
-  for (const dead of [null, () => { throw new Error('dead agent'); }]) {
-    const h = host((label) => {
-      if (label === 'reader flow') return typeof dead === 'function' ? dead() : dead;
-      return { assumptions: [assume('A', `by ${label}`, 'Confident', ['a.js'])], research: [] };
-    });
-    const out = await runScript(ANALYZER, h, AARGS);
-    assert.deepEqual(out.nulls, ['behavior']);
-    assert.deepEqual(parseReport(out.report).areas[0].items.map((i) => i.decision), ['by reader similar', 'by reader keep']);
-  }
-});
-
-test('analyzer: every reader null gives no report, and so does a set that found no assumption', async () => {
-  const dead = await runScript(ANALYZER, host(() => null), AARGS);
-  assert.deepEqual(dead, { report: null, nulls: ['similar features', 'behavior', 'what must stay intact'] });
-  const thrown = await runScript(ANALYZER, host(() => { throw new Error('boom'); }), AARGS);
-  assert.equal(thrown.report, null);
-  const odd = await runScript(ANALYZER, host(() => ({ research: [] })), AARGS);
-  assert.deepEqual([odd.report, odd.nulls.length], [null, 3], 'an object with no assumptions array is a reader that returned nothing');
-  const empty = await runScript(ANALYZER, host(() => ({ assumptions: [], research: [] })), AARGS);
-  assert.deepEqual(empty, { report: null, nulls: [] });
-});
-
-test('analyzer: a merged decision keeps two alternatives in reader order, and an Unclear item with none says None named.', async () => {
-  const h = readers({
-    similar: { assumptions: [assume('A', 'The seam owns the write', 'Likely', ['x.js'], { alternatives: ['one', 'two'] }), assume('A', 'Nobody knows', 'Unclear', ['y.js'], { alternatives: [] })], research: [] },
-    flow: { assumptions: [assume('A', 'the seam owns the write', 'Likely', ['z.js'], { alternatives: ['three', 'four'] })], research: [] },
-    keep: null,
-  });
-  const p = parseReport((await runScript(ANALYZER, h, AARGS)).report);
-  const items = p.areas.flatMap((x) => x.items);
-  assert.deepEqual(items.find((i) => i.decision === 'The seam owns the write').alternatives, ['one', 'two']);
-  assert.deepEqual(items.find((i) => i.decision === 'Nobody knows').alternatives, ['None named.']);
-});
-
 test('review-workflow.md composes the string artifact the script requires, from the refs object', () => {
   const doc = readFileSync(join(ROOT, 'cadence-core', 'references', 'review-workflow.md'), 'utf8');
   const bullet = doc.split('\n').find((l) => l.startsWith('- `artifact`'));
@@ -550,4 +388,13 @@ test('review-workflow.md composes the string artifact the script requires, from 
   // the refs string is written as `git diff` then `<base_ref>..<head_ref>`, since bulk-output reads a whole call in prose as an issued one
   assert.ok(bullet.includes('`git diff` then a space, then `<base_ref>..<head_ref>`'), 'a refs fire passes the diff command as text');
   assert.ok(bullet.includes('--cached') && bullet.includes('On a path fire'), 'a staged scope and a path fire are named too');
+});
+
+test('the analyzer is one agent: its script is gone, the seam has no --analyzer row, and /cad-context names no workflow', () => {
+  assert.equal(existsSync(join(ROOT, 'workflows', 'analyzer.js')), false);
+  const contract = readFileSync(join(ROOT, 'cadence-core', 'bin', 'lib', 'arg-contract.mjs'), 'utf8');
+  assert.ok(!contract.includes('--analyzer'), 'workflow-run declares no --analyzer flag');
+  for (const f of [['cadence-core', 'workflows', 'context.md'], ['skills', 'cad-context', 'SKILL.md']]) {
+    assert.doesNotMatch(readFileSync(join(ROOT, ...f), 'utf8'), /Workflow|workflow-run|workflow-claim|workflow-layers/, f.join('/'));
+  }
 });
