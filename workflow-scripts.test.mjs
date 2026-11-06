@@ -531,14 +531,6 @@ test('analyzer: every reader null gives no report, and so does a set that found 
   assert.deepEqual(empty, { report: null, nulls: [] });
 });
 
-test('analyzer: the workflow-run --analyzer line in context.md carries a literal out-dir, not the shell variable', () => {
-  const ctx = readFileSync(join(ROOT, 'cadence-core', 'workflows', 'context.md'), 'utf8');
-  const call = ctx.split('\n').find((l) => l.includes('workflow-run --analyzer'));
-  assert.ok(call, 'context.md has no workflow-run --analyzer line');
-  assert.ok(!call.includes('$D'), 'a shell variable does not survive into the notice turn');
-  assert.match(call, /--out-dir <[^>]+>/);
-});
-
 test('analyzer: a merged decision keeps two alternatives in reader order, and an Unclear item with none says None named.', async () => {
   const h = readers({
     similar: { assumptions: [assume('A', 'The seam owns the write', 'Likely', ['x.js'], { alternatives: ['one', 'two'] }), assume('A', 'Nobody knows', 'Unclear', ['y.js'], { alternatives: [] })], research: [] },

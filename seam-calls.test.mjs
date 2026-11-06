@@ -57,6 +57,9 @@
 //                        branch adds no call to it.
 //   context.md  8 -> 9   the same branch claims before it launches (D-02): `planning.mjs workflow-claim take` is the
 //                        ninth. Its release is named in backticks and is not a counted call.
+//   context.md  9 -> 6   the analyzer runs as one agent on every path (Phase 2, D-01), so the workflow branch is gone
+//                        and takes its three calls with it (-3): `config.mjs workflow-layers`, `workflow-run
+//                        --analyzer` and `workflow-claim take`. What is left is the six the old path had.
 //
 // The plan this file was written under - v3.3.0 phase 4's `PLAN-2`, task 6, at
 // `.planning/_archive-v3.3.0/4/PLAN-2.md` - stated 5 for `context.md`. That
@@ -96,10 +99,9 @@ function seamCalls(text) {
 const CENSUS = [
   {
     file: join('cadence-core', 'workflows', 'context.md'),
-    calls: 9,
+    calls: 6,
     note: 'cursor get, the batched config.mjs get, recall, trace close, '
-      + 'criteria-size, cursor set, plus the workflow branch\'s `config.mjs '
-      + 'workflow-layers` and `workflow-run --analyzer` (+2, off by default), plus its `workflow-claim take` (+1). A tenth means a call came back - most '
+      + 'criteria-size, cursor set. A seventh means a call came back - most '
       + 'likely a second config.mjs get at the commit step, which is the '
       + 'round-trip task 4 removed by folding planning.commit_docs into the '
       + 'spend_gate batch.',
@@ -153,7 +155,7 @@ test('the census counter is not dead: it joins continuations and ignores prose',
 // joins to its row. The header's arithmetic is that number's provenance, not a
 // second reading of the tree - which is what makes it a census and not the
 // derived measurement the registry exempts.
-// CADENCE-CENSUS: seam-call-counts | asserts: workflows/plan.md instructs exactly 15 seam invocations and workflows/context.md exactly 8
+// CADENCE-CENSUS: seam-call-counts | asserts: workflows/plan.md instructs exactly 15 seam invocations and workflows/context.md exactly 6
 for (const row of CENSUS) {
   test(`${row.file} instructs exactly ${row.calls} seam invocations`, () => {
     const text = readFileSync(join(REPO, row.file), 'utf8');
