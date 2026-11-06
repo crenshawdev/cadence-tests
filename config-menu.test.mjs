@@ -24,7 +24,7 @@ function section(text, heading) {
   return text.slice(start, next === -1 ? undefined : next);
 }
 
-test('the route lists flags, then every-token key=value, then the opening screen, in that order', () => {
+test('the route lists flags, then a leading key=value, then the opening screen, in that order', () => {
   const route = section(CONFIG_MD, '1. Route');
   const at = (needle) => {
     const i = route.indexOf(needle);
@@ -32,8 +32,17 @@ test('the route lists flags, then every-token key=value, then the opening screen
     return i;
   };
   const order = [at('Starts with `--review`'), at('Starts with `--roles`'), at('- `--walk`'),
-    at('Every token is `<key>=<value>`'), at('- Any other text is a sentence'), at('- Empty:')];
+    at('Starts with a `<key>=` token'), at('- Any other text is a sentence'), at('- Empty:')];
   assert.deepEqual(order, [...order].sort((a, b) => a - b));
+});
+
+test('a key=value whose value holds a space is Direct set, and an = inside a sentence is not a setting', () => {
+  const route = flat(section(CONFIG_MD, '1. Route'));
+  assert.match(route, /- Starts with a `<key>=` token \(a dotted key name, then `=`\): go to \*\*Direct set\*\*/);
+  assert.match(route, /A value runs to the next `<key>=` token or the end, so it may hold spaces \(`git\.protected_branches=\["main", "develop"\]`\)/);
+  assert.match(route, /An `=` further into the text does not make it a setting/);
+  assert.doesNotMatch(route, /Every token is/);
+  assert.match(route, /A flag, `--walk` and `<key>=<value>` never read the switch/);
 });
 
 test('--walk routes to the walk heading, which keeps its name', () => {
