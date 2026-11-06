@@ -283,6 +283,49 @@ test('layers: a key answer carries the setting text', () => {
   assert.ok(Array.isArray(json.row.explain));
 });
 
+const OPEN_DIFF = { review: { triggers: { diff: { gate: 'blocking' } } } };
+const tierOf = (f) => cli(f, ['layers', '--key', 'review.triggers.diff.tier']).json.row;
+
+test('layers: the diff tier has no effect with the gate unset, naming the gate', () => {
+  const r = tierOf(repoFixture({}));
+  assert.equal(r.applies, false);
+  assert.deepEqual(r.no_effect, ['review.triggers.diff.gate is off', 'review.reviewers is ["claude-subagent"]']);
+});
+
+test('layers: an open gate with no reviewer named still has no effect, naming the reviewers', () => {
+  const r = tierOf(repoFixture(OPEN_DIFF));
+  assert.deepEqual([r.applies, r.no_effect], [false, ['review.reviewers is ["claude-subagent"]']]);
+});
+
+test('layers: an open gate with openai in both layers applies; in the repo alone it does not', () => {
+  const withOpenai = { review: { ...OPEN_DIFF.review, reviewers: ['openai'] } };
+  const both = tierOf(repoFixture(withOpenai, withOpenai));
+  assert.deepEqual([both.applies, both.no_effect], [true, undefined]);
+  const repoOnly = tierOf(repoFixture(withOpenai));
+  assert.deepEqual([repoOnly.applies, repoOnly.no_effect], [false, ['review.reviewers is ["claude-subagent"]']]);
+});
+
+test('layers: the gate works with its tier and effort, and the other trigger keys carry the same conditions', () => {
+  const { json } = cli(repoFixture(OPEN_DIFF), ['layers', '--key', 'review.triggers.diff.gate']);
+  assert.deepEqual(json.row.works_with, [{ key: 'review.triggers.diff.tier', value: 'cheap' },
+    { key: 'review.triggers.diff.effort', value: 'minimal' }]);
+  assert.match(json.row.interacts, /review\.reviewers picks who reviews/);
+  const reviewers = cli(repoFixture({}), ['layers', '--key', 'review.reviewers']).json.row;
+  assert.equal(reviewers.works_with.length, 8);
+  for (const t of ['plan', 'risk_surface', 'phase_diff']) {
+    assert.equal(cli(repoFixture({}), ['layers', '--key', `review.triggers.${t}.effort`]).json.row.applies, false);
+  }
+});
+
+test('layers: a both-layer key and the parallel keys say what they need in interacts', () => {
+  const f = repoFixture({});
+  for (const [key, re] of [['git.auto_close', /both set it/], ['workflow.use_workflows', /both set it/],
+    ['workflow.multi_workflow', /both set it/], ['parallelization.enabled', /worktree\.baseRef/],
+    ['parallelization.use_worktrees', /worktree\.baseRef/]]) {
+    assert.match(cli(f, ['layers', '--key', key]).json.row.interacts, re, key);
+  }
+});
+
 test('layers: every refusal names a next step', () => {
   const f = templateFixture();
   for (const args of [['layers', '--group', 'Nope'], ['layers', '--key', 'nope.key'], ['layers', '--advanced'],
