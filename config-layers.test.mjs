@@ -157,6 +157,28 @@ test('groups come in walk order, shown rows by position and Advanced rows last',
   assert.deepEqual(r.rows.filter((x) => x.group === 'Two').map((x) => x.key).at(-1), 'b.z');
 });
 
+test('every row carries whether it applies, and a failed condition is named from the value in force', () => {
+  const keys = {
+    ...SCHEMA,
+    'a.gate': { type: 'enum', values: ['off', 'on'], default: 'off', section: 'One', position: 10, question: 'g?' },
+    'a.tier': { type: 'string', default: 't', section: 'One', position: 11, question: 't?',
+      applies_when: [{ key: 'a.gate', not: 'off' }, { key: 'review.reviewers', not: ['claude-subagent'] }, { key: 'a.gone', is: 1 }] },
+  };
+  const run = (repo) => {
+    const repoFile = join(tmp, 'repo.json');
+    rmSync(GLOBAL, { force: true });
+    writeFileSync(repoFile, JSON.stringify(repo));
+    return layerRows({ keys, merged: mergeLayers(repoFile), files: { repo: repoFile, global: GLOBAL }, both: {} });
+  };
+  const closed = rowOf(run({}), 'a.tier');
+  assert.deepEqual([closed.applies, closed.no_effect], [false, ['a.gate is off', 'review.reviewers is ["claude-subagent"]']]);
+  assert.equal(rowOf(run({}), 'a.x').applies, true);
+  assert.equal(Object.hasOwn(rowOf(run({}), 'a.x'), 'no_effect'), false);
+  // the repo alone cannot name a cross-model reviewer, so route drops it; the unknown a.gone condition is never read
+  const open = rowOf(run({ a: { gate: 'on' }, review: { reviewers: ['openai'] } }), 'a.tier');
+  assert.deepEqual(open.no_effect, ['review.reviewers is ["claude-subagent"]']);
+});
+
 // --- the CLI, on the shipped schema ------------------------------------------
 
 function repoFixture(repo, global) {
