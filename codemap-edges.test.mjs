@@ -113,3 +113,60 @@ test('the edges file spawns no search process, and a fresh clone of this reposit
   assert.equal(r.ok, true);
   assert.ok(Date.now() - t < 5000, `scan took ${Date.now() - t} ms`);
 });
+
+const importsOf = (root, path) => rowOf(root, path).imports;
+
+test('a JS relative import resolves to its tracked path, a bare package keeps its text, and both are approximate', () => {
+  const { root } = repo({
+    'src/main.js': [
+      "import { a } from './lib/a.js';",
+      "import b from './lib';",
+      "import './side';",
+      "import ts from './typed.js';",
+      "import fs from 'node:fs';",
+      "import gone from './gone.js';",
+      "import { c,",
+      "  d } from",
+      "  '../up.js';",
+      "} from '../multi.js';",
+      "const e = require('./lib/a.js');",
+      "const f = await import('lodash');",
+      "const out = require('../../outside.js');",
+    ].join('\n'),
+    'src/lib/a.js': 'export const a = 1;\n',
+    'src/lib/index.js': 'export const idx = 1;\n',
+    'src/side.js': 'export const s = 1;\n',
+    'src/typed.ts': 'export const t = 1;\n',
+    'up.js': 'export const u = 1;\n',
+  });
+  scan(root);
+  const imp = importsOf(root, 'src/main.js');
+  assert.equal(imp.approximate, true);
+  assert.deepEqual(imp.items, [
+    { path: 'src/lib/a.js' }, { path: 'src/lib/index.js' }, { path: 'src/side.js' }, { path: 'src/typed.ts' },
+    { text: 'node:fs' }, { text: './gone.js' }, { text: '../multi.js' }, { text: 'lodash' }, { text: '../../outside.js' },
+  ]);
+});
+
+test('a Rust use, a Python from-import and a Go import block each give a row', () => {
+  const { root } = repo({
+    'src/lib.rs': 'use std::collections::HashMap;\npub(crate) use crate::util::{a, b};\nuse serde::\n',
+    'app/main.py': 'from pkg.mod import thing\nimport os, sys as system\nfrom . import sibling\n# import commented\n',
+    'cmd/main.go': 'package main\n\nimport "fmt"\nimport (\n\t"os"\n\tlog "github.com/x/log"\n\t_ "embed"\n)\n\nfunc main() {}\n',
+  });
+  scan(root);
+  assert.deepEqual(importsOf(root, 'src/lib.rs'), { items: [{ text: 'std::collections::HashMap' }, { text: 'crate::util' }, { text: 'serde' }], approximate: true });
+  assert.deepEqual(importsOf(root, 'app/main.py'), { items: [{ text: 'pkg.mod' }, { text: 'os' }, { text: 'sys' }, { text: '.' }], approximate: true });
+  assert.deepEqual(importsOf(root, 'cmd/main.go'), { items: [{ text: 'fmt' }, { text: 'os' }, { text: 'github.com/x/log' }, { text: 'embed' }], approximate: true });
+});
+
+test('a file with no import has no imports key, and a long whitespace run or colon run costs a scan no extra time', () => {
+  const pad = ' '.repeat(1900);
+  const bad = [];
+  for (let i = 0; i < 400; i++) bad.push(`import${pad}x `, `from${pad}import${pad}`, `use ${':'.repeat(1900)}`, `require${pad}(${pad}`, `export ${pad}from${pad}x`);
+  const { root } = repo({ 'a.js': 'const x = 1;\n', 'b.js': bad.join('\n'), 'c.py': bad.join('\n'), 'd.rs': bad.join('\n'), 'e.go': `import (\n${bad.join('\n')}\n)\n` });
+  const t = Date.now();
+  assert.equal(scan(root).ok, true);
+  assert.ok(Date.now() - t < 5000, `scan took ${Date.now() - t} ms`);
+  assert.equal(rowOf(root, 'a.js').imports, undefined);
+});
