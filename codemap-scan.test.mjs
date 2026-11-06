@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -467,4 +467,128 @@ test('skim.mjs is untouched: it still refuses a .rs file', () => {
   let out;
   try { out = execFileSync('node', [join(ROOT, 'cadence-core', 'bin', 'skim.mjs'), join(dir, 'x.rs')], { encoding: 'utf8', stdio: 'pipe' }); } catch (e) { out = e.stdout; }
   assert.equal(JSON.parse(out).reason, 'unsupported-extension');
+});
+
+// --- the risk review's fixes -------------------------------------------------------------------------------------------
+
+test('a dirty file under a clean filter is hashed on its raw bytes and no filter program runs', () => {
+  const marker = join(mkdtempSync(join(tmpdir(), 'cad-map-ran-')), 'ran');
+  const { root, git } = repo({ 'a.js': 'one\n', '.gitattributes': '*.js filter=pwn\n' });
+  git('config', 'filter.pwn.clean', `touch ${marker}; cat`);
+  writeFileSync(join(root, 'a.js'), 'one edited\n');
+  codemap(root, 'scan');
+  assert.equal(existsSync(marker), false, 'the clean filter never ran');
+  assert.equal(rowOf(root, 'a.js')[0].hash, git('hash-object', '--no-filters', 'a.js').trim());
+});
+
+test('a dirty file under a root below the top level gets its own hash, not a same-named top-level file\'s', () => {
+  const { root } = repo({ 'a.txt': 'top\n', 'sub/a.txt': 'sub\n', 'sub/b.txt': 'b\n' });
+  const sub = join(root, 'sub');
+  writeFileSync(join(sub, 'a.txt'), 'sub edited\n');
+  writeFileSync(join(sub, 'b.txt'), 'b edited\n');
+  codemap(sub, 'scan', join(sub, '.planning'));
+  const rows = JSON.parse(readFileSync(join(sub, '.planning', 'codemap', 'index.json'), 'utf8')).rows;
+  const real = (f) => execFileSync('git', ['-C', sub, 'hash-object', f], { encoding: 'utf8' }).trim();
+  assert.equal(rows.find((x) => x.path === 'a.txt').hash, real('a.txt'));
+  assert.equal(rows.find((x) => x.path === 'b.txt').hash, real('b.txt'), 'with no same-named file at the top it is not null');
+});
+
+test('a symlink where the map\'s .gitignore goes is replaced and never read through', () => {
+  const { root } = repo({ 'a.js': 'a\n' });
+  assert.equal(codemap(root, 'scan').ok, true);
+  const target = join(root, '.planning', 'x');
+  writeFileSync(target, '*\n');
+  const ignore = mapFile(root, '.gitignore');
+  execFileSync('rm', [ignore]);
+  symlinkSync('../x', ignore);
+  assert.equal(codemap(root, 'scan').ok, true);
+  assert.equal(lstatSync(ignore).isFile(), true, 'the link is gone');
+  assert.equal(readFileSync(ignore, 'utf8'), '*\n');
+});
+
+test('a whitespace run of a megabyte inside one JS line finishes quickly', () => {
+  const start = Date.now();
+  symbolsFor('big.js', `a${' '.repeat(1048570)}b\nexport function after() {}\n`);
+  assert.ok(Date.now() - start < 5000, `took ${Date.now() - start} ms`);
+});
+
+test('an assume-unchanged or skip-worktree file that was edited takes its working-tree hash', () => {
+  const { root, git } = repo({ 'a.js': 'a\n', 'b.js': 'b\n' });
+  git('update-index', '--assume-unchanged', 'a.js');
+  git('update-index', '--skip-worktree', 'b.js');
+  writeFileSync(join(root, 'a.js'), 'a edited\n');
+  writeFileSync(join(root, 'b.js'), 'b edited\n');
+  codemap(root, 'scan');
+  assert.equal(rowOf(root, 'a.js')[0].hash, git('hash-object', 'a.js').trim());
+  assert.equal(rowOf(root, 'b.js')[0].hash, git('hash-object', 'b.js').trim());
+});
+
+test('a non-UTF-8 .planning path stays out of code modules, and a non-UTF-8 .js path still holds its symbols', () => {
+  const { root, git } = repo({ 'a.js': 'a\n', '.planning/STATE.md': 's\n' });
+  const odd = (dir, ext) => Buffer.concat([Buffer.from(`${root}/${dir}caf`), Buffer.from([0xe9]), Buffer.from(ext)]);
+  writeFileSync(odd('.planning/', '.md'), '# note\n');
+  writeFileSync(odd('', '.js'), 'export const beta = 1;\n');
+  git('add', '-A');
+  codemap(root, 'scan');
+  const planning = modulesOf(root).find((m) => m.paths.includes('".planning/caf\\351.md"'));
+  assert.ok(planning.paths.every((p) => p.startsWith('.planning/') || p.startsWith('".planning/')), 'no code file shares it');
+  assert.equal(planning.no_reader, true);
+  assert.deepEqual(names(rowOf(root, '"caf\\351.js"')[0]), ['beta']);
+});
+
+test('a trailing slash on --dir does not follow a tracked .planning symlink out of the repository', () => {
+  const out = mkdtempSync(join(tmpdir(), 'cad-map-target-'));
+  const { root, git } = repo({ 'a.js': 'a\n' });
+  symlinkSync(out, join(root, '.planning'));
+  git('add', '.planning'); git('commit', '-qm', 'link');
+  const r = codemap(root, 'scan', `${join(root, '.planning')}/`);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'unsafe-dir');
+  assert.deepEqual(readdirSync(out), []);
+});
+
+test('a module whose files are all gone from the working tree reads stale', () => {
+  const big = 'x'.repeat(100 * 1024);
+  const { root } = repo({ 'a/1.js': big, 'b/2.js': big });
+  codemap(root, 'scan');
+  build(root);
+  execFileSync('rm', [join(root, 'b', '2.js')]);
+  const r = codemap(root, 'status');
+  assert.deepEqual([r.built, r.stale, r.no_reader, r.stale_modules], [1, 1, 0, [moduleHolding(root, 'b/2.js').name]]);
+});
+
+test('a markdown file with CRLF line endings holds its headings', () => {
+  assert.deepEqual(symbolsFor('x.md', '# Title\r\n\r\n## Sub\r\ntext\r\n').map((s) => s.name), ['Title', 'Sub']);
+});
+
+test('an index just past 64 MiB is still read by status', () => {
+  const { root } = repo({ 'a.js': 'a\n' });
+  codemap(root, 'scan');
+  const file = mapFile(root, 'index.json');
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), pad: 'x'.repeat(64 * 1024 * 1024 + 1) }));
+  const r = codemap(root, 'status');
+  assert.equal(r.ok, true);
+  assert.equal(r.unbuilt, 1);
+});
+
+test('scan refuses when the repository tracks files under the map and writes nothing', () => {
+  const { root, git } = repo({ 'a.js': 'a\n', '.planning/codemap/index.json': '{"mine": true}\n' });
+  const r = codemap(root, 'scan');
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'tracked-map');
+  assert.match(r.hint, /git rm -r --cached \.planning\/codemap/);
+  assert.equal(readFileSync(mapFile(root, 'index.json'), 'utf8'), '{"mine": true}\n');
+  assert.equal(existsSync(mapFile(root, '.gitignore')), false);
+  // the quoted spelling of a non-UTF-8 name under the map is caught too
+  writeFileSync(Buffer.concat([Buffer.from(`${root}/.planning/codemap/caf`), Buffer.from([0xe9])]), 'x');
+  git('rm', '-q', '--cached', '.planning/codemap/index.json'); git('add', '-A');
+  assert.equal(codemap(root, 'scan').reason, 'tracked-map');
+});
+
+test('a new file does not join a module that is one file over the ceiling', () => {
+  const stored = [{ name: '.', paths: ['huge.md'] }, { name: 'z', paths: ['src/a.js'] }];
+  const rows = [row('huge.md', 150), row('src/a.js', 5)];
+  const out = partition([...rows, row('NEW.md', 5)], stored, C).modules;
+  assert.deepEqual(out.find((m) => m.name === '.').paths, ['huge.md']);
+  assert.equal(where(out)['NEW.md'], 'z');
 });
