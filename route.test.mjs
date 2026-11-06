@@ -140,12 +140,12 @@ for (const c of ROLES) {
   });
 }
 
-test('a pin replaces the model at every role and never touches its rung', () => {
+test('a roles model replaces the model at every role and never touches its rung', () => {
   for (const c of ROLES) {
-    const file = rawCfg({ model: { overrides: { [c.role]: 'fable' } } }, `pin-${c.role}.json`);
+    const file = rawCfg({ roles: { [c.role]: { model: 'fable' } } }, `pin-${c.role}.json`);
     const r = resolve(c.role, file);
     assert.equal(r.model, 'fable', c.role);
-    assert.equal(r.pinned, true, c.role);
+    assert.equal(r.pinned, false, c.role);
     assert.equal(r.effort, c.effort, `${c.role} effort`); // frontmatter, untouched
     assert.equal(r.agent, c.agent, `${c.role} agent`);
   }
@@ -872,42 +872,30 @@ test('layers deep-merge: a global model block and a repo roles key combine', () 
   assert.equal(r.escalated, false);
 });
 
-// --- per-role model overrides ------------------------------------------------
+// --- the retired model.* keys move nothing ----------------------------------
 
-test('an override pins one role and leaves the others at the session model', () => {
-  const c = cfg({ overrides: { 'cad-planner': 'fable' } }, 'ovr-planner.json');
-  const planner = resolve('cad-planner', c);
-  assert.equal(planner.ok, true);
-  assert.equal(planner.model, 'fable');
-  assert.equal(planner.pinned, true);
-  assert.equal(planner.model_source, 'model.overrides.cad-planner');
-  assert.equal(planner.effort, 'high');   // effort is frontmatter, untouched
-  assert.match(planner.reason.join(' '), /override cad-planner=fable/);
-  // a sibling role is unaffected, and unset means no parameter at all
-  const exec = resolve('cad-executor', c);
-  assert.equal(exec.model, null);
-  assert.equal(exec.pinned, false);
-  assert.equal(exec.model_source, 'session');
-});
-
-test('a pin keeps the rung swap - the two answers do not touch', () => {
-  const c = cfg({ escalate_on_failure: true, overrides: { 'cad-plan-checker': 'fable' } }, 'ovr-checker.json');
-  const r = resolve('cad-plan-checker', c, ['--attempt', '2']);
-  assert.equal(r.model, 'fable');                   // the pin
-  assert.equal(r.agent, 'cad-plan-checker-medium'); // ...and one rung up from `low`
-  assert.equal(r.pinned, true);
-});
-
-test('a pin the host does not accept warns and sends NO model parameter', () => {
-  const c = cfg({ overrides: { 'cad-planner': 'gpt-5' } }, 'ovr-bogus.json');
-  const r = resolve('cad-planner', c);
-  assert.equal(r.ok, true);      // never blocks the spawn
-  assert.equal(r.model, null);   // ...and never passes a string the host refuses
-  assert.equal(r.pinned, false);
+test('a layer holding model.overrides and model.effort resolves as if they were not there', () => {
+  const left = { model: { overrides: { 'cad-planner': 'opus' }, effort: { 'cad-planner': 'max' } } };
+  const r = resolve('cad-planner', rawCfg(left, 'leftover-model-keys.json'));
+  assert.equal(r.ok, true);
+  assert.equal(r.effort, 'high');             // the schema default rung, never the leftover max
+  assert.equal(r.agent, 'cad-planner');
+  assert.equal(r.model, null);
   assert.equal(r.model_source, 'session');
-  assert.equal(r.warnings.length, 1);
-  assert.match(r.warnings[0], /not a model the host accepts/);
-  assert.match(r.warnings[0], /"gpt-5"/);
+  assert.equal(r.pinned, false);
+  // Whatever a warning says about the leftovers, none may call them the deciding key.
+  assert.ok(!(r.warnings || []).some((w) => /wins over|does not apply|already the schema default/.test(w)),
+    JSON.stringify(r.warnings));
+  assert.doesNotMatch(r.reason.join(' '), /model\.(overrides|effort)/);
+  // The same config with the roles keys set resolves the roles values.
+  const both = resolve('cad-planner', rawCfg({ ...left, roles: { 'cad-planner': { model: 'haiku', effort: 'xhigh' } } },
+    'leftover-and-roles.json'));
+  assert.equal(both.model, 'haiku');
+  assert.equal(both.model_source, 'roles.cad-planner.model');
+  assert.equal(both.effort, 'xhigh');
+  assert.equal(both.agent, 'cad-planner-xhigh');
+  assert.equal(both.pinned, false);
+  assert.ok(!(both.warnings || []).some((w) => /wins over|does not apply/.test(w)), JSON.stringify(both.warnings));
 });
 
 // --- the model named outright: roles.<role>.model (ROL-01) -------------------
@@ -923,8 +911,7 @@ test('a roles-block model and rung resolve together, and pinned stays FALSE', ()
   assert.equal(r.model, 'haiku');
   assert.equal(r.effort, 'max');
   assert.equal(r.agent, 'cad-planner-max');
-  // `pinned` means model.overrides chose it, and it did not (D-11) - so the
-  // announcement rule stays keyed on a pin while the source stays readable.
+  // `pinned` stays in the envelope for additive seam JSON and is always false; `model_source` says what decided.
   assert.equal(r.pinned, false);
   assert.equal(r.model_source, 'roles.cad-planner.model');
 });
@@ -942,10 +929,8 @@ test('a roles model the host does not accept warns, and no parameter is sent (AC
   assert.match(named[0], /"notamodel"/);    // the string the user wrote
 });
 
-test('a rejected roles model does NOT fall through to the pin', () => {
-  // The arm D-02 and ROL-01 both fix: a roles key that is SET owns this role's
-  // answer, so a typo cannot silently hand the role back to an older pin the
-  // user has already replaced. The answer is the session's model, never haiku.
+test('a rejected roles model leaves a model.overrides pin out of it', () => {
+  // A typo in the roles key answers with the session's model, never the leftover pin's haiku.
   const c = rawCfg({
     model: { overrides: { 'cad-verifier': 'haiku' } },
     roles: { 'cad-verifier': { model: 'gpt-5' } } }, 'roles-model-vs-pin-bad.json');
@@ -955,26 +940,6 @@ test('a rejected roles model does NOT fall through to the pin', () => {
   assert.equal(r.pinned, false);
   assert.equal(r.model_source, 'session');
   assert.ok((r.warnings || []).some((w) => /"gpt-5"/.test(w)), JSON.stringify(r.warnings));
-});
-
-test('a roles model WINS over the pin, and a warning names the winner', () => {
-  const c = rawCfg({
-    model: { overrides: { 'cad-executor': 'sonnet' } },
-    roles: { 'cad-executor': { model: 'haiku' } } }, 'roles-model-vs-pin.json');
-  const r = resolve('cad-executor', c);
-  assert.equal(r.model, 'haiku');
-  assert.equal(r.pinned, false);
-  assert.equal(r.model_source, 'roles.cad-executor.model');
-  const named = (r.warnings || []).filter((w) => /roles\.cad-executor\.model/.test(w));
-  assert.equal(named.length, 1, JSON.stringify(r.warnings));
-  assert.match(named[0], /model\.overrides\.cad-executor/);   // ...and the loser
-});
-
-test('overrides layer: repo pin wins over a global pin', () => {
-  const g = cfg({ overrides: { 'cad-planner': 'haiku' } }, 'g-ovr.json');
-  const repo = cfg({ overrides: { 'cad-planner': 'fable' } }, 'repo-ovr.json');
-  const r = resolve('cad-planner', repo, [], { global: g });
-  assert.equal(r.model, 'fable');
 });
 
 // --- shipped config.schema.json absent/malformed (#40) ----------------------
@@ -1200,43 +1165,27 @@ test('a schema row with no values list accepts no configured gate at all', () =>
   assert.match(r.warnings[0], /review\.triggers\.risk_surface\.gate/);
 });
 
-// --- the configured START rung, model.effort.<role> (RNG-02) ------------------
-
-test('a configured start rung replaces the schema default, and picks that rung\'s file', () => {
-  // cad-verifier defaults to high/cad-verifier, so an xhigh row FAILS the moment
-  // the config value stops being read - a value equal to the default could not
-  // tell the two apart.
-  const file = cfg({ effort: { 'cad-verifier': 'xhigh' } }, 'eff-verifier.json');
-  const r = resolve('cad-verifier', file);
-  assert.equal(r.ok, true);
-  assert.equal(r.effort, 'xhigh');
-  assert.equal(r.agent, 'cad-verifier-xhigh');
-  assert.equal(r.model, null);        // a rung key names no model
-  assert.match(r.reason.join(' '),
-    /model\.effort\.cad-verifier="xhigh" \(config, over the schema default "high"\)/);
-});
+// --- the configured START rung, roles.<role>.effort (RNG-02) -----------------
 
 test('a configured start rung reaches the top of a role\'s own ladder', () => {
-  const file = cfg({ effort: { 'cad-planner': 'max' } }, 'eff-planner.json');
+  const file = rawCfg({ roles: { 'cad-planner': { effort: 'max' } } }, 'eff-planner.json');
   const r = resolve('cad-planner', file);
   assert.equal(r.effort, 'max');
   assert.equal(r.agent, 'cad-planner-max'); // solo/cad-planner starts at high
 });
 
 test('a start rung equal to the default says so rather than claiming a change', () => {
-  const file = cfg({ effort: { 'cad-executor': 'high' } }, 'eff-same.json');
+  const file = rawCfg({ roles: { 'cad-executor': { effort: 'high' } } }, 'eff-same.json');
   const r = resolve('cad-executor', file);
   assert.equal(r.effort, 'high');
   assert.match(r.reason.join(' '),
-    /model\.effort\.cad-executor="high" \(config, already the schema default rung\)/);
+    /roles\.cad-executor\.effort="high" \(config, already the schema default rung\)/);
 });
 
 test('the start rung is read from the merged config LAYERS, never a plugin file', () => {
-  // The update-survival claim itself: a global layer that does not carry the key
-  // plus a repo layer that does resolves the repo value. Nothing under the
-  // plugin root is consulted, so a plugin update cannot take the setting away.
+  // A global layer that does not carry the key plus a repo layer that does resolves the repo value.
   const g = cfg({}, 'g-no-effort.json');
-  const repo = cfg({ effort: { 'cad-verifier': 'xhigh' } }, 'repo-effort-only.json');
+  const repo = rawCfg({ roles: { 'cad-verifier': { effort: 'xhigh' } } }, 'repo-effort-only.json');
   const r = resolve('cad-verifier', repo, [], { global: g });
   assert.equal(r.effort, 'xhigh');          // from the repo layer
   assert.equal(r.agent, 'cad-verifier-xhigh');
@@ -1244,16 +1193,14 @@ test('the start rung is read from the merged config LAYERS, never a plugin file'
 });
 
 test('a hand-edited rung the role has no FILE for is refused, never fail-open dispatched', () => {
-  // `ultra` is outside rung_order entirely, so no schema enum can carry it and
-  // only a hand-edited config reaches here - which stays true now that every
-  // role carries every rung of the ladder. Handing it to the agentFor fail-open
-  // would dispatch the base file while reporting `ultra` - a rung nothing ran at.
-  const file = cfg({ effort: { 'cad-executor': 'ultra' } }, 'eff-unmapped.json');
+  // `ultra` is outside rung_order entirely, so only a hand-edited config reaches here. Handing it to the agentFor
+  // fail-open would dispatch the base file while reporting `ultra` - a rung nothing ran at.
+  const file = rawCfg({ roles: { 'cad-executor': { effort: 'ultra' } } }, 'eff-unmapped.json');
   const r = resolve('cad-executor', file);
   assert.equal(r.ok, true);                 // never blocks the spine
-  assert.equal(r.effort, 'high');           // the cell's rung stands
+  assert.equal(r.effort, 'high');           // the schema default stands
   assert.equal(r.agent, 'cad-executor');    // ...and its file
-  const named = (r.warnings || []).filter((w) => /model\.effort\.cad-executor/.test(w));
+  const named = (r.warnings || []).filter((w) => /roles\.cad-executor\.effort/.test(w));
   assert.equal(named.length, 1, JSON.stringify(r.warnings));
   assert.match(named[0], /"ultra"/);        // the value the user wrote
   assert.match(named[0], /high, xhigh/);    // ...and the rungs this role does have
@@ -1277,62 +1224,33 @@ test('a roles-block start rung replaces the schema default, and picks that rung\
   assert.equal(r.warnings, undefined, JSON.stringify(r.warnings));
 });
 
-test('the roles block WINS over model.effort, and a warning names the winner', () => {
-  // Two keys, one quantity. Different rungs on purpose: a value equal to the
-  // older key's could not tell "the roles block decided" from "nothing changed".
-  const file = rawCfg({
-    model: { effort: { 'cad-verifier': 'low' } },
-    roles: { 'cad-verifier': { effort: 'xhigh' } } }, 'roles-eff-both.json');
-  const r = resolve('cad-verifier', file);
-  assert.equal(r.effort, 'xhigh');
-  assert.equal(r.agent, 'cad-verifier-xhigh');
-  const named = (r.warnings || []).filter((w) => /roles\.cad-verifier\.effort/.test(w));
-  assert.equal(named.length, 1, JSON.stringify(r.warnings));
-  assert.match(named[0], /model\.effort\.cad-verifier/);   // ...and the loser
-  // The reason names the key that DECIDED and never the one that did not.
-  assert.match(r.reason.join(' '), /roles\.cad-verifier\.effort="xhigh" \(config/);
-  assert.doesNotMatch(r.reason.join(' '), /model\.effort\.cad-verifier="/);
-});
-
-test('a rung outside the ladder loses its turn, and the NEXT source answers', () => {
-  // Three sources, walked in order. A hand-edited roles rung names no file, so
-  // it warns and `model.effort` answers; with BOTH out of the ladder the schema
-  // default answers and the resolve still carries a whole bundle.
-  const one = resolve('cad-verifier', rawCfg({
-    model: { effort: { 'cad-verifier': 'low' } },
-    roles: { 'cad-verifier': { effort: 'ultra' } } }, 'roles-eff-stray.json'));
-  assert.equal(one.ok, true);
-  assert.equal(one.effort, 'low', JSON.stringify(one.reason));
-  assert.equal(one.agent, 'cad-verifier-low');
-  assert.ok((one.warnings || []).some((w) => /roles\.cad-verifier\.effort="ultra"/.test(w)),
-    JSON.stringify(one.warnings));
-
-  const both = resolve('cad-verifier', rawCfg({
-    model: { effort: { 'cad-verifier': 'ultra' } },
-    roles: { 'cad-verifier': { effort: 'hyper' } } }, 'roles-eff-stray-both.json'));
-  assert.equal(both.ok, true);
-  assert.equal(both.effort, 'high');   // the schema default, last in the walk
-  assert.equal(both.agent, 'cad-verifier');
-  assert.match(both.reason.join(' '),
+test('a rung outside the ladder loses its turn, and the schema default answers', () => {
+  const r = resolve('cad-verifier', rawCfg({
+    roles: { 'cad-verifier': { effort: 'hyper' } } }, 'roles-eff-stray.json'));
+  assert.equal(r.ok, true);
+  assert.equal(r.effort, 'high');   // the schema default, last in the walk
+  assert.equal(r.agent, 'cad-verifier');
+  assert.ok((r.warnings || []).some((w) => /roles\.cad-verifier\.effort="hyper"/.test(w)), JSON.stringify(r.warnings));
+  assert.match(r.reason.join(' '),
     /config\.schema\.json's roles\.cad-verifier\.effort default "high" \(unset in layers\)/);
 });
 
-test('a roles entry that is not a map contributes nothing, and the older key answers', () => {
-  // The defensive arm: a config layer arrives with a clone, so a scalar where
-  // the block belongs must fall back rather than throw.
+test('a roles entry that is not a map contributes nothing, and a leftover model.effort does not answer', () => {
+  // The defensive arm: a config layer arrives with a clone, so a scalar where the block belongs must fall back rather
+  // than throw. It falls to the schema default, not to the leftover key.
   const file = rawCfg({
     model: { effort: { 'cad-verifier': 'xhigh' } },
     roles: { 'cad-verifier': 'xhigh' } }, 'roles-eff-scalar.json');
   const r = resolve('cad-verifier', file);
   assert.equal(r.ok, true);
-  assert.equal(r.effort, 'xhigh');
-  assert.match(r.reason.join(' '), /model\.effort\.cad-verifier="xhigh" \(config/);
+  assert.equal(r.effort, 'high');
+  assert.match(r.reason.join(' '), /roles\.cad-verifier\.effort default "high" \(unset in layers\)/);
 });
 
 // --- a retry climbs from the rung that FAILED (D-02) --------------------------
 
 test('a retry climbs one rung from the CONFIGURED start, not from the schema default', () => {
-  const file = cfg({ escalate_on_failure: true, effort: { 'cad-verifier': 'medium' } }, 'eff-retry-climb.json');
+  const file = rawCfg({ model: { escalate_on_failure: true }, roles: { 'cad-verifier': { effort: 'medium' } } }, 'eff-retry-climb.json');
   const r = resolve('cad-verifier', file, ['--attempt', '2']);
   assert.equal(r.effort, 'high');             // one above the configured medium
   assert.equal(r.agent, 'cad-verifier');
@@ -1345,7 +1263,7 @@ test('a retry never resolves BELOW the rung that failed', () => {
   // configured xhigh start used to be swapped for a cell's `high` retry target,
   // which is a retry thinking LESS than the attempt that just failed. With
   // one-rung-up as the whole rule, that door does not exist.
-  const file = cfg({ escalate_on_failure: true, effort: { 'cad-verifier': 'xhigh' } }, 'eff-retry-hold.json');
+  const file = rawCfg({ model: { escalate_on_failure: true }, roles: { 'cad-verifier': { effort: 'xhigh' } } }, 'eff-retry-hold.json');
   const r = resolve('cad-verifier', file, ['--attempt', '2']);
   assert.equal(r.ok, true);
   assert.equal(r.effort, 'max');              // up from xhigh, never down
@@ -1354,8 +1272,8 @@ test('a retry never resolves BELOW the rung that failed', () => {
 });
 
 test('model.escalate_on_failure: false still wins over the start rung, unchanged', () => {
-  const file = cfg({
-    escalate_on_failure: false, effort: { 'cad-verifier': 'medium' },
+  const file = rawCfg({
+    model: { escalate_on_failure: false }, roles: { 'cad-verifier': { effort: 'medium' } },
   }, 'eff-esc-off.json');
   const r = resolve('cad-verifier', file, ['--attempt', '2']);
   assert.equal(r.effort, 'medium');
@@ -2357,7 +2275,7 @@ test('waiver: a waived scope that ALSO failed to read still raises - the fail-cl
 
 /** A repo whose phase 3 declares a secrets-carrying file, plus a pinned rung. */
 const clampFx = (extra, plan = ['src/load.mjs']) => floorRoot(
-  { model: { effort: { 'cad-plan-checker': 'low' } }, ...ANSWERED, ...extra },
+  { roles: { 'cad-plan-checker': { effort: 'low' } }, ...ANSWERED, ...extra },
   { '3/PLAN-1.md': plan },
   { 'src/load.mjs': SECRET_BODY, 'docs/README.md': '# Readme\n' });
 
@@ -2394,7 +2312,7 @@ test('no clamp: a ROLES-block rung survives a raised floor too', () => {
 
 test('no clamp: a pre-plan role is untouched, floor or no floor', () => {
   const fx = floorRoot(
-    { model: { effort: { 'cad-planner': 'high' } }, ...ANSWERED },
+    { roles: { 'cad-planner': { effort: 'high' } }, ...ANSWERED },
     { '3/PLAN-1.md': ['src/load.mjs'] }, { 'src/load.mjs': SECRET_BODY });
   const r = resolve('cad-planner', fx.file, ['--phase', '3']);
   assert.equal(r.effort, 'high');
