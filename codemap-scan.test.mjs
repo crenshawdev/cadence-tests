@@ -389,3 +389,82 @@ test('status with no index answers ok:false, names codemap scan, and writes noth
   assert.match(r.hint, /codemap scan/);
   assert.equal(existsSync(join(root, '.planning')), false);
 });
+
+// --- symbols: what each text file declares ---------------------------------------------------------------------------
+
+const { symbolsFor } = await import(join(ROOT, 'cadence-core', 'bin', 'lib', 'codemap-symbols.mjs'));
+const names = (row) => (row.symbols || []).map((s) => s.name);
+
+const FIXTURE = {
+  'lib.js': [
+    '// function ghost() {}', '/* export const phantom = 1; */',
+    'export function alpha() {}', 'export const beta = () => {};', 'function gamma() {}',
+    'export {', '  gamma as delta,', '  zeta,', '};', 'class Eta {}', '',
+  ].join('\n'),
+  'main.rs': ['pub fn top() {}', 'struct Thing;', 'impl Thing {', '    fn inner(&self) {}', '    pub async fn spaced() {}', '}', ''].join('\n'),
+  'tool.py': ['def top():', '    pass', 'class K:', '    def method(self):', '        pass', '    async def later(self):', '        pass', ''].join('\n'),
+  'srv.go': ['package srv', 'func Plain() {}', 'func (r *T) Method() {}', 'type T struct{}', ''].join('\n'),
+  'doc.md': ['# Title', '', '## Sub heading ##', '', '```', '# not a heading', '```', ''].join('\n'),
+  'data.json': JSON.stringify({ name: 'x', version: 1 }),
+  'torn.json': '{"a":',
+};
+
+test('scan places every file of five languages in one module and each text file holds its names', () => {
+  const { root, git } = repo(FIXTURE);
+  writeFileSync(join(root, 'blob.bin'), Buffer.from([0, 1, 2, 3]));
+  symlinkSync('lib.js', join(root, 'link.js'));
+  git('add', '-A'); git('commit', '-q', '-m', 'more');
+  const r = codemap(root, 'scan');
+  assert.equal(r.ok, true);
+  const rows = index(root).rows;
+  const tracked = git('ls-files').trim().split('\n');
+  assert.deepEqual(rows.map((x) => x.path).sort(), [...tracked].sort());
+  const modulesOfPath = modulesOf(root).flatMap((m) => m.paths);
+  assert.deepEqual([...modulesOfPath].sort(), [...tracked].sort(), 'each path in exactly one module');
+  // hash-object follows a link, which is exactly what the row must not do, so the link is compared by its text
+  for (const x of rows) assert.equal(x.hash, x.kind === 'symlink' ? hashOf('lib.js') : git('hash-object', x.path).trim(), x.path);
+
+  const of = (p) => rows.find((x) => x.path === p);
+  assert.deepEqual(names(of('lib.js')).sort(), ['Eta', 'alpha', 'beta', 'delta', 'gamma', 'zeta'].sort());
+  assert.ok(!names(of('lib.js')).includes('ghost') && !names(of('lib.js')).includes('phantom'), 'comments hold no symbols');
+  const rust = of('main.rs').symbols;
+  assert.deepEqual(rust.map((s) => s.name), ['top', 'Thing', 'inner', 'spaced']);
+  assert.ok(rust.every((s) => s.approximate === true), 'indented fn and column-0 pub fn are both approximate');
+  assert.deepEqual(names(of('tool.py')), ['top', 'K', 'method', 'later']);
+  assert.deepEqual(names(of('srv.go')), ['Plain', 'Method', 'T']);
+  assert.deepEqual(names(of('doc.md')), ['Title', 'Sub heading']);
+  assert.deepEqual(of('data.json').symbols, [{ name: 'name', kind: 'key', line: 0 }, { name: 'version', kind: 'key', line: 0 }]);
+  assert.equal(of('torn.json').symbols, undefined);
+  assert.equal(of('blob.bin').symbols, undefined);
+  assert.equal(of('link.js').symbols, undefined, 'a symlink holds none');
+});
+
+test('every name lib/rung-agent.mjs exports appears on its row', async () => {
+  const real = join(ROOT, 'cadence-core', 'bin', 'lib', 'rung-agent.mjs');
+  const { root } = repo({ 'lib/rung-agent.mjs': readFileSync(real, 'utf8') });
+  codemap(root, 'scan');
+  const held = new Set(names(rowOf(root, 'lib/rung-agent.mjs')[0]));
+  const exported = Object.keys(await import(real));
+  assert.ok(exported.length > 10);
+  assert.deepEqual(exported.filter((n) => !held.has(n)), []);
+});
+
+test('a megabyte of hostile text finishes quickly in every reader', () => {
+  const lines = {
+    '.rs': 'fn '.repeat(350000), '.py': 'def '.repeat(260000), '.md': '# '.repeat(520000),
+    '.js': 'export {\n'.repeat(120000), '.go': `func ${' '.repeat(1 << 20)}`, '.json': '['.repeat(1 << 20),
+  };
+  for (const [ext, text] of Object.entries(lines)) {
+    const start = Date.now();
+    symbolsFor(`big${ext}`, text);
+    assert.ok(Date.now() - start < 5000, `${ext} took ${Date.now() - start} ms`);
+  }
+});
+
+test('skim.mjs is untouched: it still refuses a .rs file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cad-map-skim-'));
+  writeFileSync(join(dir, 'x.rs'), 'fn main() {}\n');
+  let out;
+  try { out = execFileSync('node', [join(ROOT, 'cadence-core', 'bin', 'skim.mjs'), join(dir, 'x.rs')], { encoding: 'utf8', stdio: 'pipe' }); } catch (e) { out = e.stdout; }
+  assert.equal(JSON.parse(out).reason, 'unsupported-extension');
+});
