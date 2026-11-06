@@ -13,6 +13,7 @@ import {
   rungFiles, effortEnumIssues, ROLES_PREFIX, ROLES_EFFORT_SUFFIX,
   RUNG_ORDER, rungOrderIssues, roleOfAgent, rungOfAgent,
 } from '../cadence-core/bin/lib/rung-agent.mjs';
+import { dataRuleIssues } from '../cadence-core/bin/lib/data-rule.mjs';
 import { FINDING_SCHEMA } from '../cadence-core/bin/review-provider.mjs';
 import * as readTrace from '../cadence-core/bin/lib/read-trace.mjs';
 import { createHash } from 'node:crypto';
@@ -583,4 +584,16 @@ test('the reviewer brief and contract both state the four rules, and the schema 
   assert.deepEqual(
     Object.keys(FINDING_SCHEMA.properties.findings.items.properties).sort(),
     ['claim', 'failure_scenario', 'file', 'line', 'severity']);
+});
+
+// The reader's contract (Phase 3 D-02, D-03): no agent file preloads it until the rung files land, so self-verify cannot
+// lint it yet and this holds the words that matter.
+test('the mapper contract carries the data rule, sends the reader to whole files, and holds no Bash', () => {
+  const text = readFileSync(join(REPO, 'skills', 'cad-mapper-contract', 'SKILL.md'), 'utf8');
+  assert.deepEqual(dataRuleIssues(text), []);
+  for (const tool of ['Read', 'Grep', 'Glob']) assert.match(text, new RegExp(`\\b${tool}\\b`), tool);
+  assert.match(text, /Never use `skim`/);
+  assert.match(text, /relative to the root/);
+  assert.match(text, /item file's `symbols`/);
+  assert.doesNotMatch(text, /Bash/);
 });
