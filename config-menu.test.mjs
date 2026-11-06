@@ -29,7 +29,7 @@ test('the route lists flags, then every-token key=value, then the opening screen
     return i;
   };
   const order = [at('Starts with `--review`'), at('Starts with `--roles`'), at('- `--walk`'),
-    at('Every token is `<key>=<value>`'), at('- Empty:')];
+    at('Every token is `<key>=<value>`'), at('- Any other text is a sentence'), at('- Empty:')];
   assert.deepEqual(order, [...order].sort((a, b) => a - b));
 });
 
@@ -133,4 +133,40 @@ test('walk step 4 previews the batch once before the write and says a mixed batc
 
 test('Direct set names no preview, so key=value and the guided flags get no new prompt', () => {
   assert.doesNotMatch(section(CONFIG_MD, 'Direct set'), /preview/i);
+});
+
+test('a sentence arm reads A sentence, and an opening-screen reply that is not a number goes the same way', () => {
+  const route = flat(section(CONFIG_MD, '1. Route'));
+  assert.match(route, /Any other text is a sentence: Read `\$\{CLAUDE_PLUGIN_ROOT\}\/cadence-core\/workflows\/config-menu\.md` and follow its \*\*A sentence\*\*/);
+  assert.match(route, /A reply to the opening screen that is not a number from 1 to 6 goes the same way/);
+  assert.match(flat(section(MENU_MD, 'Opening screen')), /Any other reply is read as a sentence \(\*\*A sentence\*\*\)/);
+});
+
+test('a sentence redirects the catalog, matches, writes the value to a file, previews, asks, then sets', () => {
+  const s = flat(section(MENU_MD, 'A sentence'));
+  const at = (needle) => {
+    const i = s.indexOf(needle);
+    assert.notEqual(i, -1, `the sentence section does not say ${needle}`);
+    return i;
+  };
+  const order = [at('config.mjs" catalog > "$D/catalog.json"'), at('terms.json'), at('scratch-stale'),
+    at('Write tool (`<D>/v1.json`'), at('config.mjs" preview <key>="$(cat <D>/v1.json)"'),
+    at('Ask for a yes in a turn of its own. Only after the yes, call `set`'), at('config.mjs" set [--global] <key>="$(cat <D>/v1.json)"')];
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), order.join());
+  assert.match(s, /one call per file the preview named/);
+  assert.match(s, /Nothing matched: say so, name the groups from the opening screen, and write nothing/);
+});
+
+test('a sentence value reaches the preview and set only through its scratch file', () => {
+  const s = flat(section(MENU_MD, 'A sentence'));
+  assert.match(s, /A value taken from the sentence is written as JSON to its own file in that directory/);
+  assert.match(s, /take it as `<key>="\$\(cat <path>\)"`/);
+  assert.doesNotMatch(s, /(preview|set) (\[--global\] )?<key>=<value>/);
+});
+
+test('a sentence shows now, new and the file, and leaves the way a group does', () => {
+  const s = flat(section(MENU_MD, 'A sentence'));
+  assert.match(s, /`Now:` the value in force, `New:` the value from the file, and the file from the preview's `files`/);
+  assert.ok(s.includes('**Worktree base ref**'));
+  assert.ok(s.includes("**Wrap-up**'s dangling enrollment check"));
 });
