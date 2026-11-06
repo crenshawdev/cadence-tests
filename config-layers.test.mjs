@@ -336,6 +336,29 @@ test('layers: every refusal names a next step', () => {
   }
 });
 
+test('catalog: every schema key with exactly the matching fields, values equal to the layer read, smaller than keys', () => {
+  const f = repoFixture(
+    { granularity: 'fine', git: { create_tag: false }, review: { mode: 'adjudicated' } },
+    { granularity: 'coarse', git: { create_tag: true }, workflow: { use_workflows: true } },
+  );
+  const cat = cli(f, ['catalog']);
+  const all = Object.keys(cli(f, ['keys']).json.keys);
+  assert.deepEqual(cat.json.settings.map((r) => r.key).sort(), [...all].sort());
+  for (const k of ['review.providers.openai.tiers.flagship', 'workflow.max_plan_bytes']) {
+    assert.ok(cat.json.settings.some((r) => r.key === k), k);
+  }
+  for (const r of cat.json.settings) assert.deepEqual(Object.keys(r), ['key', 'question', 'purpose', 'explain', 'value'], r.key);
+  const read = {};
+  for (const g of cli(f, ['layers']).json.groups) {
+    for (const extra of [[], ['--advanced']]) {
+      for (const r of cli(f, ['layers', '--group', g.name, ...extra]).json.rows) read[r.key] = r.value;
+    }
+  }
+  for (const r of cat.json.settings) assert.deepEqual(r.value, read[r.key], r.key);
+  assert.equal(cat.json.settings.find((r) => r.key === 'granularity').value, 'fine');
+  assert.ok(cat.raw.length < cli(f, ['keys']).raw.length, `${cat.raw.length}`);
+});
+
 test('get and keys --walk keep their output', () => {
   const f = templateFixture();
   const walk = cli(f, ['keys', '--walk']).raw;
