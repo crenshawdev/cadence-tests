@@ -70,6 +70,88 @@ test('it reads no workflow switch and names no layered-workflow reader', () => {
   assert.ok(!/use_workflows|workflow-layers/.test(RAW + SKILL));
 });
 
+// --- the launch --------------------------------------------------------------
+
+test('the steps appear in order: claim, resolve, status --out-dir, launch, end of turn, codemap write, release', () => {
+  const after = MAP.indexOf('## 3. After a yes');
+  inOrder(MAP, [
+    'workflow-claim take --fire code-map-',
+    'route.mjs" resolve --role cad-mapper --attempt 1',
+    'codemap status --out-dir',
+    'Launch the `Workflow` tool by its named entry `cadence:code-map`',
+    'Otherwise end the turn',
+    'codemap write --run-file',
+    'Release the claim right after this call returns, whether it succeeded or refused',
+  ], after);
+});
+
+test('the claim is first after the yes, and the scratch directory carries the guard', () => {
+  const step = RAW.slice(RAW.indexOf('## 3. After a yes'));
+  assert.ok(step.indexOf('mktemp -d') < step.indexOf('workflow-claim take'));
+  assert.match(step, /mktemp -d "\$\{TMPDIR:-\/tmp\}\/cad-XXXXXX"\)" && case "\$D" in \(\*\[!A-Za-z0-9\._\/-\]\*\) echo "scratch-unsafe: \$D" >&2; exit 1;; esac && echo "scratch dir: \$D"/);
+});
+
+test('the resolve line carries no --bracket-read, and the agent type comes from its answer', () => {
+  const line = RAW.split('\n').find((l) => l.includes('route.mjs" resolve'));
+  assert.ok(line && !line.includes('--bracket-read'), line);
+  assert.match(MAP, /Take `agent_type` and `model` from the answer, never an agent name of your own/);
+  assert.match(MAP, /An answer of `ok:false` takes the spawn-agent seam's arm: the base agent `cadence:cad-mapper` and `model` null/);
+});
+
+test('status --out-dir runs only after the yes', () => {
+  assert.ok(MAP.indexOf('codemap status --out-dir') > MAP.indexOf('## 3. After a yes'));
+  assert.match(MAP, /Only now pin the hashes, so they are the launch's and not the question's/);
+  assert.equal(RAW.split('codemap status --out-dir').length, 2, 'status --out-dir appears once');
+});
+
+test('args retypes name, built_from and item exactly, with the resolve\'s agent_type and model and the batch size', () => {
+  assert.match(MAP, /`args` is that file whole, retyped exactly: `root`, then `items`, each with its `name`, `built_from` and `item`/);
+  assert.match(MAP, /Add the resolve's `agent_type` and `model` \(null when it answered none\) and `batch_size`, the `parallelization\.max_concurrent_agents` read in step 1/);
+});
+
+test('scriptPath names a file that exists', () => {
+  const m = RAW.match(/`scriptPath` set to `\$\{CLAUDE_PLUGIN_ROOT\}\/(workflows\/code-map\.js)`/);
+  assert.ok(m, 'scriptPath is not named');
+  assert.ok(existsSync(join(ROOT, m[1])));
+});
+
+test('the claim is released on a refused compose, zero items, a refused launch and a launch never issued', () => {
+  assert.match(MAP, /From here a claim is held, so every stop below releases it at once/);
+  assert.match(MAP, /A refusal is named in one line and the claim released/);
+  assert.match(MAP, /With `items` 0 the map went current since the question: say so, release the claim and start nothing/);
+  assert.match(MAP, /A launch the host refuses: name it in one line and release the claim at once, since no notice will come and nothing was spent/);
+  assert.match(MAP, /A launch call that never issues: name it and release the claim the same way, without saying nothing was spent/);
+});
+
+test('a take that prints no id has nothing to release', () => {
+  assert.match(MAP, /With `workflow\.multi_workflow` on a take prints no id and holds nothing, so there is nothing to release/);
+});
+
+test('a held claim names its holder and age, and the release line for a holder that may be dead', () => {
+  assert.match(MAP, /On `launch: false`, name the `holder` and its `age_seconds`[^.]*`workflow-claim release --fire <holder> --id <holder_id>`/);
+});
+
+// --- the notice --------------------------------------------------------------
+
+test('codemap write carries --launch-file and the notice\'s totals, and the claim is released whether it succeeded or refused', () => {
+  assert.match(MAP, /codemap write --run-file <run file> --launch-file <the launch file status printed> \[--notice-tokens <n> --notice-turns <n> --notice-duration-ms <n>\]/);
+  assert.match(MAP, /Release the claim right after this call returns, whether it succeeded or refused/);
+});
+
+test('the end names what was written, each refused module, each dead reader, and that only those rebuild', () => {
+  assert.match(MAP, /Print `written`, each `refused` module with the reason it names, each `dead` reader, and each `missing` module/);
+  assert.match(MAP, /stay stale and that `\/cad-map` again rebuilds only them/);
+  assert.match(MAP, /A refusal of the call is named in one line: its agents are already billed/);
+});
+
+// --- the rules the lints hold ------------------------------------------------
+
+test('the workflow file relays the resolve\'s warnings and keeps its scratch path per run', () => {
+  assert.deepEqual(relayIssues(RAW), []);
+  assert.match(MAP, /Relay every `warnings\[\]` entry to the user before you launch/);
+  assert.deepEqual(scratchPathIssues('cadence-core/workflows/map.md', RAW), []);
+});
+
 // --- through the real seams on a scratch repository --------------------------
 
 function scratchRepo() {
