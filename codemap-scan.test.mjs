@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PLANNING = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
+const { cut, partition, entryFile, ENTRY_FILE, startsNoReader } = await import(
+  join(ROOT, 'cadence-core', 'bin', 'lib', 'codemap-partition.mjs'));
 
 /** A scratch repository holding `files` (path -> text), committed. */
 function repo(files = {}) {
@@ -155,4 +157,148 @@ test('a root below the repository top level lists paths relative to itself', () 
   assert.equal(r.ok, true);
   const rows = JSON.parse(readFileSync(join(sub, '.planning', 'codemap', 'index.json'), 'utf8')).rows;
   assert.deepEqual(rows.map((x) => x.path), ['deep/d.js', 'in.js']);
+});
+
+// --- the module list: the pure cut and reuse, on a lowered ceiling -------------------------------------------------
+
+const row = (path, bytes, kind = 'text') => ({ path, bytes, kind, hash: 'h' });
+const C = 100;
+const where = (mods) => Object.fromEntries(mods.flatMap((m) => m.paths.map((p) => [p, m.name])));
+
+test('the cut puts every path in exactly one module, and a file over the ceiling stands alone', () => {
+  const rows = [row('a.js', 30), row('big.js', 250), row('src/x.js', 60), row('src/y.js', 60), row('src/z/q.js', 90),
+    row('docs/d.md', 40), row('docs/e.md', 40), row('.planning/STATE.md', 20)];
+  const mods = cut(rows, C);
+  const all = mods.flatMap((m) => m.paths);
+  assert.deepEqual([...all].sort(), rows.map((r) => r.path).sort());
+  assert.equal(new Set(all).size, rows.length);
+  assert.deepEqual(mods.find((m) => m.paths.includes('big.js')).paths, ['big.js']);
+  assert.equal(new Set(mods.map((m) => m.name)).size, mods.length, 'names are unique');
+});
+
+test('adding bytes to a file and rescanning leaves the module list identical', () => {
+  const rows = [row('a/1.js', 40), row('a/2.js', 40), row('b/1.js', 60), row('b/2.js', 60)];
+  const first = partition(rows, null, C).modules;
+  const edited = rows.map((r) => (r.path === 'a/1.js' ? { ...r, bytes: r.bytes + 2048 } : r));
+  assert.deepEqual(partition(edited, first, C).modules, first);
+  assert.equal(partition(rows, null, C).modules.length, first.length);
+});
+
+test('a new file joins the module in its own directory, else the deepest shared ancestor, else the first name', () => {
+  const stored = [
+    { name: 'm1', paths: ['src/a.js'] }, { name: 'm2', paths: ['src/sub/b.js'] },
+    { name: 'm3', paths: ['lib/c.js'] }, { name: 'm4', paths: ['lib/d.js'] },
+    { name: 'a-first', paths: ['x/1.js'] }, { name: 'b-second', paths: ['y/2.js'] },
+  ];
+  const rows = [row('src/a.js', 5), row('src/sub/b.js', 5), row('lib/c.js', 5), row('lib/d.js', 5), row('x/1.js', 5), row('y/2.js', 5)];
+  const add = (path) => where(partition([...rows, row(path, 5)], stored, C).modules)[path];
+  assert.equal(add('src/e.js'), 'm1', 'own directory');
+  assert.equal(add('src/sub/deeper/f.js'), 'm2', 'deepest shared ancestor beats a shallower one');
+  assert.equal(add('lib/g.js'), 'm3', 'two modules in the directory: the first name');
+  assert.equal(add('zzz/h.js'), 'a-first', 'nothing nearer than the root: the first name');
+});
+
+test('a new file over the ceiling stands alone, and one past twice the ceiling starts a module the next joins', () => {
+  const stored = [{ name: 'full', paths: ['d/a.js', 'd/b.js'] }, { name: 'other', paths: ['o/z.js'] }];
+  const base = [row('d/a.js', 95), row('d/b.js', 95), row('o/z.js', 5)];
+  const alone = partition([...base, row('d/huge.js', 150)], stored, C).modules;
+  assert.deepEqual(alone.find((m) => m.paths.includes('d/huge.js')).paths, ['d/huge.js']);
+  const out = partition([...base, row('d/n1.js', 50), row('d/n2.js', 20)], stored, C).modules;
+  const w = where(out);
+  assert.notEqual(w['d/n1.js'], 'full', '190 + 50 is past 200');
+  assert.equal(w['d/n2.js'], w['d/n1.js'], '190 + 20 is past 200 too, so it joins the module n1 started');
+  assert.deepEqual(out.find((m) => m.name === 'full').paths, ['d/a.js', 'd/b.js'], 'no existing file moved');
+});
+
+test('a module pushed past the limit by edits stays put and is named oversized', () => {
+  const stored = [{ name: 'grown', paths: ['g/a.js', 'g/b.js'] }, { name: 'one', paths: ['h/solo.js'] }];
+  const rows = [row('g/a.js', 150), row('g/b.js', 150), row('h/solo.js', 500)];
+  const r = partition(rows, stored, C);
+  assert.deepEqual(r.modules.map((m) => m.paths), [['g/a.js', 'g/b.js'], ['h/solo.js']]);
+  assert.deepEqual(r.oversized, ['grown'], 'one file past the limit is no re-cut candidate');
+});
+
+test('a removed file leaves its module and an emptied module goes', () => {
+  const stored = [{ name: 'm1', paths: ['a/1.js', 'a/2.js'] }, { name: 'm2', paths: ['b/1.js'] }];
+  const r = partition([row('a/1.js', 5)], stored, C);
+  assert.deepEqual(r.modules, [{ name: 'm1', paths: ['a/1.js'] }]);
+});
+
+test('an unusable stored list is a fresh cut', () => {
+  const rows = [row('a.js', 5), row('b.js', 5)];
+  const fresh = partition(rows, null, C).modules;
+  for (const bad of ['x', [{ name: 'm', paths: 'nope' }], [{ name: 'm', paths: ['a.js'] }, { name: 'n', paths: ['a.js'] }]]) {
+    assert.deepEqual(partition(rows, bad, C).modules, fresh);
+  }
+});
+
+test('.planning files hold facts but never share a module with code, and start no reader', () => {
+  const rows = [row('src/a.js', 5), row('.planning/STATE.md', 5), row('img.png', 5, 'binary')];
+  const byPath = new Map(rows.map((r) => [r.path, r]));
+  const fresh = cut(rows, 5);
+  assert.equal(fresh.length, 3, 'code, planning and the picture');
+  const planning = fresh.find((m) => m.paths.includes('.planning/STATE.md'));
+  assert.deepEqual(planning.paths, ['.planning/STATE.md']);
+  assert.equal(startsNoReader(planning, byPath), true);
+  assert.equal(startsNoReader(fresh.find((m) => m.paths.includes('img.png')), byPath), true, 'all binary');
+  assert.equal(startsNoReader(fresh.find((m) => m.paths.includes('src/a.js')), byPath), false);
+  // a repository with none: the first .planning file stays out of every code module, and a second joins the first
+  const stored = [{ name: 'code', paths: ['src/a.js'] }];
+  const withNew = partition([row('src/a.js', 5), row('.planning/x.md', 5), row('.planning/y.md', 5)], stored, C).modules;
+  assert.deepEqual(withNew.find((m) => m.name === 'code').paths, ['src/a.js']);
+  assert.deepEqual(withNew.find((m) => m.paths.includes('.planning/x.md')).paths, ['.planning/x.md', '.planning/y.md']);
+});
+
+test('an entry file name is derived by hash, so no module name can reach index.json or leave the directory', () => {
+  for (const name of ['index', 'index.json', '.gitignore', '../../x', 'a/b', '', '.']) {
+    const f = entryFile(name);
+    assert.match(f, ENTRY_FILE);
+    assert.ok(!f.includes('/') && f !== 'index.json' && f !== '.gitignore');
+  }
+  assert.notEqual(entryFile('a'), entryFile('b'));
+  const mods = cut([row('index/x.js', 5), row('../up/y.js', 5)], C);
+  for (const m of mods) assert.match(entryFile(m.name), ENTRY_FILE);
+});
+
+// --- the same, through the CLI --------------------------------------------------------------------------------------
+
+const modulesOf = (root) => index(root).modules;
+const mapFile = (root, f) => join(root, '.planning', 'codemap', f);
+
+test('scan stores the module list, and a removed last file removes its module and its entry file', () => {
+  // 100 KiB each, so the two directories cannot share one 128 KiB module
+  const big = 'x'.repeat(100 * 1024);
+  const { root, git } = repo({ 'a/1.js': big, 'b/2.js': big, '.planning/STATE.md': 's\n' });
+  const first = codemap(root, 'scan');
+  assert.equal(first.modules, 3);
+  assert.equal(first.no_reader, 1);
+  const gone = modulesOf(root).find((m) => m.paths.includes('b/2.js'));
+  writeFileSync(mapFile(root, gone.entry), '{}');
+  const keep = join(root, '.planning', 'codemap', 'notes.txt');
+  writeFileSync(keep, 'mine');
+  git('rm', '-q', 'b/2.js');
+  const second = codemap(root, 'scan');
+  assert.equal(second.modules, 2);
+  assert.equal(existsSync(mapFile(root, gone.entry)), false);
+  assert.equal(existsSync(keep), true, 'only an entry-shaped name is ever deleted');
+  assert.equal(modulesOf(root).some((m) => m.name === gone.name), false);
+});
+
+test('deleting index.json re-cuts, and an entry file no module names is gone after the scan', () => {
+  const { root } = repo({ 'a/1.js': 'a\n', 'b/2.js': 'b\n' });
+  codemap(root, 'scan');
+  const before = modulesOf(root);
+  const orphan = mapFile(root, entryFile('no such module'));
+  writeFileSync(orphan, '{}');
+  execFileSync('rm', [mapFile(root, 'index.json')]);
+  codemap(root, 'scan');
+  assert.deepEqual(modulesOf(root), before, 'the same tree cuts the same way');
+  assert.equal(existsSync(orphan), false);
+});
+
+test('a torn index.json is a fresh cut, not a failure', () => {
+  const { root } = repo({ 'a/1.js': 'a\n' });
+  codemap(root, 'scan');
+  writeFileSync(mapFile(root, 'index.json'), '{"modules": [');
+  assert.equal(codemap(root, 'scan').modules, 1);
 });
