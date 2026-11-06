@@ -138,7 +138,7 @@ test('review-panel: a provider voice starts one wrapper holding the exact line a
   assert.ok(!w.prompt.includes('${CLAUDE_PLUGIN_ROOT}') && !w.prompt.includes('CLAUDE_PLUGIN_ROOT'));
   assert.deepEqual(w.opts.disallowedTools, ['Read', 'Glob', 'Grep']);
   assert.equal(w.opts.agentType, 'cadence:cad-reviewer-low');
-  assert.equal(w.opts.model, 'sonnet');
+  assert.equal(w.opts.model, 'haiku');
   assert.equal(w.opts.label, 'provider openai');
   assert.equal(w.opts.schema.required.join(), 'ok');
   assert.deepEqual(w.opts.schema.properties.findings, FINDING_SCHEMA.properties.findings, 'the findings shape is the reviewer schema\'s');
