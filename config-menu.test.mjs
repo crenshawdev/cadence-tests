@@ -265,6 +265,12 @@ test('with the switch off no arguments opens the walk, with it on the opening sc
   assert.match(flat(MENU_MD), /only while `workflow\.config_menu` is true/);
 });
 
+test('the list and the block say a dropped reviewer is not in force and why', () => {
+  const s = flat(section(MENU_MD, 'A group'));
+  assert.match(s, /A row with `dropped` says each name there is not in force, because your global `review\.reviewers` has to name it too/);
+  assert.match(s, /When the row has `dropped`, say the same thing the list says about those names/);
+});
+
 test('the walk reached with no arguments names the menu and the command that turns it on', () => {
   const walk = flat(section(CONFIG_MD, 'Interactive menu (no args)'));
   assert.match(walk, /Reached with no arguments, end it with this line: `A menu of six settings groups is off\. \/cad-config workflow\.config_menu=true turns it on\.`/);
