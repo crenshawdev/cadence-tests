@@ -265,6 +265,11 @@ test('with the switch off no arguments opens the walk, with it on the opening sc
   assert.match(flat(MENU_MD), /only while `workflow\.config_menu` is true/);
 });
 
+test('the walk reached with no arguments names the menu and the command that turns it on', () => {
+  const walk = flat(section(CONFIG_MD, 'Interactive menu (no args)'));
+  assert.match(walk, /Reached with no arguments, end it with this line: `A menu of six settings groups is off\. \/cad-config workflow\.config_menu=true turns it on\.`/);
+});
+
 test('the docs and the skill say the menu is opt-in and how to turn it on', () => {
   const read = (...p) => readFileSync(join(ROOT, ...p), 'utf8');
   for (const [name, text] of [['skill', read('skills', 'cad-config', 'SKILL.md')],
