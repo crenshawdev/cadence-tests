@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const { FINDING_SCHEMA } = await import(pathToFileURL(join(ROOT, 'cadence-core', 'bin', 'review-provider.mjs')));
 const { ENTRY_SCHEMA } = await import(pathToFileURL(join(ROOT, 'cadence-core', 'bin', 'lib', 'codemap-entry.mjs')));
+const { entryFile } = await import(pathToFileURL(join(ROOT, 'cadence-core', 'bin', 'lib', 'codemap-partition.mjs')));
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
 
 const PANEL = readFileSync(join(ROOT, 'workflows', 'review-panel.js'), 'utf8');
@@ -423,7 +424,7 @@ test('the setting, the permissions pages, the run record page and INTERNALS name
 
 const H = (n) => String(n).repeat(40);
 const mod = (name, over = {}) => ({ name, built_from: { [`${name}/a.js`]: H(1), [`${name}/link`]: H(2) }, item: `/scratch/${name}.item.json`, ...over });
-const MAP_ARGS = { root: '/repo', items: [mod('m1'), mod('m2'), mod('m3')], agent_type: 'cadence:cad-mapper-high', model: null, batch_size: 4 };
+const MAP_ARGS = { root: '/repo', items: [mod('m1'), mod('m2'), mod('m3')], agent_type: 'cadence:cad-mapper-xhigh', model: null, batch_size: 4 };
 const entryFor = (name) => ({
   purpose: `${name} does one thing`,
   invariants: [{ claim: 'it stays', evidence: [{ path: `${name}/a.js`, symbol: 'f' }] }],
@@ -447,7 +448,7 @@ test('code-map: three modules start three readers with Bash denied, the given ru
   assert.deepEqual(h.calls.map((c) => c.opts.label), ['map m1', 'map m2', 'map m3']);
   for (const c of h.calls) {
     assert.ok(c.opts.disallowedTools.includes('Bash'));
-    assert.equal(c.opts.agentType, 'cadence:cad-mapper-high');
+    assert.equal(c.opts.agentType, 'cadence:cad-mapper-xhigh');
     assert.equal('model' in c.opts, false);
     assert.equal(c.opts.bashCommandClamp, undefined);
   }
@@ -515,4 +516,105 @@ test('code-map: its schema is the entry schema the seam judges against', async (
   const h = host(() => entryFor('m1'));
   await runScript(MAP, h, MAP_ARGS);
   assert.deepEqual(h.calls[0].opts.schema, ENTRY_SCHEMA);
+});
+
+// Drift between the script's return and `codemap write` would refuse every live run, so the real return goes through the seam.
+// The fake reader answers from the item file it is handed, the way a real one does, with absolute paths and only the symbols listed there.
+test('code-map: its real return writes the map through codemap write and bills one cad-mapper bracket per agent, and a refresh starts one reader', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'cad-wfs-map-'));
+  const git = (cwd, ...a) => execFileSync('git', ['-C', cwd, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim();
+  const ident = (cwd) => { git(cwd, 'init', '-q'); git(cwd, 'config', 'user.email', 't@example.com'); git(cwd, 'config', 'user.name', 'T'); };
+  ident(repo);
+  // 90 KB of padding in each, so the three modules stay three
+  const pad = `${'x'.repeat(80)}\n`.repeat(1140);
+  for (const [d, fn] of [['m1', 'alpha'], ['m2', 'gamma'], ['m3', 'delta']]) {
+    mkdirSync(join(repo, d));
+    writeFileSync(join(repo, d, 'main.js'), `export function ${fn}() {\n  function inner() {}\n  return inner;\n}\n`);
+    writeFileSync(join(repo, d, 'pad.txt'), pad);
+  }
+  git(repo, 'add', '-A'); git(repo, 'commit', '-q', '-m', 'base');
+  mkdirSync(join(repo, 'tests')); ident(join(repo, 'tests'));
+  writeFileSync(join(repo, 'tests', 'foo.test.mjs'), "import { alpha } from '../m1/main.js';\nalpha();\n");
+  git(join(repo, 'tests'), 'add', '-A'); git(join(repo, 'tests'), 'commit', '-q', '-m', 'tests');
+
+  const planning = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
+  const cli = (...a) => {
+    let out;
+    try { out = execFileSync('node', [planning, '--dir', join(repo, '.planning'), ...a], { encoding: 'utf8', cwd: repo, stdio: 'pipe' }); } catch (e) { out = e.stdout; }
+    return JSON.parse(out);
+  };
+  const launchTo = (name) => { const out = join(repo, name); mkdirSync(out); return { out, status: cli('codemap', 'status', '--out-dir', out) }; };
+
+  // `inner` is nested, so the facts hold no symbol of that name; `cite` picks what the reader names as a structured symbol
+  const reader = (cite) => (label, prompt) => {
+    const given = JSON.parse(prompt.split('BEGIN MODULE\n')[1].split('\nEND MODULE')[0]);
+    const item = JSON.parse(readFileSync(given.item_file, 'utf8'));
+    const [file, names] = Object.entries(item.symbols)[0];
+    assert.ok(file.startsWith(`${repo}/`), 'a reader is handed absolute paths');
+    return {
+      purpose: `${item.name} holds ${names[0]} and calls its nested inner helper`,
+      invariants: [{ claim: 'the export stays', evidence: [{ path: file, symbol: cite || names[0] }] }],
+      change_together: [],
+      pinned_by: item.tests.length ? [{ behavior: 'it runs', tests: [{ path: item.tests[0] }] }] : [],
+    };
+  };
+  // the run file the host would leave: the script's return and one agent row per reader
+  const runOf = (calls, result, id) => {
+    const file = join(repo, `${id}.json`);
+    writeFileSync(file, JSON.stringify({
+      runId: id, status: 'completed', result: JSON.parse(JSON.stringify(result)),
+      workflowProgress: calls.map((c, i) => ({ type: 'workflow_agent', index: i + 1, label: c.opts.label, agentId: `${id}-a${i + 1}`, agentType: 'cadence:cad-mapper-xhigh', state: 'done', tokens: 1000 * (i + 1), toolCalls: 10 + i, durationMs: 100 })),
+    }));
+    return file;
+  };
+  const argsOf = (status) => ({ ...JSON.parse(readFileSync(status.launch.file, 'utf8')), agent_type: 'cadence:cad-mapper-xhigh', model: null, batch_size: 2 });
+
+  assert.equal(cli('codemap', 'scan').ok, true);
+  const first = launchTo('out1');
+  const h1 = host(reader());
+  const out1 = await runScript(MAP, h1, argsOf(first.status));
+  assert.equal(h1.calls.length, 3);
+  const w1 = cli('codemap', 'write', '--run-file', runOf(h1.calls, out1, 'wf_one'), '--launch-file', first.status.launch.file);
+  assert.deepEqual([w1.ok, w1.launch_check, w1.written, w1.refused], [true, 'ran', 3, 0], JSON.stringify(w1));
+  assert.equal(w1.brackets.written, 3);
+  const built = cli('codemap', 'status');
+  assert.deepEqual([built.built, built.stale, built.unbuilt], [3, 0, 0]);
+  for (const name of ['m1', 'm2', 'm3']) assert.ok(existsSync(join(repo, '.planning', 'codemap', entryFile(name))), `${name} has an entry file`);
+  const billed = cli('trace', 'render', '--phase', '0');
+  assert.equal(billed.brackets.length, 3);
+  assert.deepEqual(billed.brackets.map((b) => b.role), ['cad-mapper', 'cad-mapper', 'cad-mapper']);
+  assert.deepEqual(billed.brackets.map((b) => [b.tokens, b.turns]).sort(), [[1000, 10], [2000, 11], [3000, 12]]);
+
+  // one edit, and the refresh starts one reader whose item says how to read the change
+  writeFileSync(join(repo, 'm2', 'main.js'), 'export function gamma() {\n  function inner() { return 1; }\n  return inner;\n}\n');
+  assert.deepEqual(cli('codemap', 'status').stale_modules, ['m2']);
+  const second = launchTo('out2');
+  assert.equal(second.status.launch.items, 1);
+  const only = JSON.parse(readFileSync(second.status.launch.file, 'utf8')).items[0];
+  assert.equal(only.name, 'm2');
+  assert.ok(['diff', 'whole'].includes(JSON.parse(readFileSync(only.item, 'utf8')).refresh));
+  const h2 = host(reader());
+  const out2 = await runScript(MAP, h2, argsOf(second.status));
+  assert.equal(h2.calls.length, 1, 'a refresh after one edit starts one reader');
+  // m2 is edited again before the write: the entry is pinned to the launch's hashes, so it is written and stays stale
+  const w2 = cli('codemap', 'write', '--run-file', runOf(h2.calls, out2, 'wf_two'), '--launch-file', second.status.launch.file);
+  assert.equal(w2.written, 1, JSON.stringify(w2));
+  assert.deepEqual([cli('codemap', 'status').built, cli('codemap', 'status').stale], [3, 0]);
+
+  writeFileSync(join(repo, 'm1', 'main.js'), 'export function alpha() {\n  function inner() { return 2; }\n  return inner;\n}\n');
+  const third = launchTo('out3');
+  const h3 = host(reader());
+  const out3 = await runScript(MAP, h3, argsOf(third.status));
+  writeFileSync(join(repo, 'm1', 'main.js'), 'export function alpha() {\n  function inner() { return 3; }\n  return inner;\n}\n');
+  const w3 = cli('codemap', 'write', '--run-file', runOf(h3.calls, out3, 'wf_three'), '--launch-file', third.status.launch.file);
+  assert.equal(w3.written, 1, JSON.stringify(w3));
+  assert.deepEqual(cli('codemap', 'status').stale_modules, ['m1'], 'an edit between launch and write leaves the module stale');
+
+  // the nested helper in free text was written above; in a structured symbol field it is refused
+  const fourth = launchTo('out4');
+  const h4 = host(reader('inner'));
+  const out4 = await runScript(MAP, h4, argsOf(fourth.status));
+  const w4 = cli('codemap', 'write', '--run-file', runOf(h4.calls, out4, 'wf_four'), '--launch-file', fourth.status.launch.file);
+  assert.deepEqual([w4.written, w4.refused], [0, 1], JSON.stringify(w4));
+  assert.match(w4.refused_modules[0].why, /inner/);
 });
