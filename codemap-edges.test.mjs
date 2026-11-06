@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -169,4 +169,93 @@ test('a file with no import has no imports key, and a long whitespace run or col
   assert.equal(scan(root).ok, true);
   assert.ok(Date.now() - t < 5000, `scan took ${Date.now() - t} ms`);
   assert.equal(rowOf(root, 'a.js').imports, undefined);
+});
+
+const { isTestPath } = await import(join(ROOT, 'cadence-core', 'bin', 'lib', 'codemap-edges.mjs'));
+
+test('the test-path rule: its directories and its name forms, and a name that only ends like one', () => {
+  const yes = ['tests/a.js', 'test/a.js', 'src/__tests__/a.js', 'pkg/spec/a.rb', 'a.test.js', 'a.spec.ts', 'x/a_test.go',
+    'test_a.py', 'x/a_test.py', 'x/b.test.d.ts', '"tests/caf\\351.js"'];
+  const no = ['contest.py', 'src/latest.js', 'src/testing/a.js', 'src/a_test.rs', 'testfile.py', 'src/spec.js', 'a.test', 'src/inspect/a.js', 'tests.js'];
+  for (const p of yes) assert.equal(isTestPath(p), true, p);
+  for (const p of no) assert.equal(isTestPath(p), false, p);
+});
+
+/** An outer repository with `tests/` gitignored and a real clone in it. */
+function withClone(outer, clone) {
+  const src = repo(clone);
+  const { root, git } = repo({ '.gitignore': 'tests/\n', ...outer });
+  execFileSync('git', ['clone', '-q', src.root, join(root, 'tests')], { stdio: 'pipe' });
+  return { root, git, clone: join(root, 'tests') };
+}
+const idx = (root) => JSON.parse(readFileSync(join(root, '.planning', 'codemap', 'index.json'), 'utf8'));
+
+test('a test in the nested clone pins the file whose hyphenated stem it names and the symbol it holds', () => {
+  const { root, clone } = withClone(
+    { 'src/some-seam.mjs': 'export function seamFn() {}\nexport function other() {}\n', 'src/plain.mjs': 'export function plainFn() {}\n' },
+    { 'some-seam.test.mjs': "import '../src/some-seam.mjs';\n", 'calls.test.mjs': 'seamFn();\n', 'unrelated.test.mjs': 'const x = 1;\n' });
+  writeFileSync(join(clone, 'untracked.test.mjs'), "import '../src/some-seam.mjs'; seamFn();\n");
+  assert.equal(scan(root).ok, true);
+  assert.deepEqual(rowOf(root, 'src/some-seam.mjs').pinned_by,
+    { files: ['tests/some-seam.test.mjs'], total: 1, approximate: true });
+  assert.deepEqual(symOf(root, 'src/some-seam.mjs', 'seamFn').pinned_by, { files: ['tests/calls.test.mjs'], total: 1, approximate: true });
+  assert.equal(symOf(root, 'src/some-seam.mjs', 'other').pinned_by, undefined);
+  assert.equal(symOf(root, 'src/some-seam.mjs', 'seamFn').callers, undefined, 'a test is never a caller');
+  assert.equal(rowOf(root, 'src/plain.mjs').pinned_by, undefined);
+  const i = idx(root);
+  assert.deepEqual(i.nested_paths, ['tests/calls.test.mjs', 'tests/some-seam.test.mjs', 'tests/unrelated.test.mjs']);
+  assert.ok(i.modules.every((m) => m.paths.every((p) => !p.startsWith('tests/'))), 'no clone path is in any module');
+  assert.ok(i.rows.every((r) => !r.path.startsWith('tests/')));
+});
+
+test('a symlink named tests is not followed, and a nested .git git cannot read still scans', () => {
+  const src = repo({ 'a.test.mjs': 'seamFn();\n' });
+  const a = repo({ '.gitignore': 'tests/\n', 'src/x.mjs': 'export function seamFn() {}\n' });
+  symlinkSync(src.root, join(a.root, 'tests'));
+  assert.equal(scan(a.root).ok, true);
+  assert.deepEqual(idx(a.root).nested_paths, []);
+  assert.equal(symOf(a.root, 'src/x.mjs', 'seamFn').pinned_by, undefined);
+
+  const b = repo({ '.gitignore': 'tests/\n', 'src/x.mjs': 'export function seamFn() {}\n' });
+  mkdirSync(join(b.root, 'tests'));
+  writeFileSync(join(b.root, 'tests', 'a.test.mjs'), 'seamFn();\n');
+  writeFileSync(join(b.root, 'tests', '.git'), 'not a gitdir pointer\n');
+  assert.equal(scan(b.root).ok, true);
+  assert.deepEqual(idx(b.root).nested_paths, []);
+  assert.equal(symOf(b.root, 'src/x.mjs', 'seamFn').pinned_by, undefined);
+});
+
+test('a tests directory the outer repository tracks is a fact of its own, and no clone', () => {
+  const { root } = repo({ 'src/x.mjs': 'export function seamFn() {}\n', 'tests/a.test.mjs': 'seamFn();\n' });
+  execFileSync('git', ['-C', join(root, 'tests'), 'init', '-q']);
+  assert.equal(scan(root).ok, true);
+  assert.deepEqual(idx(root).nested_paths, []);
+  assert.deepEqual(symOf(root, 'src/x.mjs', 'seamFn').pinned_by, { files: ['tests/a.test.mjs'], total: 1, approximate: true });
+});
+
+test('a tracked foo.test.mjs pins and is no caller, and a Rust file holding cfg(test) pins itself', () => {
+  const { root } = repo({
+    'src/foo.mjs': 'export function fooFn() {}\n',
+    'src/foo.test.mjs': "import { fooFn } from './foo.mjs';\nfooFn();\n",
+    'src/user.mjs': 'fooFn();\n',
+    'src/lib.rs': 'pub fn run() {}\n#[cfg(test)]\nmod tests {}\n',
+    'src/plain.rs': 'pub fn quiet() {}\n',
+  });
+  scan(root);
+  assert.deepEqual(symOf(root, 'src/foo.mjs', 'fooFn').callers.files, ['src/user.mjs']);
+  assert.deepEqual(symOf(root, 'src/foo.mjs', 'fooFn').pinned_by.files, ['src/foo.test.mjs']);
+  assert.deepEqual(rowOf(root, 'src/foo.mjs').pinned_by.files, ['src/foo.test.mjs']);
+  assert.deepEqual(rowOf(root, 'src/lib.rs').pinned_by, { files: ['src/lib.rs'], total: 1, approximate: true });
+  assert.equal(rowOf(root, 'src/plain.rs').pinned_by, undefined);
+});
+
+test('a generic stem named by more tests than the cap comes back approximate with the true count', () => {
+  const files = { 'src/index.js': 'export const x = 1;\n' };
+  for (let i = 0; i < 12; i++) files[`spec/t${String(i).padStart(2, '0')}.test.js`] = 'run the index here\n';
+  const { root } = repo(files);
+  scan(root);
+  const p = rowOf(root, 'src/index.js').pinned_by;
+  assert.equal(p.approximate, true);
+  assert.equal(p.total, 12);
+  assert.equal(p.files.length, 10);
 });
