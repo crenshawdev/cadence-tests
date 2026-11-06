@@ -109,3 +109,28 @@ test('a setting with no effect can still be picked, and the block says so', () =
   const s = flat(section(MENU_MD, 'A group'));
   assert.match(s, /A setting with no effect can still be picked, because it may be set up ahead of its gate, so end that line with "You can still set it now\."/);
 });
+
+test('a group pick shows the preview before set, with a yes between them', () => {
+  const s = flat(section(MENU_MD, 'A group'));
+  const preview = s.indexOf('config.mjs" preview <key>=<value>');
+  const yes = s.indexOf('ask for a yes in a turn of its own');
+  const set = s.indexOf('config.mjs" set');
+  assert.ok(preview !== -1 && yes !== -1 && set !== -1);
+  assert.ok(preview < yes && yes < set, `order is ${preview}, ${yes}, ${set}`);
+  assert.match(s, /If you pick <value>:/);
+  assert.match(s, /it stays off until both files are set/);
+});
+
+test('walk step 4 previews the batch once before the write and says a mixed batch is two set calls', () => {
+  const walk = flat(section(CONFIG_MD, 'Interactive menu (no args)'));
+  const step4 = walk.slice(walk.indexOf('4. After the last page'), walk.indexOf('5. `review.providers`'));
+  assert.match(step4, /run `config\.mjs preview <key=value>…` once for the whole batch/);
+  assert.match(step4, /ask for a yes in a turn of its own, then write/);
+  assert.ok(step4.indexOf('preview') < step4.indexOf('`config.mjs set`'));
+  assert.match(step4, /a batch for both layers is two `set` calls/);
+  assert.match(flat(section(CONFIG_MD, 'Interactive menu (no args)')), /one `set` call per file/);
+});
+
+test('Direct set names no preview, so key=value and the guided flags get no new prompt', () => {
+  assert.doesNotMatch(section(CONFIG_MD, 'Direct set'), /preview/i);
+});
