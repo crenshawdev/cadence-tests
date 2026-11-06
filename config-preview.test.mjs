@@ -195,3 +195,16 @@ test('a torn layer is refused naming the file, and a missing repo config is refu
   // a global-only batch needs no repo config
   assert.equal(preview(none, 'workflow.test_command=x').ok, true);
 });
+
+test('a refusal by the scratch set names the real config file, never the deleted scratch copy', () => {
+  const repo = fixture({ repo: { review: 'x' } });
+  const r = preview(repo, 'review.request_timeout_ms=600000');
+  assert.deepEqual([r.ok, r.reason], [false, 'invalid']);
+  assert.ok(r.hint.includes(repo.repoFile), r.hint);
+  assert.doesNotMatch(JSON.stringify(r), /\/cad-preview-(?!test-)/);
+  const glob = fixture({ repo: { ...AUTH }, global: { workflow: 'x' } });
+  const g = preview(glob, 'workflow.test_command=y');
+  assert.deepEqual([g.ok, g.reason], [false, 'invalid']);
+  assert.ok(g.hint.includes(glob.g), g.hint);
+  assert.doesNotMatch(JSON.stringify(g), /\/cad-preview-(?!test-)/);
+});
