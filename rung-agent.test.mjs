@@ -586,13 +586,22 @@ test('the reviewer brief and contract both state the four rules, and the schema 
     ['claim', 'failure_scenario', 'file', 'line', 'severity']);
 });
 
-// The reader's contract (Phase 3 D-02, D-03): no agent file preloads it until the rung files land, so self-verify cannot
-// lint it yet and this holds the words that matter.
+// The reader's contract (Phase 3 D-02, D-03): the five rung files preload it, so self-verify's check 27 already lints
+// the data rule; this holds the words check 27 doesn't read.
 test('the mapper contract carries the data rule, sends the reader to whole files, and holds no Bash', () => {
   const text = readFileSync(join(REPO, 'skills', 'cad-mapper-contract', 'SKILL.md'), 'utf8');
   assert.deepEqual(dataRuleIssues(text), []);
   for (const tool of ['Read', 'Grep', 'Glob']) assert.match(text, new RegExp(`\\b${tool}\\b`), tool);
   assert.match(text, /Never use `skim`/);
+  // A refresh: whole files on a first build and `refresh: whole`; on `refresh: diff` the added paths, never `changed` wholesale.
+  const collapsed = collapse(text);
+  assert.match(collapsed, /On a first build and on `refresh: whole`, read every file in `read` whole/);
+  for (const part of ['`refresh: diff`', '`old_entry`', 'Open every path in `added` whole', 'Drop every citation of a path in `removed`',
+    'Keep the evidence on unchanged paths without re-reading it', 'you open a file only if `read` lists it', 'paths the old entry cited that are unchanged']) {
+    assert.ok(collapsed.includes(part), `the refresh rules lack: ${part}`);
+  }
+  assert.doesNotMatch(collapsed, /Open every path in `changed`|read every listed file/);
+  for (const key of ['changed', 'added', 'removed']) assert.match(collapsed, new RegExp(`\\\`${key}\\\``), key);
   assert.match(text, /relative to the root/);
   assert.match(text, /item file's `symbols`/);
   assert.doesNotMatch(text, /Bash/);
