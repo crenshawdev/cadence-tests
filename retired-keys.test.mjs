@@ -4,11 +4,12 @@
 // ONE test() per row, deliberately: a table asserted inside a single test()
 // with a sequential loop reports the loop's count, not the rows', so a row that
 // never ran still looks green (prior-project finding, CAPTURE.md).
-// Only node: builtins, no subprocess - the lib is pure.
+// Only node: builtins. The lib is pure; the model.* rows alone call `config.mjs check` to prove `set` takes the replacement.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { RETIRED_KEYS, retiredKeyError, retiredKeysIn } from '../cadence-core/bin/lib/retired-keys.mjs';
 
@@ -79,7 +80,13 @@ const RETIRED_KEYS_FILE = fileURLToPath(new URL('../cadence-core/bin/lib/retired
 // An EIGHTH time, off
 // `f3fcc60a98ad9e863160549968912302710a7b3c260add1714a32dc908e59878`, by decision: John said "shorten the comments", so
 // the header comment in lib/retired-keys.mjs was cut shorter. No row's key, `replacement`, `since` or `detail` moved.
-const RETIRED_KEYS_SHA256 = '027bdec35a9400fe7053dc6abc045f19b211b5e4fe9a257c96316105ac1414d9';
+//
+// A NINTH time, off
+// `027bdec35a9400fe7053dc6abc045f19b211b5e4fe9a257c96316105ac1414d9`, by decision: John picked "Retire model.*, move one (Recommended)", so the twelve
+// `model.overrides.<role>` and `model.effort.<role>` keys joined this map in the commit that took them out
+// of the schema. Each row names its `roles.<role>.model` or `roles.<role>.effort` replacement, and all
+// twelve share one builder beside the legacy switch one.
+const RETIRED_KEYS_SHA256 = '6ab43ed62b3e829b53414b6ffcd72f1d1dbafe3708d8b27b6886415c67a9444a';
 
 test('lib/retired-keys.mjs is byte-identical - the eight risk.override.* keys stay retired', () => {
   // WHAT THIS PROTECTS. D-03 keeps the retired family retired because a key
@@ -226,6 +233,78 @@ test('workflow.check_inspection is retired in v3.11.1 and its detail names both 
 
 test('workflow.independent_rerun is retired in v3.11.1 and its detail names both unset commands', () => {
   assertLegacySwitchRow('workflow.independent_rerun');
+});
+
+// --- the twelve per-role model.* fallbacks (v4.0.0) --------------------------
+
+const CONFIG = fileURLToPath(new URL('../cadence-core/bin/config.mjs', import.meta.url));
+
+/**
+ * One row's contract: retired in v4.0.0, the error renders the roles replacement and both unset commands, the
+ * read face warns once, and `config.mjs check` accepts the replacement, so the text never points at a refused write.
+ * @param {string} key
+ * @param {string} replacement
+ */
+function assertModelRow(key, replacement) {
+  const e = retiredKeyError(key);
+  assert.match(e, /^retired in v4\.0\.0: /);
+  assert.ok(e.includes(`use "${replacement}" instead`), e);
+  assert.ok(e.includes(`config.mjs unset ${key}`), e);
+  assert.ok(e.includes(`config.mjs unset --global ${key}`), e);
+  const [a, b, c] = key.split('.');
+  const w = retiredKeysIn({ [a]: { [b]: { [c]: null } } });
+  assert.equal(w.length, 1, JSON.stringify(w));
+  assert.match(w[0], /was retired in v4\.0\.0 and is ignored/);
+  const checked = JSON.parse(execFileSync('node', [CONFIG, 'check', `${replacement}=null`], { encoding: 'utf8' }));
+  assert.deepEqual(checked, { ok: true }, replacement);
+}
+
+test('model.overrides.cad-planner is retired in v4.0.0 and names roles.cad-planner.model', () => {
+  assertModelRow('model.overrides.cad-planner', 'roles.cad-planner.model');
+});
+
+test('model.overrides.cad-assumptions-analyzer is retired in v4.0.0 and names roles.cad-assumptions-analyzer.model', () => {
+  assertModelRow('model.overrides.cad-assumptions-analyzer', 'roles.cad-assumptions-analyzer.model');
+});
+
+test('model.overrides.cad-verifier is retired in v4.0.0 and names roles.cad-verifier.model', () => {
+  assertModelRow('model.overrides.cad-verifier', 'roles.cad-verifier.model');
+});
+
+test('model.overrides.cad-reviewer is retired in v4.0.0 and names roles.cad-reviewer.model', () => {
+  assertModelRow('model.overrides.cad-reviewer', 'roles.cad-reviewer.model');
+});
+
+test('model.overrides.cad-executor is retired in v4.0.0 and names roles.cad-executor.model', () => {
+  assertModelRow('model.overrides.cad-executor', 'roles.cad-executor.model');
+});
+
+test('model.overrides.cad-plan-checker is retired in v4.0.0 and names roles.cad-plan-checker.model', () => {
+  assertModelRow('model.overrides.cad-plan-checker', 'roles.cad-plan-checker.model');
+});
+
+test('model.effort.cad-planner is retired in v4.0.0 and names roles.cad-planner.effort', () => {
+  assertModelRow('model.effort.cad-planner', 'roles.cad-planner.effort');
+});
+
+test('model.effort.cad-assumptions-analyzer is retired in v4.0.0 and names roles.cad-assumptions-analyzer.effort', () => {
+  assertModelRow('model.effort.cad-assumptions-analyzer', 'roles.cad-assumptions-analyzer.effort');
+});
+
+test('model.effort.cad-verifier is retired in v4.0.0 and names roles.cad-verifier.effort', () => {
+  assertModelRow('model.effort.cad-verifier', 'roles.cad-verifier.effort');
+});
+
+test('model.effort.cad-reviewer is retired in v4.0.0 and names roles.cad-reviewer.effort', () => {
+  assertModelRow('model.effort.cad-reviewer', 'roles.cad-reviewer.effort');
+});
+
+test('model.effort.cad-executor is retired in v4.0.0 and names roles.cad-executor.effort', () => {
+  assertModelRow('model.effort.cad-executor', 'roles.cad-executor.effort');
+});
+
+test('model.effort.cad-plan-checker is retired in v4.0.0 and names roles.cad-plan-checker.effort', () => {
+  assertModelRow('model.effort.cad-plan-checker', 'roles.cad-plan-checker.effort');
 });
 
 // --- retiredKeysIn: the read faces --------------------------------------------

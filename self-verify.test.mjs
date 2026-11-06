@@ -312,13 +312,8 @@ test('placeholder keys expand: <t> prose covers every trigger key', () => {
     '`review.consult.attempt_threshold` `review.decision_review.tier`\n' +
     '`review.decision_review.effort` `model.escalate_on_failure`\n' +
     '`granularity`\n' +
-    // Two-segment FAMILY tokens, one each for the six per-role pins and the six
-    // per-role start rungs: 1b counts a >=2-segment prefix as a reader, so the
-    // bare family covers all six without naming a role.
-    '`model.overrides` `model.effort`\n' +
-    // The roles family cannot be covered that way: `roles` alone is one segment
-    // and 1b refuses a bare family name as a reader, so these two go through the
-    // <role> placeholder expand() carries.
+    // `roles` alone is one segment and 1b refuses a bare family name as a reader,
+    // so these two go through the <role> placeholder expand() carries.
     '`roles.<role>.model` `roles.<role>.effort`\n' +
     '`workflow.research` `workflow.plan_check` `workflow.verifier` `workflow.skip_discuss`\n' +
     '`workflow.inline_plan_threshold` `workflow.test_command`\n' +
@@ -1220,10 +1215,10 @@ test('check 9: a dead token in the reach doc PROSE is still scanned by check 1',
 
 test('check 1: a hyphenated key spelled in full is known, a truncated guess is not', () => {
   // The tokenizer's segment class has no hyphen, so
-  // `model.overrides.cad-planner` tokenizes to `model.overrides.cad` - the
+  // `roles.cad-planner.model` tokenizes to `roles.cad` - the
   // correct spelling of a real key must not report unknown. `_` is in the
   // class, so `git.on` is still a truncated guess, not a boundary.
-  const root = fixture('Pin one role with `model.overrides.cad-planner`, not `git.on`.\n');
+  const root = fixture('Pin one role with `roles.cad-planner.model`, not `git.on`.\n');
   const p = run(['--root', root]).problems.filter((x) => x.kind === 'unknown-config-key');
   assert.deepEqual(p.map((x) => x.detail), ['git.on'], JSON.stringify(p));
 });
@@ -1319,7 +1314,7 @@ test('check 10: the SAME sentence in a skill is out of scope (directory scope)',
   assert.deepEqual(p, []);
 });
 
-// --- 8b. the shipped model.effort enums against RUNG_FILES (RNG-02) ----------
+// --- 8b. the shipped roles effort enums against RUNG_FILES (RNG-02) ----------
 
 /**
  * A tree carrying its OWN config.schema.json (the shipped one, with `transform`
@@ -1341,31 +1336,31 @@ function schemaFixture(transform) {
   return root;
 }
 
-test('a drifted model.effort enum fails on a tree holding only the schema', () => {
+test('a drifted roles effort enum fails on a tree holding only the schema', () => {
   const root = schemaFixture((keys) => ({
     ...keys,
-    'model.effort.cad-planner': { ...keys['model.effort.cad-planner'], values: ['high', null] },
+    'roles.cad-planner.effort': { ...keys['roles.cad-planner.effort'], values: ['high', null] },
   }));
   const r = run(['--root', root]);
   const drift = r.problems.filter((p) => p.kind === 'effort-enum-drift');
   assert.equal(drift.length, 1, JSON.stringify(r.problems));
-  assert.match(drift[0].detail, /model\.effort\.cad-planner/);   // BY KEY
+  assert.match(drift[0].detail, /roles\.cad-planner\.effort/);   // BY KEY
   assert.equal(drift[0].file, 'cadence-core/config.schema.json'); // the file to edit
   // ...and it really did run off that ONE file, which is the point of the row:
   // the fixture writes no weight budgets, no agents and no reach doc.
   assert.deepEqual(readdirSync(join(root, 'agents')), []);
 });
 
-test('a model.effort key naming no role in the map is named too', () => {
+test('a roles effort key naming no role in the map is named too', () => {
   const root = schemaFixture((keys) => ({
     ...keys,
-    'model.effort.cad-nonesuch': { type: 'enum', values: ['high', null], default: null,
+    'roles.cad-nonesuch.effort': { type: 'enum', values: ['high', null], default: null,
       purpose: 'a role lib/rung-agent.mjs does not file' },
   }));
   const kinds = run(['--root', root]).problems;
   const named = kinds.filter((p) => p.kind === 'unknown-effort-role');
   assert.equal(named.length, 1, JSON.stringify(kinds));
-  assert.match(named[0].detail, /model\.effort\.cad-nonesuch/);
+  assert.match(named[0].detail, /roles\.cad-nonesuch\.effort/);
 });
 
 test('an unmutated schema in that same tree reports no effort-enum problem', () => {

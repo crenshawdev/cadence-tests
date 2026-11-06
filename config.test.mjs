@@ -888,7 +888,7 @@ test('keys --walk returns only question-bearing keys in position order, typed en
 });
 
 test('keys --walk on the shipped schema holds every walk key, in position order, under 25,000 bytes', () => {
-  const NOT_ASKED = ['model.overrides.', 'model.effort.', 'workflow.max_dispatch_tokens.', 'review.providers.', 'review.decision_review.'];
+  const NOT_ASKED = ['workflow.max_dispatch_tokens.', 'review.providers.', 'review.decision_review.'];
   const shipped = JSON.parse(readFileSync(join(dirname(CONFIG), '..', 'config.schema.json'), 'utf8')).keys;
   const expected = Object.keys(shipped).filter((k) => !NOT_ASKED.some((p) => k.startsWith(p)));
   assert.ok(expected.length < Object.keys(shipped).length && expected.length > 0, 'the exclusion list names real keys');
@@ -995,34 +995,34 @@ test('SCP-01: the SHIPPED keys carrying the marker are the ones that authorize, 
     assert.equal(shipped[k].repo_only, undefined, `${k} carries no repo_only marker`);
   }
 
-  // `src: "repo"` means "settable in either layer" and 34 keys carry it -
+  // `src: "repo"` means "settable in either layer" and 28 keys carry it -
   // `granularity` and `review.mode` among them, keys a user legitimately pins
   // machine-wide - so no key may inherit the refusal from it.
   const srcRepo = Object.keys(shipped).filter((k) => shipped[k].src === 'repo');
-  assert.equal(srcRepo.length, 34, JSON.stringify(srcRepo));
+  assert.equal(srcRepo.length, 28, JSON.stringify(srcRepo));
   for (const k of ['granularity', 'review.mode', 'git.auto_close']) {
     assert.ok(srcRepo.includes(k), `${k} carries src:"repo"`);
   }
   assert.deepEqual(srcRepo.filter((k) => shipped[k].repo_only !== undefined), []);
 });
 
-// --- model.effort.<role>: the per-role start rung, refused by key (RNG-02) ---
+// --- roles.<role>.effort: the per-role start rung, refused by key (RNG-02) ---
 
 test('check: a rung the role HAS is accepted', () => {
   // Every role carries every rung of the ladder in lib/rung-agent.mjs (RNG-06),
   // so the accepted set is the same five for all six keys.
-  assert.deepEqual(run(['check', 'model.effort.cad-verifier=xhigh']), { ok: true });
+  assert.deepEqual(run(['check', 'roles.cad-verifier.effort=xhigh']), { ok: true });
 });
 
 test('check: a rung the role LACKS is refused by key, naming that role\'s set', () => {
   // Refused BY KEY, and the message names the set that key accepts. `ultra` is
   // outside rung_order entirely: with the ladder complete no role LACKS a real
   // rung any more, so the value that reaches this arm is one no role can file.
-  const r = run(['check', 'model.effort.cad-executor=ultra']);
+  const r = run(['check', 'roles.cad-executor.effort=ultra']);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'invalid');
   assert.equal(r.detail.length, 1);
-  assert.equal(r.detail[0].key, 'model.effort.cad-executor'); // BY KEY
+  assert.equal(r.detail[0].key, 'roles.cad-executor.effort'); // BY KEY
   assert.equal(r.detail[0].error, 'must be one of: low, medium, high, xhigh, max, null');
 });
 
@@ -1030,12 +1030,12 @@ test('check: null renders as the literal, not as a dangling separator', () => {
   // Every `default: null` enum ends its accepted set with null; Array#join
   // rendered it as '' and the message read "…: high, xhigh, " - a truncated
   // sentence rather than a settable value.
-  const r = run(['check', 'model.effort.cad-planner=ultra']);
+  const r = run(['check', 'roles.cad-planner.effort=ultra']);
   assert.equal(r.ok, false);
   assert.equal(r.detail[0].error, 'must be one of: low, medium, high, xhigh, max, null');
   assert.ok(!/,\s*$/.test(r.detail[0].error));
   // and the literal IS accepted, so the message is not advertising a fiction
-  assert.deepEqual(run(['check', 'model.effort.cad-planner=null']), { ok: true });
+  assert.deepEqual(run(['check', 'roles.cad-planner.effort=null']), { ok: true });
 });
 
 test('set: the WRITE face refuses the same value and writes nothing', () => {
@@ -1045,11 +1045,11 @@ test('set: the WRITE face refuses the same value and writes nothing', () => {
   const repo = join(dir, 'effort-write.json');
   writeFileSync(repo, JSON.stringify({ granularity: 'standard' }, null, 2) + '\n');
   const before = readFileSync(repo, 'utf8');
-  const r = run(['set', '--file', repo, 'model.effort.cad-executor=ultra'],
+  const r = run(['set', '--file', repo, 'roles.cad-executor.effort=ultra'],
     join(dir, 'effort-no-global.json'));
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'invalid');
-  assert.equal(r.detail[0].key, 'model.effort.cad-executor');
+  assert.equal(r.detail[0].key, 'roles.cad-executor.effort');
   assert.equal(r.detail[0].error, 'must be one of: low, medium, high, xhigh, max, null');
   assert.equal(readFileSync(repo, 'utf8'), before); // byte-identical
 });
@@ -1057,38 +1057,38 @@ test('set: the WRITE face refuses the same value and writes nothing', () => {
 test('set: an accepted rung is written into the config layer, not the plugin', () => {
   const repo = join(dir, 'effort-write-ok.json');
   writeFileSync(repo, JSON.stringify({ granularity: 'standard' }, null, 2) + '\n');
-  const r = run(['set', '--file', repo, 'model.effort.cad-verifier=xhigh'],
+  const r = run(['set', '--file', repo, 'roles.cad-verifier.effort=xhigh'],
     join(dir, 'effort-no-global.json'));
   assert.equal(r.ok, true);
   assert.deepEqual(JSON.parse(readFileSync(repo, 'utf8')),
-    { granularity: 'standard', model: { effort: { 'cad-verifier': 'xhigh' } } });
+    { granularity: 'standard', roles: { 'cad-verifier': { effort: 'xhigh' } } });
 });
 
 test('validate: a whole config carrying a bad start rung names the key', () => {
   const repo = join(dir, 'effort-validate.json');
-  writeFileSync(repo, JSON.stringify({ model: { effort: { 'cad-plan-checker': 'ultra' } } }));
+  writeFileSync(repo, JSON.stringify({ roles: { 'cad-plan-checker': { effort: 'ultra' } } }));
   const r = run(['validate', '--file', repo], join(dir, 'effort-no-global.json'));
   assert.equal(r.ok, false);
   assert.deepEqual(r.errors, [{
-    key: 'model.effort.cad-plan-checker',
+    key: 'roles.cad-plan-checker.effort',
     error: 'must be one of: low, medium, high, xhigh, max, null',
     value: 'ultra',
   }]);
 });
 
-test('every model.effort enum is exactly that role\'s rung set from RUNG_FILES', () => {
+test('every roles effort enum is exactly that role\'s rung set from RUNG_FILES', () => {
   // The schema shipped here is the one config.mjs refuses against; if it drifts
   // from the map, the refusal starts refusing the wrong values. self-verify
   // holds the same invariant for CI - this row holds it for the write face.
   const schema = JSON.parse(readFileSync(
     join(dirname(CONFIG), '..', 'config.schema.json'), 'utf8')).keys;
   for (const [role, map] of Object.entries(RUNG_FILES)) {
-    const spec = schema[`model.effort.${role}`];
-    assert.ok(spec, `no model.effort.${role} key`);
+    const spec = schema[`roles.${role}.effort`];
+    assert.ok(spec, `no roles.${role}.effort key`);
     assert.deepEqual(spec.values, [...Object.keys(map), null]);
-    assert.equal(spec.default, null);
+    assert.ok(Object.hasOwn(map, spec.default), `${role} defaults to a rung it has a file for`);
   }
-  assert.equal(Object.keys(schema).filter((k) => k.startsWith('model.effort.')).length,
+  assert.equal(Object.keys(schema).filter((k) => /^roles\..+\.effort$/.test(k)).length,
     Object.keys(RUNG_FILES).length);
 });
 
@@ -2203,6 +2203,62 @@ test('a file holding a legacy switch still takes a set of another key, and unset
   assert.deepEqual(ug.removed, ['workflow.independent_rerun']);
   const after = run(['get', '--file', f, 'granularity'], gpath);
   assert.equal(after.warnings, undefined, JSON.stringify(after.warnings));
+});
+
+// --- the twelve per-role model.* fallbacks: retired in v4.0.0 -----------------
+
+const RETIRED_MODEL_PAIR = { 'model.effort.cad-executor': 'high', 'model.overrides.cad-executor': 'opus' };
+const RETIRED_MODEL_CONFIG = { model: { effort: { 'cad-executor': 'high' }, overrides: { 'cad-executor': 'opus' } } };
+
+test('get: a retired model.* key at either layer warns naming its roles replacement and both unset commands', () => {
+  for (const layer of ['repo', 'global']) {
+    const repo = join(dir, `retired-model-get-${layer}-repo.json`);
+    const gpath = join(dir, `retired-model-get-${layer}-global.json`);
+    writeFileSync(repo, JSON.stringify(layer === 'repo' ? RETIRED_MODEL_CONFIG : { granularity: 'fine' }));
+    writeFileSync(gpath, JSON.stringify(layer === 'global' ? RETIRED_MODEL_CONFIG : {}));
+    const r = run(['get', '--file', repo, 'granularity'], gpath);
+    assert.equal(r.ok, true, layer);
+    for (const [key, replacement] of [['model.effort.cad-executor', 'roles.cad-executor.effort'],
+      ['model.overrides.cad-executor', 'roles.cad-executor.model']]) {
+      const w = retiredWarnings(r, key);
+      assert.equal(w.length, 1, `${layer} ${key}: ${JSON.stringify(r.warnings)}`);
+      assert.match(w[0], /was retired in v4\.0\.0 and is ignored/);
+      assert.ok(w[0].includes(`use "${replacement}" instead`), w[0]);
+      assert.ok(w[0].includes(`config.mjs unset ${key}`), w[0]);
+      assert.ok(w[0].includes(`config.mjs unset --global ${key}`), w[0]);
+    }
+  }
+});
+
+test('set refuses a retired model.* key at either layer with one text, while set of another key and unset both succeed', () => {
+  for (const [key, value] of Object.entries(RETIRED_MODEL_PAIR)) {
+    const gpath = join(dir, `retired-model-set-${key}-global.json`);
+    writeFileSync(gpath, JSON.stringify(RETIRED_MODEL_CONFIG));
+    const f = join(dir, `retired-model-set-${key}-repo.json`);
+    writeFileSync(f, JSON.stringify(RETIRED_MODEL_CONFIG));
+    const gBefore = sha256(gpath);
+    const fBefore = sha256(f);
+    const g = run(['set', '--global', `${key}=${value}`], gpath);
+    const r = run(['set', '--file', f, `${key}=${value}`], gpath);
+    for (const x of [g, r]) {
+      assert.equal(x.ok, false, key);
+      assert.equal(x.reason, 'invalid', key);
+      assert.equal(x.detail[0].key, key);
+      assert.match(x.detail[0].error, /^retired in v4\.0\.0: use "roles\.cad-executor\.(model|effort)" instead/);
+    }
+    assert.equal(g.detail[0].error, r.detail[0].error, key);
+    assert.equal(sha256(gpath), gBefore, key);
+    assert.equal(sha256(f), fBefore, key);
+
+    assert.equal(run(['set', '--file', f, 'granularity=fine'], gpath).ok, true, key);
+    assert.equal(run(['set', '--global', 'granularity=coarse'], gpath).ok, true, key);
+    const u = run(['unset', '--file', f, key], gpath);
+    assert.equal(u.ok, true, JSON.stringify(u));
+    assert.deepEqual(u.removed, [key]);
+    const ug = run(['unset', '--global', key], gpath);
+    assert.equal(ug.ok, true, JSON.stringify(ug));
+    assert.deepEqual(ug.removed, [key]);
+  }
 });
 
 // --- the two workflow switches: on only when both layers say so ----------------
