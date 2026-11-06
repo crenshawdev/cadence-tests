@@ -265,6 +265,12 @@ test('with the switch off no arguments opens the walk, with it on the opening sc
   assert.match(flat(MENU_MD), /only while `workflow\.config_menu` is true/);
 });
 
+test('a group list says how to finish, and finishing is what runs the follow-ups', () => {
+  const s = flat(section(MENU_MD, 'A group'));
+  assert.match(s, /The last line says `done` finishes the group\. Plain text that ends the turn/);
+  assert.match(s, /\*\*Leaving\.\*\* When they say `done`, or otherwise that they're finished, run \*\*Worktree base ref\*\*/);
+});
+
 test('the list and the block say a dropped reviewer is not in force and why', () => {
   const s = flat(section(MENU_MD, 'A group'));
   assert.match(s, /A row with `dropped` says each name there is not in force, because your global `review\.reviewers` has to name it too/);
