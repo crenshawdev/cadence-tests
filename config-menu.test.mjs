@@ -112,7 +112,7 @@ test('a setting with no effect can still be picked, and the block says so', () =
 
 test('a group pick shows the preview before set, with a yes between them', () => {
   const s = flat(section(MENU_MD, 'A group'));
-  const preview = s.indexOf('config.mjs" preview <key>=<value>');
+  const preview = s.indexOf('config.mjs" preview <key>="$(cat <D>/value.json)"');
   const yes = s.indexOf('ask for a yes in a turn of its own');
   const set = s.indexOf('config.mjs" set');
   assert.ok(preview !== -1 && yes !== -1 && set !== -1);
@@ -124,7 +124,7 @@ test('a group pick shows the preview before set, with a yes between them', () =>
 test('walk step 4 previews the batch once before the write and says a mixed batch is two set calls', () => {
   const walk = flat(section(CONFIG_MD, 'Interactive menu (no args)'));
   const step4 = walk.slice(walk.indexOf('4. After the last page'), walk.indexOf('5. `review.providers`'));
-  assert.match(step4, /run `config\.mjs preview <key=value>…` once for the whole batch/);
+  assert.match(step4, /Run `config\.mjs preview <key>="\$\(cat <path>\)"…` once for the whole batch/);
   assert.match(step4, /ask for a yes in a turn of its own, then write/);
   assert.ok(step4.indexOf('preview') < step4.indexOf('`config.mjs set`'));
   assert.match(step4, /a batch for both layers is two `set` calls/);
@@ -177,4 +177,17 @@ test('a sentence hands a provider match to provider setup by its keys, after mat
   assert.match(s, /The test is the matched keys, not the words used: `set up OpenAI reviews`/);
   const handOff = s.indexOf('**Provider hand-off.**');
   assert.ok(s.indexOf('**Matching.**') < handOff && handOff < s.indexOf('**Showing.**'));
+});
+
+test('a typed value reaches the preview and set through a scratch file, in a pick and in the walk', () => {
+  const s = flat(section(MENU_MD, 'A group'));
+  assert.match(s, /write the new value as JSON to a file in it with the Write tool \(`<D>\/value\.json`\)/);
+  assert.match(s, /config\.mjs" set \[--global\] <key>="\$\(cat <D>\/value\.json\)"/);
+  assert.doesNotMatch(s, /(preview|set \[--global\]) <key>=<value>/);
+  assert.ok(s.indexOf('mktemp -d') < s.indexOf('config.mjs" preview'));
+  const walk = flat(section(CONFIG_MD, 'Interactive menu (no args)'));
+  const step4 = walk.slice(walk.indexOf('4. After the last page'), walk.indexOf('5. `review.providers`'));
+  assert.match(step4, /write each changed value as JSON to its own file in a directory this run made/);
+  assert.match(step4, /pass the preview and `set` each key as `<key>="\$\(cat <path>\)"`/);
+  assert.ok(step4.indexOf('mktemp -d') < step4.indexOf('config.mjs preview'));
 });
