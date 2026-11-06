@@ -265,6 +265,41 @@ test('with the switch off no arguments opens the walk, with it on the opening sc
   assert.match(flat(MENU_MD), /only while `workflow\.config_menu` is true/);
 });
 
+test('a setting that needs both files offers the global write behind its own yes, in a group and in a sentence', () => {
+  const s = flat(section(MENU_MD, 'A group'));
+  const first = s.indexOf('Only after the yes, call `set`');
+  const ask = s.indexOf('**The second file.**');
+  const yes = s.indexOf('Only after that yes, write the global file');
+  const write = s.indexOf('config.mjs" set --global <key>="$(cat <D>/value.json)"');
+  assert.ok(first !== -1 && first < ask && ask < yes && yes < write, `order is ${first}, ${ask}, ${yes}, ${write}`);
+  assert.match(s, /a value there counts for any repo that also sets this key/);
+  assert.match(s, /A no leaves the repo value as it is and the setting off/);
+  assert.match(s, /Picking true where the repo already stores true writes nothing to the repo, and \*\*The second file\*\* still runs/);
+  assert.match(flat(section(MENU_MD, 'A sentence')), /named a `second_file` then takes \*\*The second file\*\* from \*\*A group\*\*/);
+});
+
+// the prose only helps if the seam takes the write it asks for, so prove the two writes really turn the setting on
+test('the repo write leaves each both-file key off, and the global write the menu offers turns it on', () => {
+  for (const key of ['git.auto_close', 'workflow.use_workflows', 'workflow.multi_workflow']) {
+    const root = mkdtempSync(join(tmpdir(), 'cad-second-file-'));
+    try {
+      mkdirSync(join(root, '.planning'));
+      writeFileSync(join(root, '.planning', 'config.json'), '{}');
+      const g = join(root, 'g.json');
+      const run = (...args) => JSON.parse(execFileSync('node', [CONFIG_MJS, ...args],
+        { encoding: 'utf8', cwd: root, env: { ...process.env, CADENCE_GLOBAL_CONFIG: g } }));
+      run('set', `${key}=true`);
+      const pair = run('preview', `${key}=true`).files[0].pairs[0];
+      assert.equal(pair.stays_off, true, key);
+      assert.equal(pair.second_file.layer, 'global', key);
+      assert.equal(run('layers', '--key', key).row.value, false, key);
+      run('set', '--global', `${key}=true`);
+      assert.equal(run('layers', '--key', key).row.value, true, key);
+      assert.equal(run('preview', `${key}=true`).files[0].pairs[0].stays_off, undefined, key);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
 test('a group list says how to finish, and finishing is what runs the follow-ups', () => {
   const s = flat(section(MENU_MD, 'A group'));
   assert.match(s, /The last line says `done` finishes the group\. Plain text that ends the turn/);
