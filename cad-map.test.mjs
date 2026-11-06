@@ -81,7 +81,7 @@ test('the steps appear in order: claim, resolve, status --out-dir, launch, end o
     'Launch the `Workflow` tool by its named entry `cadence:code-map`',
     'Otherwise end the turn',
     'codemap write --run-file',
-    'Release the claim right after this call returns, whether it succeeded or refused',
+    'Release the claim right after the call returns any other answer, whether it succeeded or refused',
   ], after);
 });
 
@@ -135,13 +135,25 @@ test('a held claim names its holder and age, and the release line for a holder t
 
 test('codemap write carries --launch-file and the notice\'s totals, and the claim is released whether it succeeded or refused', () => {
   assert.match(MAP, /codemap write --run-file <run file> --launch-file <the launch file status printed> \[--notice-tokens <n> --notice-turns <n> --notice-duration-ms <n>\]/);
-  assert.match(MAP, /Release the claim right after this call returns, whether it succeeded or refused/);
+  assert.match(MAP, /Release the claim right after the call returns any other answer, whether it succeeded or refused/);
 });
 
 test('the end names what was written, each refused module, each dead reader, and that only those rebuild', () => {
   assert.match(MAP, /Print `written`, each `refused` module with the reason it names, each `dead` reader, and each `missing` module/);
   assert.match(MAP, /stay stale and that `\/cad-map` again rebuilds only them/);
-  assert.match(MAP, /A refusal of the call is named in one line: its agents are already billed/);
+  assert.match(MAP, /A refusal of the call is named in one line\. One carrying `brackets` has billed its agents, and a `bad-args` one has billed nothing/);
+});
+
+test('a bad-args refusal is corrected and the same call run again before the release', () => {
+  const i = MAP.indexOf('A `bad-args` refusal has billed and written nothing');
+  assert.ok(i > 0, 'the bad-args arm is not stated');
+  assert.match(MAP, /A `bad-args` refusal has billed and written nothing and the run file is still good, so correct the flag it names and run the same call again before you stop/);
+  assert.ok(i < MAP.indexOf('Release the claim right after the call returns any other answer'), 'the retry comes before the release rule');
+});
+
+test('a partial view of the launch file is read whole, or the run stops released and never launches from it', () => {
+  assert.match(MAP, /If `Read` answers a partial view, follow its instruction to read the whole file; if the whole file can't be had, name that in one line, release the claim and start nothing, and never launch from a partial view/);
+  assert.ok(!/allow_large/.test(MAP), 'a host parameter is named');
 });
 
 // --- the rules the lints hold ------------------------------------------------
