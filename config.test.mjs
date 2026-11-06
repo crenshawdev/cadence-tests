@@ -2256,7 +2256,10 @@ test('a workflow switch is on only when both layers set an explicit true', () =>
 });
 
 test('the workflow switches default false, refuse a non-boolean, and warn in the walk', () => {
-  const got = run(['get', ...WORKFLOW_SWITCHES], join(dir, 'no-wf-global.json'));
+  // --file pins the repo layer, or a machine whose own .planning/config.json turns a switch on reads true
+  const emptyRepo = join(dir, 'wf-empty-repo.json');
+  writeFileSync(emptyRepo, '{}');
+  const got = run(['get', '--file', emptyRepo, ...WORKFLOW_SWITCHES], join(dir, 'no-wf-global.json'));
   for (const key of WORKFLOW_SWITCHES) {
     assert.equal(got.values[key], false);
     const bad = run(['set', '--file', join(dir, 'wf-bad.json'), `${key}=yes`], join(dir, 'no-wf-global.json'));
