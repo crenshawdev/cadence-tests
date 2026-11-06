@@ -265,3 +265,27 @@ test('an index whose rows or symbols are not objects with a path answers no-inde
   writeFileSync(file, JSON.stringify(good));
   assert.equal(slice(root, '--files', 'a.mjs').json.ok, true);
 });
+
+test('5,000 built modules all left out by one broad term print at or under 10,000 bytes, and quickly', () => {
+  const rows = [];
+  const entries = new Map();
+  const states = new Map();
+  for (let i = 0; i < 5000; i++) {
+    const m = `pkg${String(i).padStart(4, '0')}`;
+    rows.push({ path: `${m}/f.js`, kind: 'text', hash: 'a'.repeat(40), bytes: 10, symbols: [{ name: `s${i}`, kind: 'function', line: 1, approximate: true }] });
+    entries.set(m, { built_from: { [`${m}/f.js`]: 'a'.repeat(40) }, summary: 'y'.repeat(2000) });
+    states.set(m, 'built');
+  }
+  const t = Date.now();
+  const body = sliceOf({
+    rows, modules: rows.map((r) => ({ name: r.path.split('/')[0], paths: [r.path] })), states, entries,
+    select: { files: [], symbols: [], terms: ['pkg'] }, entryPath: (m) => `.planning/codemap/${m}.json`, current: new Set(rows.map((r) => r.path)),
+  });
+  assert.ok(Date.now() - t < 3000, `took ${Date.now() - t} ms`);
+  assert.ok(Buffer.byteLength(JSON.stringify({ ok: true, ...body })) + 1 <= 10000);
+  assert.equal(body.total, 5000);
+  assert.equal(body.entries, undefined);
+  assert.equal(body.entries_omitted.length, 20);
+  assert.deepEqual(body.entries_omitted[19], { module: 'pkg0019', file: '.planning/codemap/pkg0019.json' });
+  assert.equal(body.entries_omitted_more, 4980);
+});

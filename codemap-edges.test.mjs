@@ -383,3 +383,43 @@ test('an importer whose name is quoted still resolves its relative import, in a 
   assert.deepEqual(importsOf(root, '"src/\\377.mjs"').items, [{ path: 'src/dep.mjs' }]);
   assert.deepEqual(importsOf(root, '"d\\351/x.mjs"').items, [{ path: '"d\\351/dep.mjs"' }]);
 });
+
+test('a name with a non-ASCII letter is held whole, with its caller and its pin', () => {
+  const { root } = repo({
+    'src/a.js': 'export function créer() {}\nconst alpha = 1;\nexport { alpha as ünï };\n', 'src/b.js': 'créer();\n', 'spec/a.test.js': 'créer; ünï;\n',
+    'src/c.py': 'def défaut():\n  pass\n', 'src/d.py': 'défaut()\n',
+  });
+  scan(root);
+  assert.ok(rowOf(root, 'src/a.js').symbols.some((s) => s.name === 'créer'));
+  assert.ok(!rowOf(root, 'src/a.js').symbols.some((s) => s.name === 'cr'));
+  assert.deepEqual(symOf(root, 'src/a.js', 'créer').callers, { files: ['src/b.js'], total: 1, approximate: true });
+  assert.deepEqual(symOf(root, 'src/a.js', 'créer').pinned_by, { files: ['spec/a.test.js'], total: 1, approximate: true });
+  assert.deepEqual(symOf(root, 'src/a.js', 'ünï').pinned_by, { files: ['spec/a.test.js'], total: 1, approximate: true });
+  assert.deepEqual(symOf(root, 'src/c.py', 'défaut').callers, { files: ['src/d.py'], total: 1, approximate: true });
+});
+
+test('101 files declaring créer give every holder a total of the other 100 and the one caller', () => {
+  const files = { 'src/user.js': 'créer();\n' };
+  for (let i = 0; i < 101; i++) files[`pkg${String(i).padStart(3, '0')}/x.js`] = 'export function créer() {}\n';
+  const { root } = repo(files);
+  assert.equal(scan(root).ok, true);
+  for (const pkg of ['pkg000', 'pkg100']) {
+    const c = symOf(root, `${pkg}/x.js`, 'créer').callers;
+    assert.equal(c.total, 101);
+    assert.ok(!c.files.includes(`${pkg}/x.js`));
+  }
+});
+
+test('101 files declaring a 250-character name give no negative total and no empty list', () => {
+  const name = 'n'.repeat(250);
+  const files = {};
+  for (let i = 0; i < 101; i++) files[`pkg${String(i).padStart(3, '0')}/x.js`] = `export function ${name}() {}\n`;
+  const { root } = repo(files);
+  assert.equal(scan(root).ok, true);
+  for (const pkg of ['pkg000', 'pkg100']) {
+    const s = symOf(root, `${pkg}/x.js`, name);
+    assert.ok(s, 'the symbol is kept');
+    assert.equal(s.callers, undefined);
+    assert.equal(s.pinned_by, undefined);
+  }
+});
