@@ -82,11 +82,11 @@ test('rungFiles on an unknown role is empty, never a throw', () => {
   assert.deepEqual(rungFiles(undefined), []);
 });
 
-// CADENCE-CENSUS: rung-agent-files | asserts: RUNG_FILES names 30 file stems across the six roles, each serving exactly one rung
-test('RUNG_FILES names 30 files across the six roles, and is frozen', () => {
+// CADENCE-CENSUS: rung-agent-files | asserts: RUNG_FILES names 35 file stems across the seven roles, each serving exactly one rung
+test('RUNG_FILES names 35 files across the seven roles, and is frozen', () => {
   const stems = Object.keys(RUNG_FILES).flatMap((r) => rungFiles(r));
-  assert.equal(stems.length, 30);
-  assert.equal(new Set(stems).size, 30); // no file serves two rungs
+  assert.equal(stems.length, 35);
+  assert.equal(new Set(stems).size, 35); // no file serves two rungs
   assert.equal(Object.isFrozen(RUNG_FILES), true);
   assert.equal(Object.isFrozen(RUNG_FILES['cad-planner']), true);
 });
@@ -265,7 +265,7 @@ test('rungPrefixIssues: the SHIPPED agents/ tree carries one body per role', () 
     const fm = text.match(/^---\n([\s\S]*?)\n---/);
     bodies[e.slice(0, -3)] = fm ? text.slice(fm[0].length) : text;
   }
-  assert.equal(Object.keys(bodies).length, 30);
+  assert.equal(Object.keys(bodies).length, 35);
   assert.deepEqual(rungPrefixIssues(bodies), []);
 });
 

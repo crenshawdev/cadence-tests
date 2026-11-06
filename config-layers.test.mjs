@@ -216,7 +216,7 @@ test('layers: use_workflows set in only the repo reads off with no winner; a rep
 
 test('layers: a fresh template repo sets 43, all 43 the shipped default', () => {
   const { json } = cli(templateFixture(), ['layers']);
-  assert.equal(json.totals.settings, 96);
+  assert.equal(json.totals.settings, 98);
   assert.equal(json.totals.repo, 43);
   assert.equal(json.totals.at_default, 43);
   assert.equal(json.totals.global, 0);
@@ -303,6 +303,17 @@ test('layers: an open gate with openai in both layers applies; in the repo alone
   assert.deepEqual([both.applies, both.no_effect], [true, undefined]);
   const repoOnly = tierOf(repoFixture(withOpenai));
   assert.deepEqual([repoOnly.applies, repoOnly.no_effect], [false, ['review.reviewers is ["claude-subagent"]']]);
+});
+
+test('layers: the mapper keys have no effect with the code map off, apply with it on, and sit in Models and effort\'s advanced list', () => {
+  for (const key of ['roles.cad-mapper.model', 'roles.cad-mapper.effort']) {
+    const off = cli(repoFixture({}), ['layers', '--key', key]).json.row;
+    assert.deepEqual([off.applies, off.no_effect], [false, ['planning.code_map is false, not true']], key);
+    const on = cli(repoFixture({ planning: { code_map: true } }), ['layers', '--key', key]).json.row;
+    assert.deepEqual([on.applies, on.no_effect], [true, undefined], key);
+  }
+  const adv = cli(repoFixture({}), ['layers', '--group', 'Models and effort']).json.advanced;
+  assert.ok(adv.includes('roles.cad-mapper.model') && adv.includes('roles.cad-mapper.effort'), JSON.stringify(adv));
 });
 
 test('layers: the gate works with its tier and effort, and the other trigger keys carry the same conditions', () => {

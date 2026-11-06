@@ -115,6 +115,7 @@ const ROLES = [
   { role: 'cad-reviewer', effort: 'medium', agent: 'cad-reviewer-medium', retry: 'high', retryAgent: 'cad-reviewer' },
   { role: 'cad-executor', effort: 'high', agent: 'cad-executor', retry: 'xhigh', retryAgent: 'cad-executor-xhigh' },
   { role: 'cad-plan-checker', effort: 'low', agent: 'cad-plan-checker', retry: 'medium', retryAgent: 'cad-plan-checker-medium' },
+  { role: 'cad-mapper', effort: 'high', agent: 'cad-mapper', retry: 'xhigh', retryAgent: 'cad-mapper-xhigh' },
 ];
 
 // ONE test case per role, never one case walking all six: node:test aborts a
@@ -1007,7 +1008,7 @@ test('every rung the MAP names has an agent file carrying exactly that effort', 
       byName.set(stem, rung);
     }
   }
-  assert.equal(byName.size, 30, `routable agent names: ${[...byName.keys()].join(', ')}`);
+  assert.equal(byName.size, 35, `routable agent names: ${[...byName.keys()].join(', ')}`);
   for (const [name, rung] of byName) {
     assert.ok(existsSync(join(AGENTS, `${name}.md`)), `agents/${name}.md must exist`);
     assert.equal(frontmatterEffort(name), rung, `${name} frontmatter effort`);
