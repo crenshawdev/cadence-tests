@@ -170,3 +170,11 @@ test('a sentence shows now, new and the file, and leaves the way a group does', 
   assert.ok(s.includes('**Worktree base ref**'));
   assert.ok(s.includes("**Wrap-up**'s dangling enrollment check"));
 });
+
+test('a sentence hands a provider match to provider setup by its keys, after matching and before showing', () => {
+  const s = flat(section(MENU_MD, 'A sentence'));
+  assert.match(s, /When a match touches `review\.providers\.\*`, or adds a cross-model name to `review\.reviewers`, go to \*\*Review provider setup\*\*/);
+  assert.match(s, /The test is the matched keys, not the words used: `set up OpenAI reviews`/);
+  const handOff = s.indexOf('**Provider hand-off.**');
+  assert.ok(s.indexOf('**Matching.**') < handOff && handOff < s.indexOf('**Showing.**'));
+});
