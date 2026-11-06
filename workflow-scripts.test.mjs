@@ -398,3 +398,21 @@ test('the analyzer is one agent: its script is gone, the seam has no --analyzer 
     assert.doesNotMatch(readFileSync(join(ROOT, ...f), 'utf8'), /Workflow|workflow-run|workflow-claim|workflow-layers/, f.join('/'));
   }
 });
+
+test('the setting, the permissions pages, the run record page and INTERNALS name only reviews, never the analyzer', () => {
+  const schema = JSON.parse(readFileSync(join(ROOT, 'cadence-core', 'config.schema.json'), 'utf8'));
+  const key = schema.keys['workflow.use_workflows'];
+  assert.ok(key, 'the key is in the schema');
+  assert.doesNotMatch(key.question, /analyzer/i, 'question');
+  assert.doesNotMatch(key.purpose, /analyzer/i, 'purpose');
+  const read = (...p) => readFileSync(join(ROOT, ...p), 'utf8');
+  for (const f of [['docs', 'guide', 'reference', 'permissions.md'], ['docs', 'PERMISSIONS.md'], ['docs', 'guide', 'how-it-works', 'records.md']]) {
+    assert.doesNotMatch(read(...f), /analyzer/i, f.join('/'));
+  }
+  const section = read('docs', 'guide', 'configuration', 'execution.md').split(/^### `workflow\.use_workflows`$/m)[1]?.split(/^### /m)[0];
+  assert.ok(section, 'execution.md has the key section');
+  assert.doesNotMatch(section, /analyzer/i, 'execution.md section');
+  const para = read('INTERNALS.md').split('\n').find((l) => l.startsWith('The plugin root has a `workflows/` directory'));
+  assert.ok(para, 'INTERNALS.md has the workflows/ paragraph');
+  assert.doesNotMatch(para, /analyzer/i, 'INTERNALS.md workflows/ paragraph');
+});
