@@ -171,12 +171,39 @@ test('a sentence shows now, new and the file, and leaves the way a group does', 
   assert.ok(s.includes("**Wrap-up**'s dangling enrollment check"));
 });
 
-test('a sentence hands a provider match to provider setup by its keys, after matching and before showing', () => {
+test('a sentence hands a pick to provider setup or Risk surfaces by its keys, after matching and before showing', () => {
   const s = flat(section(MENU_MD, 'A sentence'));
-  assert.match(s, /When a match touches `review\.providers\.\*`, or adds a cross-model name to `review\.reviewers`, go to \*\*Review provider setup\*\*/);
-  assert.match(s, /The test is the matched keys, not the words used: `set up OpenAI reviews`/);
-  const handOff = s.indexOf('**Provider hand-off.**');
+  assert.match(s, /The test is the settings you picked to change, not the lines read back and not the words used/);
+  assert.match(s, /A pick of `review\.providers\.\*`, or one that adds a cross-model name to `review\.reviewers`, goes to \*\*Review provider setup\*\*/);
+  assert.match(s, /`set up OpenAI reviews` picks provider keys, while `make reviews cheaper` picks tier keys and shows them here/);
+  assert.match(s, /A pick of `review\.triggers\.risk_surface\.surfaces` goes to \*\*Risk surfaces\*\*/);
+  assert.match(s, /say which picks weren't made, and that they can ask again after the setup/);
+  const handOff = s.indexOf('**Hand-off.**');
   assert.ok(s.indexOf('**Matching.**') < handOff && handOff < s.indexOf('**Showing.**'));
+});
+
+test('the read-back filter searches the key as well as the text', () => {
+  const s = flat(section(MENU_MD, 'A sentence'));
+  assert.match(s, /whose `key`, `question`, `purpose` or `explain` holds one of them/);
+  assert.ok(s.includes('const x=[s.key,s.question,s.purpose]'));
+});
+
+test('a sentence prints the same no-effect line a group pick does, for each pick', () => {
+  const s = flat(section(MENU_MD, 'A sentence'));
+  assert.match(s, /Read each pick with `layers --key <key>`/);
+  assert.match(s, /When a pick's `applies` is false, add `No effect right now:` with each sentence of `no_effect`/);
+  assert.ok(s.indexOf('layers --key') < s.indexOf('Ask for a yes'));
+});
+
+test('every scratch directory step refuses an unsafe path before the path is used', () => {
+  const guard = 'case "$D" in (*[!A-Za-z0-9._/-]*)';
+  for (const [name, text] of [['config-menu.md', MENU_MD], ['config.md', CONFIG_MD]]) {
+    const sites = text.split('\n').filter((l) => l.includes('mktemp -d'));
+    assert.ok(sites.length > 0, `${name} makes no scratch directory`);
+    for (const l of sites) {
+      assert.ok(l.includes(guard), `${name} makes a scratch directory with no guard: ${l.trim()}`);
+    }
+  }
 });
 
 test('a typed value reaches the preview and set through a scratch file, in a pick and in the walk', () => {
