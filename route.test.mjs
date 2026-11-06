@@ -1874,7 +1874,7 @@ test('floor: an ordinary NESTED path is still read and still raises', () => {
   assert.equal('warnings' in r, false, JSON.stringify(r.warnings));
 });
 
-test('floor: the two pre-plan roles are exempt and say they were not computed', () => {
+test('floor: the three pre-plan roles are exempt and say they were not computed', () => {
   const fx = floorRoot({ ...ANSWERED },
     { '3/PLAN-1.md': ['src/load.mjs'] }, { 'src/load.mjs': SECRET_BODY });
   // The same phase raises both effects for an executor...
@@ -1883,10 +1883,12 @@ test('floor: the two pre-plan roles are exempt and say they were not computed', 
   // ...and reaches neither role dispatched before a plan exists (D-16). The
   // cursor lags at both their call sites, so a floor computed for them is
   // computed off another phase's file list.
-  for (const role of ['cad-planner', 'cad-assumptions-analyzer']) {
+  // The mapper's reader reads no plan either, so it is exempt for the same reason.
+  for (const role of ['cad-planner', 'cad-assumptions-analyzer', 'cad-mapper']) {
     const r = resolve(role, fx.file, ['--phase', '3']);
     assert.equal(r.ok, true, role);
     assert.deepEqual(effects(r), ['advisory', 'off'], role);
+    assert.equal(r.effort, 'high', `${role} keeps its default rung`);
     assert.deepEqual(floorReasons(r), [], `${role}: ${JSON.stringify(r.reason)}`);
     assert.ok(r.reason.some((x) => x.startsWith(`no risk-floor computation: ${role}`)),
       `${role}: ${JSON.stringify(r.reason)}`);
