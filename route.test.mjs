@@ -1533,6 +1533,45 @@ test('a valueless --bracket-read is refused, not recorded as an empty read-set',
   assert.equal(existsSync(join(planning, 'trace.jsonl')), false);
 });
 
+// --- the preview's two flags: --no-record and --planning-root -----------------
+
+test('--no-record leaves trace.jsonl alone with --phase and --bracket-read, and the same call without it appends', () => {
+  const planning = traceRoot('no-record', false);
+  const flags = ['--phase', '3', '--bracket-read', 'PLAN.md'];
+  const quiet = resolve('cad-executor', join(planning, 'config.json'), [...flags, '--no-record']);
+  assert.equal(quiet.ok, true);
+  assert.equal(existsSync(join(planning, 'trace.jsonl')), false);
+  // the negative control: the identical call minus the flag writes its two rows
+  resolve('cad-executor', join(planning, 'config.json'), flags);
+  assert.equal(traceLines(planning).length, 2);
+  const before = readFileSync(join(planning, 'trace.jsonl'), 'utf8');
+  resolve('cad-executor', join(planning, 'config.json'), [...flags, '--no-record']);
+  assert.equal(readFileSync(join(planning, 'trace.jsonl'), 'utf8'), before);
+});
+
+test('--planning-root reads the floor off the real tree while --file names a scratch config', () => {
+  const answered = { review: { triggers: { risk_surface: { surfaces: ['auth'] } } } };
+  const fx = floorRoot(answered, { '3/PLAN-1.md': ['src/auth/session.rs'] });
+  const scratch = rawCfg(answered, 'scratch-floor.json');
+  const real = resolve('cad-executor', fx.file, ['--phase', '3']);
+  assert.deepEqual(effects(real), ['blocking', 'on']);
+  const rooted = resolve('cad-executor', scratch, ['--phase', '3', '--planning-root', fx.planning]);
+  assert.deepEqual(effects(rooted), ['blocking', 'on']);
+  assert.deepEqual(floorReasons(rooted), floorReasons(real));
+  // Without the root the scratch directory holds no plan. The floor fails closed on a scope nobody read, so the
+  // effects still raise, but it cites no file and no surface: a different floor from the real one.
+  const alone = resolve('cad-executor', scratch, ['--phase', '3']);
+  assert.notDeepEqual(floorReasons(alone), floorReasons(real));
+  assert.equal(floorReasons(alone).some((x) => /touches auth/.test(x)), false);
+});
+
+test('a valueless --planning-root is refused, not read as the config\'s own directory', () => {
+  const r = resolve('cad-executor', cfg({}), ['--planning-root']);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'usage');
+  assert.match(r.detail, /--planning-root/);
+});
+
 // --- D-03: `deferred` is reachable by a CONFIG-SET gate only, this cycle ----
 //
 // Phase 2 admits `deferred` to the gate vocabulary and builds everything that
