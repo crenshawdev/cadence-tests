@@ -267,7 +267,7 @@ test('R3: escalation pressure at the floor suggests the role effort key; either 
   ];
   assert.equal(MIN_ESCALATIONS_FOR_RUNG_SUGGESTION, 2, 'fixture is built against the floor');
   const out = suggestFromRender(render(events));
-  const s = out.find((x) => x.action === 'model.effort.cad-planner');
+  const s = out.find((x) => x.action === 'roles.cad-planner.effort');
   assert.ok(s, `expected an effort suggestion, got ${JSON.stringify(out)}`);
   assert.match(s.evidence, /2 of 3 resolves/);
 });
@@ -369,12 +369,24 @@ test('SGT-01: R3 proposes the rung the escalated resolves actually landed on', (
     resolve('cad-planner', { escalated: true, effort: 'xhigh' }),
     resolve('cad-planner', { effort: 'high' }),
   ]), { gates: GATES });
-  const s = out.find((x) => x.action === 'model.effort.cad-planner');
+  const s = out.find((x) => x.action === 'roles.cad-planner.effort');
   assert.ok(s, JSON.stringify(out));
   assert.equal(s.direction, 'raise');
   assert.match(s.current, /unset/);
   assert.match(s.current, /the schema default decides it/);
   assert.equal(s.proposed, 'xhigh');
+});
+
+test('D-02: the key and rung R3 offers are a write `config.mjs check` accepts', () => {
+  const out = suggestFromRender(render([
+    resolve('cad-planner', { escalated: true, effort: 'xhigh' }),
+    resolve('cad-planner', { escalated: true, effort: 'xhigh' }),
+  ]), { gates: GATES });
+  const s = out.find((x) => x.action === 'roles.cad-planner.effort');
+  assert.ok(s, JSON.stringify(out));
+  const CONFIG = join(dirname(BIN), 'config.mjs');
+  const res = JSON.parse(execFileSync('node', [CONFIG, 'check', `${s.action}=${s.proposed}`], { encoding: 'utf8' }));
+  assert.deepEqual(res, { ok: true });
 });
 
 test('SGT-01: R3 omits a target that names no raise against the rung in force', () => {
@@ -383,10 +395,10 @@ test('SGT-01: R3 omits a target that names no raise against the rung in force', 
     resolve('cad-planner', { escalated: true, effort: 'xhigh' }),
   ];
   const at = (rung) => suggestFromRender(render(climbed), {
-    values: { 'model.effort.cad-planner': rung },
+    values: { 'roles.cad-planner.effort': rung },
     gates: GATES,
     rungs: RUNGS,
-  }).find((x) => x.action === 'model.effort.cad-planner');
+  }).find((x) => x.action === 'roles.cad-planner.effort');
 
   const same = at('xhigh');
   assert.ok(same, 'the suggestion still stands - it is the TARGET that cannot be named');
@@ -412,14 +424,14 @@ test('SGT-01: R3 keeps the record\'s rung when no layer pins the key, ladder or 
     resolve('cad-planner', { escalated: true, effort: 'xhigh' }),
   ];
   const unset = suggestFromRender(render(climbed), { gates: GATES, rungs: RUNGS })
-    .find((x) => x.action === 'model.effort.cad-planner');
+    .find((x) => x.action === 'roles.cad-planner.effort');
   assert.equal(unset.proposed, 'xhigh',
     'nothing is in force to compare against, and the rung is still a change from a default nobody stated');
 
   const noLadder = suggestFromRender(render(climbed), {
-    values: { 'model.effort.cad-planner': 'high' },
+    values: { 'roles.cad-planner.effort': 'high' },
     gates: GATES,
-  }).find((x) => x.action === 'model.effort.cad-planner');
+  }).find((x) => x.action === 'roles.cad-planner.effort');
   assert.equal('proposed' in noLadder, false,
     'no ladder means no comparison, and the omission IS the report');
 });
@@ -549,7 +561,7 @@ test('D-12: an info receipt gains NONE of the three new keys, under every rule t
     values: {
       'review.triggers.risk_surface.gate': 'blocking',
       'review.reviewers': ['openai'],
-      'model.effort.cad-executor': 'xhigh',
+      'roles.cad-executor.effort': 'xhigh',
       'workflow.max_plan_tasks': 8,
     },
     gates: GATES,
@@ -797,11 +809,11 @@ const SPEND_EXCLUDES_READ = Array.isArray(traceSuggestModule.SPEND_EXCLUDES)
 //   $ node --test tests/trace-suggest.test.mjs
 //   x SGT-01: `trace suggest` returns a direction, a current, and a proposed
 //     where the record prices one
-//     AssertionError [ERR_ASSERTION]: `model.effort.cad-planner` came back with
+//     AssertionError [ERR_ASSERTION]: `roles.cad-planner.effort` came back with
 //     no direction - /cad-suggest names a key and leaves the user to work out
 //     which way to move it. Got: {"kind":"suggest","subject":"cad-planner",
 //     "evidence":"2 of 2 resolves climbed to the retry rung","action":
-//     "model.effort.cad-planner"}
+//     "roles.cad-planner.effort"}
 //   i pass 25
 //   i fail 11
 //
@@ -832,7 +844,7 @@ test('SGT-01: `trace suggest` returns a direction, a current, and a proposed whe
     // layer on the running machine holds - the repo wins at the merge.
     writeFileSync(join(planning, 'config.json'), JSON.stringify({
       review: { triggers: { plan: { gate: 'blocking' } } },
-      model: { effort: { 'cad-planner': 'high' } },
+      roles: { 'cad-planner': { effort: 'high' } },
     }));
     for (let i = 0; i < MIN_FIRES_FOR_GATE_SUGGESTION; i++) {
       appendEvent(planning, {
@@ -873,7 +885,7 @@ test('SGT-01: `trace suggest` returns a direction, a current, and a proposed whe
     assert.equal(gate.proposed, 'deferred',
       'the gate arm prices its target one step down the ladder the plan-gate row states');
 
-    const effort = keyed.find((s) => s.action === 'model.effort.cad-planner');
+    const effort = keyed.find((s) => s.action === 'roles.cad-planner.effort');
     assert.ok(effort, JSON.stringify(keyed));
     assert.equal(effort.direction, 'raise');
     assert.equal(effort.current, 'high');
