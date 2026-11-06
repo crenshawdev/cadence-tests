@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -591,4 +591,69 @@ test('a new file does not join a module that is one file over the ceiling', () =
   const out = partition([...rows, row('NEW.md', 5)], stored, C).modules;
   assert.deepEqual(out.find((m) => m.name === '.').paths, ['huge.md']);
   assert.equal(where(out)['NEW.md'], 'z');
+});
+
+// --- the second risk review's fixes ------------------------------------------------------------------------------------
+
+test('no clean filter runs on a scan or a status, unedited or after a same-size edit, and a clean row equals its index hash', () => {
+  const marker = join(mkdtempSync(join(tmpdir(), 'cad-map-ran-')), 'ran');
+  const { root, git } = repo({ 'a.js': 'one\n', 'b.js': 'bee\n', '.gitattributes': '*.js filter=pwn\n' });
+  git('config', 'filter.pwn.clean', `touch ${marker}; cat`);
+  for (const sub of ['scan', 'status']) {
+    assert.equal(codemap(root, sub).ok, true);
+    assert.equal(existsSync(marker), false, `${sub} on an unedited file ran the filter`);
+  }
+  for (const f of ['a.js', 'b.js']) assert.equal(rowOf(root, f)[0].hash, git('ls-files', '-s', f).split(/\s+/)[1]);
+  writeFileSync(join(root, 'a.js'), 'two\n');
+  for (const sub of ['scan', 'status']) {
+    assert.equal(codemap(root, sub).ok, true);
+    assert.equal(existsSync(marker), false, `${sub} after a same-size edit ran the filter`);
+  }
+  assert.equal(rowOf(root, 'a.js')[0].hash, git('hash-object', '--no-filters', 'a.js').trim());
+});
+
+test('an unreadable file keeps a null hash and the files after it in the batch are still hashed', (t) => {
+  if (process.getuid && process.getuid() === 0) return t.skip('root reads a chmod 000 file');
+  const { root, git } = repo({ 'a.txt': 'a\n', 'b.txt': 'b\n', 'c.txt': 'c\n' });
+  chmodSync(join(root, 'b.txt'), 0);
+  try {
+    codemap(root, 'scan');
+    assert.equal(rowOf(root, 'b.txt')[0].hash, null);
+    for (const f of ['a.txt', 'c.txt']) assert.equal(rowOf(root, f)[0].hash, git('ls-files', '-s', f).split(/\s+/)[1], f);
+  } finally { chmodSync(join(root, 'b.txt'), 0o644); }
+});
+
+test('a clean symlink hashes its link text to the index hash, and a dirty one to the hash of its new text', () => {
+  const { root, git } = repo({ 'a.js': 'a\n' });
+  symlinkSync('a.js', join(root, 'ok')); symlinkSync('a.js', join(root, 'moved'));
+  git('add', '-A'); git('commit', '-qm', 'links');
+  execFileSync('rm', [join(root, 'moved')]);
+  symlinkSync('elsewhere/b.js', join(root, 'moved'));
+  codemap(root, 'scan');
+  assert.equal(rowOf(root, 'ok')[0].hash, git('ls-files', '-s', 'ok').split(/\s+/)[1]);
+  assert.equal(rowOf(root, 'moved')[0].hash, hashOf('elsewhere/b.js'));
+});
+
+test('a long comment or string line does not change what skim sees below it', () => {
+  const pad = 'x'.repeat(2100);
+  const of = (src) => symbolsFor('f.js', src).map((s) => s.name);
+  assert.deepEqual(of(`/* ${pad} */\nexport function after() {}\n/* second */\nexport function last() {}\n`), ['after', 'last']);
+  assert.deepEqual(of(`const a = '${pad}';\nexport function one() {}\nconst g = '/*';\nexport function two() {}\nconst h = '*/';\nexport function three() {}\n`),
+    ['a', 'one', 'g', 'two', 'h', 'three']);
+  assert.deepEqual(of(`const a = '${pad}'; /* a real\nexport function fake() {}\n*/\nexport function real() {}\n`), ['a', 'real']);
+  // a comment opened past the old cap on a line of its own text still hides the declaration it wraps
+  assert.ok(!of(`const n = 0;${' '.repeat(2001)}/*\nexport function phantom() {}\n*/\n`).includes('phantom'));
+});
+
+test('an index over 128 MiB is named by status and is a fresh cut for scan', () => {
+  const { root } = repo({ 'a.js': 'a\n' });
+  codemap(root, 'scan');
+  truncateSync(mapFile(root, 'index.json'), 128 * 1024 * 1024 + 1);
+  const r = codemap(root, 'status');
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'index-too-large');
+  assert.match(r.hint, /re-cuts the modules every run/);
+  const s = codemap(root, 'scan');
+  assert.equal(s.ok, true);
+  assert.equal(codemap(root, 'status').ok, true, 'the scan wrote a readable index over it');
 });
