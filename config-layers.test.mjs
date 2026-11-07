@@ -216,7 +216,7 @@ test('layers: use_workflows set in only the repo reads off with no winner; a rep
 
 test('layers: a fresh template repo sets 43, all 43 the shipped default', () => {
   const { json } = cli(templateFixture(), ['layers']);
-  assert.equal(json.totals.settings, 98);
+  assert.equal(json.totals.settings, 99);
   assert.equal(json.totals.repo, 43);
   assert.equal(json.totals.at_default, 43);
   assert.equal(json.totals.global, 0);
@@ -314,6 +314,13 @@ test('layers: the mapper keys have no effect with the code map off, apply with i
   }
   const adv = cli(repoFixture({}), ['layers', '--group', 'Models and effort']).json.advanced;
   assert.ok(adv.includes('roles.cad-mapper.model') && adv.includes('roles.cad-mapper.effort'), JSON.stringify(adv));
+});
+
+test('layers: workflow_plans sits in How work runs\' advanced list and applies with the code map off', () => {
+  const adv = cli(repoFixture({}), ['layers', '--group', 'How work runs']).json.advanced;
+  assert.ok(adv.includes('planning.workflow_plans'), JSON.stringify(adv));
+  const row = cli(repoFixture({}), ['layers', '--key', 'planning.workflow_plans']).json.row;
+  assert.deepEqual([row.applies, row.no_effect], [true, undefined]);
 });
 
 test('layers: the gate works with its tier and effort, and the other trigger keys carry the same conditions', () => {
