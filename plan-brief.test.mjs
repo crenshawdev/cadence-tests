@@ -118,6 +118,13 @@ test('brief: the head names the plan by its repository path', () => {
   assert.ok(!got.includes(dir), 'no absolute path in the brief');
 });
 
+test('brief: the head tells the executor that reading the brief covers the plan file', () => {
+  const { dir } = project();
+  const out = scratch();
+  const got = readFileSync(brief(dir, ['--phase', '4', '--plan', '3', '--out-dir', out]).path, 'utf8');
+  assert.ok(got.includes('Where it says to read that file, reading this brief covers it'));
+});
+
 test('brief: a project with no PROJECT.md still composes, without Constraints', () => {
   const { dir } = project({ projectMd: null });
   const out = scratch();
