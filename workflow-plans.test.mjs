@@ -126,9 +126,15 @@ function keyLineOf(text) {
   return start === -1 ? null : { start, end: text.indexOf('\n', start) };
 }
 
-// Every vocabulary match outside the stretch, the inline sentence and the key's line.
+// The brief check is its own gated step: its tag to its closing tag. Null when the step is gone.
+function briefStepOf(text) {
+  const start = text.indexOf('<step name="check_brief">');
+  return start === -1 ? null : { start, end: text.indexOf('</step>', start) + '</step>'.length };
+}
+
+// Every vocabulary match outside the stretch, the brief step, the inline sentence and the key's line.
 function outside(text) {
-  const spans = [stretchOf(text), inlineOf(text), keyLineOf(text)].filter(Boolean);
+  const spans = [stretchOf(text), briefStepOf(text), inlineOf(text), keyLineOf(text)].filter(Boolean);
   return [...text.matchAll(VOCAB), ...text.matchAll(MARKERS)]
     .filter((m) => !spans.some((s) => m.index >= s.start && m.index < s.end));
 }
@@ -165,7 +171,7 @@ test('inline_plan reads the reference for the task fields only and carries no bl
   assert.match(inline, /`depends_on` and the width don't apply, and it carries no block/);
 });
 
-test('with the switch off the new vocabulary appears in plan.md only inside the stretch, the inline sentence and the key line', () => {
+test('with the switch off the new vocabulary appears in plan.md only inside the stretch, the brief step, the inline sentence and the key line', () => {
   assert.ok([...PLAN_MD.matchAll(VOCAB)].length > 0, 'plan.md holds none of the vocabulary, so this pins nothing');
   assert.deepEqual(outside(PLAN_MD).map((m) => m.index), []);
   const at = PLAN_MD.indexOf('<planning_context>\nPhase:');
@@ -177,6 +183,44 @@ test('with the switch off the new vocabulary appears in plan.md only inside the 
 
 test('the pin fails when the stretch loses its opening sentence', () => {
   assert.ok(outside(PLAN_MD.replace(OPENING, 'x')).length > 0);
+});
+
+test('the pin fails when the brief step loses its tag', () => {
+  assert.ok(outside(PLAN_MD.replace('<step name="check_brief">', '<step name="x">')).length > 0);
+});
+
+// --- /cad-plan: the brief check ------------------------------------------------
+
+const BRIEF_STEP = stepOf(PLAN_MD, 'check_brief');
+const briefFlat = BRIEF_STEP.replace(/\s+/g, ' ');
+
+test('the brief check sits after check_size and before check_census and check_gate', () => {
+  const at = (n) => PLAN_MD.indexOf(`<step name="${n}">`);
+  assert.ok(at('check_size') < at('check_brief'));
+  assert.ok(at('check_brief') < at('check_census'));
+  assert.ok(at('check_brief') < at('check_gate'));
+  assert.ok(at('handle_return') < at('check_brief'));
+});
+
+test('the brief check makes one call, with --phase and --plan and no --out-dir, once per plan file, and none with the key not true', () => {
+  const calls = BRIEF_STEP.match(/planning\.mjs" brief [^\n]*/g) || [];
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /--phase \{N\}/);
+  assert.match(calls[0], /--plan <k>/);
+  assert.doesNotMatch(calls[0], /--out-dir/);
+  assert.match(briefFlat, /Once per plan file the phase has/);
+  assert.match(briefFlat, /With the key not `true`, make no call and go on/);
+});
+
+test('the brief check re-dispatches once on a refusal, is no hard halt, and lets /cad-execute fall back', () => {
+  assert.match(briefFlat, /On `ok:false`, say what the answer names out loud, and re-dispatch ONCE/);
+  assert.match(briefFlat, /bad id goes to a fresh revision-mode planner[^.]*`<checker_issues>`/);
+  assert.match(briefFlat, /over its ceiling gets `check_size`'s instruction/);
+  assert.match(briefFlat, /Not a hard halt\. After the one re-dispatch, or the user's word, continue/);
+});
+
+test('inline_plan does not name the brief call', () => {
+  assert.doesNotMatch(stepOf(PLAN_MD, 'inline_plan'), /planning\.mjs" brief|check_brief/);
 });
 
 test('the planner contract, executor contract, planner rungs, plan skill, template and gaps workflow hold none of it', () => {

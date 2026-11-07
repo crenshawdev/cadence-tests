@@ -55,6 +55,10 @@
 //                        `planning.code_map` is true. Adding `planning.code_map` to parse's wrapped `config.mjs get`
 //                        adds a KEY and no call (0), and the gaps and revision modes reuse the prompt and so scan
 //                        nothing a second time.
+//   plan.md    16 -> 17  the brief check's `brief --phase {N} --plan <k>` at check_brief is a NEW invocation (+1), written
+//                        once and run once per plan file, only when `planning.workflow_plans` is true. The key rode parse's
+//                        wrapped `config.mjs get` already (0), and the `--inline` path never reaches the step, so it adds
+//                        nothing.
 //   context.md  6 -> 8   the workflow branch of `analyze` (v3.12, D-01) spells two NEW invocations (+2): `config.mjs
 //                        workflow-layers` for the both-layer read and `planning.mjs workflow-run --analyzer` on the
 //                        notice. Both sit on a branch that is off by default; the old path's six are untouched, and the
@@ -116,7 +120,7 @@ const CENSUS = [
   },
   {
     file: join('cadence-core', 'workflows', 'plan.md'),
-    calls: 16,
+    calls: 17,
     note: 'status, config.mjs get, plan-size x2, recall, trace close x2, '
       + 'seed-reqs, cursor set (9), plus RBK-01\'s two read-back count points - '
       + '`cite-count --point planned` at count_planned and `cite-count --point '
@@ -143,7 +147,9 @@ const CENSUS = [
       + 'The sixteenth is the code map\'s `codemap scan` at spawn_planner (+1; '
       + 'its `planning.code_map` key rides the existing config.mjs get, and a '
       + 'gaps or revision dispatch scans nothing a second time). '
-      + 'A seventeenth means a call came back - most likely a restated count or '
+      + 'The seventeenth is the brief check\'s `brief` at check_brief (+1; its '
+      + '`planning.workflow_plans` key rides the existing config.mjs get, and the inline path never reaches the step). '
+      + 'An eighteenth means a call came back - most likely a restated count or '
       + 'a restated census call in inline_plan, a third resolve, a second scan, or a '
       + '`trace append` beside the seam\'s own in-code outcome event.',
   },
@@ -166,7 +172,7 @@ test('the census counter is not dead: it joins continuations and ignores prose',
 // joins to its row. The header's arithmetic is that number's provenance, not a
 // second reading of the tree - which is what makes it a census and not the
 // derived measurement the registry exempts.
-// CADENCE-CENSUS: seam-call-counts | asserts: workflows/plan.md instructs exactly 16 seam invocations and workflows/context.md exactly 7
+// CADENCE-CENSUS: seam-call-counts | asserts: workflows/plan.md instructs exactly 17 seam invocations and workflows/context.md exactly 7
 for (const row of CENSUS) {
   test(`${row.file} instructs exactly ${row.calls} seam invocations`, () => {
     const text = readFileSync(join(REPO, row.file), 'utf8');
