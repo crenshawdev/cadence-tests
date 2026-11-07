@@ -809,6 +809,16 @@ test('lease-check --plan-time and plan-overlap read ONE two-plan fixture the sam
   assert.equal(second._exit, 1);
 });
 
+test('lease-check --plan-time refuses a plan whose depends_on cannot be read', () => {
+  const { cwd, dir } = planTimeTree(['src/a.mjs'], '',
+    { name: 'PLAN-1.md', extra: 'depends_on: "1\n' });
+  const r = planTime(cwd, dir, undefined, 1);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.reason, 'unparsed-lease');
+  assert.equal(r.frontmatter_issues[0].code, 'unterminated-quote', JSON.stringify(r));
+  assert.equal(r._exit, 1);
+});
+
 test('lease-check --plan-time: two plans that declare real paths are a PASS on both', () => {
   // The other half of the pair above, on the same builder: this is a fail-closed
   // rule and not a blanket refusal, so a two-plan fixture whose leases read

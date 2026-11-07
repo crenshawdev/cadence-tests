@@ -268,6 +268,17 @@ test('the named face carries the same two failure arms as the union', () => {
   assert.match(bad.warnings[0], /out of grammar/);
 });
 
+test('a plan whose depends_on is out of grammar warns and is not clean', () => {
+  const root = planningRoot({
+    '7/PLAN-1.md': '---\nphase: 7\nplan: 1\ndepends_on: "1\nfiles:\n  - src/a.mjs\n---\n\n# Plan\n',
+  });
+  const r = declaredFilesIn(join(root, 'phases', '7'));
+  assert.deepEqual(r.files, []);
+  assert.equal(r.found, 1);
+  assert.equal(r.clean, 0);
+  assert.match(r.warnings[0], /out of grammar/);
+});
+
 // --- declaredFilesIn: the same reader, addressed by PATH ---------------------
 
 test('the by-path reader answers exactly what the phase-keyed face does', () => {

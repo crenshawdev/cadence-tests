@@ -414,6 +414,38 @@ const ROWS = [
     text: fence('goal: something\n- "unbalanced\nfiles:\n  - src/a.rs'),
     key: 'files', items: ['src/a.rs'], issues: ['item-without-key'],
   },
+
+  // --- depends_on is a list key: a defect is reported, never read as no dependency ------
+  {
+    name: 'depends_on inline [1, 2] reads as two plan numbers',
+    text: fence('depends_on: [1, 2]\nfiles: []'),
+    key: 'depends_on', items: ['1', '2'], issues: [],
+  },
+  {
+    name: 'depends_on in block form reads as two plan numbers',
+    text: fence('depends_on:\n  - 1\n  - 2\nfiles: []'),
+    key: 'depends_on', items: ['1', '2'], issues: [],
+  },
+  {
+    name: 'depends_on with an unterminated quote gives no items and reports it',
+    text: fence('depends_on: "1\nfiles: []'),
+    key: 'depends_on', items: [], issues: ['unterminated-quote'],
+  },
+  {
+    name: 'a depends_on defect also reaches a files: read',
+    text: fence('depends_on: "1\nfiles:\n  - src/a.rs'),
+    key: 'files', items: ['src/a.rs'], issues: ['unterminated-quote'],
+  },
+  {
+    name: 'a backtick-wrapped depends_on value reports backtick-wrapped-value',
+    text: fence('depends_on: [`1`]\nfiles: []'),
+    key: 'depends_on', items: ['`1`'], issues: ['backtick-wrapped-value'],
+  },
+  {
+    name: 'the same defect under goal: still reports nothing',
+    text: fence('goal: "1\ndepends_on: [1]\nfiles: []'),
+    key: 'depends_on', items: ['1'], issues: [],
+  },
 ];
 
 // One test() per row, not one loop inside one test(): a row that fails
