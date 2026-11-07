@@ -79,6 +79,10 @@ test('plan-graph.md has the planner run plan-overlap and state the width, with a
   assert.match(GRAPH, /information and no gate/);
 });
 
+test('plan-graph.md has the planner fix a frontmatter_issues entry and run plan-overlap again', () => {
+  assert.match(GRAPH, /A `frontmatter_issues` entry in that answer means a plan you wrote is wrong, so fix it and run it again before you return/);
+});
+
 test('plan-graph.md names no Cadence-only file, and an inline plan can read the task fields section alone', () => {
   assert.doesNotMatch(GRAPH, /tests-pin|weight-budgets\.json/);
   assert.match(GRAPH, /An inline plan reads only `## The task fields`/);
