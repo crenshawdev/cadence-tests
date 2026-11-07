@@ -235,3 +235,121 @@ test('the planner contract, executor contract, planner rungs, plan skill, templa
     assert.doesNotMatch(text, MARKERS, f);
   }
 });
+
+// --- /cad-execute: the executor's brief ----------------------------------------------------------------------
+
+const EXEC_OPEN = 'With `planning.workflow_plans` read in `locate` as `true`, a brief takes the place of the plan file';
+const EXEC_CLOSE = '\n\nDo NOT restate the executor';
+const SHARED_BULLET = `- Shared files to read first (identical for every plan in the phase): project
+  \`CLAUDE.md\` (if present), \`.planning/PROJECT.md\` (if present),
+  \`.planning/phases/<N>/CONTEXT.md\` (if present).`;
+const BRACKET_LINE = '`--plan <k> --bracket-plan <k> --bracket-read "CLAUDE.md,.planning/PROJECT.md,.planning/phases/<N>/CONTEXT.md,<the plan file>"`';
+const EXEC_VOCAB = /\b(?:workflow_plans|plan-graph|brief)\b/gi;
+
+// The stretch: its opening sentence to the paragraph break before the standing-rules paragraph. Null when the opening is gone.
+function execStretch(text) {
+  const start = text.indexOf(EXEC_OPEN);
+  if (start === -1) return null;
+  const end = text.indexOf(EXEC_CLOSE, start);
+  assert.notEqual(end, -1, 'the stretch has no end');
+  return { start, end };
+}
+const execKeyLine = (text) => {
+  const start = text.indexOf('testing.scope planning.workflow_plans');
+  return start === -1 ? null : { start, end: text.indexOf('\n', start) };
+};
+function execOutside(text) {
+  const spans = [execStretch(text), execKeyLine(text)].filter(Boolean);
+  return [...text.matchAll(EXEC_VOCAB)].filter((m) => !spans.some((s) => m.index >= s.start && m.index < s.end));
+}
+
+const flatExec = (text) => text.replace(/\s+/g, ' ');
+const STRETCH = (() => { const at = execStretch(EXECUTE); return at ? EXECUTE.slice(at.start, at.end) : ''; })();
+const stretchFlat = flatExec(STRETCH);
+
+test('execute.md keeps today\'s shared-files bullet and bracket-read string byte for byte, free of the new vocabulary', () => {
+  assert.ok(EXECUTE.includes(SHARED_BULLET), 'the shared-files bullet changed');
+  assert.ok(EXECUTE.includes(BRACKET_LINE), 'the lifecycle bracket\'s --bracket-read string changed');
+  assert.doesNotMatch(SHARED_BULLET + BRACKET_LINE, EXEC_VOCAB);
+});
+
+test('locate has one config.mjs get, which names the key', () => {
+  const locate = stepOf(EXECUTE, 'locate');
+  assert.equal((locate.match(/config\.mjs" get/g) || []).length, 1);
+  assert.match(locate.match(/config\.mjs" get \\\n((?:  .*\n)+)```/)?.[1] ?? '', /\bplanning\.workflow_plans\b/);
+});
+
+test('outside the stretch and the key line, execute.md holds none of the new vocabulary, and the pin fails without the opening sentence', () => {
+  assert.ok(STRETCH.length > 500, 'no stretch in execute.md');
+  assert.deepEqual(execOutside(EXECUTE).map((m) => m.index), []);
+  assert.ok(execOutside(EXECUTE.replace(EXEC_OPEN, 'x')).length > 0);
+});
+
+test('the risk_surface fix pass paragraph is unchanged', () => {
+  const FIX = 'The dispatch prompt carries four things, nothing distilled by the coordinator: the plan file; the findings file\'s PATH, already persisted at `.planning/phases/<N>/REVIEW-risk_surface-plan-<k>.md` (references/risk-surface.md); the instruction to fix the blocker/high findings only; and the instruction NOT to rotate the plan\'s report but to append its fix row to the existing `<plandir>/reports/plan-<k>.md`';
+  assert.ok(flatExec(EXECUTE).includes(FIX));
+});
+
+test('the stretch names no PROJECT.md or CONTEXT.md, reads CLAUDE.md alone, and names the brief file in place of the plan file', () => {
+  assert.doesNotMatch(STRETCH, /PROJECT\.md|CONTEXT\.md/);
+  assert.ok(stretchFlat.includes('The shared files to read first are project `CLAUDE.md` alone'));
+  assert.ok(stretchFlat.includes('names the brief file by that absolute path in place of the plan file'));
+  assert.match(stretchFlat, /even from a worktree/);
+});
+
+test('the stretch\'s bracket value is CLAUDE.md plus the brief path and nothing else, the flag given apart from it', () => {
+  const m = /`--bracket-read` value is `([^`]*)`/.exec(stretchFlat);
+  assert.ok(m, 'the flag is not in backticks with its value apart');
+  assert.equal(m[1], 'CLAUDE.md,<the brief path>');
+  assert.doesNotMatch(STRETCH, /--bracket-read\s/, 'a flag followed by whitespace is a second open to the trace census');
+  assert.match(stretchFlat, /carries its own value on its own `dispatch` event, so no member's bracket names another's brief/);
+});
+
+test('the stretch composes before each plan\'s dispatch with --out-dir, a batch composes first, and the transcript never gets the brief', () => {
+  const at = stretchFlat.indexOf('Before each plan\'s dispatch');
+  assert.notEqual(at, -1);
+  const call = /planning\.mjs" brief --phase <N> --plan <k> --out-dir <the scratch directory>/.exec(stretchFlat.slice(at));
+  assert.ok(call, 'the compose call does not follow the words');
+  assert.equal((STRETCH.match(/planning\.mjs" brief/g) || []).length, 1);
+  assert.match(stretchFlat, /composes all its briefs before the batch's one message/);
+  assert.match(stretchFlat, /never the brief/);
+  assert.match(stretchFlat, /mktemp -d "\$\{TMPDIR:-\/tmp\}\/cad-XXXXXX"/);
+});
+
+test('the stretch has a continuation name the same file, the refused arm, and the blocked arm with no report file', () => {
+  assert.match(stretchFlat, /A continuation and a re-dispatched remainder name that same brief file, unless that plan's executor came back `blocked` on it/);
+  assert.match(stretchFlat, /\*\*A refused or unreadable answer\.\*\* Print one line with what it names, and dispatch that plan the way this step does with the key not `true`/);
+  assert.match(stretchFlat, /does no task and returns a `blocked` checkpoint naming the path/);
+  assert.match(stretchFlat, /That return owes no report file/);
+  assert.match(stretchFlat, /After a first dispatch, where no task has run, it starts the plan fresh and names no report path/);
+  assert.match(stretchFlat, /keeps what `handle_checkpoint` carries: the report path, the checkpoint outcome, "continue from task <k>" and the same pre-plan HEAD/);
+  assert.match(stretchFlat, /A `risk_surface` fix pass keeps what its own paragraph lists/);
+});
+
+test('the parallel reference still reuses this prompt and keeps its per-worker bracket', () => {
+  const par = readFileSync(join(ROOT, 'cadence-core', 'references', 'execute-parallel.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(par, /Same prompt as sequential except/);
+  assert.match(par, /per worker/);
+});
+
+test('through the real seams a scratch project reads the switch false and brief --out-dir writes the file its answer names', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cad-wfbrief-'));
+  try {
+    assert.equal(readSwitch(undefined), false);
+    const phase = join(root, '.planning', 'phases', '1');
+    mkdirSync(phase, { recursive: true });
+    writeFileSync(join(phase, 'PLAN.md'), '---\nphase: 1\nplan: 1\nfiles:\n  - a.txt\n---\n\n# Phase 1: x - Plan 1: y\n\n## Goal\n\nDo it.\n\n## Tasks\n\n### Task 1: one\n\n- **Files:** a.txt\n- **Action:** write it\n- **Verify:** cat a.txt\n');
+    const out = mkdtempSync(join(tmpdir(), 'cad-wfbrief-out-'));
+    try {
+      const run = (...args) => JSON.parse(execFileSync('node', [join(ROOT, 'cadence-core', 'bin', 'planning.mjs'), 'brief', '--phase', '1', '--plan', '1', ...args], { encoding: 'utf8', cwd: root }));
+      const bare = run();
+      assert.equal(bare.ok, true);
+      assert.equal(bare.path, undefined, 'no --out-dir writes nothing');
+      const written = run('--out-dir', out);
+      assert.equal(written.ok, true);
+      assert.equal(written.path, join(out, 'plan-1-brief.md'));
+      assert.ok(existsSync(written.path));
+      assert.equal(readFileSync(written.path, 'utf8').length > 0, true);
+    } finally { rmSync(out, { recursive: true, force: true }); }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
