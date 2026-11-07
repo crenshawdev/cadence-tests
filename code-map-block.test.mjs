@@ -131,6 +131,17 @@ test('the pin fails when the stretch loses its opening sentence', () => {
   assert.ok(mapsOutside(PLAN_MD.replace(OPENING, 'x')).length > 0);
 });
 
+// An inline plan has no prompt to carry a block, but the scan and the line still run, by reference to their one spelling
+test('inline_plan makes spawn_planner\'s scan and prints its line, with no second spelling and no block', () => {
+  const start = PLAN_MD.indexOf('<step name="inline_plan">');
+  assert.notEqual(start, -1, 'no inline_plan step');
+  const inline = flat(PLAN_MD.slice(start, PLAN_MD.indexOf('</step>', start)));
+  assert.match(inline, /with that key `true`, make that scan once and print that line before planning/);
+  assert.match(inline, /on `ok:false`, or output that won't parse, print nothing about it and go on planning/);
+  assert.match(inline, /An inline plan has no prompt, so it carries no block/);
+  assert.doesNotMatch(inline, /codemap scan|<code_map>/);
+});
+
 test('the planner contract, the planner rungs, the plan skill and the testing policy hold no whole-word map', () => {
   const rungs = readdirSync(join(ROOT, 'agents')).filter((f) => /^cad-planner(-.+)?\.md$/.test(f));
   assert.equal(rungs.length, 5);
