@@ -2865,6 +2865,15 @@ test('workflow scripts: no args guard, a meta that calls a function, and an unkn
   assert.deepEqual(kinds(late), ['workflow-no-args-guard']);
   const saved = run(['--root', scriptFixture(GOOD_SCRIPT.replace("if (!args) return 'no args';", 'const saved = args;'))]);
   assert.deepEqual(kinds(saved), ['workflow-no-args-guard']);
+  // a helper's own return sits right in front of the call and stops nothing
+  for (const spawn of ['return await agent', 'return agent']) {
+    const body = "if (!args) return 'no args';\nawait agent('hi', {});";
+    const helper = `const a = args;\nconst ask = async () => { try { ${spawn}('hi', {}); } catch { return null; } };\nawait ask();`;
+    const unguarded = run(['--root', scriptFixture(GOOD_SCRIPT.replace(body, helper))]);
+    assert.deepEqual(kinds(unguarded), ['workflow-no-args-guard'], spawn);
+    const guarded = run(['--root', scriptFixture(GOOD_SCRIPT.replace(body, `if (!args) return 'no args';\n${helper}`))]);
+    assert.deepEqual(kinds(guarded), [], spawn);
+  }
   const aliased = run(['--root', scriptFixture(GOOD_SCRIPT.replace("if (!args) return 'no args';", "let a = args;\nif (!a) { return 'no args'; }"))]);
   assert.deepEqual(kinds(aliased), []);
   const throws = run(['--root', scriptFixture(GOOD_SCRIPT.replace("if (!args) return 'no args';", "if (!args) throw new Error('no args');"))]);
