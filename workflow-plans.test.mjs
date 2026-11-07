@@ -225,6 +225,12 @@ test('the brief check re-dispatches once on a refusal, is no hard halt, and lets
   assert.match(briefFlat, /Not a hard halt\. After the one re-dispatch, or the user's word, continue/);
 });
 
+test('the brief check relays reads_missing and reads_unchecked in one line per plan and has no re-dispatch for them', () => {
+  assert.match(briefFlat, /An `ok:true` answer may carry `reads_missing`[^.]*or `reads_unchecked`: relay either in one line per plan and re-dispatch nothing for it\./);
+  assert.ok(briefFlat.indexOf('reads_missing') < briefFlat.indexOf('On `ok:false`'));
+  assert.doesNotMatch(briefFlat, /\bmap\b/i);
+});
+
 test('inline_plan does not name the brief call', () => {
   assert.doesNotMatch(stepOf(PLAN_MD, 'inline_plan'), /planning\.mjs" brief|check_brief/);
 });

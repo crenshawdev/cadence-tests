@@ -378,3 +378,146 @@ test('brief ceiling: multi-byte text counts in bytes', () => {
   assert.equal(r.ok, false);
   assert.match(r.detail, /PLAN-3\.md/);
 });
+
+// --- Reads: checked against the stored index, never refused ---
+
+import { execFileSync } from 'node:child_process';
+
+const SOURCE = 'export function alpha() {}\nexport function beta() {}\n';
+
+/** A scratch git repository holding the sources, with an index from the real `codemap scan` when `scan` is true. */
+function gitProject({ plans, scan = true, sources = { 'src/a.mjs': SOURCE, 'src/b.mjs': 'export const b = 1;\n' }, context = null } = {}) {
+  const p = project({ plans, context });
+  const git = (...a) => execFileSync('git', ['-C', p.root, ...a], { encoding: 'utf8', stdio: 'pipe' });
+  git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');
+  for (const [f, text] of Object.entries(sources)) {
+    mkdirSync(join(p.root, f, '..'), { recursive: true });
+    writeFileSync(join(p.root, f), text);
+  }
+  git('add', 'src'); git('commit', '-q', '-m', 'base');
+  if (scan) assert.equal(run(['codemap', 'scan'], p.dir).ok, true);
+  return { ...p, git };
+}
+
+const withReads = (reads, extra = '') => planText({ tasks: `### Task 1: Read\n\n- **Files:** src/a.mjs (note, b)\n- **Reads:** ${reads}\n- **Action:** do ${extra}\n- **Verify:** v\n` });
+const readsOnly = (reads) => ({ 'PLAN-3.md': withReads(reads) });
+const UNCHECKED_RE = /The `Reads` entries were not checked/g;
+const briefText = (dir, args = ['--phase', '4', '--plan', '3']) => {
+  const out = scratch();
+  const r = brief(dir, [...args, '--out-dir', out]);
+  return { r, text: r.ok ? readFileSync(r.path, 'utf8') : null };
+};
+
+test('brief reads: a path and symbol the index holds report nothing', () => {
+  const { dir } = gitProject({ plans: readsOnly('src/a.mjs#alpha, src/b.mjs') });
+  const { r, text } = briefText(dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.reads_missing, undefined);
+  assert.equal(r.reads_unchecked, undefined);
+  assert.doesNotMatch(text, /Reads the code map does not hold/);
+  assert.doesNotMatch(text, UNCHECKED_RE);
+});
+
+test('brief reads: an absent symbol and an absent path are each reported, with the brief written', () => {
+  const { dir } = gitProject({ plans: readsOnly('src/a.mjs#nope, src/new.mjs, src/a.mjs#alpha') });
+  const { r, text } = briefText(dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.reads_missing, ['src/a.mjs#nope', 'src/new.mjs']);
+  assert.match(text, /Reads the code map does not hold\n\n- src\/a\.mjs#nope\n- src\/new\.mjs\n/);
+  assert.doesNotMatch(text, /- src\/a\.mjs#alpha/);
+});
+
+test('brief reads: a path outside the repository is reported and its file is never opened', () => {
+  const { dir, root } = gitProject({ plans: readsOnly('../../outside#x') });
+  const outside = join(root, '..', '..', 'outside');
+  const marker = 'OUTSIDE-MARKER-STRING';
+  try { writeFileSync(outside, marker); } catch { /* a read-only parent still proves nothing was reported as held */ }
+  const { r, text } = briefText(dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.reads_missing, ['../../outside#x']);
+  assert.ok(!text.includes(marker));
+});
+
+test('brief reads: an index that lost its symbols judges the path alone', () => {
+  const { dir } = gitProject({ plans: readsOnly('src/a.mjs#nope, src/gone.mjs#x') });
+  const file = join(dir, 'codemap', 'index.json');
+  const index = JSON.parse(readFileSync(file, 'utf8'));
+  index.symbols_shed = true;
+  for (const row of index.rows) delete row.symbols;
+  writeFileSync(file, JSON.stringify(index));
+  const { r } = briefText(dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.reads_missing, ['src/gone.mjs#x']);
+});
+
+test('brief reads: with no map the brief says so once and flags no entry', () => {
+  const { dir } = gitProject({ plans: readsOnly('src/a.mjs#nope, src/new.mjs'), scan: false });
+  const { r, text } = briefText(dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.reads_unchecked, true);
+  assert.equal(r.reads_missing, undefined);
+  assert.equal((text.match(UNCHECKED_RE) || []).length, 1);
+  assert.doesNotMatch(text, /Reads the code map does not hold/);
+});
+
+test('brief reads: a plan with no Reads and no map carries no such sentence, and a non-repository is no map', () => {
+  const { dir } = gitProject({ scan: false });
+  const a = briefText(dir);
+  assert.equal(a.r.reads_unchecked, undefined);
+  assert.doesNotMatch(a.text, UNCHECKED_RE);
+  const plain = project({ plans: readsOnly('src/a.mjs#alpha') });
+  const b = briefText(plain.dir);
+  assert.equal(b.r.ok, true, JSON.stringify(b.r));
+  assert.equal(b.r.reads_unchecked, true);
+});
+
+/** The brief's size for a plan whose one task is padded with `pad` bytes. */
+const readsPlan = (reads, pad) => ({ 'PLAN-3.md': planText({ tasks: `### Task 1: Pad\n\n- **Reads:** ${reads}\n- **Action:** ${'x'.repeat(pad)}\n- **Verify:** v\n` }) });
+const absent = (n) => Array.from({ length: n }, (_, i) => `src/absent-${String(i).padStart(2, '0')}.mjs`);
+
+/** What a brief holds before any Reads report: the same plan with no map, less the one sentence that arm adds. */
+const neverCut = (plans) => {
+  const { r, text } = briefText(gitProject({ plans, scan: false }).dir);
+  return r.bytes - Buffer.byteLength(text.match(/The `Reads` entries were not checked[^\n]*\n/)[0]);
+};
+
+test('brief reads: 30 absent entries at 200 B under the ceiling list fewer, count the rest last, and the envelope holds all', () => {
+  const entries = absent(30).join(', ');
+  const { dir } = gitProject({ plans: readsPlan(entries, CEILING - 200 - neverCut(readsPlan(entries, 0))) });
+  const { r, text } = briefText(dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(r.bytes <= CEILING && readFileSync(r.path).length <= CEILING);
+  assert.equal(r.reads_missing.length, 30);
+  assert.ok(text.includes('### Task 1: Pad') && text.includes('- **Verify:** v'));
+  const listed = text.split('\n').filter((l) => /^- src\/absent-/.test(l));
+  assert.ok(listed.length > 0 && listed.length < 30, `${listed.length} listed`);
+  assert.match(text.trimEnd().split('\n').pop(), new RegExp(`^- ${30 - listed.length} more not listed$`));
+});
+
+test('brief reads: with a map, a plan exactly at the ceiling stays that size and the envelope still reports', () => {
+  const entries = absent(3).join(', ');
+  const { dir } = gitProject({ plans: readsPlan(entries, CEILING - neverCut(readsPlan(entries, 0))) });
+  const { r, text } = briefText(dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.bytes, CEILING);
+  assert.deepEqual(r.reads_missing, absent(3));
+  assert.doesNotMatch(text, /Reads the code map does not hold/, 'no room for even the count line');
+});
+
+test('brief reads: with no map a plan at the ceiling with a Reads entry is refused, and one with none passes', () => {
+  const noMap = (plans) => gitProject({ plans, scan: false }).dir;
+  const pad = CEILING - neverCut(readsPlan('src/a.mjs', 0));
+  const refused = brief(noMap(readsPlan('src/a.mjs', pad)));
+  assert.equal(refused.ok, false);
+  assert.match(refused.detail, /PLAN-3\.md/);
+  assert.match(refused.detail, new RegExp(`\\b${CEILING}\\b`));
+  assert.match(refused.detail, /brief is (\d+) bytes/);
+  const out = scratch();
+  assert.equal(brief(noMap(readsPlan('src/a.mjs', pad)), ['--phase', '4', '--plan', '3', '--out-dir', out]).ok, false);
+  assert.deepEqual(listing(out), []);
+  const base = gitProject({ plans: { 'PLAN-3.md': padded('') }, scan: false });
+  const exact = gitProject({ plans: { 'PLAN-3.md': padded('x'.repeat(CEILING - brief(base.dir).bytes)) }, scan: false });
+  const r = brief(exact.dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.bytes, CEILING);
+});
