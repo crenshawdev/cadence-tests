@@ -7,6 +7,10 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { run } from './planning.test.mjs';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+
+const { entryFile } = await import(join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'lib', 'codemap-partition.mjs'));
 
 const PROJECT = `# Proj
 
@@ -394,7 +398,7 @@ function gitProject({ plans, scan = true, sources = { 'src/a.mjs': SOURCE, 'src/
     mkdirSync(join(p.root, f, '..'), { recursive: true });
     writeFileSync(join(p.root, f), text);
   }
-  git('add', 'src'); git('commit', '-q', '-m', 'base');
+  git('add', ...Object.keys(sources)); git('commit', '-q', '-m', 'base');
   if (scan) assert.equal(run(['codemap', 'scan'], p.dir).ok, true);
   return { ...p, git };
 }
@@ -476,9 +480,9 @@ const readsPlan = (reads, pad) => ({ 'PLAN-3.md': planText({ tasks: `### Task 1:
 const absent = (n) => Array.from({ length: n }, (_, i) => `src/absent-${String(i).padStart(2, '0')}.mjs`);
 
 /** What a brief holds before any Reads report: the same plan with no map, less the one sentence that arm adds. */
-const neverCut = (plans) => {
-  const { r, text } = briefText(gitProject({ plans, scan: false }).dir);
-  return r.bytes - Buffer.byteLength(text.match(/The `Reads` entries were not checked[^\n]*\n/)[0]);
+const neverCut = (plans, context = null) => {
+  const { r, text } = briefText(gitProject({ plans, scan: false, context }).dir);
+  return r.bytes - Buffer.byteLength(text.match(/The `Reads` entries were not checked[^\n]*\n/)?.[0] ?? '');
 };
 
 test('brief reads: 30 absent entries at 200 B under the ceiling list fewer, count the rest last, and the envelope holds all', () => {
@@ -520,4 +524,128 @@ test('brief reads: with no map a plan at the ceiling with a Reads entry is refus
   const r = brief(exact.dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.bytes, CEILING);
+});
+
+// --- the map's rows, shed first ---
+
+const many = (n, prefix = 'fn') => Array.from({ length: n }, (_, i) => `export function ${prefix}${String(i).padStart(3, '0')}() {}\n`).join('');
+const ROWS_HEADING_RE = /^## Code map rows for this plan's files and reads$/m;
+const ROWS_LEFT_OUT = 'The code map rows were left out: the brief had no room for them.';
+/** The rows section's one JSON line, parsed; null when the brief carries none. */
+const rowsOf = (text) => {
+  const line = text.split('\n').find((l) => l.startsWith('{"ok":true,"action":"slice"'));
+  return line === undefined ? null : JSON.parse(line);
+};
+const symbolsIn = (answer) => answer.rows.reduce((n, r) => n + (r.symbols ? r.symbols.length : 0), 0);
+/** The index's hashes become the entry's built_from, as `build()` does in codemap-slice.test.mjs. */
+function build(dir, path, entry = { summary: 'built' }) {
+  const index = JSON.parse(readFileSync(join(dir, 'codemap', 'index.json'), 'utf8'));
+  const m = index.modules.find((x) => x.paths.includes(path));
+  const built_from = Object.fromEntries(m.paths.map((p) => [p, index.rows.find((r) => r.path === p).hash]));
+  writeFileSync(join(dir, 'codemap', entryFile(m.name)), JSON.stringify({ built_from, ...entry }));
+}
+const filesPlan = (files, tasks) => planText({ files, tasks });
+const oneTask = (reads, pad) => `### Task 1: Rows\n\n${reads ? `- **Reads:** ${reads}\n` : ''}- **Action:** ${'x'.repeat(pad)}\n- **Verify:** v\n`;
+
+test('brief rows: the rows for a files: path and a Reads path appear, and a path the plan does not name does not', () => {
+  const { dir } = gitProject({
+    plans: { 'PLAN-3.md': filesPlan(['src/a.mjs'], oneTask('src/b.mjs#b', 1)) },
+    sources: { 'src/a.mjs': SOURCE, 'src/b.mjs': 'export const b = 1;\n', 'src/c.mjs': 'export const c = 1;\n' },
+  });
+  const { r, text } = briefText(dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.match(text, ROWS_HEADING_RE);
+  const answer = rowsOf(text);
+  assert.deepEqual(answer.rows.map((x) => x.path), ['src/a.mjs', 'src/b.mjs']);
+  assert.equal(answer.rows[0].symbols[0].name, 'alpha');
+  assert.ok(!text.includes('src/c.mjs'));
+});
+
+test('brief rows: a task line `a.mjs (note, b)` asks for no row named `b)`', () => {
+  const { dir } = gitProject({
+    plans: { 'PLAN-3.md': filesPlan(['src/a.mjs'], '### Task 1: Rows\n\n- **Files:** src/a.mjs (note, b)\n- **Action:** x\n- **Verify:** v\n') },
+    sources: { 'src/a.mjs': SOURCE, 'b)': 'export const b = 1;\n' },
+  });
+  const { r, text } = briefText(dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(rowsOf(text).rows.map((x) => x.path), ['src/a.mjs']);
+});
+
+test('brief rows: two runs give identical bytes', () => {
+  const { dir } = gitProject({ plans: { 'PLAN-3.md': filesPlan(['src/a.mjs'], oneTask('src/b.mjs#nope', 1)) } });
+  assert.equal(briefText(dir).text, briefText(dir).text);
+});
+
+test('brief rows: a built module\'s row is stale after an edit and a never-built module\'s is not', () => {
+  const { dir, root } = gitProject({
+    plans: { 'PLAN-3.md': filesPlan(['built/a.mjs', 'unbuilt/b.mjs'], oneTask('', 1)) },
+    sources: { 'built/a.mjs': SOURCE, 'unbuilt/b.mjs': `${'x'.repeat(80)}\n`.repeat(1700) },
+  });
+  build(dir, 'built/a.mjs');
+  const fresh = rowsOf(briefText(dir).text);
+  assert.ok(fresh.rows.every((x) => x.stale === undefined), JSON.stringify(fresh.rows));
+  writeFileSync(join(root, 'built', 'a.mjs'), `${SOURCE}// edited\n`);
+  writeFileSync(join(root, 'unbuilt', 'b.mjs'), `${'y'.repeat(80)}\n`.repeat(1700));
+  const rows = Object.fromEntries(rowsOf(briefText(dir).text).rows.map((x) => [x.path, x]));
+  assert.equal(rows['built/a.mjs'].stale, true);
+  assert.equal(rows['unbuilt/b.mjs'].stale, undefined);
+});
+
+/** A project whose one file holds 100 symbols, a plan padded to leave `room` bytes after what is never cut. */
+const crowded = (reads, room, { scan = true } = {}) => {
+  const shape = (pad) => ({ 'PLAN-3.md': filesPlan(['src/a.mjs'], oneTask(reads, pad)) });
+  const pad = CEILING - room - neverCut(shape(0));
+  return gitProject({ plans: shape(pad), sources: { 'src/a.mjs': many(100) }, scan });
+};
+
+test('brief rows: padding the tasks sheds rows, and every task and decision line stays whole', () => {
+  const context = '## Decisions\n\n- D-02 (kept): this decision line must ride whole.\n';
+  const shape = (pad) => ({ 'PLAN-3.md': filesPlan(['src/a.mjs'], `### Task 1: Rows\n\n- **Decisions:** D-02\n- **Action:** ${'x'.repeat(pad)}\n- **Verify:** v\n`) });
+  const sources = { 'src/a.mjs': many(100) };
+  const loose = briefText(gitProject({ plans: shape(1), sources, context }).dir);
+  const base = neverCut(shape(0), context);
+  const tight = gitProject({ plans: shape(CEILING - 2500 - base), sources, context });
+  const t = briefText(tight.dir);
+  assert.equal(t.r.ok, true, JSON.stringify(t.r));
+  assert.ok(t.r.bytes <= CEILING && readFileSync(t.r.path).length <= CEILING);
+  for (const line of ['- **Decisions:** D-02', '- **Verify:** v', '- D-02 (kept): this decision line must ride whole.', '### Task 1: Rows']) assert.ok(t.text.includes(line), line);
+  const a = rowsOf(t.text);
+  const b = rowsOf(loose.text);
+  assert.ok(a.truncated === true || symbolsIn(a) < symbolsIn(b), `${symbolsIn(a)} of ${symbolsIn(b)}`);
+});
+
+test('brief rows: with 3,000 B left and ten absent Reads entries, all ten are listed and the rows give way to them', () => {
+  const held = Array.from({ length: 10 }, (_, i) => `src/a.mjs#fn${String(i).padStart(3, '0')}`).join(', ');
+  const gone = Array.from({ length: 10 }, (_, i) => `src/a.mjs#zz${String(i).padStart(3, '0')}`).join(', ');
+  const withHeld = briefText(crowded(held, 3000).dir);
+  const withGone = briefText(crowded(gone, 3000).dir);
+  assert.equal(withGone.r.ok, true, JSON.stringify(withGone.r));
+  assert.ok(withGone.r.bytes <= CEILING && readFileSync(withGone.r.path).length <= CEILING);
+  assert.equal(withHeld.r.reads_missing, undefined);
+  assert.equal(withGone.r.reads_missing.length, 10);
+  assert.equal(withGone.text.split('\n').filter((l) => /^- src\/a\.mjs#zz/.test(l)).length, 10);
+  const a = rowsOf(withGone.text);
+  const b = rowsOf(withHeld.text);
+  assert.ok(a.truncated === true || symbolsIn(a) < symbolsIn(b));
+  assert.ok(symbolsIn(a) < symbolsIn(b), `${symbolsIn(a)} against ${symbolsIn(b)}`);
+});
+
+test('brief rows: with room for no answer the rows are left out, one line says so, and the brief composes', () => {
+  const some = briefText(crowded('', 100).dir);
+  assert.equal(some.r.ok, true, JSON.stringify(some.r));
+  assert.ok(some.r.bytes <= CEILING);
+  assert.ok(some.text.includes(ROWS_LEFT_OUT));
+  assert.doesNotMatch(some.text, ROWS_HEADING_RE);
+  assert.equal(rowsOf(some.text), null);
+  const none = briefText(crowded('', 0).dir);
+  assert.equal(none.r.ok, true, JSON.stringify(none.r));
+  assert.equal(none.r.bytes, CEILING);
+  assert.ok(!none.text.includes(ROWS_LEFT_OUT));
+});
+
+test('brief rows: tasks past the ceiling are still refused with a map present', () => {
+  const { dir } = gitProject({ plans: { 'PLAN-3.md': padded('x'.repeat(CEILING)) } });
+  const r = brief(dir);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /PLAN-3\.md/);
 });
