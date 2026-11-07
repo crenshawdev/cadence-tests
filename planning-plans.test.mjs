@@ -735,13 +735,14 @@ test('plan-overlap: single plan and missing phase degrade predictably', () => {
 
 // --- plan-overlap: waves ---------------------------------------------------------
 
-/** A phase 1 with one PLAN file per key of `plans`: `{ name: [files] }`. */
+/** A phase 1 with one PLAN file per key of `plans`: `{ name: [files] }`, or `{ name: { files, extra } }` with `extra` spliced into the frontmatter. */
 function wavesTree(plans) {
   const names = Object.keys(plans);
   const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: names } } });
   for (const name of names) {
+    const spec = Array.isArray(plans[name]) ? { files: plans[name] } : plans[name];
     writeFileSync(join(dir, 'phases', '1', name),
-      `---\nphase: 1\nrequirements: [REQ-1]\nfiles: [${plans[name].join(', ')}]\n---\n# ${name}\n`);
+      `---\nphase: 1\nrequirements: [REQ-1]\nfiles: [${spec.files.join(', ')}]\n${spec.extra || ''}---\n# ${name}\n`);
   }
   return dir;
 }
@@ -799,6 +800,66 @@ test('plan-overlap waves: a phase directory with no plan gives no waves', () => 
   const r = run(['plan-overlap', '--phase', '1'], empty);
   assert.equal(r.ok, true);
   assert.deepEqual(r.waves, []);
+});
+
+/** SIX_PLANS with `depends_on: <value>` spliced into PLAN-2.md's frontmatter. */
+const sixWithDeps = (value) => wavesTree({
+  ...SIX_PLANS, 'PLAN-2.md': { files: SIX_PLANS['PLAN-2.md'], extra: `depends_on: ${value}\n` },
+});
+
+test('plan-overlap waves: depends_on orders a plan after the earlier plan it names', () => {
+  const r = run(['plan-overlap', '--phase', '1'], sixWithDeps('[1]'));
+  assert.deepEqual(r.waves,
+    [['PLAN-1.md', 'PLAN-5.md', 'PLAN-6.md'], ['PLAN-2.md', 'PLAN-4.md'], ['PLAN-3.md']]);
+  assert.equal(r.frontmatter_issues, undefined);
+});
+
+test('plan-overlap waves: a block-form depends_on holding 1 orders the plan', () => {
+  const r = run(['plan-overlap', '--phase', '1'], wavesTree({
+    'PLAN-1.md': ['src/a.rs'],
+    'PLAN-2.md': { files: ['src/b.rs'], extra: 'depends_on:\n  - 1\n' },
+  }));
+  assert.deepEqual(r.waves, [['PLAN-1.md'], ['PLAN-2.md']]);
+  assert.equal(r.frontmatter_issues, undefined);
+});
+
+for (const value of ['[9]', '[3]', '[2]', '[x]']) {
+  test(`plan-overlap waves: depends_on ${value} on PLAN-2.md is one invalid-depends-on at the key line`, () => {
+    const r = run(['plan-overlap', '--phase', '1'], sixWithDeps(value));
+    assert.deepEqual(r.frontmatter_issues, [{
+      plan: 'PLAN-2.md',
+      issues: [{ line: 5, code: 'invalid-depends-on', text: `depends_on: ${value}` }],
+    }]);
+  });
+}
+
+test('plan-overlap waves: an empty or absent depends_on declares nothing and raises nothing', () => {
+  for (const dir of [sixWithDeps('[]'), wavesTree(SIX_PLANS)]) {
+    assert.equal(run(['plan-overlap', '--phase', '1'], dir).frontmatter_issues, undefined);
+  }
+});
+
+// choose_path reads a second wave with no overlap and no issue as a valid depends_on, and routes sequential
+test('plan-overlap waves: a valid depends_on with no shared file gives empty overlaps and two waves', () => {
+  const r = run(['plan-overlap', '--phase', '1'], wavesTree({
+    'PLAN-1.md': ['src/a.rs'],
+    'PLAN-2.md': { files: ['src/b.rs'], extra: 'depends_on: [1]\n' },
+  }));
+  assert.deepEqual(r.overlaps, []);
+  assert.equal(r.frontmatter_issues, undefined);
+  assert.deepEqual(r.waves, [['PLAN-1.md'], ['PLAN-2.md']]);
+});
+
+test('plan-overlap waves: depends_on on a one-plan phase comes back in the early return', () => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true } } });
+  writeFileSync(join(dir, 'phases', '1', 'PLAN.md'),
+    '---\nphase: 1\nrequirements: [REQ-1]\nfiles: [src/a.rs]\ndepends_on: [1]\n---\n# Plan\n');
+  const r = run(['plan-overlap', '--phase', '1'], dir);
+  assert.deepEqual(r.waves, [['PLAN.md']]);
+  assert.deepEqual(r.frontmatter_issues, [{
+    plan: 'PLAN.md',
+    issues: [{ line: 5, code: 'invalid-depends-on', text: 'depends_on: [1]' }],
+  }]);
 });
 
 // Phase 2's real plans, trimmed to their frontmatter and `- **Files:**` lines (the only bytes parsePlanFiles reads).
