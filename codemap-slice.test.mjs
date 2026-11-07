@@ -289,3 +289,44 @@ test('5,000 built modules all left out by one broad term print at or under 10,00
   assert.deepEqual(body.entries_omitted[19], { module: 'pkg0019', file: '.planning/codemap/pkg0019.json' });
   assert.equal(body.entries_omitted_more, 4980);
 });
+
+// the pure function with a smaller limit, the way the plan brief asks for it
+function manyRows(n, { withEntries = false } = {}) {
+  const rows = [];
+  const entries = new Map();
+  const states = new Map();
+  for (let i = 0; i < n; i++) {
+    const m = `pkg${String(i).padStart(4, '0')}`;
+    rows.push({ path: `${m}/f.js`, kind: 'text', hash: 'a'.repeat(40), bytes: 10, symbols: [{ name: `s${i}`, kind: 'function', line: 1, approximate: true }] });
+    if (withEntries) { entries.set(m, { built_from: { [`${m}/f.js`]: 'a'.repeat(40) }, summary: 'y'.repeat(2000) }); states.set(m, 'built'); }
+  }
+  return {
+    rows, modules: rows.map((r) => ({ name: r.path.split('/')[0], paths: [r.path] })), states, entries,
+    select: { files: [], symbols: [], terms: ['pkg'] }, entryPath: (m) => `.planning/codemap/${m}.json`, current: new Set(rows.map((r) => r.path)),
+  };
+}
+const printed = (body) => Buffer.byteLength(JSON.stringify({ ok: true, ...body })) + 1;
+
+test('a limit of 2,000 B holds, and so does it when every entry is left out', () => {
+  const rowsOnly = sliceOf({ ...manyRows(500), limit: 2000 });
+  assert.ok(printed(rowsOnly) <= 2000, `${printed(rowsOnly)} B`);
+  assert.equal(rowsOnly.truncated, true);
+  assert.equal(rowsOnly.total, 500);
+
+  const entries = sliceOf({ ...manyRows(5000, { withEntries: true }), limit: 2000 });
+  assert.ok(printed(entries) <= 2000, `${printed(entries)} B`);
+  assert.equal(entries.truncated, true);
+  assert.equal(entries.entries, undefined);
+  assert.ok(entries.entries_omitted.length > 0 && entries.entries_omitted.length < 20, 'the list shrank with the limit');
+  assert.equal(entries.entries_omitted.length + entries.entries_omitted_more, 5000);
+});
+
+test('a smaller limit sheds at least as much as a larger one on the same input', () => {
+  const input = manyRows(300);
+  const small = sliceOf({ ...input, limit: 2000 });
+  const mid = sliceOf({ ...input, limit: 6000 });
+  const full = sliceOf(input);
+  assert.ok(small.rows.length <= mid.rows.length && mid.rows.length <= full.rows.length);
+  assert.ok(small.rows.length < full.rows.length);
+  assert.deepEqual(sliceOf({ ...input, limit: 10000 }), full, 'the default is the limit of 10,000');
+});
