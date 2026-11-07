@@ -256,6 +256,56 @@ test('brief decisions: a value wrapped onto a second line keeps every id', () =>
   for (const id of ['- D-01 (shared', '- D-06 (choose_path)', '- D-10 (budget)']) assert.ok(got.includes(id), id);
 });
 
+const SHAPED = `# Phase 4: Thing - Context
+
+## Decisions
+
+- D-02 (wrapped): the first line ends mid-sentence and
+  the sentence finishes here, with John's ruling.
+- D-03 (nested): requires:
+  - the first requirement
+    - a sub-point of it
+
+  - the second requirement, after a blank line inside the decision
+
+- D-04 (plain): one line.
+- D-10a (draft): WRONG
+- D-10 (budget): RIGHT
+
+## Notes
+
+- D-05 (elsewhere): not in a decision section.
+`;
+
+test('brief decisions: a wrapped decision and a nested-bullet decision ride whole, to the next column-0 line', () => {
+  const { dir } = make({ 'PLAN-3.md': withDecisions(field('D-02, D-03')) }, SHAPED);
+  const { r } = compose(dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const got = readFileSync(r.path, 'utf8');
+  const wrapped = '- D-02 (wrapped): the first line ends mid-sentence and\n  the sentence finishes here, with John\'s ruling.';
+  const nested = '- D-03 (nested): requires:\n  - the first requirement\n    - a sub-point of it\n\n  - the second requirement, after a blank line inside the decision';
+  assert.ok(got.includes(`## Decisions the tasks name\n\n${wrapped}\n${nested}\n`), 'both whole, trailing blank dropped');
+  assert.ok(!got.includes('D-04 (plain)'), 'the next column-0 line ends the decision');
+});
+
+test('brief decisions: a suffixed id is not the bare id, in either order', () => {
+  const { dir } = make({ 'PLAN-3.md': withDecisions(field('D-10')) }, SHAPED);
+  const { r } = compose(dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const got = readFileSync(r.path, 'utf8');
+  assert.ok(got.includes('- D-10 (budget): RIGHT'));
+  assert.ok(!got.includes('WRONG'));
+  const only = make({ 'PLAN-3.md': withDecisions(field('D-10')) }, '## Decisions\n\n- D-10a (draft): WRONG\n');
+  assert.equal(compose(only.dir).r.ok, false);
+});
+
+test('brief: the head does not claim a file the project lacks, and still names the paths', () => {
+  const { dir } = project({ projectMd: null });
+  const got = readFileSync(compose(dir).r.path, 'utf8');
+  assert.ok(!got.includes('All three are still there'));
+  assert.ok(got.includes('Any of these the project has are still there to open'));
+});
+
 test('brief decisions: an empty value refuses nothing and does not take in the next field', () => {
   const { dir } = make({ 'PLAN-3.md': withDecisions('- **Decisions:**\n') });
   const { r } = compose(dir);
