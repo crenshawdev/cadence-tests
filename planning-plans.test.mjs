@@ -10,8 +10,10 @@
 // a sibling that imports a fixture from here registers nothing twice.
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { copyFileSync, mkdirSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { makeTree, run, isEntryFile } from './planning.test.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
@@ -729,4 +731,88 @@ test('plan-overlap: single plan and missing phase degrade predictably', () => {
   assert.match(r.note, /fewer than two/);
   assert.equal(run(['plan-overlap', '--phase', '9'], single).reason, 'no-phase-dir');
   assert.equal(run(['plan-overlap'], single).reason, 'bad-args');
+});
+
+// --- plan-overlap: waves ---------------------------------------------------------
+
+/** A phase 1 with one PLAN file per key of `plans`: `{ name: [files] }`. */
+function wavesTree(plans) {
+  const names = Object.keys(plans);
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: names } } });
+  for (const name of names) {
+    writeFileSync(join(dir, 'phases', '1', name),
+      `---\nphase: 1\nrequirements: [REQ-1]\nfiles: [${plans[name].join(', ')}]\n---\n# ${name}\n`);
+  }
+  return dir;
+}
+
+/** Plans 1 and 4 share a file, plans 2 and 3 share another, 5 and 6 share nothing. */
+const SIX_PLANS = {
+  'PLAN-1.md': ['src/one.rs', 'src/a.rs'],
+  'PLAN-2.md': ['src/two.rs', 'src/b.rs'],
+  'PLAN-3.md': ['src/three.rs', 'src/b.rs'],
+  'PLAN-4.md': ['src/four.rs', 'src/a.rs'],
+  'PLAN-5.md': ['src/five.rs'],
+  'PLAN-6.md': ['src/six.rs'],
+};
+
+test('plan-overlap waves: plans wait only for the earlier plans they share a file with', () => {
+  const r = run(['plan-overlap', '--phase', '1'], wavesTree(SIX_PLANS));
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.waves,
+    [['PLAN-1.md', 'PLAN-2.md', 'PLAN-5.md', 'PLAN-6.md'], ['PLAN-3.md', 'PLAN-4.md']]);
+  assert.deepEqual(r.overlaps.map((o) => o.plans),
+    [['PLAN-1.md', 'PLAN-4.md'], ['PLAN-2.md', 'PLAN-3.md']]);
+});
+
+test('plan-overlap waves: two plans sharing only .github/tests-pin land in different waves', () => {
+  const r = run(['plan-overlap', '--phase', '1'], wavesTree({
+    'PLAN-1.md': ['src/a.rs', '.github/tests-pin'],
+    'PLAN-2.md': ['src/b.rs', '.github/tests-pin'],
+  }));
+  assert.deepEqual(r.waves, [['PLAN-1.md'], ['PLAN-2.md']]);
+});
+
+test('plan-overlap waves: plan numbers compare as numbers, so PLAN-10.md follows PLAN-2.md', () => {
+  const r = run(['plan-overlap', '--phase', '1'],
+    wavesTree({ 'PLAN-2.md': ['src/s.rs'], 'PLAN-10.md': ['src/s.rs'] }));
+  assert.deepEqual(r.waves, [['PLAN-2.md'], ['PLAN-10.md']]);
+});
+
+test('plan-overlap waves: a directory lease and a file under it land in different waves', () => {
+  const r = run(['plan-overlap', '--phase', '1'],
+    wavesTree({ 'PLAN-1.md': ['src/'], 'PLAN-2.md': ['src/a.rs'] }));
+  assert.deepEqual(r.waves, [['PLAN-1.md'], ['PLAN-2.md']]);
+});
+
+test('plan-overlap waves: a one-plan phase is one wave beside the unchanged note', () => {
+  const single = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true } } });
+  const r = run(['plan-overlap', '--phase', '1'], single);
+  assert.deepEqual(r.waves, [['PLAN.md']]);
+  assert.deepEqual(r.plans, []);
+  assert.deepEqual(r.overlaps, []);
+  assert.match(r.note, /fewer than two/);
+});
+
+test('plan-overlap waves: a phase directory with no plan gives no waves', () => {
+  const empty = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: {} } });
+  const r = run(['plan-overlap', '--phase', '1'], empty);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.waves, []);
+});
+
+// Phase 2's real plans, trimmed to their frontmatter and `- **Files:**` lines (the only bytes parsePlanFiles reads).
+// The pinned figure is the sha256 of the seam's `overlaps` JSON on this fixture, taken before `waves` existed.
+const PHASE2_OVERLAPS_SHA256 = '1e5e7d11c99571eb75c4cee8e2ec79e33f8a75b475ca944dd093dc7adcdff013';
+
+test("plan-overlap waves: a copy of Phase 2's plans gives 8 waves and leaves overlaps byte-identical", () => {
+  const from = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'phase-2-plans');
+  const dir = makeTree({ roadmap: [{ n: 2, name: 'Two' }], phases: { 2: {} } });
+  for (const f of readdirSync(from)) copyFileSync(join(from, f), join(dir, 'phases', '2', f));
+  const r = run(['plan-overlap', '--phase', '2'], dir);
+  assert.equal(r.waves.length, 8);
+  assert.ok(r.waves.every((w) => w.length === 1), JSON.stringify(r.waves));
+  assert.equal(createHash('sha256').update(JSON.stringify(r.overlaps)).digest('hex'), PHASE2_OVERLAPS_SHA256);
+  assert.equal(r.undeclared, undefined);
+  assert.equal(r.frontmatter_issues, undefined);
 });
