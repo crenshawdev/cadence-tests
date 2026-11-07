@@ -286,3 +286,45 @@ test('brief decisions: with no CONTEXT.md and no field the head carries no such 
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.ok(!readFileSync(r.path, 'utf8').includes('No decision was carried'));
 });
+
+// --- the ceiling: 32 KiB of the file's bytes, never characters ---
+
+const CEILING = 32 * 1024;
+const padded = (pad) => planText({ tasks: `### Task 1: Pad\n\n- **Action:** ${pad}\n- **Verify:** v\n` });
+const sizeWith = (pad) => {
+  const { dir } = project({ plans: { 'PLAN-3.md': padded(pad) } });
+  return brief(dir).bytes;
+};
+
+test('brief ceiling: a plan whose parts pad past it is refused naming the plan and both numbers', () => {
+  const { dir } = project({ plans: { 'PLAN-3.md': padded('x'.repeat(CEILING)) } });
+  const out = scratch();
+  const r = brief(dir, ['--phase', '4', '--plan', '3', '--out-dir', out]);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /PLAN-3\.md/);
+  assert.match(r.detail, new RegExp(`\\b${CEILING}\\b`));
+  assert.match(r.detail, /brief is (\d+) bytes/);
+  assert.ok(Number(/brief is (\d+) bytes/.exec(r.detail)[1]) > CEILING);
+  assert.match(r.hint, /split/);
+  assert.deepEqual(listing(out), []);
+});
+
+test('brief ceiling: a brief exactly at it passes and its file is that size, one byte over is refused', () => {
+  const base = sizeWith('');
+  const { dir } = project({ plans: { 'PLAN-3.md': padded('x'.repeat(CEILING - base)) } });
+  const out = scratch();
+  const r = brief(dir, ['--phase', '4', '--plan', '3', '--out-dir', out]);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.bytes, CEILING);
+  assert.equal(readFileSync(r.path).length, CEILING);
+  const over = project({ plans: { 'PLAN-3.md': padded('x'.repeat(CEILING - base + 1)) } });
+  assert.equal(brief(over.dir).ok, false);
+});
+
+test('brief ceiling: multi-byte text counts in bytes', () => {
+  // 12,000 characters of 3-byte text: under the ceiling by characters, over it by bytes
+  const { dir } = project({ plans: { 'PLAN-3.md': padded('€'.repeat(12000)) } });
+  const r = brief(dir);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /PLAN-3\.md/);
+});
