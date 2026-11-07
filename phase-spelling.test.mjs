@@ -462,6 +462,8 @@ function phaseArgCallsites() {
  * about a callsite that does nothing.
  */
 const CALLSITES = [
+  { file: 'brief.mjs', fn: 'cmdBrief', ordinal: 1, disposition: 'tree-aware',
+    why: 'resolves the plan file under the phase directory and names it by the caller\'s spelling' },
   { file: 'capture.mjs', fn: 'cmdCapture', ordinal: 1, disposition: 'exempt',
     why: 'the raw spelling is a TAG appended to CAPTURE.md and no phases/<N>/ path is resolved (D-08)' },
   { file: 'cite-count.mjs', fn: 'cmdCiteCount', ordinal: 1, disposition: 'tree-aware',
@@ -537,10 +539,10 @@ test('census: every phase-argument callsite under planning/ carries a dispositio
     'CALLSITES names a callsite the walk no longer finds - delete the row if the callsite is gone,'
     + ' or re-key it if its enclosing function was renamed.');
 
-  // CADENCE-CENSUS: phase-spelling-callsites | asserts: 25 phase-argument callsites under cadence-core/bin/planning/, 15 of them resolving a phases/<N>/ path - 13 through the tree-aware check and 2 through the unconditional one
-  assert.equal(found.length, 25, `callsite count moved: ${found.length}`);
+  // CADENCE-CENSUS: phase-spelling-callsites | asserts: 26 phase-argument callsites under cadence-core/bin/planning/, 16 of them resolving a phases/<N>/ path - 14 through the tree-aware check and 2 through the unconditional one
+  assert.equal(found.length, 26, `callsite count moved: ${found.length}`);
   const by = (d) => CALLSITES.filter((c) => c.disposition === d).length;
-  assert.equal(by('tree-aware'), 13);
+  assert.equal(by('tree-aware'), 14);
   assert.equal(by('unconditional'), 2);
   assert.equal(by('exempt'), 10);
 });
