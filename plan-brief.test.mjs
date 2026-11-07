@@ -176,3 +176,113 @@ test('brief: bad --phase and --plan are refused at the door', () => {
   assert.equal(brief(dir, ['--phase', '4']).reason, 'bad-args');
   assert.equal(brief(dir, ['--phase', '4', '--plan', 'x']).reason, 'bad-args');
 });
+
+// --- Decisions: a task's named ids pull their lines from the phase's CONTEXT.md ---
+
+const CONTEXT = `# Phase 4: Thing - Context
+
+## Durable decisions
+
+- D-01 (shared files): \`waves\` counts every declared file: John picked "Count every file".
+
+## Decisions
+
+- D-06 (choose_path): routes the phase sequential. Evidence: \`execute.md:177\`.
+- D-10 (budget): the ceiling is held by the seam.
+- D-11 (unnamed): no task names this one.
+`;
+
+const withDecisions = (...fields) => planText({
+  tasks: fields.map((f, i) => `### Task ${i + 1}: T${i + 1}\n\n${f}- **Action:** a\n- **Verify:** v\n`).join('\n'),
+});
+const field = (value) => `- **Decisions:** ${value}\n`;
+const make = (plans, context = CONTEXT) => project({ plans, context });
+const compose = (dir, plan = '3') => {
+  const out = scratch();
+  return { out, r: brief(dir, ['--phase', '4', '--plan', plan, '--out-dir', out]) };
+};
+
+test('brief decisions: a named id gives its line whole and once, and an unnamed line is absent', () => {
+  const { dir } = make({ 'PLAN-3.md': withDecisions(field('D-01, D-10'), field('D-10')) });
+  const { r } = compose(dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const got = readFileSync(r.path, 'utf8');
+  const d01 = CONTEXT.split('\n').find((l) => l.startsWith('- D-01'));
+  const d10 = CONTEXT.split('\n').find((l) => l.startsWith('- D-10'));
+  assert.ok(got.includes(`${d01}\n${d10}\n`), 'both lines whole, in the order first named');
+  assert.equal(got.split(d10).length - 1, 1, 'D-10 once though two tasks name it');
+  assert.ok(!got.includes('D-11 (unnamed)'));
+  assert.ok(!got.includes('No decision was carried'));
+});
+
+test('brief decisions: a missing id is refused naming plan, task and id, and nothing is written', () => {
+  const { dir } = make({ 'PLAN-2.md': withDecisions(field('D-01'), field('D-99')) });
+  const { out, r } = compose(dir, '2');
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /PLAN-2\.md/);
+  assert.match(r.detail, /Task 2/);
+  assert.match(r.detail, /D-99/);
+  assert.deepEqual(listing(out), []);
+});
+
+test('brief decisions: every bad entry across tasks is named in one answer', () => {
+  const { dir } = make({ 'PLAN-3.md': withDecisions(field('D-98'), field('D-01'), field('D-99')) });
+  const { r } = compose(dir);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /Task 1 names D-98/);
+  assert.match(r.detail, /Task 3 names D-99/);
+  assert.doesNotMatch(r.detail, /Task 2/);
+});
+
+test('brief decisions: ids compare whole, so D-1 never finds D-10', () => {
+  const { dir } = make({ 'PLAN-3.md': withDecisions(field('D-1')) });
+  const { r } = compose(dir);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /D-1,/);
+});
+
+test('brief decisions: an entry that is not an id refuses the brief', () => {
+  const { dir } = make({ 'PLAN-3.md': withDecisions(field('see D-01')) });
+  const { r } = compose(dir);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /see D-01.*not a decision id/);
+});
+
+test('brief decisions: a value wrapped onto a second line keeps every id', () => {
+  const { dir } = make({ 'PLAN-3.md': withDecisions('- **Decisions:** D-01,\n  D-06, D-10\n') });
+  const { r } = compose(dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const got = readFileSync(r.path, 'utf8');
+  for (const id of ['- D-01 (shared', '- D-06 (choose_path)', '- D-10 (budget)']) assert.ok(got.includes(id), id);
+});
+
+test('brief decisions: an empty value refuses nothing and does not take in the next field', () => {
+  const { dir } = make({ 'PLAN-3.md': withDecisions('- **Decisions:**\n') });
+  const { r } = compose(dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const got = readFileSync(r.path, 'utf8');
+  assert.ok(!got.includes('## Decisions the tasks name'));
+  assert.ok(got.includes('No decision was carried'));
+});
+
+test('brief decisions: with no CONTEXT.md a named id is refused', () => {
+  const { dir } = project({ plans: { 'PLAN-3.md': withDecisions(field('D-01')) } });
+  const { r } = compose(dir);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /D-01/);
+});
+
+test('brief decisions: no Decisions field against a CONTEXT.md that holds some names its path in the head', () => {
+  const { dir } = make({ 'PLAN-3.md': planText() });
+  const { r } = compose(dir);
+  const got = readFileSync(r.path, 'utf8');
+  assert.match(got, /No decision was carried: no task names one\. `\.planning\/phases\/4\/CONTEXT\.md` holds/);
+  assert.ok(!got.includes('## Decisions the tasks name'));
+});
+
+test('brief decisions: with no CONTEXT.md and no field the head carries no such line', () => {
+  const { dir } = project();
+  const { r } = compose(dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(!readFileSync(r.path, 'utf8').includes('No decision was carried'));
+});
