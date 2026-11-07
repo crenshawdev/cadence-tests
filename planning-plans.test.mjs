@@ -823,7 +823,8 @@ test('plan-overlap waves: a block-form depends_on holding 1 orders the plan', ()
   assert.equal(r.frontmatter_issues, undefined);
 });
 
-for (const value of ['[9]', '[3]', '[2]', '[x]']) {
+// [0] is below PLAN-2's number and names no plan, so only the numbers.has(k) half of the check rejects it
+for (const value of ['[9]', '[3]', '[2]', '[x]', '[0]']) {
   test(`plan-overlap waves: depends_on ${value} on PLAN-2.md is one invalid-depends-on at the key line`, () => {
     const r = run(['plan-overlap', '--phase', '1'], sixWithDeps(value));
     assert.deepEqual(r.frontmatter_issues, [{
