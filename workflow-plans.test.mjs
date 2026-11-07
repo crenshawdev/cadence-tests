@@ -52,3 +52,34 @@ test('planning.workflow_plans reads false when unset and true when the repo or t
 test('the shipped schema adds no parallelization.waves key', () => {
   assert.doesNotMatch(readFileSync(join(ROOT, 'cadence-core', 'config.schema.json'), 'utf8'), /parallelization\.waves/);
 });
+
+// --- the planner's reference ------------------------------------------------
+
+const GRAPH = readFileSync(join(ROOT, 'cadence-core', 'references', 'plan-graph.md'), 'utf8').replace(/\s+/g, ' ');
+
+test('plan-graph.md names the three markers and depends_on, and Reads is no lease and takes path#symbol', () => {
+  for (const m of ['**Reads:**', '**Decisions:**', '**Pins:**', '`depends_on`']) assert.ok(GRAPH.includes(m), `${m} is not named`);
+  assert.match(GRAPH, /comma-separated `path#symbol` entries/);
+  assert.match(GRAPH, /It is not a lease/);
+});
+
+test('plan-graph.md puts anchors on Reads and not Files, and a task with nothing leaves the field out and never writes none', () => {
+  assert.match(GRAPH, /any anchor your contract would carry onto a path goes on `Reads:` instead/);
+  assert.match(GRAPH, /leaves that field out and never writes `none`/);
+});
+
+test('plan-graph.md holds the shared-file rule and the one-last-plan rule', () => {
+  assert.match(GRAPH, /"more plans, sequential where they share files" wins over "if two slices touch the same file, they are one plan"/);
+  assert.match(GRAPH, /in one last plan/);
+});
+
+test('plan-graph.md has the planner run plan-overlap and state the width, with a reason at 1, as no gate', () => {
+  assert.match(GRAPH, /planning\.mjs" plan-overlap --phase <N>/);
+  assert.match(GRAPH, /return states the width, plus one line of reason when it is 1/);
+  assert.match(GRAPH, /information and no gate/);
+});
+
+test('plan-graph.md names no Cadence-only file, and an inline plan can read the task fields section alone', () => {
+  assert.doesNotMatch(GRAPH, /tests-pin|weight-budgets\.json/);
+  assert.match(GRAPH, /An inline plan reads only `## The task fields`/);
+});
