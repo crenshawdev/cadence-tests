@@ -212,6 +212,12 @@ test('the brief check makes one call, with --phase and --plan and no --out-dir, 
   assert.match(briefFlat, /With the key not `true`, make no call and go on/);
 });
 
+test('the brief check skips an already-complete plan in a gaps run and re-dispatches nothing for it', () => {
+  assert.match(briefFlat, /In a `--gaps` run, skip a plan whose `reports\/plan-<k>\.md` opens `PLAN COMPLETE`/);
+  assert.match(briefFlat, /re-dispatch nothing for it/);
+  assert.ok(briefFlat.indexOf('skip a plan whose') < briefFlat.indexOf('re-dispatch ONCE'));
+});
+
 test('the brief check re-dispatches once on a refusal, is no hard halt, and lets /cad-execute fall back', () => {
   assert.match(briefFlat, /On `ok:false`, say what the answer names out loud, and re-dispatch ONCE/);
   assert.match(briefFlat, /bad id goes to a fresh revision-mode planner[^.]*`<checker_issues>`/);
