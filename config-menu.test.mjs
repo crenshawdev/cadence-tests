@@ -206,8 +206,27 @@ test('a sentence hands a pick to provider setup or Risk surfaces by its keys, af
 
 test('the read-back filter searches the key as well as the text', () => {
   const s = flat(section(MENU_MD, 'A sentence'));
-  assert.match(s, /whose `key`, `question`, `purpose` or `explain` holds one of them/);
-  assert.ok(s.includes('const x=[s.key,s.question,s.purpose]'));
+  assert.match(s, /whose `key`, `label`, `question`, `purpose` or `explain` holds one of them/);
+  assert.ok(s.includes('const x=[s.key,s.label,s.question,s.purpose]'));
+});
+
+test('the read-back one-liner finds a setting by a word only its label holds and prints the label', () => {
+  const oneLiner = MENU_MD.split('\n').find((l) => l.startsWith("node -e '"));
+  const body = oneLiner.slice("node -e '".length, oneLiner.indexOf("' \"<the echoed scratch directory>\""));
+  const d = mkdtempSync(join(tmpdir(), 'cad-menu-'));
+  try {
+    writeFileSync(join(d, 'run-token'), 'T1');
+    writeFileSync(join(d, 'catalog.json'), JSON.stringify({ settings: [
+      { key: 'a.one', label: 'Zebra stripes', question: 'First?', purpose: 'p1', explain: null, value: 1 },
+      { key: 'b.two', label: 'Other name', question: 'Second?', purpose: 'p2', explain: null, value: 2 },
+    ] }));
+    writeFileSync(join(d, 'terms.json'), JSON.stringify(['zebra']));
+    const lines = execFileSync('node', ['-e', body, d, 'T1'], { encoding: 'utf8' }).trim().split('\n');
+    assert.equal(lines.length, 1);
+    assert.deepEqual(lines[0].split('\t').slice(0, 3), ['a.one', 'Zebra stripes', '1']);
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
 });
 
 test('a sentence prints the same no-effect line a group pick does, for each pick', () => {
