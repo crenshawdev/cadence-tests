@@ -140,7 +140,7 @@ test('a group pick shows the preview before set, with a yes between them', () =>
   assert.ok(preview !== -1 && yes !== -1 && set !== -1);
   assert.ok(preview < yes && yes < set, `order is ${preview}, ${yes}, ${set}`);
   assert.match(s, /If you pick <value>:/);
-  assert.match(s, /it stays off until both files are set/);
+  assert.match(s, /The setting stays off until <second_file\.file> turns it on too/);
 });
 
 test('walk step 4 previews the batch once before the write and says a mixed batch is two set calls', () => {
@@ -301,7 +301,7 @@ test('a setting that needs both files offers the global write behind its own yes
   const yes = s.indexOf('Only after that yes, write the global file');
   const write = s.indexOf('config.mjs" set --global <key>="$(cat <D>/value.json)"');
   assert.ok(first !== -1 && first < ask && ask < yes && yes < write, `order is ${first}, ${ask}, ${yes}, ${write}`);
-  assert.match(s, /a value there counts for any repo that also sets this key/);
+  assert.match(s, /A value there applies in every repo that also turns it on/);
   assert.match(s, /A no leaves the repo value as it is and the setting off/);
   assert.match(s, /Picking true where the repo already stores true writes nothing to the repo, and \*\*The second file\*\* still runs/);
   assert.match(flat(section(MENU_MD, 'A sentence')), /named a `second_file` then takes \*\*The second file\*\* from \*\*A group\*\*/);
