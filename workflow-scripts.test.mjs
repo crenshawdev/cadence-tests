@@ -629,3 +629,92 @@ test('code-map: its real return writes the map through codemap write and bills o
   assert.deepEqual([w4.written, w4.refused], [0, 1], JSON.stringify(w4));
   assert.match(w4.refused_modules[0].why, /inner/);
 });
+
+// --- execute-wave: one executor per plan, a worktree only when the wave is wider than one -------------------------------------
+const WAVE = readFileSync(join(ROOT, 'workflows', 'execute-wave.js'), 'utf8');
+const wp = (plan, over = {}) => ({ plan, prompt: `Execute plan ${plan}.`, agent_type: `cadence:cad-executor-r${plan}`, model: null, ...over });
+const WAVE_ARGS = { plans: [wp(1), wp(2)], batch_size: 2 };
+const done = (more = {}) => ({ status: 'PLAN COMPLETE', tasks: '2 of 2', commits: 'abc1234..def5678', deviations: '0', open_items: '0', ...more });
+
+test('execute-wave: malformed args, an empty list, a repeated plan and a batch size below 1 start no agent', async () => {
+  for (const bad of [undefined, null, 'not json', '{', 42, {}, { ...WAVE_ARGS, plans: [] }, { ...WAVE_ARGS, plans: [wp(1), wp('1')] },
+    { ...WAVE_ARGS, batch_size: 0 }, { ...WAVE_ARGS, batch_size: 1.5 }, { ...WAVE_ARGS, batch_size: undefined },
+    { ...WAVE_ARGS, plans: [wp(1), wp(2, { prompt: '' })] }, { ...WAVE_ARGS, plans: [wp(1), wp(2, { agent_type: undefined })] },
+    { ...WAVE_ARGS, plans: [wp(1), wp(2, { model: 5 })] }, { ...WAVE_ARGS, plans: [wp(1), wp(undefined)] }, { ...WAVE_ARGS, plans: [wp(1), 'x'] }]) {
+    const h = host(() => assert.fail('an agent started'));
+    const out = await runScript(WAVE, h, bad);
+    assert.equal(h.calls.length, 0);
+    assert.equal(typeof out, 'string');
+    assert.match(out, /started no agent/);
+  }
+});
+
+test('execute-wave: a two-plan wave starts two executors, each in a worktree on its own rung and model, labelled for billing', async () => {
+  const h = host(() => done());
+  const out = await runScript(WAVE, h, JSON.stringify({ ...WAVE_ARGS, plans: [wp(1, { model: 'haiku' }), wp(2, { model: 'opus' })] }));
+  assert.equal(h.calls.length, 2);
+  const by = Object.fromEntries(h.calls.map((c) => [c.opts.label, c]));
+  assert.deepEqual(Object.keys(by).sort(), ['plan 1', 'plan 2']);
+  for (const k of [1, 2]) {
+    const o = by[`plan ${k}`].opts;
+    assert.equal(o.isolation, 'worktree');
+    assert.equal(o.agentType, `cadence:cad-executor-r${k}`);
+    assert.equal(o.model, k === 1 ? 'haiku' : 'opus');
+    assert.match(by[`plan ${k}`].prompt, new RegExp(`^Execute plan ${k}\\.\\n\\n`));
+    assert.match(by[`plan ${k}`].prompt, /return your digest through the schema/);
+  }
+  assert.deepEqual(out.plans.map((p) => [p.plan, p.digest.status]), [[1, 'PLAN COMPLETE'], [2, 'PLAN COMPLETE']]);
+});
+
+test('execute-wave: a one-plan wave sets no isolation key, and a null or absent model sends no model', async () => {
+  const h = host(() => done());
+  await runScript(WAVE, h, { plans: [wp(7)], batch_size: 3 });
+  assert.equal(h.calls.length, 1);
+  assert.equal('isolation' in h.calls[0].opts, false);
+  assert.equal('model' in h.calls[0].opts, false);
+  const two = host(() => done());
+  await runScript(WAVE, two, { plans: [wp(1), wp(2, { model: undefined })], batch_size: 2 });
+  assert.ok(two.calls.every((c) => !('model' in c.opts)));
+});
+
+test('execute-wave: a dead executor leaves null in its slot and the others\' digests come back in plan order', async () => {
+  const h = host((label) => {
+    if (label === 'plan 2') throw new Error('dead agent');
+    return label === 'plan 3' ? null : done({ commits: label });
+  });
+  const out = await runScript(WAVE, h, { plans: [wp(3), wp(2), wp(1)], batch_size: 3 });
+  assert.deepEqual(out.plans.map((p) => [p.plan, p.digest && p.digest.commits]), [[3, null], [2, null], [1, 'plan 1']]);
+  assert.equal(h.calls.length, 3, 'nothing is retried');
+  assert.ok(h.logs.some((m) => /executor for plan 2 failed: dead agent/.test(m)));
+});
+
+test('execute-wave: a checkpoint digest from one plan stops no other, and both come back unjudged', async () => {
+  const cp = { status: 'PLAN PARTIAL', tasks: '1 of 3', commits: 'abc1234', checkpoint: 'structural', current_task: '2 - the thing', need: 'a decision' };
+  const h = host((label) => (label === 'plan 1' ? cp : done()));
+  const out = await runScript(WAVE, h, WAVE_ARGS);
+  assert.deepEqual(out.plans, [{ plan: 1, digest: cp }, { plan: 2, digest: done() }]);
+});
+
+test('execute-wave: three plans at batch size 1 never have two spawns open at once, and all run in order', async () => {
+  let live = 0; let peak = 0;
+  const h = host(async () => {
+    live++; peak = Math.max(peak, live);
+    await new Promise((r) => setTimeout(r, 5));
+    live--;
+    return done();
+  });
+  const out = await runScript(WAVE, h, { plans: [wp(1), wp(2), wp(3)], batch_size: 1 });
+  assert.equal(peak, 1);
+  assert.deepEqual(h.calls.map((c) => c.opts.label), ['plan 1', 'plan 2', 'plan 3']);
+  assert.ok(out.plans.every((p) => p.digest));
+});
+
+test('execute-wave: its digest schema asks only for the status line and types every field as a plain string', async () => {
+  const h = host(() => done());
+  await runScript(WAVE, h, WAVE_ARGS);
+  const s = h.calls[0].opts.schema;
+  assert.deepEqual(s.required, ['status']);
+  assert.deepEqual(Object.keys(s.properties).sort(), ['checkpoint', 'commits', 'current_task', 'deviations', 'need', 'open_items', 'status', 'tasks']);
+  for (const p of Object.values(s.properties)) assert.deepEqual(Object.keys(p).filter((k) => k !== 'description'), ['type']);
+  assert.ok(Object.values(s.properties).every((p) => p.type === 'string'));
+});
