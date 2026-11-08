@@ -72,7 +72,11 @@ export function asksIn(text) {
       continue;
     }
     const raw = [];
-    if (o[1].trim() !== '') {
+    if (/^none\b/i.test(o[1].trim())) {
+      // an ask whose answer is the person's own words: no set of options, and the line still gets its checks
+      ask.freeText = true;
+      ask.options.push({ line: j + 1, text: o[1].trim(), label: '', description: '' });
+    } else if (o[1].trim() !== '') {
       for (const seg of o[1].split(/\s+\/\s+(?=")/)) raw.push([seg, j + 1]);
     } else {
       while (j + 1 < lines.length && OPTION_LINE.test(lines[j + 1])) {
@@ -125,7 +129,9 @@ export function rowOf(docText, cells) {
 
 // The file table: each workflow file with the number of asks it holds, one per `- header:` line. Each task that writes
 // a file's asks adds the file here with the count its own Action lists.
-const ASK_FILES = [];
+const ASK_FILES = [
+  ['cadence-core/workflows/context.md', 8],
+];
 
 // The doc table: a row in a docs table that quotes an ask's option names in bold. `notOptions` names the bold spans
 // in that row that are not option names.
@@ -178,6 +184,14 @@ test('a question wrapped over two lines reads as one, and an indented block read
   assert.equal(got.header, 'Pick');
   assert.equal(got.question, 'Which one?');
   assert.deepEqual(got.options.map((o) => o.label), ['First', 'Second', 'Third']);
+});
+
+test('an options line that says none is a free-text ask, and its words are still checked', () => {
+  const free = asksIn('- header: "No check"\n- question: "What now?"\n- options: none, the person answers in their own words').asks[0];
+  assert.equal(free.freeText, true);
+  assert.deepEqual(breaksIn(free), []);
+  const dirty = asksIn('- header: "No check"\n- question: "What now?"\n- options: none, set workflow.test_command').asks[0];
+  assert.match(breaksIn(dirty).join('\n'), /^line 3: dotted key workflow\.test_command/);
 });
 
 test('a block missing its question or its options is a problem, not a skipped ask', () => {
