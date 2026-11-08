@@ -2777,6 +2777,53 @@ test('check 29: the live tree files no condition problem and `checked` names the
   assert.match(r.checked, /\bsetting-conditions\b/);
 });
 
+// --- check 30: the plain-words rules over what a person reads in the schema -----
+// The rules are pinned in plain-words.test.mjs. This side pins the WIRING: a fixture on each failing rule reaches
+// `problems` filed against config.schema.json with the key named, and the live tree is clean.
+
+const PLAIN_KINDS = ['label-missing', 'label-duplicate', 'option-text-missing', 'plain-words-dotted-key',
+  'plain-words-backtick', 'plain-words-internal-term'];
+
+/** A root whose schema holds `demo.a` (a clean walked key carrying `fields`) and `demo.b`, a second walked key carrying `other`. */
+function plainRoot(fields, other = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'cad-selfverify-plain-'));
+  mkdirSync(join(root, 'cadence-core'), { recursive: true });
+  const clean = (label) => ({ type: 'enum', values: ['a', 'b'], default: 'a', purpose: 'Demo', question: 'Which mode?',
+    section: 'One', position: 1, label, explain: [{ value: 'a', text: 'the first' }, { value: 'b', text: 'the second' }] });
+  writeFileSync(join(root, 'cadence-core', 'config.schema.json'), JSON.stringify({
+    keys: { 'demo.a': { ...clean('Mode'), ...fields }, 'demo.b': { ...clean('Other mode'), ...other } },
+  }, null, 2));
+  return root;
+}
+const plainProblems = (fields, other) => run(['--root', plainRoot(fields, other)]).problems.filter((x) => PLAIN_KINDS.includes(x.kind));
+
+test('check 30: a clean fixture files nothing', () => {
+  assert.deepEqual(plainProblems({}), []);
+});
+
+for (const [name, fields, other, kind, key] of [
+  ['a walked key with no label', { label: undefined }, {}, 'label-missing', 'demo.a'],
+  ['two labels in one section that match', {}, { label: 'MODE' }, 'label-duplicate', 'demo.b'],
+  ['an option with no text', { explain: [{ value: 'a', text: 'the first' }, { value: 'b' }] }, {}, 'option-text-missing', 'demo.a'],
+  ['a question holding a dotted key', { question: 'Does demo.other matter?' }, {}, 'plain-words-dotted-key', 'demo.a'],
+  ['a question holding backticks', { question: 'Which `mode`?' }, {}, 'plain-words-backtick', 'demo.a'],
+  ['a question holding a listed term', { question: 'Which mode do we dispatch?' }, {}, 'plain-words-internal-term', 'demo.a'],
+]) {
+  test(`check 30: ${name} is filed against the schema, naming the key`, () => {
+    const p = plainProblems(fields, other);
+    assert.equal(p.length, 1, JSON.stringify(p));
+    assert.equal(p[0].kind, kind);
+    assert.equal(p[0].file, 'cadence-core/config.schema.json');
+    assert.ok(p[0].detail.startsWith(`${key}: `), p[0].detail);
+  });
+}
+
+test('check 30: the live tree files no plain-words problem and `checked` names the check', () => {
+  const r = run([]);
+  assert.ok(!r.problems.some((x) => PLAIN_KINDS.includes(x.kind)), JSON.stringify(r.problems));
+  assert.match(r.checked, /\bplain-words\b/);
+});
+
 // --- checks 1 to 3 over the schema's walk text (D-12) ------------------------
 // The lints themselves are pinned on prose above. These pin what the new input
 // brings: the question, an entry's text and a hint are read, `purpose` is not,

@@ -4,8 +4,7 @@
 // Run: node --test tests/plain-words.test.mjs
 //
 // The rules are stated from the plan, each on the smallest schema that breaks it. The last test reads the shipped
-// schema: no label issue anywhere, and no issue at all in the groups or keys listed in REWRITTEN. Each rewrite
-// task adds its group to that list; Plan 3 Task 4 wires the lib into self-verify and the list goes away.
+// schema and wants no issue at all; self-verify runs the same lib as check 30.
 // Only node: builtins, no subprocess.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -111,19 +110,8 @@ test('terms: every listed term is caught as itself', () => {
 
 // --- the shipped schema ----------------------------------------------------
 
-// Groups and keys whose wording Phase 6 has rewritten. Each rewrite task adds its own.
-const REWRITTEN = ['How work runs', 'Git and landing', 'Testing', 'When reviews run', 'Who reviews',
-  'Models and effort'];
-
-test('the shipped schema: no label issue anywhere, and nothing at all in a rewritten group or key', () => {
+test('the shipped schema: no plain-words issue anywhere', () => {
   const schema = JSON.parse(readFileSync(
     join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'config.schema.json'), 'utf8')).keys;
-  const got = plainWordsIssues(schema);
-  const labelIssues = got.filter((i) => i.code.startsWith('label-') || /: the label /.test(i.detail));
-  assert.deepEqual(labelIssues, []);
-  const rewritten = got.filter((i) => {
-    const key = i.detail.slice(0, i.detail.indexOf(':'));
-    return REWRITTEN.includes(key) || REWRITTEN.includes(schema[key]?.section);
-  });
-  assert.deepEqual(rewritten, []);
+  assert.deepEqual(plainWordsIssues(schema), []);
 });
