@@ -897,7 +897,7 @@ test('keys --walk returns only question-bearing keys in position order, typed en
 });
 
 test('keys --walk on the shipped schema holds every walk key, in position order, under 25,000 bytes', () => {
-  const NOT_ASKED = ['workflow.config_menu', 'planning.code_map', 'planning.workflow_plans', 'roles.cad-mapper.', 'workflow.max_plan_bytes', 'workflow.max_dispatch_tokens.', 'review.providers.', 'review.decision_review.'];
+  const NOT_ASKED = ['workflow.config_menu', 'planning.code_map', 'planning.workflow_plans', 'workflow.execute_workflows', 'roles.cad-mapper.', 'workflow.max_plan_bytes', 'workflow.max_dispatch_tokens.', 'review.providers.', 'review.decision_review.'];
   const shipped = JSON.parse(readFileSync(join(dirname(CONFIG), '..', 'config.schema.json'), 'utf8')).keys;
   const expected = Object.keys(shipped).filter((k) => !NOT_ASKED.some((p) => k.startsWith(p)));
   assert.ok(expected.length < Object.keys(shipped).length && expected.length > 0, 'the exclusion list names real keys');
@@ -1004,11 +1004,11 @@ test('SCP-01: the SHIPPED keys carrying the marker are the ones that authorize, 
     assert.equal(shipped[k].repo_only, undefined, `${k} carries no repo_only marker`);
   }
 
-  // `src: "repo"` means "settable in either layer" and 28 keys carry it -
+  // `src: "repo"` means "settable in either layer" and 29 keys carry it -
   // `granularity` and `review.mode` among them, keys a user legitimately pins
   // machine-wide - so no key may inherit the refusal from it.
   const srcRepo = Object.keys(shipped).filter((k) => shipped[k].src === 'repo');
-  assert.equal(srcRepo.length, 28, JSON.stringify(srcRepo));
+  assert.equal(srcRepo.length, 29, JSON.stringify(srcRepo));
   for (const k of ['granularity', 'review.mode', 'git.auto_close']) {
     assert.ok(srcRepo.includes(k), `${k} carries src:"repo"`);
   }
@@ -2272,7 +2272,7 @@ test('set refuses a retired model.* key at either layer with one text, while set
 
 // --- the two workflow switches: on only when both layers say so ----------------
 
-const WORKFLOW_SWITCHES = ['workflow.use_workflows', 'workflow.multi_workflow'];
+const WORKFLOW_SWITCHES = ['workflow.use_workflows', 'workflow.multi_workflow', 'workflow.execute_workflows'];
 
 // Runs `workflow-layers` in a temporary repo. repo/global are objects (written as JSON), raw strings (written as
 // is, to make a torn layer) or undefined (no file). 'self' points the global path at the repo's own config.
@@ -2331,7 +2331,10 @@ test('the workflow switches default false, refuse a non-boolean, and warn in the
     assert.equal(bad.ok, false);
     assert.equal(bad.reason, 'invalid');
   }
-  const walk = JSON.parse(run_raw(['keys', '--walk'])).walk.flatMap((g) => g.keys).filter((row) => WORKFLOW_SWITCHES.includes(row.key));
+  const walkAll = JSON.parse(run_raw(['keys', '--walk'])).walk.flatMap((g) => g.keys);
+  // execute_workflows has no question, so it sits under Advanced and no walk asks it
+  assert.equal(walkAll.some((row) => row.key === 'workflow.execute_workflows'), false);
+  const walk = walkAll.filter((row) => WORKFLOW_SWITCHES.includes(row.key));
   assert.equal(walk.length, 2);
   for (const row of walk) {
     const text = JSON.stringify(row);

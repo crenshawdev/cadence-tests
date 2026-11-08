@@ -216,7 +216,7 @@ test('layers: use_workflows set in only the repo reads off with no winner; a rep
 
 test('layers: a fresh template repo sets 43, all 43 the shipped default', () => {
   const { json } = cli(templateFixture(), ['layers']);
-  assert.equal(json.totals.settings, 99);
+  assert.equal(json.totals.settings, 100);
   assert.equal(json.totals.repo, 43);
   assert.equal(json.totals.at_default, 43);
   assert.equal(json.totals.global, 0);
@@ -321,6 +321,7 @@ test('layers: workflow_plans sits in How work runs\' advanced list and applies w
   assert.ok(adv.includes('planning.workflow_plans'), JSON.stringify(adv));
   const row = cli(repoFixture({}), ['layers', '--key', 'planning.workflow_plans']).json.row;
   assert.deepEqual([row.applies, row.no_effect], [true, undefined]);
+  assert.ok(adv.includes('workflow.execute_workflows'), JSON.stringify(adv));
 });
 
 test('layers: the gate works with its tier and effort, and the other trigger keys carry the same conditions', () => {
@@ -338,7 +339,8 @@ test('layers: the gate works with its tier and effort, and the other trigger key
 test('layers: a both-layer key and the parallel keys say what they need in interacts', () => {
   const f = repoFixture({});
   for (const [key, re] of [['git.auto_close', /both set it/], ['workflow.use_workflows', /both set it/],
-    ['workflow.multi_workflow', /both set it/], ['parallelization.enabled', /worktree\.baseRef/],
+    ['workflow.multi_workflow', /both set it/], ['workflow.execute_workflows', /both set it/],
+    ['parallelization.enabled', /worktree\.baseRef/],
     ['parallelization.use_worktrees', /worktree\.baseRef/]]) {
     assert.match(cli(f, ['layers', '--key', key]).json.row.interacts, re, key);
   }
