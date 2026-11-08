@@ -133,7 +133,7 @@ const ASK_FILES = [
   ['cadence-core/workflows/context.md', 8],
   ['cadence-core/workflows/new-project.md', 9],
   ['cadence-core/workflows/adopt.md', 5],
-  ['cadence-core/workflows/plan.md', 3],
+  ['cadence-core/workflows/plan.md', 4],
   ['cadence-core/workflows/execute.md', 5],
   ['cadence-core/workflows/verify.md', 3],
   ['skills/cad-land/SKILL.md', 6],
