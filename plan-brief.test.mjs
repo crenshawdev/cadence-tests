@@ -171,6 +171,39 @@ test('brief: an --out-dir that is not a directory is refused and nothing is writ
   assert.deepEqual(listing(pdir), ['PLAN-3.md']);
 });
 
+test('brief: --main-root makes the head name the plan, PROJECT.md and CONTEXT.md by absolute paths, and the bytes repeat', () => {
+  const { root, dir } = project({ context: '# Ctx\n\n- D-02 (x): a decision.\n' });
+  const a = scratch();
+  const b = scratch();
+  const args = (o) => ['--phase', '4', '--plan', '3', '--main-root', root, '--out-dir', o];
+  const ra = brief(dir, args(a));
+  const rb = brief(dir, args(b));
+  assert.equal(ra.ok, true, JSON.stringify(ra));
+  const got = readFileSync(ra.path, 'utf8');
+  assert.deepEqual(Buffer.from(got), readFileSync(rb.path));
+  const head = got.split('\n').slice(0, 6).join('\n');
+  for (const f of ['phases/4/PLAN-3.md', 'PROJECT.md', 'phases/4/CONTEXT.md']) {
+    assert.ok(head.includes(`\`${root}/.planning/${f}\``), `${f} is absolute in the head`);
+  }
+  assert.ok(!head.replaceAll(`${root}/.planning/`, '').includes('.planning/'), 'no relative .planning/ path in the head');
+});
+
+test('brief: without --main-root the head keeps its relative paths', () => {
+  const { dir } = project();
+  const got = readFileSync(brief(dir, ['--phase', '4', '--plan', '3', '--out-dir', scratch()]).path, 'utf8');
+  assert.ok(got.includes('stands in for `.planning/phases/4/PLAN-3.md`, `.planning/PROJECT.md` and `.planning/phases/4/CONTEXT.md`.'));
+});
+
+test('brief: a --main-root that is not a directory is refused and nothing is written', () => {
+  const { dir, pdir } = project();
+  const out = scratch();
+  const r = brief(dir, ['--phase', '4', '--plan', '3', '--main-root', join(scratch(), 'missing'), '--out-dir', out]);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'bad-args');
+  assert.deepEqual(listing(out), []);
+  assert.deepEqual(listing(pdir), ['PLAN-3.md']);
+});
+
 test('brief: a plan that does not exist, and a plan with no Tasks, are refused by name', () => {
   const { dir } = project({ plans: { 'PLAN-3.md': planText(), 'PLAN-2.md': planText({ tasks: null }) } });
   const none = brief(dir, ['--phase', '4', '--plan', '9']);
