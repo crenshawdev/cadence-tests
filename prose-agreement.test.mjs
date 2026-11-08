@@ -2096,6 +2096,8 @@ test('TRN-02: the bulk-output rule is stated once, and every converted site perf
 // BOTH surfaces, which is the failure mode a prose argument invites: prose that
 // argues for 8 beside a `"default": 6` is worse than no prose, because a reader
 // believes it.
+//
+// Phase 6 moved the figures out of the walked question, so the test now reads the `purpose` alone.
 
 /**
  * The three figures the `workflow.max_plan_tasks` re-decision is written with,
@@ -2115,14 +2117,11 @@ function ceilingDecision(text) {
   };
 }
 
-test('PLN-01: the max_plan_tasks decision reads the same off the schema purpose and question', () => {
+test('PLN-01: the max_plan_tasks decision is stated whole in the schema purpose', () => {
   const key = JSON.parse(doc('cadence-core', 'config.schema.json'))
     .keys['workflow.max_plan_tasks'];
   assert.ok(key, 'config.schema.json defines no workflow.max_plan_tasks');
   const schema = ceilingDecision(String(key.purpose));
-  assert.equal(typeof key.question, 'string',
-    'config.schema.json defines no question for workflow.max_plan_tasks');
-  const question = ceilingDecision(key.question);
 
   // 1. The purpose states the whole decision, not part of it.
   for (const [field, value] of Object.entries(schema)) {
@@ -2131,15 +2130,6 @@ test('PLN-01: the max_plan_tasks decision reads the same off the schema purpose 
       + 'it states what the key means and not what its value was decided against, '
       + 'so the ceiling is argued nowhere a check can read');
   }
-
-  // 2. The question states the SAME decision. Compared as extractions, so a
-  //    figure changed on one field and not the other is what fails, and the
-  //    message carries both sides rather than the phrase that was looked for.
-  assert.deepEqual(question, schema,
-    'the workflow.max_plan_tasks question and purpose extract different decisions '
-    + `(question ${JSON.stringify(question)}, purpose ${JSON.stringify(schema)}) - `
-    + 'one of the two fields was edited alone, so a reader gets a different '
-    + 'argument depending on which one they opened');
 
   // 3. And the value the prose argues is the value the machine reads. Prose
   //    arguing for one number beside a default holding another is worse than

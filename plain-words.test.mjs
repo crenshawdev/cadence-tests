@@ -112,7 +112,7 @@ test('terms: every listed term is caught as itself', () => {
 // --- the shipped schema ----------------------------------------------------
 
 // Groups and keys whose wording Phase 6 has rewritten. Each rewrite task adds its own.
-const REWRITTEN = [];
+const REWRITTEN = ['How work runs'];
 
 test('the shipped schema: no label issue anywhere, and nothing at all in a rewritten group or key', () => {
   const schema = JSON.parse(readFileSync(
