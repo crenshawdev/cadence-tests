@@ -23,8 +23,16 @@ test('README and the guide open with the same sentence', () => {
   assert.equal(openingSentence('README.md'), openingSentence('docs/guide/index.md'));
 });
 
-test('the front page and the guide drop the old audience claim', () => {
-  for (const rel of ['README.md', 'docs/guide/index.md']) {
+test('the front page, the guide and the contributing page drop the old audience claim', () => {
+  for (const rel of ['README.md', 'docs/guide/index.md', 'docs/guide/contributing.md']) {
     assert.doesNotMatch(read(rel), OLD_AUDIENCE, rel);
   }
+});
+
+test('contributing keeps its scope point in the feature paragraph, without an audience claim', () => {
+  const para = read('docs/guide/contributing.md').split(/\n\s*\n/).find((p) => p.startsWith('For a feature'));
+  assert.ok(para, 'no paragraph begins "For a feature"');
+  assert.match(para, /issue/);
+  assert.match(para, /scope/);
+  assert.doesNotMatch(para, OLD_AUDIENCE);
 });
