@@ -328,7 +328,7 @@ test('layers: the gate works with its tier and effort, and the other trigger key
   const { json } = cli(repoFixture(OPEN_DIFF), ['layers', '--key', 'review.triggers.diff.gate']);
   assert.deepEqual(json.row.works_with, [{ key: 'review.triggers.diff.tier', value: 'cheap' },
     { key: 'review.triggers.diff.effort', value: 'minimal' }]);
-  assert.match(json.row.interacts, /review\.reviewers picks who reviews/);
+  assert.match(json.row.interacts, /Who reviews decides whether this review's tier and effort are read/);
   const reviewers = cli(repoFixture({}), ['layers', '--key', 'review.reviewers']).json.row;
   assert.equal(reviewers.works_with.length, 8);
   for (const t of ['plan', 'risk_surface', 'phase_diff']) {

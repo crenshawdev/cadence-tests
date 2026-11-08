@@ -50,3 +50,21 @@ test('no two keys in one group share a label, ignoring case and spacing', () => 
     seen.set(id, k);
   }
 });
+
+// The four reviews each get their own plain name, and no name holds another, so a question that names the wrong review shows.
+const REVIEWS = { plan: 'plan review', diff: 'commit review', risk_surface: 'risky code review', phase_diff: 'phase review' };
+
+test('the 12 review gate, tier and effort questions are 12 different texts, each naming only its own review', () => {
+  const all = [];
+  for (const [t, name] of Object.entries(REVIEWS)) {
+    for (const field of ['gate', 'tier', 'effort']) {
+      const q = SCHEMA[`review.triggers.${t}.${field}`].question.toLowerCase();
+      all.push(q);
+      assert.ok(q.includes(name), `${t}.${field} does not name the ${name}`);
+      for (const other of Object.values(REVIEWS).filter((n) => n !== name)) {
+        assert.ok(!q.includes(other), `${t}.${field} names the ${other}`);
+      }
+    }
+  }
+  assert.equal(new Set(all).size, 12);
+});
