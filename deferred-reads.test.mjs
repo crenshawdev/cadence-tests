@@ -102,6 +102,13 @@ const REGISTER_SOURCE = `export const DEFERRED_READS = Object.freeze([
     file: 'cadence-core/workflows/execute.md',
   }),
   Object.freeze({
+    skill: 'cad-execute',
+    reference: 'references/execute-workflow.md',
+    anchors: Object.freeze(['execute_workflow']),
+    read_paragraphs: 1,
+    file: 'cadence-core/workflows/execute.md',
+  }),
+  Object.freeze({
     skill: 'cad-executor-contract',
     reference: 'references/worktree-executor.md',
     anchors: Object.freeze(['worktree_mode']),
@@ -136,8 +143,8 @@ test('register: the surviving cut rows are byte-identical, and the register is e
   const end = src.indexOf(']);', start);
   assert.ok(end > start, 'the register export must close with `]);`');
   assert.equal(src.slice(start, end + 3), REGISTER_SOURCE);
-  // CADENCE-CENSUS: deferred-reads-register | asserts: the register is exactly 9 rows, byte-identical to the export's own source
-  assert.equal(DEFERRED_READS.length, 9);
+  // CADENCE-CENSUS: deferred-reads-register | asserts: the register is exactly 10 rows, byte-identical to the export's own source
+  assert.equal(DEFERRED_READS.length, 10);
 });
 
 // --- AC3: a contract skill's own step ------------------------------------------
@@ -586,6 +593,10 @@ test('AC4: cad-debug / references/recall.md is unread without its one sentence',
 
 test('AC4: cad-execute / references/execute-parallel.md is unread without its one sentence', () => {
   assertPromotedRow('cad-execute', 'references/execute-parallel.md', 'execute_parallel');
+});
+
+test('AC4: cad-execute / references/execute-workflow.md is unread without its one sentence', () => {
+  assertPromotedRow('cad-execute', 'references/execute-workflow.md', 'execute_workflow');
 });
 
 test('AC4: cad-executor-contract / references/worktree-executor.md is unread without its one sentence', () => {

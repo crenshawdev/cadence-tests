@@ -1,6 +1,7 @@
 // Zero-dep tests for the workflow arm of references/worktree-executor.md. Run: node --test tests/execute-workflow.test.mjs
 // The defects are today's worktree executor reading changed rules, an executor committing its report or marking it
 // complete before the merge, and an executor deleting a branch that holds earlier work.
+// The second half pins the main session's side of the path: references/execute-workflow.md and choose_path (Phase 5, plan 5).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -47,4 +48,72 @@ test('workflow arm: the report goes to the scratch path the prompt names, nothin
   assert.match(a, /goes to the path the prompt names, in place of `<plandir>\/reports\/plan-<k>\.md`, and you NEVER commit it/);
   assert.match(a, /only after it has merged your branch/);
   assert.match(a, /ABSOLUTE paths outside the worktree, never relative to it/);
+});
+
+// --- the main session's side: the reference, choose_path, the notice and the stops ----------------------------------
+
+const REF = readFileSync(join(REPO, 'cadence-core', 'references', 'execute-workflow.md'), 'utf8');
+const refFlat = flat(REF);
+const EXEC = readFileSync(join(REPO, 'cadence-core', 'workflows', 'execute.md'), 'utf8');
+const stepBody = (name) => EXEC.slice(EXEC.indexOf(`<step name="${name}">`), EXEC.indexOf('</step>', EXEC.indexOf(`<step name="${name}">`)));
+const CHOOSE = stepBody('choose_path');
+const chooseFlat = flat(CHOOSE);
+const TODAY = 'Sequential (default) unless ALL of these hold:';
+// a section of the reference, flattened: from its heading to the next second-level heading or the end
+const section = (from) => {
+  const a = REF.indexOf(from);
+  assert.notEqual(a, -1, `no ${from}`);
+  const b = REF.indexOf('\n## ', a + from.length);
+  return flat(REF.slice(a, b === -1 ? REF.length : b));
+};
+const LAUNCH = section('## 1. Launch one wave');
+
+test('the launch takes the claim before the first resolve and before the launch, and reads plan-overlap before each of them', () => {
+  const take = REF.indexOf('workflow-claim take');
+  const overlap = REF.indexOf('planning.mjs" plan-overlap');
+  const resolve = REF.indexOf('--bracket-plan');
+  const launch = REF.indexOf('cadence:execute-wave');
+  assert.ok(take > 0 && take < overlap && overlap < resolve && resolve < launch, 'claim, then plan-overlap, then resolve, then launch');
+  assert.match(LAUNCH, /Take it before any resolve below, so a lost claim leaves no dispatch open/);
+  assert.match(LAUNCH, /Ask `plan-overlap` again, never from a list held since `choose_path`/);
+  assert.match(LAUNCH, /in the dispatch set `locate` defined that are not already done in this run/);
+  assert.match(LAUNCH, /A plan stopped by an earlier wave holds the next wave/);
+});
+
+test('the launch resolves each plan on its own with the bracket-read the stretch states, and falls back to the script path', () => {
+  assert.match(LAUNCH, /--role cad-executor --attempt 1 --phase <N> --plan <k> --bracket-plan <k> --bracket-read "CLAUDE\.md,<the brief path>"/);
+  assert.match(LAUNCH, /because the risk floor differs by plan/);
+  assert.match(LAUNCH, /If the name does not resolve, launch it with `scriptPath` set to `\$\{CLAUDE_PLUGIN_ROOT\}\/workflows\/execute-wave\.js`/);
+  assert.match(LAUNCH, /"batch_size": <parallelization\.max_concurrent_agents>/);
+  assert.match(LAUNCH, /keep both, and end the turn/);
+});
+
+test('the launch names the main-tree flag and the scratch report path above width 1, and the pre-plan HEAD and the restart sentence in every prompt', () => {
+  assert.match(LAUNCH, /Above width 1 add `--main-root <the main tree's root>`/);
+  assert.match(LAUNCH, /every `\.planning\/` path the prompt names is the main tree's absolute path/);
+  assert.match(LAUNCH, /`<the scratch directory>\/reports\/plan-<k>\.md`/);
+  assert.match(LAUNCH, /Add the pre-plan HEAD and this sentence: the host may restart the executor with this same prompt, so any commit after that HEAD in this plan's scope is its own earlier work to continue from and never redo/);
+  assert.match(LAUNCH, /At width 1 it is "Sequential executor on the normal working tree\."/);
+});
+
+test('the prompt\'s workflow mode line is the one worktree-executor.md writes, byte for byte', () => {
+  const theirs = flat(arm).match(/mode line reads exactly "([^"]+)"/)[1];
+  const ours = REF.match(/^ {2}"(Workflow worktree executor[^\n]*)"$/m);
+  assert.ok(ours, 'the reference writes the line out on a line of its own');
+  assert.equal(ours[1], theirs);
+});
+
+test('a refused launch releases the claim, closes each opened bracket as an escalation and goes to today\'s path', () => {
+  assert.match(LAUNCH, /A launch the host refuses releases the claim at once/);
+  assert.match(LAUNCH, /--event escalation --plan <k> --role cad-executor/);
+  assert.match(LAUNCH, /run the rest of the phase on today's sequential path/);
+  assert.ok(REF.indexOf('workflow-claim release --fire execute-<N>-wave-<j>') > REF.indexOf('cadence:execute-wave'));
+});
+
+test('cad-execute allows the wave script and its workflow step reads the reference by its full path', () => {
+  const skill = readFileSync(join(REPO, 'skills', 'cad-execute', 'SKILL.md'), 'utf8');
+  assert.match(skill, /^ {2}- Workflow\(cadence:execute-wave\)$/m);
+  const step = flat(stepBody('execute_workflow'));
+  assert.match(step, /Read `\$\{CLAUDE_PLUGIN_ROOT\}\/cadence-core\/references\/execute-workflow\.md`/);
+  assert.match(step, /\(one consult site - this step\)/);
 });
