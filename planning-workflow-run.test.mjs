@@ -911,3 +911,126 @@ test('workflow-run: a wave whose result lacks its plan list is refused with its 
   const killed = seam(t, waveRun({ status: 'killed' }));
   assert.equal(killed.reason, 'run-not-completed');
 });
+
+// --- a wave named by --plans: the seam knows the wave from its caller, not from what the run file still holds (Phase 5 fix pass) ---
+
+const NOTICE = ['--notice-tokens', '4000', '--notice-turns', '30', '--notice-duration-ms', '9000'];
+const GONE = 'gone/wf_wave-0001.json';
+/** The wave seam with --plans; `run` null leaves the file unwritten so `file` names one that does not exist. */
+function waveCall(t, run, { plans = '1,2', notice = [], file = 'wf_wave-0001.json' } = {}) {
+  const runFile = join(t.repo, file);
+  if (run !== null) writeFileSync(runFile, typeof run === 'string' ? run : JSON.stringify(run));
+  return cli(t, ['workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', t.out, '--payload-ref', `${t.base}..${t.head}`, '--plans', plans, ...notice]);
+}
+/** A wave of two dispatched plans. */
+function waveTree() { const t = tree(); dispatchPlan(t, 1); dispatchPlan(t, 2); return t; }
+/** The trace has no open dispatch and no worker key a plan does not own, and risk-check status takes plan 1's good record. */
+function assertGateClean(t, plan = '1') {
+  assert.deepEqual(render(t).unpaired, []);
+  assert.deepEqual([...new Set(lifecycle(t).map((e) => e.plan))].sort(), ['1', '2'], 'every worker key is a plan of the wave');
+  const ran = cli(t, ['risk-check', 'run', '--phase', '1', '--plan', plan, '--base', t.base, '--head', t.head, '--surfaces', 'auth']);
+  assert.equal(ran.ok, true, JSON.stringify(ran));
+  // status counts every executor the run returned, so a returned wave-mate owes its own record or skip first
+  if (closesOf(t).some((e) => e.plan === '2' && e.event === 'return')) {
+    const skip = cli(t, ['trace', 'append', '--phase', '1', '--family', 'outcome', '--event', 'risk_check_skipped', '--plan', '2', '--sha', t.base]);
+    assert.equal(skip.written, true, JSON.stringify(skip));
+  }
+  const status = cli(t, ['risk-check', 'status', '--phase', '1', '--plan', plan, '--base', t.base, '--head', t.head]);
+  assert.equal(status.ok, true, JSON.stringify(status));
+}
+const cadTokens = (t) => render(t).roles['cad-executor'].tokens;
+
+test('workflow-run --plans: a plan with no agent row closes as a checkpoint under its own key, saying why, and the other plan bills from its row', () => {
+  const t = waveTree();
+  const r = waveCall(t, waveRun({ workflowProgress: [execRow(1)] }));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual([r.brackets.source, r.brackets.written], ['run-file', 2]);
+  const [one, two] = closesOf(t);
+  assert.deepEqual([one.plan, one.event, one.agent_id, one.tokens], ['1', 'return', 'agent-plan-1', 1007]);
+  assert.deepEqual([two.plan, two.role, two.event, two.agent_id], ['2', 'cad-executor', 'checkpoint', 'wf_wave-0001-plan-2']);
+  assert.match(two.detail, /no agent row labelled "plan 2"/);
+  assert.equal(two.tokens, undefined);
+  assertGateClean(t);
+  const again = waveCall(t, waveRun({ workflowProgress: [execRow(1)] }));
+  assert.deepEqual([again.brackets.written, again.brackets.already], [0, 2]);
+});
+
+test('workflow-run --plans: a wave with no agent rows bills the notice\'s totals as cad-executor on the first plan, closes the rest, and writes no -notice key', () => {
+  const t = waveTree();
+  const r = waveCall(t, waveRun({ workflowProgress: [] }), { notice: NOTICE });
+  assert.deepEqual([r.ok, r.brackets.source, r.brackets.written], [true, 'notice-totals', 2]);
+  const [one, two] = closesOf(t);
+  assert.deepEqual([one.plan, one.role, one.event, one.tokens, one.turns, one.duration_ms], ['1', 'cad-executor', 'checkpoint', 4000, 30, 9000]);
+  assert.match(one.detail, /totals from the completion notice, because the run file holds no agent rows/);
+  assert.deepEqual([two.plan, two.event, two.tokens], ['2', 'checkpoint', undefined]);
+  assert.match(two.detail, /no agent row bills this plan/);
+  assert.equal(lifecycle(t).some((e) => String(e.plan).endsWith('-notice')), false);
+  assert.equal(render(t).roles['review-workflow'], undefined);
+  assert.equal(cadTokens(t), 4000);
+  assertGateClean(t);
+});
+
+test('workflow-run --plans: an unreadable or non-JSON run file is still a wave, billed as cad-executor and closed per plan, then refused as a run file', () => {
+  for (const [run, file, reason] of [[null, GONE, 'run-unreadable'], ['not json {', 'wf_wave-0001.json', 'run-not-json']]) {
+    const t = waveTree();
+    const r = waveCall(t, run, { notice: NOTICE, file });
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.equal(r.reason, reason);
+    assert.doesNotMatch(r.hint || '', /one bracket/);
+    assert.deepEqual([r.brackets.source, r.brackets.written], ['notice-totals', 2]);
+    assert.deepEqual(closesOf(t).map((e) => [e.plan, e.role, e.event]), [['1', 'cad-executor', 'checkpoint'], ['2', 'cad-executor', 'checkpoint']]);
+    assert.equal(render(t).roles['review-workflow'], undefined);
+    assert.equal(cadTokens(t), 4000);
+    assertGateClean(t);
+  }
+});
+
+test('workflow-run --plans: the script\'s string result is a wave that started no executor, not a bad review', () => {
+  const t = waveTree();
+  const message = 'execute-wave runs one executor per plan for /cad-execute. It needs args and started no agent.';
+  const r = waveCall(t, waveRun({ workflowProgress: [], result: message }), { notice: NOTICE });
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.reason, 'run-bad-wave');
+  assert.match(r.detail, /started no executor/);
+  assert.ok(r.detail.includes(message));
+  assert.doesNotMatch(`${r.detail} ${r.hint}`, /review|voices/);
+  assert.deepEqual(closesOf(t).map((e) => [e.plan, e.role, e.event]), [['1', 'cad-executor', 'checkpoint'], ['2', 'cad-executor', 'checkpoint']]);
+  assert.equal(render(t).roles['review-workflow'], undefined);
+  assertGateClean(t);
+});
+
+test('workflow-run --plans: the rows and then the notice\'s totals on a retry bill the wave once', () => {
+  const t = waveTree();
+  assert.equal(waveCall(t, waveRun()).brackets.written, 2);
+  const retry = waveCall(t, null, { notice: NOTICE, file: GONE });
+  assert.deepEqual([retry.brackets.written, retry.brackets.already], [0, 2]);
+  assert.equal(closesOf(t).length, 2);
+  assert.equal(cadTokens(t), 1007 + 2007, 'the rows\' spend only, never the notice\'s 4000 on top');
+  assertGateClean(t);
+});
+
+test('workflow-run --plans: the notice\'s totals and then the rows on a retry bill the wave once', () => {
+  const t = waveTree();
+  assert.equal(waveCall(t, null, { notice: NOTICE, file: GONE }).brackets.written, 2);
+  const retry = waveCall(t, waveRun());
+  assert.deepEqual([retry.brackets.written, retry.brackets.already], [0, 2]);
+  assert.equal(closesOf(t).length, 2);
+  assert.equal(cadTokens(t), 4000, 'the notice\'s spend only, never the rows\' on top');
+  assertGateClean(t);
+});
+
+test('workflow-run --plans: a later run of the same plan bills again, and a bad plan list is refused before anything is written', () => {
+  const t = waveTree();
+  waveCall(t, waveRun());
+  dispatchPlan(t, 1);
+  const second = waveRun({ runId: 'wf_wave-0002', workflowProgress: [execRow(1, { agentId: 'agent-second-1', tokens: 9999 })] });
+  second.result.plans = [{ plan: 1, digest: completeDigest() }];
+  const r = waveCall(t, second, { plans: '1', file: 'wf_wave-0002.json' });
+  assert.deepEqual([r.brackets.written, r.brackets.already], [1, 0]);
+  const before = rawEvents(t).length;
+  for (const plans of ['1,,2', '1, 2', '1,1', ' 1']) {
+    const bad = waveCall(t, waveRun(), { plans });
+    assert.deepEqual([bad.ok, bad.reason], [false, 'bad-args'], plans);
+  }
+  assert.equal(rawEvents(t).length, before);
+});

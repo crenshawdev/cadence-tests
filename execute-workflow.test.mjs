@@ -166,12 +166,14 @@ test('choose_path still makes one plan-overlap call, and the part from "Sequenti
 
 const NOTICE = section('## 2. On the notice');
 
-test('the notice runs workflow-run, releases the claim right after it, and writes no close for a wave executor except on notice-totals', () => {
-  assert.match(NOTICE, /workflow-run --phase <N> --run-file <the run file> --out-dir <the scratch directory> --payload-ref <the scratch directory>/);
+test('the notice runs workflow-run with the wave\'s plan list, releases the claim right after it, and writes no close for any wave executor', () => {
+  assert.match(NOTICE, /workflow-run --phase <N> --run-file <the run file> --out-dir <the scratch directory> --payload-ref <the scratch directory> --plans <the wave's plan numbers, comma-separated, as 1,2,3>/);
   assert.match(NOTICE, /Release the claim right after this call returns, whether it answered or refused/);
   assert.ok(REF.indexOf('workflow-claim release', REF.indexOf('## 2. On the notice')) > REF.indexOf('workflow-run --phase'));
-  assert.match(NOTICE, /so no `trace close` is written for them\. One exception: when `brackets\.source` is `notice-totals`/);
-  assert.match(NOTICE, /one `trace close --plan <k> --role cad-executor --detail-file <path>` call, where the file names the missing agent rows, which makes the close a `checkpoint`/);
+  assert.match(NOTICE, /and no `trace close` is written for any plan\. `--plans` is how it knows the wave when the run file cannot say/);
+  assert.match(NOTICE, /as a `checkpoint` under its own plan number that says why, with the notice's totals on the first of them/);
+  assert.match(NOTICE, /It writes no `<run id>-notice` bracket for a wave/);
+  assert.doesNotMatch(NOTICE, /trace close --plan <k>/);
   assert.match(NOTICE, /Relay each plan's outcome with its position line\. For each entry of `restarted`, name that plan's agent as restarted by the host/);
 });
 
