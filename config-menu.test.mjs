@@ -117,6 +117,16 @@ test('the list and the block both name the read\'s applies answer, and the block
   assert.match(s, /Add `Works with:` with the `interacts` text and each of `works_with` as its key beside its value/);
 });
 
+test('the lists show each setting by its label and the block keeps the key and the file', () => {
+  const s = flat(section(MENU_MD, 'A group'));
+  assert.match(s, /each with `key`, `label`, `value`/);
+  assert.match(s, /A numbered list of the rows by `label`/);
+  assert.doesNotMatch(s, /by dotted key/);
+  assert.match(s, /which answers each row's `key`, `label`, `value`, `winner` and `purpose`\. It lists the rows by `label`/);
+  assert.match(s, /show a block: the key, `Now:`/);
+  assert.ok(s.includes('Writes <key>=<value> to <file>.'));
+});
+
 test('a setting with no effect can still be picked, and the block says so', () => {
   const s = flat(section(MENU_MD, 'A group'));
   assert.match(s, /A setting with no effect can still be picked, because it may be set up ahead of its gate, so end that line with "You can still set it now\."/);
