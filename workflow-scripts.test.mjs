@@ -718,3 +718,23 @@ test('execute-wave: its digest schema asks only for the status line and types ev
   for (const p of Object.values(s.properties)) assert.deepEqual(Object.keys(p).filter((k) => k !== 'description'), ['type']);
   assert.ok(Object.values(s.properties).every((p) => p.type === 'string'));
 });
+
+// Drift between the script's return and workflow-run would refuse every live wave, so the real return goes through the seam.
+test('execute-wave: its real return, placed in a run file with one row per call, passes workflow-run with both outcomes and closes under plans 1 and 2', async () => {
+  const cp = { status: 'PLAN PARTIAL', tasks: '1 of 2', commits: 'abc1234', deviations: '0', open_items: '0', checkpoint: 'decision', current_task: '2 - x', need: 'a call' };
+  const h = host((label) => (label === 'plan 2' ? cp : done()));
+  const out = JSON.parse(JSON.stringify(await runScript(WAVE, h, WAVE_ARGS)));
+  const repo = mkdtempSync(join(tmpdir(), 'cad-wfs-wave-'));
+  mkdirSync(join(repo, '.planning', 'phases', '1'), { recursive: true });
+  mkdirSync(join(repo, 'scratch'));
+  const rows = h.calls.map((c, i) => ({ type: 'workflow_agent', index: i + 1, label: c.opts.label, agentId: `wave-a${i + 1}`, agentType: c.opts.agentType, state: 'done', attempt: 1, tokens: 500 * (i + 1), toolCalls: 5 + i, durationMs: 90 }));
+  writeFileSync(join(repo, 'run.json'), JSON.stringify({ runId: 'wf_wave', status: 'completed', result: out, workflowProgress: rows }));
+  const planning = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
+  const call = (...a) => JSON.parse(execFileSync('node', [planning, '--dir', join(repo, '.planning'), ...a], { encoding: 'utf8', cwd: repo }));
+  const seam = call('workflow-run', '--phase', '1', '--run-file', join(repo, 'run.json'), '--out-dir', join(repo, 'scratch'), '--payload-ref', 'abc1234..def5678');
+  assert.equal(seam.ok, true, JSON.stringify(seam));
+  assert.deepEqual(seam.plans.map((p) => [p.plan, p.digest.status]), [[1, 'PLAN COMPLETE'], [2, 'PLAN PARTIAL']]);
+  assert.deepEqual(seam.restarted, []);
+  const closes = call('trace', 'render', '--phase', '1', '--events').events.filter((e) => e.family === 'lifecycle');
+  assert.deepEqual(closes.map((e) => [e.plan, e.role, e.event, e.tokens]), [['1', 'cad-executor', 'return', 500], ['2', 'cad-executor', 'checkpoint', 1000]]);
+});

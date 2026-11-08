@@ -870,3 +870,44 @@ test('workflow-run: a readable wave result with no agent rows bills one notice b
   assert.equal(out.brackets[0].role, 'cad-executor');
   assert.equal(rawEvents(t).find((e) => e.event === 'dispatch').plan, 'wf_wave-0001-notice');
 });
+
+test('workflow-run: a wave answers ok with each plan\'s outcome in the script\'s order, a dead slot kept as null, and writes no payload', () => {
+  const t = tree();
+  const run = waveRun({ workflowProgress: [execRow(1), execRow(2), execRow(3)] });
+  const cp = completeDigest({ status: 'PLAN PARTIAL', checkpoint: 'decision', current_task: '1 - x', need: 'a call' });
+  run.result.plans = [{ plan: 2, digest: cp }, { plan: 1, digest: completeDigest() }, { plan: 3, digest: null }];
+  const r = seam(t, run);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.plans, [{ plan: 2, digest: cp }, { plan: 1, digest: completeDigest() }, { plan: 3, digest: null }]);
+  assert.deepEqual(r.restarted, []);
+  assert.deepEqual([r.brackets.source, r.brackets.written], ['run-file', 3]);
+  assert.deepEqual(emptyOut(t), [], 'no payload, review input or answers file');
+  for (const k of ['payload', 'review_input', 'answers', 'counts']) assert.equal(k in r, false, k);
+});
+
+test('workflow-run: a row the host restarted is named, and a row with no attempt key or attempt 1 is not', () => {
+  const t = tree();
+  const noKey = execRow(3); delete noKey.attempt;
+  const run = waveRun({ workflowProgress: [execRow(1, { attempt: 2 }), execRow(2), noKey] });
+  run.result.plans.push({ plan: 3, digest: completeDigest() });
+  const r = seam(t, run);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.restarted, [{ plan: '1', agent_id: 'agent-plan-1', attempt: 2 }]);
+});
+
+test('workflow-run: a wave whose result lacks its plan list is refused with its own reason, and its executors are still billed', () => {
+  const t = tree();
+  dispatchPlan(t, 1); dispatchPlan(t, 2);
+  for (const result of [{}, { plans: 'x' }, { plans: [{ plan: 1, digest: 'text' }] }, { plans: [{ digest: null }] },
+    { plans: [{ plan: 1, digest: null }, { plan: '1', digest: null }] }]) {
+    const r = seam(t, waveRun({ result }));
+    assert.equal(r.ok, false, JSON.stringify(result));
+    assert.equal(r.reason, 'run-bad-wave');
+    assert.match(r.detail, /result/);
+    assert.ok(r.brackets.written + r.brackets.already === 2, 'both executors billed, once');
+  }
+  assert.equal(closesOf(t).length, 2);
+  assert.deepEqual(emptyOut(t), []);
+  const killed = seam(t, waveRun({ status: 'killed' }));
+  assert.equal(killed.reason, 'run-not-completed');
+});
