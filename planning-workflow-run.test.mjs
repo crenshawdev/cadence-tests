@@ -732,3 +732,141 @@ test('workflow-run: two overlapping runs of one trigger keep scratch files, brac
   assert.equal(cli(t, ['adjudication', ...again, '--payload', b.seam.payload]).ok, false);
   assert.equal(readFileSync(join(phaseDir, `REVIEW-diff-${a.name}.md`), 'utf8'), before);
 });
+
+// --- a wave's run: each executor is billed under its plan number (Phase 5, D-19) ---------------------------------------------
+
+/** One executor row as the host leaves it, labelled the way workflows/execute-wave.js labels its agents. */
+const execRow = (plan, over = {}) => ({
+  type: 'workflow_agent', index: plan, label: `plan ${plan}`, agentId: `agent-plan-${plan}`, agentType: 'cadence:cad-executor-high',
+  model: 'claude-sonnet-5-5', state: 'done', attempt: 1, tokens: 1000 * plan + 7, toolCalls: 10 * plan + 1, durationMs: 100 * plan + 3, ...over,
+});
+const completeDigest = (more = {}) => ({ status: 'PLAN COMPLETE', tasks: '2 of 2', commits: 'abc1234..def5678', deviations: '0', open_items: '0', ...more });
+/** A wave's run file: two executors by default, the result the script returns. */
+const waveRun = (over = {}) => ({
+  runId: 'wf_wave-0001', status: 'completed', defaultModel: 'claude-sonnet-5-5',
+  result: { plans: [{ plan: 1, digest: completeDigest() }, { plan: 2, digest: completeDigest() }] },
+  workflowProgress: [execRow(1), execRow(2)], ...over,
+});
+/** The dispatch a plan's own resolve would have written, so the wave's close has something to pair with. */
+function dispatchPlan(t, plan) {
+  const readSet = join(t.repo, `read-${plan}.txt`);
+  writeFileSync(readSet, `.planning/phases/1/PLAN-${plan}.md\n`);
+  const r = cli(t, ['trace', 'append', '--phase', '1', '--family', 'lifecycle', '--event', 'dispatch', '--plan', String(plan), '--role', 'cad-executor', '--read-file', readSet]);
+  assert.equal(r.written, true, JSON.stringify(r));
+}
+const lifecycle = (t) => rawEvents(t).filter((e) => e.family === 'lifecycle');
+const closesOf = (t) => lifecycle(t).filter((e) => e.event !== 'dispatch');
+
+test('workflow-run: a wave bills one close per executor under its plan number with its own figures, and writes no dispatch', () => {
+  const t = tree();
+  dispatchPlan(t, 1); dispatchPlan(t, 2);
+  const run = waveRun();
+  run.result.plans[1].digest = completeDigest({ tasks: '1 of 1' });
+  seam(t, run);
+  const events = lifecycle(t);
+  assert.equal(events.filter((e) => e.event === 'dispatch').length, 2, 'no dispatch was added to the two the resolves wrote');
+  const closes = closesOf(t);
+  assert.deepEqual(closes.map((e) => [e.plan, e.role, e.event]), [['1', 'cad-executor', 'return'], ['2', 'cad-executor', 'return']]);
+  for (const [i, c] of closes.entries()) {
+    const row = run.workflowProgress[i];
+    assert.deepEqual([c.tokens, c.turns, c.duration_ms, c.agent_id], [row.tokens, row.toolCalls, row.durationMs, row.agentId]);
+  }
+  const out = render(t);
+  assert.deepEqual(out.unpaired, []);
+  assert.deepEqual(out.brackets.map((b) => [b.plan, b.tokens]).sort(), [['1', 1007], ['2', 2007]]);
+  assert.deepEqual(out.roles['cad-executor'], { dispatches: 2, tokens: 3014, turns: 11 + 21 });
+});
+
+test('workflow-run: a checkpoint digest closes as a checkpoint naming its type, and a replay closes as a return with the replay flag', () => {
+  const t = tree();
+  dispatchPlan(t, 1); dispatchPlan(t, 2);
+  const run = waveRun();
+  run.result.plans[0].digest = completeDigest({ status: 'PLAN PARTIAL', checkpoint: 'structural', current_task: '2 - x', need: 'a decision' });
+  run.result.plans[1].digest = completeDigest({ commits: 'none (already applied)' });
+  seam(t, run);
+  const [one, two] = closesOf(t);
+  assert.deepEqual([one.event, one.replay], ['checkpoint', undefined]);
+  assert.match(one.detail, /structural/);
+  assert.deepEqual([two.event, two.replay], ['return', true]);
+  assert.equal(closesOf(t).filter((e) => e.event === 'return' && !e.replay).length, 0, 'a plain return carries no replay flag');
+});
+
+test('workflow-run: a row that is not done, and a plan whose slot is null, close as checkpoints naming the state', () => {
+  const t = tree();
+  dispatchPlan(t, 1); dispatchPlan(t, 2); dispatchPlan(t, 3);
+  const run = waveRun();
+  run.result.plans = [{ plan: 1, digest: completeDigest() }, { plan: 2, digest: null }, { plan: 3, digest: completeDigest() }];
+  run.workflowProgress = [execRow(1, { state: 'progress' }), execRow(2), execRow(3)];
+  seam(t, run);
+  const [one, two, three] = closesOf(t);
+  assert.deepEqual([one.event, two.event, three.event], ['checkpoint', 'checkpoint', 'return']);
+  assert.match(one.detail, /state "progress"/);
+  assert.match(two.detail, /null/);
+});
+
+test('workflow-run: a second call for the same wave writes nothing, but a new dispatch of plan 1 and a new run bill plan 1 again', () => {
+  const t = tree();
+  dispatchPlan(t, 1); dispatchPlan(t, 2);
+  const first = seam(t, waveRun());
+  assert.deepEqual([first.brackets.source, first.brackets.written, first.brackets.already], ['run-file', 2, 0]);
+  const before = rawEvents(t).length;
+  const again = seam(t, waveRun());
+  assert.deepEqual([again.brackets.written, again.brackets.already], [0, 2]);
+  assert.equal(rawEvents(t).length, before);
+
+  // plan 1 runs again by hand on today's path, and its close is not mistaken for the first run's
+  dispatchPlan(t, 1);
+  const hand = cli(t, ['trace', 'close', '--phase', '1', '--plan', '1', '--role', 'cad-executor', '--agent-id', 'by-hand', '--tokens', '500']);
+  assert.equal(hand.written, true, JSON.stringify(hand));
+  assert.equal(seam(t, waveRun()).brackets.written, 0, 'the hand close does not make the wave bill twice either');
+
+  // a second wave run over the same plan, with a new run id and a new agent id, bills plan 1 again
+  dispatchPlan(t, 1);
+  const second = waveRun({ runId: 'wf_wave-0002', workflowProgress: [execRow(1, { agentId: 'agent-second-1', tokens: 9999 })] });
+  second.result.plans = [{ plan: 1, digest: completeDigest() }];
+  const r = seam(t, second);
+  assert.deepEqual([r.brackets.written, r.brackets.already], [1, 0]);
+  assert.deepEqual(closesOf(t).filter((e) => e.agent_id === 'agent-second-1').map((e) => [e.plan, e.tokens]), [['1', 9999]]);
+});
+
+test('workflow-run: a row with no agent id still bills once, and a stray unlabelled row bills as an agent of the run', () => {
+  const t = tree();
+  dispatchPlan(t, 1);
+  const run = waveRun();
+  run.result.plans = [{ plan: 1, digest: completeDigest() }];
+  const noId = execRow(1); delete noId.agentId;
+  run.workflowProgress = [noId, execRow(2, { label: 'something else', agentId: 'stray-1' })];
+  const first = seam(t, run);
+  assert.deepEqual([first.brackets.written, first.brackets.already], [2, 0]);
+  assert.equal(closesOf(t).find((e) => e.plan === '1').agent_id, 'wf_wave-0001-agent1');
+  const again = seam(t, run);
+  assert.deepEqual([again.brackets.written, again.brackets.already], [0, 2]);
+  assert.ok(lifecycle(t).some((e) => e.plan === 'wf_wave-0001-stray-1'), 'the stray row keeps the run-keyed worker');
+});
+
+test('workflow-run: risk-check status for plan 1 accepts its record only once plan 2, which the run also closed, has a skip', () => {
+  const t = tree();
+  dispatchPlan(t, 1); dispatchPlan(t, 2);
+  seam(t, waveRun());
+  const ran = cli(t, ['risk-check', 'run', '--phase', '1', '--plan', '1', '--base', t.base, '--head', t.head, '--surfaces', 'auth']);
+  assert.equal(ran.ok, true, JSON.stringify(ran));
+  const status = () => cli(t, ['risk-check', 'status', '--phase', '1', '--plan', '1', '--base', t.base, '--head', t.head]);
+  const without = status();
+  assert.equal(without.ok, false, JSON.stringify(without));
+  assert.equal(without.reason, 'risk-record-missing');
+  assert.match(JSON.stringify(without), /"plan":"2"/);
+  const skip = cli(t, ['trace', 'append', '--phase', '1', '--family', 'outcome', '--event', 'risk_check_skipped', '--plan', '2', '--sha', t.base]);
+  assert.equal(skip.written, true, JSON.stringify(skip));
+  const withSkip = status();
+  assert.equal(withSkip.ok, true, JSON.stringify(withSkip));
+});
+
+test('workflow-run: a readable wave result with no agent rows bills one notice bracket under cad-executor', () => {
+  const t = tree();
+  const r = seam(t, waveRun({ workflowProgress: [] }));
+  assert.deepEqual([r.brackets.source, r.brackets.written], ['notice-totals', 1]);
+  const out = render(t);
+  assert.equal(out.brackets.length, 1);
+  assert.equal(out.brackets[0].role, 'cad-executor');
+  assert.equal(rawEvents(t).find((e) => e.event === 'dispatch').plan, 'wf_wave-0001-notice');
+});
