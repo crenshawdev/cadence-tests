@@ -375,7 +375,7 @@ test('catalog: every schema key with exactly the matching fields, values equal t
   for (const k of ['review.providers.openai.tiers.flagship', 'workflow.max_plan_bytes']) {
     assert.ok(cat.json.settings.some((r) => r.key === k), k);
   }
-  for (const r of cat.json.settings) assert.deepEqual(Object.keys(r), ['key', 'question', 'purpose', 'explain', 'value'], r.key);
+  for (const r of cat.json.settings) assert.deepEqual(Object.keys(r), ['key', 'label', 'question', 'purpose', 'explain', 'value'], r.key);
   const read = {};
   for (const g of cli(f, ['layers']).json.groups) {
     for (const extra of [[], ['--advanced']]) {
@@ -385,6 +385,24 @@ test('catalog: every schema key with exactly the matching fields, values equal t
   for (const r of cat.json.settings) assert.deepEqual(r.value, read[r.key], r.key);
   assert.equal(cat.json.settings.find((r) => r.key === 'granularity').value, 'fine');
   assert.ok(cat.raw.length < cli(f, ['keys']).raw.length, `${cat.raw.length}`);
+});
+
+test('layers: every row carries the schema label, and an Advanced row is only key, label, value, winner and purpose', () => {
+  const f = repoFixture({ granularity: 'fine' }, { git: { create_tag: true } });
+  const schema = cli(f, ['keys']).json.keys;
+  let advanced = 0;
+  for (const g of cli(f, ['layers']).json.groups) {
+    for (const r of cli(f, ['layers', '--group', g.name]).json.rows) assert.equal(r.label, schema[r.key].label, r.key);
+    for (const r of cli(f, ['layers', '--group', g.name, '--advanced']).json.rows) {
+      assert.deepEqual(Object.keys(r), ['key', 'label', 'value', 'winner', 'purpose'], r.key);
+      assert.equal(r.label, schema[r.key].label, r.key);
+      advanced += 1;
+    }
+  }
+  assert.ok(advanced > 0);
+  for (const k of ['granularity', 'workflow.max_plan_bytes']) {
+    assert.equal(cli(f, ['layers', '--key', k]).json.row.label, schema[k].label, k);
+  }
 });
 
 test('get and keys --walk keep their output', () => {
