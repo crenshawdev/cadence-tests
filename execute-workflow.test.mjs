@@ -117,3 +117,42 @@ test('cad-execute allows the wave script and its workflow step reads the referen
   assert.match(step, /Read `\$\{CLAUDE_PLUGIN_ROOT\}\/cadence-core\/references\/execute-workflow\.md`/);
   assert.match(step, /\(one consult site - this step\)/);
 });
+
+// --- choose_path -----------------------------------------------------------------------------------------------
+
+test('choose_path reads the switch through workflow-layers and no config get in execute.md names it', () => {
+  assert.match(chooseFlat, /config\.mjs" workflow-layers/);
+  assert.match(chooseFlat, /`workflow\.execute_workflows` is on in BOTH config layers/);
+  assert.match(chooseFlat, /never with `config\.mjs get`/);
+  // a get call runs from its line to the closing fence or a blank line
+  for (const m of EXEC.matchAll(/config\.mjs" get[^\n]*(?:\n(?!```|\n)[^\n]*)*/g)) {
+    assert.doesNotMatch(m[0], /workflow\.execute_workflows/);
+  }
+});
+
+test('choose_path names every condition of the workflow path and what stops routing to sequential', () => {
+  const head = chooseFlat.slice(0, chooseFlat.indexOf(TODAY));
+  for (const part of ['`planning.workflow_plans` is true', 'the `Workflow` tool is in this session\'s tool list', '`ok:true`', '`undeclared`',
+    '`frontmatter_issues`', '`parallelization.enabled` and `parallelization.use_worktrees` are both true']) {
+    assert.ok(head.includes(part), `${part} is not named`);
+  }
+  assert.match(head, /an `overlaps` entry and a second wave do not route to sequential, because `waves` already order them/);
+  assert.match(head, /`parallelization\.min_plans_for_parallel` is not read/);
+  assert.match(head, /declining its fix or its `ok:false` means today's path/);
+  assert.match(head, /go to `execute_workflow`/);
+});
+
+test('choose_path sends an all-width-1 phase to today\'s path with a line saying why, and prints nothing with neither layer setting the switch', () => {
+  const head = chooseFlat.slice(0, chooseFlat.indexOf(TODAY));
+  assert.match(head, /drop every plan outside the dispatch set, and drop any wave left empty\. When every wave left holds one plan, today's path runs and one line says why/);
+  assert.match(head, /when either layer sets the switch \(`repo` or `global` reads `"set"` in that answer\) one line names the missing condition\. With neither layer setting it, print nothing/);
+});
+
+test('choose_path still makes one plan-overlap call, and the part from "Sequential (default)" on is today\'s text byte for byte', () => {
+  assert.equal((CHOOSE.match(/planning\.mjs" plan-overlap/g) || []).length, 1);
+  const rest = CHOOSE.slice(CHOOSE.indexOf(TODAY) - 0).replace(/^\n/, '');
+  // the sha-256 of choose_path's body as it stood before the workflow path was added
+  assert.equal(createHash('sha256').update(CHOOSE.slice(CHOOSE.indexOf(TODAY)).replace(/^\n/, '')).digest('hex'),
+    '7545544f91cbdeb888f5c8b8c0c5ead36bbab01160889fe4f37fa1408228d22c');
+  assert.ok(rest.length > 2000);
+});

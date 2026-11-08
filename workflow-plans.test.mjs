@@ -266,12 +266,23 @@ function execStretch(text) {
   assert.notEqual(end, -1, 'the stretch has no end');
   return { start, end };
 }
+// Plan 5's choose_path stretch: the workflow path's conditions, up to the line that starts today's list. It names the switch's
+// companion key, so it is the second allowance.
+const WF_OPEN = '**The workflow path comes first.**';
+const WF_CLOSE = 'Sequential (default) unless ALL of these hold:';
+function wfStretch(text) {
+  const start = text.indexOf(WF_OPEN);
+  if (start === -1) return null;
+  const end = text.indexOf(WF_CLOSE, start);
+  assert.notEqual(end, -1, 'the workflow stretch has no end');
+  return { start, end };
+}
 const execKeyLine = (text) => {
   const start = text.indexOf('testing.scope planning.workflow_plans');
   return start === -1 ? null : { start, end: text.indexOf('\n', start) };
 };
 function execOutside(text) {
-  const spans = [execStretch(text), execKeyLine(text)].filter(Boolean);
+  const spans = [execStretch(text), wfStretch(text), execKeyLine(text)].filter(Boolean);
   return [...text.matchAll(EXEC_VOCAB)].filter((m) => !spans.some((s) => m.index >= s.start && m.index < s.end));
 }
 
@@ -295,6 +306,13 @@ test('outside the stretch and the key line, execute.md holds none of the new voc
   assert.ok(STRETCH.length > 500, 'no stretch in execute.md');
   assert.deepEqual(execOutside(EXECUTE).map((m) => m.index), []);
   assert.ok(execOutside(EXECUTE.replace(EXEC_OPEN, 'x')).length > 0);
+});
+
+test('the vocabulary pin fails when the workflow stretch loses its opening sentence, and the stretch holds only the key it needs', () => {
+  assert.ok(wfStretch(EXECUTE), 'no workflow stretch in execute.md');
+  assert.ok(execOutside(EXECUTE.replace(WF_OPEN, 'x')).length > 0);
+  const stretch = EXECUTE.slice(wfStretch(EXECUTE).start, wfStretch(EXECUTE).end);
+  assert.doesNotMatch(stretch, /\bbrief\b|plan-graph/i);
 });
 
 test('the risk_surface fix pass paragraph is unchanged', () => {
