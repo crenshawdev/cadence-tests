@@ -73,6 +73,10 @@ test('plan-graph.md holds the shared-file rule and the one-last-plan rule', () =
   assert.match(GRAPH, /in one last plan/);
 });
 
+test('plan-graph.md has the last plan name every earlier plan in depends_on, because waves order only on a shared file or depends_on', () => {
+  assert.match(GRAPH, /That last plan names every earlier plan in `depends_on`, because `waves` orders plans only on a shared file or a `depends_on` entry/);
+});
+
 test('plan-graph.md has the planner run plan-overlap and state the width, with a reason at 1, as no gate', () => {
   assert.match(GRAPH, /planning\.mjs" plan-overlap --phase <N>/);
   assert.match(GRAPH, /return states the width, plus one line of reason when it is 1/);
