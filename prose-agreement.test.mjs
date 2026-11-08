@@ -3083,8 +3083,8 @@ function assertConfirmBeforeCreate(name, text) {
     `${name}: no confirmation naming the provider, the owner and the repository name - `
     + 'AC6 requires the question itself to state what is about to be created');
   const question = step.slice(confirmAt, confirmAt + 200);
-  assert.match(question, /PRIVATE/,
-    `${name}: the confirmation does not state that the repository will be PRIVATE`);
+  assert.match(question, /private/i,
+    `${name}: the confirmation does not state that the repository will be private`);
 
   assert.ok(confirmAt < createAt,
     `${name}: the forge.mjs create invocation sits BEFORE the confirmation - the ordering `

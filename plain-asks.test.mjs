@@ -131,6 +131,8 @@ export function rowOf(docText, cells) {
 // a file's asks adds the file here with the count its own Action lists.
 const ASK_FILES = [
   ['cadence-core/workflows/context.md', 8],
+  ['cadence-core/workflows/new-project.md', 9],
+  ['cadence-core/workflows/adopt.md', 5],
 ];
 
 // The doc table: a row in a docs table that quotes an ask's option names in bold. `notOptions` names the bold spans
