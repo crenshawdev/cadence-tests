@@ -79,10 +79,10 @@ test('a group ends its list turn without a box and names each guided setup again
   assert.match(s, /Git and landing and How work runs have none/);
 });
 
-test('a pick shows the three layers, compares four keys against the target file and states the file rules', () => {
+test('a pick shows the three layers, compares five keys against the target file and states the file rules', () => {
   const s = flat(section(MENU_MD, 'A group'));
   assert.match(s, /the default, global and repo values with who wins/);
-  for (const key of ['git.auto_close', 'workflow.use_workflows', 'workflow.multi_workflow', 'review.reviewers']) {
+  for (const key of ['git.auto_close', 'workflow.use_workflows', 'workflow.multi_workflow', 'workflow.execute_workflows', 'review.reviewers']) {
     assert.ok(s.includes(`\`${key}\``), key);
   }
   assert.match(s, /equals what the target file stores/);
@@ -280,7 +280,7 @@ test('a setting that needs both files offers the global write behind its own yes
 
 // the prose only helps if the seam takes the write it asks for, so prove the two writes really turn the setting on
 test('the repo write leaves each both-file key off, and the global write the menu offers turns it on', () => {
-  for (const key of ['git.auto_close', 'workflow.use_workflows', 'workflow.multi_workflow']) {
+  for (const key of ['git.auto_close', 'workflow.use_workflows', 'workflow.multi_workflow', 'workflow.execute_workflows']) {
     const root = mkdtempSync(join(tmpdir(), 'cad-second-file-'));
     try {
       mkdirSync(join(root, '.planning'));

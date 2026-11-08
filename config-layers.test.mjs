@@ -336,6 +336,14 @@ test('layers: the gate works with its tier and effort, and the other trigger key
   }
 });
 
+test('layers: execute_workflows set in only the repo has both true and reads off; set in both it reads on', () => {
+  const alone = cli(repoFixture({ workflow: { execute_workflows: true } }), ['layers', '--key', 'workflow.execute_workflows']).json.row;
+  assert.deepEqual([alone.both, alone.value], [true, false]);
+  const both = cli(repoFixture({ workflow: { execute_workflows: true } }, { workflow: { execute_workflows: true } }),
+    ['layers', '--key', 'workflow.execute_workflows']).json.row;
+  assert.deepEqual([both.both, both.value], [true, true]);
+});
+
 test('layers: a both-layer key and the parallel keys say what they need in interacts', () => {
   const f = repoFixture({});
   for (const [key, re] of [['git.auto_close', /both set it/], ['workflow.use_workflows', /both set it/],
