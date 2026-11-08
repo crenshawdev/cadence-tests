@@ -135,6 +135,7 @@ const ASK_FILES = [
   ['cadence-core/workflows/adopt.md', 5],
   ['cadence-core/workflows/plan.md', 3],
   ['cadence-core/workflows/execute.md', 5],
+  ['cadence-core/workflows/verify.md', 3],
   ['skills/cad-land/SKILL.md', 6],
   ['cadence-core/references/triage-gate.md', 6],
   ['cadence-core/references/git-guard.md', 1],
@@ -146,6 +147,7 @@ const DOC_ROWS = [
   { doc: 'docs/WORKFLOW.md', cells: ['`/cad-context`', 'How big is this phase?'], file: 'cadence-core/workflows/context.md', header: 'Size', notOptions: [] },
   { doc: 'docs/WORKFLOW.md', cells: ['`/cad-land`', 'How to publish'], file: 'skills/cad-land/SKILL.md', header: 'Publish', notOptions: ['no option preselected'] },
   { doc: 'docs/WORKFLOW.md', cells: ['`/cad-plan`', 'The `plan` review trigger'], file: 'cadence-core/references/triage-gate.md', header: 'Findings', notOptions: ['advisory', 'blocking', 'adjudicated'] },
+  { doc: 'docs/WORKFLOW.md', cells: ['`/cad-verify`', 'What to do with a failure'], file: 'cadence-core/workflows/verify.md', header: 'Fix', notOptions: [] },
 ];
 
 const SLASH = [
@@ -297,4 +299,15 @@ test('no option in the protected-branch stop carries "recommended"', () => {
   const ask = asksIn(read('cadence-core/references/git-guard.md')).asks[0];
   assert.equal(ask.options.length, 3);
   assert.deepEqual(ask.options.filter((o) => /recommended/i.test(o.text)), []);
+});
+
+test('each arm of verify\'s route_failures step is named by a label of the fix ask', () => {
+  const text = read('cadence-core/workflows/verify.md');
+  const step = /<step name="route_failures">([\s\S]*?)<\/step>/.exec(text);
+  assert.ok(step, 'verify.md has no route_failures step');
+  const arms = [...step[1].matchAll(/^\d+\.\s+\*\*([^*]+)\*\*\s+->/gm)].map((m) => m[1]);
+  assert.equal(arms.length, 3);
+  const fix = asksIn(text).asks.find((a) => a.header === 'Fix');
+  assert.ok(fix, 'verify.md has no ask headed Fix');
+  assert.deepEqual(arms.filter((a) => !fix.options.some((o) => o.label === a)), []);
 });
