@@ -156,3 +156,52 @@ test('choose_path still makes one plan-overlap call, and the part from "Sequenti
     '7545544f91cbdeb888f5c8b8c0c5ead36bbab01160889fe4f37fa1408228d22c');
   assert.ok(rest.length > 2000);
 });
+
+// --- the notice ------------------------------------------------------------------------------------------------
+
+const NOTICE = section('## 2. On the notice');
+
+test('the notice runs workflow-run, releases the claim right after it, and writes no close for a wave executor except on notice-totals', () => {
+  assert.match(NOTICE, /workflow-run --phase <N> --run-file <the run file> --out-dir <the scratch directory> --payload-ref <the scratch directory>/);
+  assert.match(NOTICE, /Release the claim right after this call returns, whether it answered or refused/);
+  assert.ok(REF.indexOf('workflow-claim release', REF.indexOf('## 2. On the notice')) > REF.indexOf('workflow-run --phase'));
+  assert.match(NOTICE, /so no `trace close` is written for them\. One exception: when `brackets\.source` is `notice-totals`/);
+  assert.match(NOTICE, /one `trace close --plan <k> --role cad-executor --detail-file <path>` call, where the file names the missing agent rows, which makes the close a `checkpoint`/);
+  assert.match(NOTICE, /Relay each plan's outcome with its position line\. For each entry of `restarted`, name that plan's agent as restarted by the host/);
+});
+
+test('a wider wave Reads execute-parallel.md by its full path, follows steps 3 to 5, and merges in plan order', () => {
+  assert.match(NOTICE, /Read `\$\{CLAUDE_PLUGIN_ROOT\}\/cadence-core\/references\/execute-parallel\.md` and follow steps 3 to 5 for the plans that settled/);
+  assert.match(NOTICE, /Merge each plan's branch `cadence\/phase-<N>-plan-<k>` in plan order, with both HEADs recorded/);
+});
+
+test('a report moves from the scratch directory only after its branch merged, a report already there is rotated aside, and nothing in it is edited', () => {
+  assert.match(NOTICE, /Once a plan's branch has merged, move its report from `<the scratch directory>\/reports\/plan-<k>\.md` into `<plandir>\/reports\/plan-<k>\.md`/);
+  assert.match(NOTICE, /First rotate a report already there aside to the next free `plan-<k>\.<n>\.md`/);
+  assert.match(NOTICE, /Edit nothing in the moved file/);
+  assert.match(NOTICE, /A plan whose branch has not merged keeps its report in the scratch directory, so the main tree never holds a `PLAN COMPLETE` for unmerged work/);
+  assert.match(NOTICE, /the `state` step's existing staging is its only commit/);
+  assert.ok(NOTICE.indexOf('Once a plan\'s branch has merged') > NOTICE.indexOf('Merge each plan\'s branch'));
+});
+
+test('the suite runs after every wider wave, every plan\'s run or skip comes before any status, and a worktree is removed only if the host kept it', () => {
+  assert.match(NOTICE, /The suite runs after this wave, not once at the end, because the next wave forks from this merge/);
+  const risk = NOTICE.indexOf('run the skip or `risk-check run` for every settled plan first');
+  assert.ok(risk > 0);
+  assert.ok(risk < NOTICE.indexOf('Then each plan\'s `status`'));
+  assert.ok(NOTICE.indexOf('Then the fires') > risk);
+  assert.match(NOTICE, /Remove a worktree only if the host kept it/);
+});
+
+test('phase_diff fires once after the last wave with a line when it is off, and a one-plan wave follows execute_sequential', () => {
+  assert.match(NOTICE, /After the last wave, fire `phase_diff` once, as step 6 of `execute-parallel\.md` states\. When its gate is `off` and a wave ran wider than 1, print one line saying the interaction of the merged plans went unreviewed/);
+  assert.match(NOTICE, /### A wave of one plan It ran in the normal tree, so nothing merges/);
+  assert.match(NOTICE, /The plan's range is its pre-plan HEAD to HEAD\. The risk sequence, the cursor write and the `diff` fire are `execute_sequential`'s/);
+});
+
+test('execute.md\'s writers guardrail names workflow-run, and execute-parallel.md names this reference as its second reader', () => {
+  const guard = flat(EXEC.slice(EXEC.indexOf('<guardrails>')));
+  assert.match(guard, /THREE writers[^]*for a wave's executors `workflow-run`'s close/);
+  assert.match(flat(readFileSync(join(REPO, 'cadence-core', 'references', 'execute-parallel.md'), 'utf8')), /and a second time by `references\/execute-workflow\.md`/);
+  assert.match(flat(EXEC), /ALL worktree ceremony exists inside the two opt-in branches, the parallel one and the workflow one, and nowhere else/);
+});
