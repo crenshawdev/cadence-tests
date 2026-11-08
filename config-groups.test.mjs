@@ -54,3 +54,17 @@ test('workflow.max_plan_bytes is Advanced under How work runs and keeps its purp
   assert.equal(shown('workflow.max_plan_bytes'), false);
   assert.ok(typeof spec.purpose === 'string' && spec.purpose.length > 0);
 });
+
+test('every key has a plain label', () => {
+  const bare = Object.keys(SCHEMA).filter((k) => typeof SCHEMA[k].label !== 'string' || SCHEMA[k].label.trim() === '');
+  assert.deepEqual(bare, []);
+});
+
+test('no two keys in one group share a label, ignoring case and spacing', () => {
+  const seen = new Map();
+  for (const k of Object.keys(SCHEMA)) {
+    const id = `${SCHEMA[k].section}|${String(SCHEMA[k].label).toLowerCase().replace(/\s+/g, '')}`;
+    assert.equal(seen.get(id), undefined, `${k} repeats the label of ${seen.get(id)}`);
+    seen.set(id, k);
+  }
+});
