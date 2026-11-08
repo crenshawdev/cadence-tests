@@ -135,12 +135,14 @@ const ASK_FILES = [
   ['cadence-core/workflows/adopt.md', 5],
   ['cadence-core/workflows/plan.md', 3],
   ['cadence-core/workflows/execute.md', 5],
+  ['skills/cad-land/SKILL.md', 6],
 ];
 
 // The doc table: a row in a docs table that quotes an ask's option names in bold. `notOptions` names the bold spans
 // in that row that are not option names.
 const DOC_ROWS = [
   { doc: 'docs/WORKFLOW.md', cells: ['`/cad-context`', 'How big is this phase?'], file: 'cadence-core/workflows/context.md', header: 'Size', notOptions: [] },
+  { doc: 'docs/WORKFLOW.md', cells: ['`/cad-land`', 'How to publish'], file: 'skills/cad-land/SKILL.md', header: 'Publish', notOptions: ['no option preselected'] },
 ];
 
 const SLASH = [
@@ -259,3 +261,31 @@ for (const entry of DOC_ROWS) {
     assert.deepEqual(staleBoldIn(row, ask.options.map((o) => o.label), entry.notOptions), []);
   });
 }
+
+// The publish question carries no recommended option (D-04), and the names the docs quote are its labels word for word (AC6).
+const publishAsk = () => asksIn(read('skills/cad-land/SKILL.md')).asks.find((a) => a.header === 'Publish');
+
+test('no option in the publish ask carries "recommended"', () => {
+  const ask = publishAsk();
+  assert.ok(ask, 'skills/cad-land/SKILL.md has no ask headed Publish');
+  assert.equal(ask.options.length, 4);
+  assert.deepEqual(ask.options.filter((o) => /recommended/i.test(o.text)), []);
+});
+
+test('every name in the first column of publish.md\'s choice table is a label of the publish ask', () => {
+  const labels = publishAsk().options.map((o) => o.label);
+  const lines = read('docs/guide/working/publish.md').split('\n');
+  const at = lines.findIndex((l) => /^\|\s*Choice\s*\|/.test(l));
+  assert.ok(at >= 0, 'publish.md has no Choice table');
+  const names = [];
+  for (let i = at + 2; i < lines.length && lines[i].startsWith('|'); i++) names.push(lines[i].split('|')[1].trim());
+  assert.equal(names.length, 4);
+  assert.deepEqual(names.filter((n) => !labels.includes(n)), []);
+});
+
+test('every publish label in milestone-land.svg is a label of the publish ask', () => {
+  const labels = publishAsk().options.map((o) => o.label);
+  const names = [...read('docs/figures/milestone-land.svg').matchAll(/<text class="lbl-sm" x="906"[^>]*>([^<]+)<\/text>/g)].map((m) => m[1]);
+  assert.equal(names.length, 4);
+  assert.deepEqual(names.filter((n) => !labels.includes(n)), []);
+});
