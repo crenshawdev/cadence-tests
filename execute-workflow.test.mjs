@@ -80,6 +80,11 @@ test('the launch takes the claim before the first resolve and before the launch,
   assert.match(LAUNCH, /A plan stopped by an earlier wave holds the next wave/);
 });
 
+test('the launch picks its wave in choose_path\'s order: filter every wave, drop the empty ones, take the first, and go to the end when none remain', () => {
+  assert.match(LAUNCH, /Pick the wave in `choose_path`'s order\. In every wave of `waves`, keep only the plans in the dispatch set `locate` defined that are not already done in this run, then drop any wave left empty\. Take the first wave that remains/);
+  assert.match(LAUNCH, /When none remain there is nothing to launch: release the claim with the line below and go to the after-the-last-wave step in "Then"/);
+});
+
 test('the launch resolves each plan on its own with the bracket-read the stretch states, and falls back to the script path', () => {
   assert.match(LAUNCH, /--role cad-executor --attempt 1 --phase <N> --plan <k> --bracket-plan <k> --bracket-read "CLAUDE\.md,<the brief path>"/);
   assert.match(LAUNCH, /because the risk floor differs by plan/);
