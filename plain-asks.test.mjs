@@ -136,6 +136,7 @@ const ASK_FILES = [
   ['cadence-core/workflows/plan.md', 3],
   ['cadence-core/workflows/execute.md', 5],
   ['skills/cad-land/SKILL.md', 6],
+  ['cadence-core/references/triage-gate.md', 6],
 ];
 
 // The doc table: a row in a docs table that quotes an ask's option names in bold. `notOptions` names the bold spans
@@ -143,6 +144,7 @@ const ASK_FILES = [
 const DOC_ROWS = [
   { doc: 'docs/WORKFLOW.md', cells: ['`/cad-context`', 'How big is this phase?'], file: 'cadence-core/workflows/context.md', header: 'Size', notOptions: [] },
   { doc: 'docs/WORKFLOW.md', cells: ['`/cad-land`', 'How to publish'], file: 'skills/cad-land/SKILL.md', header: 'Publish', notOptions: ['no option preselected'] },
+  { doc: 'docs/WORKFLOW.md', cells: ['`/cad-plan`', 'The `plan` review trigger'], file: 'cadence-core/references/triage-gate.md', header: 'Findings', notOptions: ['advisory', 'blocking', 'adjudicated'] },
 ];
 
 const SLASH = [
