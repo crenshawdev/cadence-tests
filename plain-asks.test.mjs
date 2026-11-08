@@ -137,6 +137,7 @@ const ASK_FILES = [
   ['cadence-core/workflows/execute.md', 5],
   ['skills/cad-land/SKILL.md', 6],
   ['cadence-core/references/triage-gate.md', 6],
+  ['cadence-core/references/git-guard.md', 1],
 ];
 
 // The doc table: a row in a docs table that quotes an ask's option names in bold. `notOptions` names the bold spans
@@ -290,4 +291,10 @@ test('every publish label in milestone-land.svg is a label of the publish ask', 
   const names = [...read('docs/figures/milestone-land.svg').matchAll(/<text class="lbl-sm" x="906"[^>]*>([^<]+)<\/text>/g)].map((m) => m[1]);
   assert.equal(names.length, 4);
   assert.deepEqual(names.filter((n) => !labels.includes(n)), []);
+});
+
+test('no option in the protected-branch stop carries "recommended"', () => {
+  const ask = asksIn(read('cadence-core/references/git-guard.md')).asks[0];
+  assert.equal(ask.options.length, 3);
+  assert.deepEqual(ask.options.filter((o) => /recommended/i.test(o.text)), []);
 });
