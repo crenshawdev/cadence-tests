@@ -264,7 +264,7 @@ const EXECUTE_WF = 'cadence-core/workflows/execute.md';
 // grammar under test is unchanged - a named step whose column-0 items take
 // nested labels - and `git_guard` is the surviving instance of it.
 const GUARD_OPEN = '<step name="git_guard">';
-const GUARD_ITEM_2 = "\n2. Commit it now as the user's own commit, message theirs, then continue";
+const GUARD_ITEM_2 = '\n2. "Commit them now';
 
 /**
  * `skills/cad-execute/SKILL.md` plus `workflows/execute.md`, with one Read

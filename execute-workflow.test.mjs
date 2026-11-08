@@ -156,9 +156,9 @@ test('choose_path sends an all-width-1 phase to today\'s path with a line saying
 test('choose_path still makes one plan-overlap call, and the part from "Sequential (default)" on is today\'s text byte for byte', () => {
   assert.equal((CHOOSE.match(/planning\.mjs" plan-overlap/g) || []).length, 1);
   const rest = CHOOSE.slice(CHOOSE.indexOf(TODAY) - 0).replace(/^\n/, '');
-  // the sha-256 of choose_path's body as it stood before the workflow path was added
+  // the sha-256 of choose_path's body from "Sequential (default)" on; re-pinned when the worktree offer became a plain-words ask
   assert.equal(createHash('sha256').update(CHOOSE.slice(CHOOSE.indexOf(TODAY)).replace(/^\n/, '')).digest('hex'),
-    '7545544f91cbdeb888f5c8b8c0c5ead36bbab01160889fe4f37fa1408228d22c');
+    '3bfbe09942d4efa70623f472d157f3f9ff6615295c4b4a474766db84e86cb50c');
   assert.ok(rest.length > 2000);
 });
 
