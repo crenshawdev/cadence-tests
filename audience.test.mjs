@@ -36,3 +36,13 @@ test('contributing keeps its scope point in the feature paragraph, without an au
   assert.match(para, /scope/);
   assert.doesNotMatch(para, OLD_AUDIENCE);
 });
+
+test('the three manifest descriptions are one line, identical, and free of the old audience', () => {
+  const plugin = JSON.parse(read('.claude-plugin/plugin.json'));
+  const market = JSON.parse(read('.claude-plugin/marketplace.json'));
+  const descriptions = [plugin.description, market.description, market.plugins[0].description];
+  for (const d of descriptions) assert.equal(typeof d, 'string');
+  assert.deepEqual(new Set(descriptions).size, 1, 'the three descriptions differ');
+  assert.doesNotMatch(descriptions[0], /[\r\n]/);
+  assert.doesNotMatch(descriptions[0], OLD_AUDIENCE);
+});
