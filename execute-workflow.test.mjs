@@ -205,3 +205,47 @@ test('execute.md\'s writers guardrail names workflow-run, and execute-parallel.m
   assert.match(flat(readFileSync(join(REPO, 'cadence-core', 'references', 'execute-parallel.md'), 'utf8')), /and a second time by `references\/execute-workflow\.md`/);
   assert.match(flat(EXEC), /ALL worktree ceremony exists inside the two opt-in branches, the parallel one and the workflow one, and nowhere else/);
 });
+
+// --- the stops -------------------------------------------------------------------------------------------------
+
+const STOPS = section('## 3. Where a wave stops');
+
+test('a merge conflict stops everything after it, leaves the merge in place and never runs merge --abort', () => {
+  const arm = STOPS.slice(STOPS.indexOf('**A merge conflict.**'), STOPS.indexOf('**A checkpoint.**'));
+  assert.match(arm, /stop with the conflicted merge left in place/);
+  assert.match(arm, /Name the plan and the conflicting paths/);
+  assert.match(arm, /Start no further merge, risk check, cursor write, review, SUMMARY or next wave/);
+  assert.match(arm, /Headless, the run ends there and the file state is the proof/);
+  const aborts = REF.match(/git merge --abort/g) || [];
+  assert.equal(aborts.length, 1);
+  assert.match(arm, /Never run `git merge --abort` yourself/);
+});
+
+test('a checkpoint merges the settled plans first, holds the next wave, and continues the stopped plan in the normal tree under its worker key', () => {
+  const arm = STOPS.slice(STOPS.indexOf('**A checkpoint.**'), STOPS.indexOf('**A null slot'));
+  assert.match(arm, /The plans that settled merge in plan order as section 2 states, and the next wave waits/);
+  assert.match(arm, /Route the checkpoint as `handle_checkpoint` does/);
+  assert.match(arm, /The stopped plan's branch waits for the answer and then merges, its report moving in with that merge/);
+  assert.match(arm, /runs in the normal tree on today's sequential dispatch under worker key `<k>`, the way the parallel path's fix dispatch runs, never back into a worktree/);
+  assert.match(arm, /replaces the closing sentence of `execute-parallel\.md`/);
+});
+
+test('a one-plan wave\'s dead slot checks git log and asks, and only a wider wave checks a branch or reads the scratch report', () => {
+  const arm = STOPS.slice(STOPS.indexOf('**A null slot'), STOPS.indexOf('**A restart.**'));
+  const [, one, wide] = arm.split(/ - In a wave /);
+  assert.match(one, /^of one plan/);
+  assert.match(one, /git log \{pre-plan HEAD\}\.\.HEAD/);
+  assert.match(one, /ask whether to re-dispatch the remainder or stop/);
+  assert.match(one, /under worker key `<k>`/);
+  assert.doesNotMatch(one, /scratch directory|whether its branch exists/);
+  assert.match(wide, /^wider than 1/);
+  assert.match(wide, /read the plan's report in the scratch directory and check whether its branch exists/);
+  assert.match(wide, /No branch means nothing landed and nothing merges, so its report moves in as it stands, unless it reads `PLAN COMPLETE`, which is named and left in the scratch directory/);
+  assert.match(wide, /The next wave still waits for the answer/);
+  assert.match(wide, /A branch is handled like a checkpoint/);
+  assert.match(wide, /a remainder runs in the normal tree/);
+});
+
+test('a restarted agent is named in its plan\'s relay', () => {
+  assert.match(STOPS, /\*\*A restart\.\*\* A plan whose agent the host restarted is named in that plan's relay, from `restarted` in `workflow-run`'s answer/);
+});
