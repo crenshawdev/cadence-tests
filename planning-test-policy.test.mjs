@@ -297,3 +297,43 @@ test('a torn config or an invalid scope fails instead of reading as no policy', 
   }));
   assert.match(read.warnings.join(' '), /testing\.scope.*"bogus"/);
 });
+
+// --- check: a tracked set past git's 1 MiB default read buffer ---------------
+
+/** Stage `count` long paths under `dir/` in `root`'s index with no working files: one blob, many index entries. */
+function bigIndex(root, dir, count) {
+  const blob = execFileSync('git', ['-C', root, 'hash-object', '-w', '--stdin'], { input: 'x', encoding: 'utf8' }).trim();
+  const pad = 'p'.repeat(180);
+  const lines = [];
+  for (let i = 0; i < count; i++) lines.push(`100644 ${blob}\t${dir}/${pad}${i}.js\n`);
+  execFileSync('git', ['-C', root, 'update-index', '--add', '--index-info'], { input: lines.join('') });
+}
+
+test('check does not report a glob matching nothing when the tracked list is over 1 MiB', () => {
+  const root = agreeing();
+  bigIndex(root, 'big', 6000);
+  const listed = execFileSync('git', ['-C', root, 'ls-files'], { maxBuffer: 64 << 20 }).length;
+  assert.ok(listed > 1024 * 1024, `fixture must pass 1 MiB, got ${listed}`);
+  const config = join(root, '.planning', 'config.json');
+  const edited = JSON.parse(readFileSync(config, 'utf8'));
+  edited.testing.coverage.include = ['big/**'];
+  writeFileSync(config, JSON.stringify(edited));
+  assert.equal(policy(['render'], root).ok, true);
+  execFileSync('git', ['-C', root, 'add', POLICY]);
+  const r = policy(['check'], root);
+  assert.deepEqual(r.problems, [], JSON.stringify(r));
+  assert.equal(r.ok, true);
+});
+
+test('check still reports an include glob that no tracked file matches', () => {
+  const root = agreeing();
+  const config = join(root, '.planning', 'config.json');
+  const edited = JSON.parse(readFileSync(config, 'utf8'));
+  edited.testing.coverage.include = ['src/**', 'nowhere/**'];
+  writeFileSync(config, JSON.stringify(edited));
+  assert.equal(policy(['render'], root).ok, true);
+  execFileSync('git', ['-C', root, 'add', POLICY]);
+  const r = policy(['check'], root);
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.problems, ['coverage.include "nowhere/**" matches no tracked file']);
+});
