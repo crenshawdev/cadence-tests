@@ -1552,6 +1552,26 @@ for (const row of DECLARES_ROWS) {
   });
 }
 
+// An indented heading is still a heading to CommonMark up to three spaces, so it is a typo of the section, not
+// an absence of it (P3-1-04). Four spaces is code, and keeps the exemption.
+for (const spaces of [1, 3]) {
+  test(`acceptance-criteria near-miss: ${spaces} leading space(s) before the heading report it, never the exemption`, () => {
+    const r = classifyAcceptanceCriteria(
+      `# Phase 1 Context\n\n${' '.repeat(spaces)}## Acceptance criteria\n\n- [ ] AC1: the tests pass\n`);
+    assert.equal(r.criteria, null);
+    assert.equal(r.declaresIds, 'unknown');
+    assert.deepEqual(r.issues.map((i) => [i.line, i.code]), [[3, 'criteria-heading-near-miss']]);
+  });
+}
+
+test('acceptance-criteria near-miss: four leading spaces are code, so the heading stays absent and declares nothing', () => {
+  const r = classifyAcceptanceCriteria(
+    '# Phase 1 Context\n\n    ## Acceptance criteria\n\n- [ ] AC1: the tests pass\n');
+  assert.equal(r.criteria, null);
+  assert.equal(r.declaresIds, 'none');
+  assert.deepEqual(r.issues, []);
+});
+
 // This repo's own four v2.0.0 phases, FROZEN: the fixture no synthetic row can
 // replace, because the grammar must keep reading the files it was written
 // against - wrapped continuations, backticks, embedded colons and all.
