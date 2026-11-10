@@ -143,3 +143,33 @@ test('every marked census site in the live tree has a registry row', () => {
     censusMarkersIn(readFileSync(join(REPO, rel), 'utf8'))));
   assert.deepEqual(issues.map((i) => i.message), [], issues.map((i) => i.message).join('\n'));
 });
+
+// --- arm (iv): a row says what it counts, and names a test that exists --------
+
+// A tally in a `counts` string goes stale the day the marker's number moves; the
+// marker at the holder is where the number lives. Read off CENSUSES, not the file:
+// an `asserted_by` quotes live test titles, and those carry their own numbers.
+test('no row\'s counts holds a numeral', () => {
+  for (const e of CENSUSES) {
+    // not preceded by a word character or a hyphen, so `UTF-8` passes
+    assert.doesNotMatch(e.counts, /(?<![\w-])\d/, `${e.id}: counts states a tally: ${e.counts}`);
+  }
+});
+
+test('no row\'s counts holds a spelled cardinal from two up', () => {
+  const SPELLED = /\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)\b/i;
+  for (const e of CENSUSES) {
+    assert.doesNotMatch(e.counts, SPELLED, `${e.id}: counts spells a tally: ${e.counts}`);
+  }
+});
+
+test('every asserted_by that names a test names a title its holder carries', () => {
+  for (const e of CENSUSES) {
+    const m = e.asserted_by.match(/the test named `([^`]+)`/);
+    if (!m || m[1].includes('<')) continue; // seam-calls generates its titles from a row
+    const text = readFileSync(join(REPO, e.holder), 'utf8');
+    // a title with an apostrophe sits in the source as `\'` inside a single-quoted literal
+    const carried = text.includes(m[1]) || text.includes(m[1].replaceAll("'", "\\'"));
+    assert.ok(carried, `${e.id}: ${e.holder} carries no test titled "${m[1]}"`);
+  }
+});
