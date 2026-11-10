@@ -24,6 +24,7 @@ import {
   parseArchiveRows, appendArchiveRows, parseFiledRows, appendFiledRow,
   parseDeclinedRows, appendDeclinedRow,
   parsePlanFiles, parseTaskRecordSnippets, parseSummarySnippets, CURSOR_STATUSES,
+  parseUat, renderUat,
 } from '../cadence-core/bin/lib/planning-files.mjs';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
@@ -2638,4 +2639,30 @@ test('cutPhaseDetail: a fenced `### ` line inside the section is cut with it, no
   const next = '### Phase 2: Next\n**Goal:** b\n';
   const section = ['### Phase 1: A', '**Goal:** a', '```', '### not a heading', '```', 'tail prose', '', ''].join('\n');
   assert.equal(cutPhaseDetail(head + section + next, 1), head + next);
+});
+
+// --- parseUat splits only on unfenced `### ` lines (P3-2-02) ------------------
+
+const uatWithFence = [
+  '---', 'status: executed', 'phase: 1', 'started: 2026-01-01', '---', '', '## Items', '',
+  '### 1. Real item', 'status: pass', 'evidence: seen', '```text', '### 2. phantom', '```', '',
+  '### Repro notes', '', 'Steps:', '', '```md', '### 3. also phantom', '```', '', 'Still fails.', '',
+  '## Summary', '', 'total: 1', '',
+].join('\n');
+
+test('parseUat: a fenced `### N.` line inside an item body mints no item', () => {
+  const uat = parseUat(uatWithFence);
+  assert.deepEqual(uat.items.map((i) => i.k), [1]);
+  assert.equal(uat.items[0].status, 'pass');
+  assert.equal(uat.counts.pass, 1);
+});
+
+test('parseUat: a fenced `### N.` line in a hand-added section survives a render whole', () => {
+  const uat = parseUat(uatWithFence);
+  assert.equal(uat.extras.length, 1);
+  const out = renderUat(uat);
+  const kept = ['### Repro notes', '', 'Steps:', '', '```md', '### 3. also phantom', '```', '', 'Still fails.'].join('\n');
+  assert.equal(out.split(kept).length - 1, 1);
+  assert.equal((out.match(/^```/gm) || []).length % 2, 0);
+  assert.equal(parseUat(out).items.length, 1);
 });
