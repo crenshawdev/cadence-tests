@@ -834,3 +834,18 @@ test('lease-check --plan-time: two plans that declare real paths are a PASS on b
     assert.equal(r._exit, 0);
   }
 });
+
+test('lease-check: a staged set over 1 MiB is read, not refused as no-staged-set', () => {
+  // one blob and many index entries, no working files: the staged list alone passes git's 1 MiB default read buffer
+  const { repo, dir } = leaseRepo({ files: ['big/'] });
+  const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: repo, input: 'x', encoding: 'utf8' }).trim();
+  const pad = 'p'.repeat(180);
+  const entries = [];
+  for (let i = 0; i < 6000; i++) entries.push(`100644 ${blob}\tbig/${pad}${i}.js\n`);
+  execFileSync('git', ['update-index', '--add', '--index-info'], { cwd: repo, input: entries.join('') });
+
+  const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
+  assert.equal(r.ok, true, JSON.stringify(r).slice(0, 300));
+  assert.equal(r.staged, 6000);
+  assert.equal(r._exit, 0);
+});
