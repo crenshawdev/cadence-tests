@@ -897,7 +897,7 @@ test('keys --walk returns only question-bearing keys in position order, typed en
 });
 
 test('keys --walk on the shipped schema holds every walk key, in position order, under 25,000 bytes', () => {
-  const NOT_ASKED = ['workflow.config_menu', 'planning.code_map', 'planning.workflow_plans', 'workflow.execute_workflows', 'roles.cad-mapper.', 'workflow.max_plan_bytes', 'workflow.max_dispatch_tokens.', 'review.providers.', 'review.decision_review.'];
+  const NOT_ASKED = ['workflow.config_menu', 'planning.code_map', 'planning.workflow_plans', 'workflow.execute_workflows', 'roles.cad-mapper.', 'workflow.max_plan_bytes', 'review.triggers.diff.when', 'workflow.max_dispatch_tokens.', 'review.providers.', 'review.decision_review.'];
   const shipped = JSON.parse(readFileSync(join(dirname(CONFIG), '..', 'config.schema.json'), 'utf8')).keys;
   const expected = Object.keys(shipped).filter((k) => !NOT_ASKED.some((p) => k.startsWith(p)));
   assert.ok(expected.length < Object.keys(shipped).length && expected.length > 0, 'the exclusion list names real keys');

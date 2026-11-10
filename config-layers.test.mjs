@@ -216,7 +216,7 @@ test('layers: use_workflows set in only the repo reads off with no winner; a rep
 
 test('layers: a fresh template repo sets 43, all 43 the shipped default', () => {
   const { json } = cli(templateFixture(), ['layers']);
-  assert.equal(json.totals.settings, 100);
+  assert.equal(json.totals.settings, 101);
   assert.equal(json.totals.repo, 43);
   assert.equal(json.totals.at_default, 43);
   assert.equal(json.totals.global, 0);
