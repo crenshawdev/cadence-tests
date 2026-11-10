@@ -24,7 +24,7 @@ import {
   parseArchiveRows, appendArchiveRows, parseFiledRows, appendFiledRow,
   parseDeclinedRows, appendDeclinedRow,
   parsePlanFiles, parseTaskRecordSnippets, parseSummarySnippets, CURSOR_STATUSES,
-  parseUat, renderUat,
+  parseUat, renderUat, planTaskTitles,
 } from '../cadence-core/bin/lib/planning-files.mjs';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
@@ -2683,4 +2683,14 @@ test('parseUat: a CRLF UAT.md reads status, phase and started like its LF twin, 
   assert.deepEqual(b.items, a.items);
   const out = renderUat(b);
   for (const line of ['status: executed', 'phase: 1', 'started: 2026-01-01']) assert.ok(out.includes(`${line}\n`), line);
+});
+
+// --- a fenced `### Task` line is not a task (P3-2-03) --------------------------
+
+test('planTaskTitles: a fenced `### Task 9:` example inside a task is not counted', () => {
+  const plan = [
+    '## Tasks', '', '### Task 1: Real one', '', 'Write it like this:', '', '```md', '### Task 9: example', '```', '',
+    '### Task 2: Real two', '', '- **Verify:** ok', '',
+  ].join('\n');
+  assert.deepEqual(planTaskTitles(plan), ['Real one', 'Real two']);
 });
