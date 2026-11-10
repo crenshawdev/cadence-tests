@@ -570,12 +570,9 @@ function censusIssues(sources, rows) {
     const site = found.find((c) => keyOf(c) === keyOf(row));
     if (!site) continue;
     if (row.disposition === 'tree-aware' && site.callee !== 'guard') {
-      // TRANSITIONAL: the faces not yet on the guard still take the check themselves
-      if (!site.body.includes(`phaseSpellingCollision${'('}`)) {
-        unchecked.push(`${site.file}:${site.line} is dispositioned tree-aware, but ${site.fn} neither calls`
-          + ` ${GUARD} nor phaseSpellingCollision - a phases/<N>/ path resolved from the caller's`
-          + ' spelling with no check in front of it is exactly what this census exists to stop');
-      }
+      unchecked.push(`${site.file}:${site.line} is dispositioned tree-aware, but ${site.fn} parses --phase`
+        + ` itself instead of calling ${GUARD} - a phases/<N>/ path resolved from the caller's spelling`
+        + ' with no check in front of it is exactly what this census exists to stop');
     }
     if (row.disposition === 'unconditional' && !site.body.includes(`phaseSpellingRefusal${'('}`)) {
       unchecked.push(`${site.file}:${site.line} is dispositioned unconditional, but ${site.fn} never calls`
