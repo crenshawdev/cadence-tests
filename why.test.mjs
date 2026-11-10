@@ -863,3 +863,26 @@ test('this repository: the exclusion reaches the rendered text with the count, t
   }
   assert.match(env.text, /git log --full-history -- cadence-core\/bin\/lib\/release-decision\.mjs$/m);
 });
+
+test('a path whose log output is over 1 MiB gets its whole chain, not git-failed', () => {
+  // git fast-import writes the history in one process: 1,200 commits with long subjects pass git's 1 MiB default read buffer
+  const dir = mkdtempSync(join(tmpdir(), 'cad-why-big-'));
+  execFileSync('git', ['-C', dir, 'init', '-q', '-b', 'main'], { stdio: 'ignore', env: GIT_ENV });
+  const n = 1200;
+  const pad = 's'.repeat(900);
+  let stream = '';
+  for (let i = 0; i < n; i++) {
+    const msg = `change ${i} ${pad}`;
+    const body = `v${i}\n`;
+    stream += `commit refs/heads/main\ncommitter cad <cad@example.invalid> ${1767225600 + i * 60} +0000\n`
+      + `data ${Buffer.byteLength(msg)}\n${msg}\nM 100644 inline f.txt\ndata ${Buffer.byteLength(body)}\n${body}\n`;
+  }
+  execFileSync('git', ['-C', dir, 'fast-import', '--quiet'], { input: stream, stdio: ['pipe', 'ignore', 'ignore'], env: GIT_ENV });
+  const logged = execFileSync('git', ['-C', dir, 'log', '--format=%H%x1f%cI%x1f%s', '--', 'f.txt'], { env: GIT_ENV, maxBuffer: 64 << 20 });
+  assert.ok(logged.length > 1024 * 1024, `fixture must pass 1 MiB, got ${logged.length}`);
+
+  const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
+  assert.equal(env.ok, true, JSON.stringify(env).slice(0, 300));
+  assert.equal(env.result, 'chain');
+  assert.equal(env.total, n);
+});
