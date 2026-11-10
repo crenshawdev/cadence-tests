@@ -2666,3 +2666,21 @@ test('parseUat: a fenced `### N.` line in a hand-added section survives a render
   assert.equal((out.match(/^```/gm) || []).length % 2, 0);
   assert.equal(parseUat(out).items.length, 1);
 });
+
+// --- a CRLF UAT.md reads its frontmatter (P3-2-06) ----------------------------
+
+test('parseUat: a CRLF UAT.md reads status, phase and started like its LF twin, and render keeps them', () => {
+  const lf = [
+    '---', 'status: executed', 'phase: 1', 'started: 2026-01-01', '---', '', '## Items', '',
+    '### 1. Real item', 'status: pass', '', '## Summary', '', 'total: 1', '',
+  ].join('\n');
+  const crlf = lf.replace(/\n/g, '\r\n');
+  const a = parseUat(lf);
+  const b = parseUat(crlf);
+  assert.equal(b.status, a.status);
+  assert.equal(b.phase, a.phase);
+  assert.equal(b.fm.started, '2026-01-01');
+  assert.deepEqual(b.items, a.items);
+  const out = renderUat(b);
+  for (const line of ['status: executed', 'phase: 1', 'started: 2026-01-01']) assert.ok(out.includes(`${line}\n`), line);
+});
