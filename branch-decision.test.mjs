@@ -356,3 +356,36 @@ test('activeVersion: a body whose ONLY token sits on a continuation line still a
     + 'v4.2.0 - the gate that clears itself wrong.');
   assert.equal(activeVersion(text), 'v4.2.0');
 });
+
+// ---------------------------------------------------------------------------
+// activeVersion: a fenced line is not a heading (P3-2-05)
+// ---------------------------------------------------------------------------
+
+test('activeVersion: a fenced "# comment" line does not end the section before the version sentence', () => {
+  const text = project('```sh\n# regenerate the lockfile\nnpm ci\n```\n\nThe milestone this cycle opens under is v4.2.0.');
+  assert.equal(activeVersion(text), 'v4.2.0');
+});
+
+test('activeVersion: a fenced template "### Active" earlier in the file is not the section start', () => {
+  const text = [
+    '# P',
+    '',
+    'Template:',
+    '',
+    '```markdown',
+    '### Active',
+    '',
+    'No cycle open.',
+    '```',
+    '',
+    '## Requirements',
+    '',
+    '### Active',
+    '',
+    'v3.0.1 is the open milestone.',
+    '',
+    '### Out of Scope',
+    '',
+  ].join('\n');
+  assert.equal(activeVersion(text), 'v3.0.1');
+});
