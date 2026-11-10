@@ -717,3 +717,13 @@ test('brief rows: a note under the heading says the rows are data, the room coun
   const none = briefText(crowded('', 100).dir);
   assert.ok(none.text.includes(ROWS_LEFT_OUT) && !none.text.includes(NOTE));
 });
+
+test('brief: a blank line before the opening --- still gives the lease', () => {
+  const { dir } = project({ plans: { 'PLAN-3.md': `\n${planText()}` } });
+  const out = scratch();
+  const r = brief(dir, ['--phase', '4', '--plan', '3', '--out-dir', out]);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const got = readFileSync(r.path, 'utf8');
+  assert.ok(got.includes("The plan's lease"), 'the lease section is kept');
+  assert.ok(got.includes('files:\n  - src/a.mjs\n  - tests/a.test.mjs (lease)'), 'the files: lines as written');
+});
