@@ -1,5 +1,4 @@
-// Tests for lib/state-cursor.mjs, the STATE.md cursor parser planning-files
-// re-exports. Run: node --test tests/state-cursor.test.mjs
+// Tests for lib/state-cursor.mjs, the STATE.md cursor parser. Run: node --test tests/state-cursor.test.mjs
 //
 // Not named planning-*: test-groups.test.mjs pins the `planning` group to
 // exactly those files.
@@ -22,10 +21,6 @@ const LINES = [
   'Updated: 2026-10-04',
 ];
 const STATE = `# State\n\n${LINES.join('\n')}\n`;
-
-test('planning-files re-exports this parseCursor, not a copy', () => {
-  assert.equal(planningFiles.parseCursor, parseCursor);
-});
 
 test('parses the canonical four lines, decimal phase included', () => {
   assert.deepEqual(parseCursor(STATE), {
