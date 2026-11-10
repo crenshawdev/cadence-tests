@@ -381,19 +381,22 @@ test('trace render: --phase 1.10 still renders on a tree holding phases/1.1/', (
 
 // --- the census: every `--phase` reader under planning/, dispositioned -------
 //
-// WHAT IT PINS. The wire above is a property of TWENTY-ONE callsites, and the
-// way it stops being true is the twenty-second: someone adds a command that
-// resolves `phases/<N>/` from a caller's spelling and never calls the check.
-// Nothing else in this tree would notice, so the count and the disposition of
-// every callsite are written down here and re-derived by a walk.
+// WHAT IT PINS. The wire above is a property of one guard and the callsites
+// that run it: `phaseGuard` in `planning/core.mjs` parses `--phase` and runs
+// `phaseSpellingCollision`, and every face that resolves `phases/<N>/` from a
+// caller's spelling is meant to call it. The way that stops being true is a new
+// command that parses the flag on its own and never takes the check. Nothing
+// else in this tree would notice, so every guard call and every direct
+// `requirePhaseArg` parse is written down here and re-derived by a walk.
 //
 // KEYED BY FILE + ENCLOSING FUNCTION + ORDINAL, never by line. A line-keyed
-// table would redden this suite on every unrelated edit to these fifteen
-// modules - a rail that fires wrong gets deleted rather than tuned - while the
-// function name is what a reader is actually sent to. The LINE is still
-// reported in the failure message, because that is what a reader opens.
+// table would redden this suite on every unrelated edit to these modules - a
+// rail that fires wrong gets deleted rather than tuned - while the function
+// name is what a reader is actually sent to. The LINE is still reported in the
+// failure message, because that is what a reader opens. The ordinal counts
+// guard calls and direct parses together, in source order.
 //
-// `lib/arg-contract.mjs:184` is deliberately outside the walk and gets this
+// `lib/arg-contract.mjs` is deliberately outside the walk and gets this
 // sentence instead of a row: it is the reader that PRODUCES a parse result
 // rather than a consumer that resolves a path from one. Scoping the walk to
 // exactly what this census's registry subjects cover
@@ -404,8 +407,24 @@ test('trace render: --phase 1.10 still renders on a tree holding phases/1.1/', (
 // callsite moved inside a top-level arrow-assigned const would be attributed to
 // the function above it and redden the set-equality below, which is the safe
 // direction: the census reports rather than guesses.
+//
+// THE WALK TAKES ITS SOURCE AS AN ARGUMENT, so the non-vacuity test at the
+// bottom can run the very same walk and comparisons over a synthetic module.
+// The call spellings are built from parts for the same reason: this file's own
+// text must carry nothing a walk would count.
 
 const PLANNING_DIR = join(BIN, 'planning');
+const GUARD = 'phaseGuard';
+const PARSE = 'requirePhaseArg';
+
+/** Every `.mjs` under `planning/`, as `{file: text}`. */
+function planningSources() {
+  const out = {};
+  for (const file of readdirSync(PLANNING_DIR).filter((n) => n.endsWith('.mjs')).sort()) {
+    out[file] = readFileSync(join(PLANNING_DIR, file), 'utf8');
+  }
+  return out;
+}
 
 /** Every top-level `function` in one module's lines, as `{name, start, end}`
  * 0-based half-open spans. */
@@ -420,22 +439,26 @@ function functionSpans(lines) {
   return spans;
 }
 
-/** Every phase-argument parse under `planning/`, as
- * `{file, fn, ordinal, line, body}` - `body` being its enclosing function's
- * source, which is what the disposition assertions read. */
-function phaseArgCallsites() {
-  const call = `requirePhaseArg${'('}`;
+/** Every guard call and direct phase-argument parse in `sources` (`{file: text}`), as
+ * `{file, fn, ordinal, line, callee, body}` - `callee` being `'guard'` or `'parse'` and
+ * `body` its enclosing function's source, which is what the disposition assertions read. */
+function phaseArgCallsites(sources) {
+  const guardCall = new RegExp(`(?<![\\w$.])${GUARD}\\${'('}`);
+  const parseCall = new RegExp(`(?<![\\w$.])${PARSE}\\${'('}`);
   const out = [];
-  for (const file of readdirSync(PLANNING_DIR).filter((n) => n.endsWith('.mjs')).sort()) {
-    const lines = readFileSync(join(PLANNING_DIR, file), 'utf8').split('\n');
+  for (const file of Object.keys(sources).sort()) {
+    const lines = sources[file].split('\n');
     const spans = functionSpans(lines);
     const seen = new Map();
     for (let i = 0; i < lines.length; i++) {
       const text = lines[i].trim();
       // Comments never count: this census is over invocations, and a sentence
-      // naming the function is documentation, not a callsite.
+      // naming the function is documentation, not a callsite. A declaration is
+      // not a call either.
       if (text.startsWith('//') || text.startsWith('*')) continue;
-      if (!text.includes(call)) continue;
+      if (/^(?:export\s+)?(?:async\s+)?function\s/.test(text)) continue;
+      const callee = guardCall.test(text) ? 'guard' : parseCall.test(text) ? 'parse' : null;
+      if (!callee) continue;
       const span = spans.find((sp) => i >= sp.start && i < sp.end);
       const fn = span ? span.name : '(top level)';
       const ordinal = (seen.get(fn) || 0) + 1;
@@ -445,6 +468,7 @@ function phaseArgCallsites() {
         fn,
         ordinal,
         line: i + 1,
+        callee,
         body: span ? lines.slice(span.start, span.end).join('\n') : '',
       });
     }
@@ -452,13 +476,20 @@ function phaseArgCallsites() {
   return out;
 }
 
+/** The source of the guard's own definition in `core.mjs`, or null when it is gone. */
+function guardBody(sources) {
+  const lines = (sources['core.mjs'] || '').split('\n');
+  const span = functionSpans(lines).find((sp) => sp.name === GUARD);
+  return span ? lines.slice(span.start, span.end).join('\n') : null;
+}
+
 /**
  * The hand-written disposition of every callsite the walk finds.
  *
- * `tree-aware` calls `phaseSpellingCollision`, `unconditional` calls
- * `phaseSpellingRefusal`, and `exempt` calls neither and states why in the same
- * row. The two guarded dispositions are ASSERTED against the source below; an
- * exempt row is a claim a reader can check, which is the most a census can be
+ * `tree-aware` takes the tree-aware check (through the guard), `unconditional`
+ * calls `phaseSpellingRefusal`, and `exempt` takes neither and states why in the
+ * same row. The two guarded dispositions are ASSERTED against the source below;
+ * an exempt row is a claim a reader can check, which is the most a census can be
  * about a callsite that does nothing.
  */
 const CALLSITES = [
@@ -469,7 +500,9 @@ const CALLSITES = [
   { file: 'cite-count.mjs', fn: 'cmdCiteCount', ordinal: 1, disposition: 'tree-aware',
     why: 'reads the phase directory plans and echoes phase: <value> beside them' },
   { file: 'core.mjs', fn: 'fireIdentity', ordinal: 1, disposition: 'tree-aware',
-    why: 'the one callsite adjudication and deferred record share; fireHome joins the phase directory' },
+    why: 'the guard call adjudication and deferred record share; fireHome joins the phase directory' },
+  { file: 'core.mjs', fn: 'phaseGuard', ordinal: 1, disposition: 'exempt',
+    why: 'the guard\'s own parse; the census asserts its body goes on to call phaseSpellingCollision' },
   { file: 'core.mjs', fn: 'decimalRefusal', ordinal: 1, disposition: 'exempt',
     why: 'wording over a raw token - it decides whether a refusal sentence mentions the decimal form' },
   { file: 'criteria-size.mjs', fn: 'cmdCriteriaSize', ordinal: 1, disposition: 'tree-aware',
@@ -522,42 +555,91 @@ const CALLSITES = [
 
 const keyOf = (c) => `${c.file} ${c.fn} #${c.ordinal}`;
 
-test('census: every phase-argument callsite under planning/ carries a disposition', () => {
-  const found = phaseArgCallsites();
+/**
+ * The census's three comparisons, over any source: a callsite with no row, a row with no
+ * callsite, and a callsite that does not take the check its disposition claims. The guard
+ * itself is held to its half of the bargain here too - its body must call the collision check.
+ * @returns {{unlisted: string[], gone: string[], unchecked: string[]}}
+ */
+function censusIssues(sources, rows) {
+  const found = phaseArgCallsites(sources);
   const foundKeys = new Set(found.map(keyOf));
-  const tableKeys = new Set(CALLSITES.map(keyOf));
+  const tableKeys = new Set(rows.map(keyOf));
+  const unchecked = [];
+  for (const row of rows) {
+    const site = found.find((c) => keyOf(c) === keyOf(row));
+    if (!site) continue;
+    if (row.disposition === 'tree-aware' && site.callee !== 'guard') {
+      // TRANSITIONAL: the faces not yet on the guard still take the check themselves
+      if (!site.body.includes(`phaseSpellingCollision${'('}`)) {
+        unchecked.push(`${site.file}:${site.line} is dispositioned tree-aware, but ${site.fn} neither calls`
+          + ` ${GUARD} nor phaseSpellingCollision - a phases/<N>/ path resolved from the caller's`
+          + ' spelling with no check in front of it is exactly what this census exists to stop');
+      }
+    }
+    if (row.disposition === 'unconditional' && !site.body.includes(`phaseSpellingRefusal${'('}`)) {
+      unchecked.push(`${site.file}:${site.line} is dispositioned unconditional, but ${site.fn} never calls`
+        + ' phaseSpellingRefusal');
+    }
+  }
+  const body = guardBody(sources);
+  if (body === null || !body.includes(`phaseSpellingCollision${'('}`)) {
+    unchecked.push(`${GUARD} in core.mjs ${body === null ? 'is gone' : 'never calls phaseSpellingCollision'}`
+      + ' - every face dispositioned tree-aware relies on it for the tree-aware refusal');
+  }
+  return {
+    unlisted: found.filter((c) => !tableKeys.has(keyOf(c))).map((c) => `${c.file}:${c.line} (${c.fn} #${c.ordinal})`),
+    gone: [...tableKeys].filter((k) => !foundKeys.has(k)),
+    unchecked,
+  };
+}
 
-  const unlisted = found.filter((c) => !tableKeys.has(keyOf(c)));
-  assert.deepEqual(unlisted.map((c) => `${c.file}:${c.line} (${c.fn} #${c.ordinal})`), [],
-    'a phase-argument callsite under cadence-core/bin/planning/ has no row in CALLSITES. Add a row'
-    + ' naming its disposition and why: `tree-aware` if it resolves a phases/<N>/ path from the'
-    + " caller's spelling and takes phaseSpellingCollision, `unconditional` for a write face taking"
-    + ' phaseSpellingRefusal, `exempt` only if it resolves no phase directory at all.');
+test('census: every phase-guard call and direct phase-argument parse under planning/ carries a disposition', () => {
+  const sources = planningSources();
+  const found = phaseArgCallsites(sources);
+  const { unlisted, gone } = censusIssues(sources, CALLSITES);
 
-  const gone = [...tableKeys].filter((k) => !foundKeys.has(k));
+  assert.deepEqual(unlisted, [],
+    'a phase-guard call or a direct phase-argument parse under cadence-core/bin/planning/ has no row in'
+    + ' CALLSITES. Add a row naming its disposition and why: `tree-aware` if it is a call to the guard,'
+    + ' `unconditional` for a write face taking phaseSpellingRefusal, `exempt` only if it resolves no'
+    + ' phase directory at all.');
   assert.deepEqual(gone, [],
     'CALLSITES names a callsite the walk no longer finds - delete the row if the callsite is gone,'
     + ' or re-key it if its enclosing function was renamed.');
 
-  // CADENCE-CENSUS: phase-spelling-callsites | asserts: 26 phase-argument callsites under cadence-core/bin/planning/, 16 of them resolving a phases/<N>/ path - 14 through the tree-aware check and 2 through the unconditional one
-  assert.equal(found.length, 26, `callsite count moved: ${found.length}`);
+  // CADENCE-CENSUS: phase-spelling-callsites | asserts: 27 phase-guard calls and direct phase-argument parses under cadence-core/bin/planning/, 14 of them tree-aware, 2 unconditional and 11 exempt
+  assert.equal(found.length, 27, `callsite count moved: ${found.length}`);
   const by = (d) => CALLSITES.filter((c) => c.disposition === d).length;
   assert.equal(by('tree-aware'), 14);
   assert.equal(by('unconditional'), 2);
-  assert.equal(by('exempt'), 10);
+  assert.equal(by('exempt'), 11);
 });
 
 test('census: every path-resolving callsite actually calls its check', () => {
-  const found = phaseArgCallsites();
-  const CHECK = { 'tree-aware': 'phaseSpellingCollision', unconditional: 'phaseSpellingRefusal' };
-  for (const row of CALLSITES) {
-    const check = CHECK[row.disposition];
-    if (!check) continue;
-    const site = found.find((c) => keyOf(c) === keyOf(row));
-    assert.ok(site, `${keyOf(row)} is in CALLSITES but not on disk`);
-    assert.ok(site.body.includes(`${check}${'('}`),
-      `${site.file}:${site.line} is dispositioned ${row.disposition}, but ${site.fn} never calls`
-      + ` ${check} - a phases/<N>/ path resolved from the caller's spelling with no check in front`
-      + ' of it is exactly what this census exists to stop');
-  }
+  const { unchecked } = censusIssues(planningSources(), CALLSITES);
+  assert.deepEqual(unchecked, []);
+});
+
+test('census: the comparisons go red on a synthetic module - an unlisted callsite, a guard with no check', () => {
+  const parse = `${PARSE}${'('}opts.phase${')'}`;
+  const guardOk = `function ${GUARD}${'('}face, dir, phase) {\n  const parsed = ${parse};\n`
+    + `  return phaseSpellingCollision${'('}dir, parsed);\n}\n`;
+  const guardBare = `function ${GUARD}${'('}face, dir, phase) {\n  const parsed = ${parse};\n  return parsed;\n}\n`;
+  const rows = [
+    { file: 'core.mjs', fn: GUARD, ordinal: 1, disposition: 'exempt', why: 'the guard parses' },
+  ];
+
+  const clean = censusIssues({ 'core.mjs': guardOk }, rows);
+  assert.deepEqual(clean, { unlisted: [], gone: [], unchecked: [] }, 'the clean module reports nothing');
+
+  const stray = censusIssues({
+    'core.mjs': guardOk,
+    'newface.mjs': `function cmdNew${'('}dir, opts) {\n  const p = ${parse};\n}\n`,
+  }, rows);
+  assert.deepEqual(stray.unlisted, ['newface.mjs:2 (cmdNew #1)']);
+
+  const hollow = censusIssues({ 'core.mjs': guardBare }, rows);
+  assert.equal(hollow.unchecked.length, 1);
+  assert.match(hollow.unchecked[0], /never calls phaseSpellingCollision/);
 });
