@@ -86,7 +86,15 @@ const RETIRED_KEYS_FILE = fileURLToPath(new URL('../cadence-core/bin/lib/retired
 // `model.overrides.<role>` and `model.effort.<role>` keys joined this map in the commit that took them out
 // of the schema. Each row names its `roles.<role>.model` or `roles.<role>.effort` replacement, and all
 // twelve share one builder beside the legacy switch one.
-const RETIRED_KEYS_SHA256 = '6ab43ed62b3e829b53414b6ffcd72f1d1dbafe3708d8b27b6886415c67a9444a';
+//
+// A TENTH time, off
+// `6ab43ed62b3e829b53414b6ffcd72f1d1dbafe3708d8b27b6886415c67a9444a`, by decision: ledger decision 7a in
+// `.planning/drafts/deep-refactor-2026-11-09.md` (John's "yes"). The eight `risk.override.*` details said "there is
+// no floor for a waiver to lower", which stopped being true when the plan-time floor and its
+// `review.triggers.risk_surface.waive_routing_floor` waiver landed, so they were corrected to name that key and each
+// row's own surface. The eight rows are still retired, with the same `since` and a null `replacement`, and they now
+// come from one builder.
+const RETIRED_KEYS_SHA256 = 'e3f752398fac87565376d1e58fd058b63954a1330681d416af80384a3969eae4';
 
 test('lib/retired-keys.mjs is byte-identical - the eight risk.override.* keys stay retired', () => {
   // WHAT THIS PROTECTS. D-03 keeps the retired family retired because a key
@@ -103,13 +111,12 @@ test('lib/retired-keys.mjs is byte-identical - the eight risk.override.* keys st
   // whatever the file now hashes to is how the decision gets reversed by
   // somebody who never read it.
   //
-  // AND ONE THING THE PIN DELIBERATELY FREEZES IN A FALSE STATE: the eight
-  // `detail` strings still say "there is no floor for a waiver to lower". That
-  // stopped being true when the plan-time floor landed, and this milestone's
-  // waiver key makes it false twice over. D-03 locks the file anyway; the
-  // sentence stands, and the fix is a decision to take, not a byte to change
-  // under this test. Phase 3 re-cut the digest for the `stakes` and
-  // `model.profile` rows and deliberately left those eight strings untouched.
+  // AND WHAT THE EIGHT DETAILS SAY NOW (ledger decision 7a): each names
+  // `review.triggers.risk_surface.waive_routing_floor` and its own surface as the
+  // value to add to that list, and says the commit-time `risk_surface` review
+  // still judges the actual diff. `replacement` stays null on purpose: the old
+  // keys were per-surface bools and the new one is an `array_enum`, so a
+  // `use "<key>" instead` line would read as a drop-in.
   const sha = createHash('sha256').update(readFileSync(RETIRED_KEYS_FILE)).digest('hex');
   assert.equal(sha, RETIRED_KEYS_SHA256,
     'cadence-core/bin/lib/retired-keys.mjs changed. CER-01 D-03 locks this file: '
@@ -233,6 +240,57 @@ test('workflow.check_inspection is retired in v3.11.1 and its detail names both 
 
 test('workflow.independent_rerun is retired in v3.11.1 and its detail names both unset commands', () => {
   assertLegacySwitchRow('workflow.independent_rerun');
+});
+
+// --- the eight risk.override.* keys (v2.7.0, decision 7a) ---------------------
+
+const WAIVER_KEY = 'review.triggers.risk_surface.waive_routing_floor';
+
+/**
+ * One row's contract: retired in v2.7.0, no replacement key, and a detail that names the waiver key and this
+ * row's own surface as the value to add to it.
+ * @param {string} surface
+ */
+function assertRiskOverrideRow(surface) {
+  const key = `risk.override.${surface}`;
+  const e = retiredKeyError(key);
+  assert.match(e, /^retired in v2\.7\.0: /);
+  assert.ok(e.includes(WAIVER_KEY), e);
+  assert.ok(e.includes(`\`${surface}\``), e);
+  assert.doesNotMatch(e, /use "/);
+  assert.equal(RETIRED_KEYS[key].replacement, null);
+}
+
+test('risk.override.auth is retired in v2.7.0 and its detail names the waiver key and auth', () => {
+  assertRiskOverrideRow('auth');
+});
+
+test('risk.override.migrations is retired in v2.7.0 and its detail names the waiver key and migrations', () => {
+  assertRiskOverrideRow('migrations');
+});
+
+test('risk.override.billing is retired in v2.7.0 and its detail names the waiver key and billing', () => {
+  assertRiskOverrideRow('billing');
+});
+
+test('risk.override.concurrency is retired in v2.7.0 and its detail names the waiver key and concurrency', () => {
+  assertRiskOverrideRow('concurrency');
+});
+
+test('risk.override.destructive is retired in v2.7.0 and its detail names the waiver key and destructive', () => {
+  assertRiskOverrideRow('destructive');
+});
+
+test('risk.override.secrets is retired in v2.7.0 and its detail names the waiver key and secrets', () => {
+  assertRiskOverrideRow('secrets');
+});
+
+test('risk.override.api_contract is retired in v2.7.0 and its detail names the waiver key and api_contract', () => {
+  assertRiskOverrideRow('api_contract');
+});
+
+test('risk.override.untrusted_input is retired in v2.7.0 and its detail names the waiver key and untrusted_input', () => {
+  assertRiskOverrideRow('untrusted_input');
 });
 
 // --- the twelve per-role model.* fallbacks (v4.0.0) --------------------------
