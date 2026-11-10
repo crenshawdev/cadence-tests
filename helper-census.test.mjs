@@ -19,7 +19,9 @@
 // - a call-site census would redden on every legitimate use, so the patterns
 // below are the BODY IDIOM of each contract. Matching the body rather than the
 // name is also what makes a paste-back under a new name fail here: a copy is a
-// copy of the body.
+// copy of the body. Two rows are the exceptions and are still keyed by name:
+// `regexHere` and `dirents`, which match their function declaration, so a
+// renamed copy of either is not caught.
 //
 // The rules are LEXICAL, which means a rule can match its own source - the
 // discipline lib/merge-warnings.mjs states, where the fix belongs at the

@@ -191,9 +191,9 @@ test('the walk checks .planning before .git in the same directory', () => {
   assert.equal(planningRoot(base, (d, n) => existsSync(join(d, n))), base);
 });
 
-// The module cannot import node:path, so parentDir is a port of it. Every step
-// from each shape down to its root must match node's own dirname for that kind
-// of path: posix for a `/`-leading path, win32 for a drive or UNC path.
+// parentDir steps with posix and win32 from node:path, picked by the path's
+// shape. Every step from each shape below down to its root must match that
+// kind's own dirname: posix for a `/`-leading path, win32 for a drive or UNC path.
 const POSIX_SHAPES = ['/', '//', '/a', '/a/b', '/a/b/', '/a//b', '/a/b//', '//a', '/home/me/proj/src'];
 const WIN32_SHAPES = [
   'C:\\', 'C:/', 'C:', 'C:\\a', 'C:\\a\\b', 'C:\\a\\b\\', 'C:/a/b/', 'c:\\a\\\\b',
