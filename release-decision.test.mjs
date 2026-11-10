@@ -586,3 +586,37 @@ test('promote: total on junk input - a non-string text and a falsy version never
   assert.equal(noVersion.changed, false);
   assert.equal(noVersion.text, STAGED_FIXTURE);
 });
+
+// --- prependChangelogEntry: a fenced example is not a heading (P3-2-04) -----
+
+const FENCED_EXAMPLE_FIXTURE = [
+  '# Changelog',
+  '',
+  'Entries look like this:',
+  '',
+  '```markdown',
+  '## [1.2.0] - 2026-01-01',
+  '```',
+  '',
+  '## [1.1.0] - 2026-07-16',
+  '',
+  'First public release.',
+  '',
+].join('\n');
+
+test('changelog: a ## [version] line inside a fenced example does not make the scaffold a no-op', () => {
+  const r = prependChangelogEntry(FENCED_EXAMPLE_FIXTURE, { version: '1.2.0', date: '2026-07-17', url: '' });
+  assert.equal(r.changed, true);
+  const lines = r.text.split('\n');
+  const real = lines.indexOf('## [1.2.0] - 2026-07-17');
+  assert.ok(real > lines.indexOf('```'), 'the real heading is written outside the fence');
+  assert.equal(real, lines.indexOf('## [1.1.0] - 2026-07-16') - 2, 'it sits directly above the first real released heading');
+});
+
+test('changelog: a real ## [version] heading outside any fence is still a no-op', () => {
+  const withReal = FENCED_EXAMPLE_FIXTURE.replace('## [1.1.0] - 2026-07-16', '## [1.2.0] - 2026-07-16');
+  const r = prependChangelogEntry(withReal, { version: '1.2.0', date: '2026-07-17', url: '' });
+  assert.equal(r.changed, false);
+  assert.equal(r.text, withReal);
+  assert.match(r.reason, /^already-present/);
+});
