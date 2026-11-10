@@ -277,7 +277,10 @@ const HELPERS = [
   {
     name: 'the plain-object type predicate (isPlainObject)',
     home: 'lib/text-util.mjs',
-    re: new RegExp('function isPlainObject\\(|const isPlainObject[ ]= ', 'g'),
+    // The predicate's BODY under any identifier: the same name in all three
+    // clauses, by backreference. The truthiness variant (`X && typeof X ===
+    // 'object' && ...`) is a different idiom and this row leaves it alone on purpose.
+    re: new RegExp("([A-Za-z_$][\\w$]*) !== null && typeof \\1 === 'object' && !Array\\.isArray\\(\\1\\)", 'g'),
     note: 'Import { isPlainObject } from ./lib/text-util.mjs (lib/config-merge.mjs '
       + 're-exports it). It is a type predicate, which the checkJs typecheck '
       + 'needs to narrow an unknown.',
