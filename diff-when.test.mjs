@@ -66,19 +66,31 @@ test('execute_sequential skips the per-plan fire under phase_end and fires once 
   const body = seq.slice(arm);
   assert.match(body, /this fire is not made per plan/);
   assert.match(body, /after the last plan of the dispatch set is reported done and before `goal_check`/);
-  assert.match(body, /\{base_ref: PHASE_START, head_ref: HEAD\}/);
+  assert.match(body, /\{base_ref: PHASE_BASE, head_ref: HEAD\}/);
+  // finding 1: the base is the phase's OLDEST phase_start anchor, so an earlier run's plans are inside the range
+  assert.match(body, /PHASE_BASE is the phase's OLDEST `phase_start` anchor/);
+  assert.match(body, /the `sha` on the first line of `grep '"event":"phase_start"' \.planning\/trace\.jsonl` that carries `"phase":"<N>"`, and PHASE_START when there is none/);
+  // finding 2: the fix has its own worker key and discriminator, so a plan's record, receipts and re-arm count are untouched
+  assert.match(body, /under worker key `phase`, never a plan's/);
+  assert.match(body, /\(`--plan phase`\)/);
+  assert.match(body, /\(discriminator `plan-phase`, a re-arm counted on its own\)/);
+  assert.match(body, /that fix's range gets its own `risk-check run` and `risk-check status`/);
 });
 
 test('execute-parallel.md: step 5 skips the per-plan diff fires and step 6 states phase_diff-else-diff, never both', () => {
   const five = slice(PARALLEL, '\n5. After all batches', '\n6. Fire the `phase_diff` trigger');
   const six = slice(PARALLEL, '\n6. Fire the `phase_diff` trigger', '\nThe lifecycle bracket');
   assert.match(five, /`phase_end`.* none of these per-plan `diff` fires is made/);
-  assert.match(six, /`phase_end`, one review of `PHASE_START\.\.HEAD` fires here: `phase_diff` when its gate is not `off`, else `diff` with the same refs, never both/);
+  assert.match(six, /`phase_end`, one review of `PHASE_BASE\.\.HEAD` fires here/);
+  assert.match(six, /oldest `phase_start`\s+anchor as `execute_sequential` states it: `phase_diff` when its gate is not `off`, else `diff` with the same refs, never both/);
+  // finding 3: the same worker key and the same risk-check run and status the sequential arm states
+  assert.match(six, /fixed in the main tree by the continuation `cad-executor` under worker key `phase`, never a plan's/);
+  assert.match(six, /gets its own `risk-check run`, any `risk_surface` fire \(discriminator `plan-phase`\) and `risk-check status --plan phase`, before `goal_check`/);
 });
 
 test('review-triggers.md: the diff row names the phase_end fire and the phase_diff row says it stands in', () => {
   const row = (name) => flat(TRIGGERS.split('\n').find((l) => l.startsWith(`| \`${name}\` |`)));
-  assert.match(row('diff'), /once at phase end over `<PHASE_START>\.\.HEAD` with `review\.triggers\.diff\.when: phase_end`/);
+  assert.match(row('diff'), /once at phase end over `<PHASE_BASE>\.\.HEAD` \(the phase's oldest `phase_start` anchor\) with `review\.triggers\.diff\.when: phase_end`/);
   assert.match(row('phase_diff'), /with `review\.triggers\.diff\.when: phase_end` it stands in for the `diff` fire/);
 });
 
@@ -89,5 +101,5 @@ test('execute-workflow.md: the Step 5 bullet, the one-plan wave and Then each ca
   assert.match(one, /`phase_end` it takes `execute_sequential`'s skip of the per-plan `diff` fire and does not make its phase-end fire/);
   const then = slice(WORKFLOW, '### Then', '\n## 3.');
   assert.match(then, /`phase_end`, step 6 of `execute-parallel\.md` states the rule, and its review is the only phase-end `diff` review on this path whatever the width of the last wave/);
-  assert.match(then, /the line above is not printed, because with `phase_diff` `off` step 6 fires `diff` over `PHASE_START\.\.HEAD`/);
+  assert.match(then, /the line above is not printed, because with `phase_diff` `off` step 6 fires `diff` over `PHASE_BASE\.\.HEAD`/);
 });
