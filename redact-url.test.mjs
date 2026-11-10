@@ -442,3 +442,16 @@ test('the scheme pin writes back the prefix it absorbed', () => {
   // And the cut twin, which ends the input instead of at an `@`.
   assert.equal(redactUrl('9a9b://fake_tok'), `9a9b://${REDACTION_MARK}`);
 });
+
+// P2-5-01: the two bare-userinfo rules restarted at every colon of a long colon run, so a hostile text cost tens of
+// seconds. Each case ends the run with a `/`, which no userinfo can cross, so nothing matches and every start is wasted.
+test('redactUrl: a long colon run before a slash returns in bounded time', () => {
+  for (const tail of ['/@', '/']) {
+    const hostile = ':a'.repeat(128000) + tail;
+    const t0 = process.hrtime.bigint();
+    const out = redactUrl(hostile);
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    assert.ok(ms < 1000, `redactUrl took ${ms} ms on a 256k colon run ending ${tail}`);
+    assert.equal(out, hostile, 'no userinfo can cross the slash, so the text is unchanged');
+  }
+});
