@@ -10,9 +10,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   rungBody, rungBodyIssue, rungEffortIssue, rungPrefixIssues, RUNG_FILES, rungFile,
-  rungFiles, effortEnumIssues, ROLES_PREFIX, ROLES_EFFORT_SUFFIX,
-  RUNG_ORDER, rungOrderIssues, roleOfAgent, rungOfAgent,
+  effortEnumIssues, ROLES_PREFIX, ROLES_EFFORT_SUFFIX,
+  RUNG_ORDER, roleOfAgent, rungOfAgent,
 } from '../cadence-core/bin/lib/rung-agent.mjs';
+import { isPlainObject } from '../cadence-core/bin/lib/text-util.mjs';
 import { dataRuleIssues } from '../cadence-core/bin/lib/data-rule.mjs';
 import { FINDING_SCHEMA } from '../cadence-core/bin/review-provider.mjs';
 import * as readTrace from '../cadence-core/bin/lib/read-trace.mjs';
@@ -71,6 +72,17 @@ test('rungFile never inherits a prototype property as a rung', () => {
   assert.equal(rungFile('cad-planner', 'toString'), null);
 });
 
+/**
+ * Every agent-file stem one role's map names, in rung order. An unknown role yields an empty array, never a throw.
+ * Test-only: the census counts the map's stems through it.
+ * @param {string} role
+ * @returns {string[]}
+ */
+function rungFiles(role) {
+  const map = typeof role === 'string' ? RUNG_FILES[role] : undefined;
+  return map ? Object.values(map) : [];
+}
+
 test('rungFiles lists every stem a role names, in rung order', () => {
   assert.deepEqual(rungFiles('cad-verifier'),
     ['cad-verifier-low', 'cad-verifier-medium', 'cad-verifier',
@@ -92,6 +104,34 @@ test('RUNG_FILES names 35 files across the seven roles, and is frozen', () => {
 });
 
 // --- RUNG_ORDER and the guard that holds it to the map ------------------------
+
+/**
+ * Whether the map and the ladder still say the same thing: every role's rung keys are exactly RUNG_ORDER, in order.
+ * Nothing else compares them. A role missing `xhigh` resolves `rungFile` to null and route.mjs fails open, and
+ * reordered keys hand `rungFiles` and `rungPrefixIssues` a tie-break order that isn't the ladder's; both are silent.
+ * Takes the map so a caller can hold a drifted one against the ladder.
+ * @param {any} [files] the rung map to check, stem values unread
+ * @param {any} [order] the ladder to check it against, weakest first
+ * @returns {{code: string, role: string, detail: string}[]}
+ */
+function rungOrderIssues(files, order) {
+  const map = files !== undefined && files !== null ? files : RUNG_FILES;
+  const ladder = Array.isArray(order) ? order : RUNG_ORDER;
+  /** @type {{code: string, role: string, detail: string}[]} */
+  const out = [];
+  const read = isPlainObject(map) ? map : {};
+  for (const role of Object.keys(read)) {
+    const rungs = read[role];
+    const got = isPlainObject(rungs)
+      ? Object.keys(rungs) : [];
+    if (got.length === ladder.length && ladder.every((r, i) => got[i] === r)) continue;
+    out.push({ code: 'rung-order-drift', role,
+      detail: `${role} files rungs ${JSON.stringify(got)}, but the rung ladder is ${
+        JSON.stringify([...ladder])} - the map and RUNG_ORDER are one statement `
+        + 'and nothing else holds them together' });
+  }
+  return out;
+}
 
 test('RUNG_ORDER is exactly the five rungs, weakest first, and is frozen', () => {
   assert.deepEqual([...RUNG_ORDER], ['low', 'medium', 'high', 'xhigh', 'max']);
