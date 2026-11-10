@@ -17,8 +17,21 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   evaluateFlag, evaluateRow, evaluatePresence, subcommandKey,
-  DISPOSITIONS, TYPES, CONTRACTS, PRESENCE_RULES, flagNames,
+  CONTRACTS, PRESENCE_RULES, flagNames,
 } from '../cadence-core/bin/lib/arg-contract.mjs';
+
+// Three words, all positions already shipped; making every typed flag refuse would reverse two of them.
+//   refuse    ok:false naming the flag, which lib/seam-input.mjs's `flagValue` does by hand.
+//   warn      the value is kept raw and the caller records a warning. No row declares it today, but the arm stays
+//             so the next such flag is a decision.
+//   fallback  the flag reads as absent so the caller's own `|| default` answers. A dropped bare flag is fallback too.
+const DISPOSITIONS = Object.freeze(['refuse', 'warn', 'fallback']);
+
+// Each type is an existing classifier, never a re-derived predicate: `int` is requireInt, `cursor` requireCursorNumber,
+// `phase` requirePhaseArg, `plan-key` requirePlanKey. `string` is the non-blank rule planning.mjs hand-writes at its
+// two `--root` guards. `boolean` is for flags whose bare form is the value (`--dry-run`, `--global`); without it a door
+// would call the only spelling the flag has malformed.
+const TYPES = Object.freeze(['string', 'boolean', 'int', 'cursor', 'phase', 'plan-key']);
 
 const MODULE_URL = new URL('../cadence-core/bin/lib/arg-contract.mjs', import.meta.url).href;
 
