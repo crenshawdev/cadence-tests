@@ -1025,8 +1025,8 @@ test('a corpus recorded before files existed yields no file measurement rather t
 // is confidently wrong rather than honestly absent. Pure by injection, so the
 // caller supplies the bracket rows and this needs no trace file.
 
-import { joinReads, HOST_AGENT_TYPES, roleOfAgent, rungOfAgent } from '../cadence-core/bin/lib/read-trace.mjs';
-import { RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
+import { joinReads, HOST_AGENT_TYPES } from '../cadence-core/bin/lib/read-trace.mjs';
+import { RUNG_FILES, roleOfAgent, rungOfAgent } from '../cadence-core/bin/lib/rung-agent.mjs';
 
 /** One paired bracket row, the shape `renderTrace(...).brackets` returns. */
 const span = (role, plan, from, to) => ({

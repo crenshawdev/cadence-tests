@@ -16,7 +16,6 @@ import {
 import { isPlainObject } from '../cadence-core/bin/lib/text-util.mjs';
 import { dataRuleIssues } from '../cadence-core/bin/lib/data-rule.mjs';
 import { FINDING_SCHEMA } from '../cadence-core/bin/review-provider.mjs';
-import * as readTrace from '../cadence-core/bin/lib/read-trace.mjs';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -511,9 +510,7 @@ test('roles.<role>.model is not held to the effort rules - it has no enum', () =
 
 // --- the reverse lookups: an agent type back to its role and rung -------------
 
-test('roleOfAgent and rungOfAgent live here, read-trace re-exports them, and they answer every stem', () => {
-  assert.equal(readTrace.roleOfAgent, roleOfAgent);
-  assert.equal(readTrace.rungOfAgent, rungOfAgent);
+test('roleOfAgent and rungOfAgent answer every stem', () => {
   for (const role of Object.keys(RUNG_FILES)) {
     for (const [rung, stem] of Object.entries(RUNG_FILES[role])) {
       for (const spelling of [stem, `cadence:${stem}`]) {
