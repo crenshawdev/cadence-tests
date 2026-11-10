@@ -23,7 +23,7 @@ import {
   atomicWrite, parseCaptureSnippets, captureSections, phaseCriteria,
   parseArchiveRows, appendArchiveRows, parseFiledRows, appendFiledRow,
   parseDeclinedRows, appendDeclinedRow,
-  parsePlanFiles, parseTaskRecordSnippets, CURSOR_STATUSES,
+  parsePlanFiles, parseTaskRecordSnippets, parseSummarySnippets, CURSOR_STATUSES,
 } from '../cadence-core/bin/lib/planning-files.mjs';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
@@ -2579,4 +2579,26 @@ test('planName: no name, no stand-in', async () => {
     '',
   ]) assert.equal(planName(text), null, JSON.stringify(text));
   for (const bad of [undefined, null, 5, {}, ['# a - Plan 1: x']]) assert.equal(planName(bad), null);
+});
+
+// --- the recall section reader sees fences (P2-1-01) -------------------------
+// A `## ` line inside a fenced block is output, not a heading, so it must not end a recall section.
+
+test('parseCaptureSnippets: a fenced `## ` line inside `## Todos` does not drop the todo after it', () => {
+  const text = [
+    '# Capture', '', '## Todos', '', '- first todo', '',
+    '```text', '## build output', '```', '',
+    '- second todo', '', '## Seeds', '', '- a seed', '',
+  ].join('\n');
+  assert.deepEqual(parseCaptureSnippets(text),
+    [{ text: 'first todo' }, { text: 'second todo' }, { text: 'a seed' }]);
+});
+
+test('parseSummarySnippets: a fenced `## ` line inside `## Deviations` keeps both bullets', () => {
+  const text = [
+    '# Summary', '', '## Deviations', '', '- [deviation] first bullet',
+    '```', '## not a heading', '```',
+    '- second bullet', '', '## Open items', '', '- an open item', '',
+  ].join('\n');
+  assert.deepEqual(parseSummarySnippets(text), ['first bullet', 'second bullet', 'an open item']);
 });
