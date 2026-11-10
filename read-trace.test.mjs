@@ -1490,3 +1490,22 @@ test('the marker carrying the new field is still filtered out of both folds', ()
   assert.equal(j.unresolved, 0, 'the marker became an unresolved read');
   assert.equal(j.coordinator, 1);
 });
+
+// P3-2-07: the hook redacted the whole first error line before capping it, and `redactCause` is quadratic on a long
+// [\w.-] run, so a 256k failure text cost seconds in a hook that runs after every tool call. Redact a 4,096-char window.
+test('errorTextOf stores a very long failure text in bounded time', () => {
+  const resp = { error: 'Error: ' + 'node_modules.pkg-name.'.repeat(11700) };
+  const t0 = process.hrtime.bigint();
+  const text = errorTextOf(resp);
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  assert.ok(ms < 1000, `errorTextOf took ${ms} ms on a 256k first line`);
+  // the stored text is the same as redacting the first 4,096 characters and capping
+  const window = resp.error.slice(0, 4096);
+  assert.equal(text, redactCause(window).slice(0, MAX_ERROR_TEXT));
+});
+
+test('errorTextOf still masks a credential pair inside the first 200 characters of a long line', () => {
+  const text = errorTextOf({ error: 'auth failed: api_key=sk-live-0123456789 ' + 'x'.repeat(100000) });
+  assert.ok(text.startsWith('auth failed: api_key=<redacted>'), text);
+  assert.ok(!text.includes('sk-live'), text);
+});
