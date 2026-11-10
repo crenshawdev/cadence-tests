@@ -86,6 +86,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { refusalSites } from '../cadence-core/bin/lib/refusal-hints.mjs';
 import { skim } from '../cadence-core/bin/lib/skim.mjs';
+import { escapeRe } from '../cadence-core/bin/lib/text-util.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -130,13 +131,10 @@ const sourceOf = (rel) => {
   return sources.get(rel);
 };
 
-/** Every character a regex would otherwise read as syntax - the tokens include
- *  two full sentences, which carry a `/` and a `(`. */
-const escape = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
 /** Is this site's token spelled as a plain string literal in its own file? */
 function isLiteral(site) {
-  const re = new RegExp(`(?:reason\\s*:|fail\\s*\\()\\s*(['"])${escape(site.token)}\\1`);
+  // The tokens include two full sentences, which carry a `/` and a `(`, so each is escaped.
+  const re = new RegExp(`(?:reason\\s*:|fail\\s*\\()\\s*(['"])${escapeRe(site.token)}\\1`);
   return re.test(sourceOf(site.file));
 }
 

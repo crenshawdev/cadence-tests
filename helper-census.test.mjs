@@ -270,7 +270,14 @@ const HELPERS = [
   {
     name: 'the RegExp escaper (escapeRe)',
     home: 'lib/text-util.mjs',
-    re: new RegExp('function escapeRe\\(|const escapeRe[ ]= ', 'g'),
+    // A DEFINITION whose body is the escaper, under any name: a function
+    // declaration returning it, or a const bound to an arrow that does. The
+    // class and the `\\$&` replacement are the body. An inline use inside a
+    // `new RegExp(...)` call is neither shape, so the tests that escape there stay.
+    re: new RegExp(String.raw`(?:function\s+[\w$]+\s*\([^)]*\)\s*\{\s*return\s|`
+      + String.raw`(?:const|let|var)\s+[\w$]+\s*=\s*(?:\([^)]*\)|[\w$]+)\s*=>\s*(?:\{\s*return\s)?)`
+      + String.raw`[^;{}]{0,80}?\.replace\(`
+      + String.raw`\/\[\.\*\+\?\^\$\{\}\(\)\|\[\\\]\\\\\]\/g,\s*'\\\\\$&'`, 'g'),
     note: 'Import { escapeRe } from ./lib/text-util.mjs. It imports nothing, '
       + 'so a module that must not touch the filesystem can use it too.',
   },
