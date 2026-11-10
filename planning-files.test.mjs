@@ -2602,3 +2602,21 @@ test('parseSummarySnippets: a fenced `## ` line inside `## Deviations` keeps bot
   ].join('\n');
   assert.deepEqual(parseSummarySnippets(text), ['first bullet', 'second bullet', 'an open item']);
 });
+
+// --- the recall readers on a CRLF checkout (P4-05) ----------------------------
+
+test('the SUMMARY, RECORD and CAPTURE snippet readers give a CRLF checkout the same snippets as its LF twin', () => {
+  const crlf = (t) => t.replace(/\n/g, '\r\n');
+  const summary = '# Summary\n\n## Deviations\n\n- [deviation] a deviation\n\n## Open items\n\n- an open item\n';
+  const record = '# Task: a-slug\n\n## What shipped\n\n- first thing\n- second thing\n\n## Commits\n';
+  const captureText = '# Capture\n\n## Todos\n\n- [ ] (phase 3) a todo\n\n## Seeds\n\n- a seed\n\n## Notes\n\n- a note\n';
+  for (const [read, text, expected] of [
+    [parseSummarySnippets, summary, ['a deviation', 'an open item']],
+    [parseTaskRecordSnippets, record, ['first thing', 'second thing']],
+    [parseCaptureSnippets, captureText,
+      [{ text: 'a todo', phase: 3 }, { text: 'a seed' }, { text: 'a note' }]],
+  ]) {
+    assert.deepEqual(read(text), expected, `${read.name} on LF`);
+    assert.deepEqual(read(crlf(text)), expected, `${read.name} on CRLF`);
+  }
+});
