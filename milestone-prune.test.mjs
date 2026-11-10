@@ -1247,3 +1247,19 @@ test('a bullet carrying its tracker suffix is removed WHOLE, and keeps the ref',
   assert.match(out,
     /\| BBB-01 \(a bullet in the older form, with no tracker suffix\.\) \| 1 \| Complete \| v9\.9\.9 \|/);
 });
+
+// --- the detail locator sees fences (P3-2-01) ---------------------------------
+
+test('pruneRoadmap: a fenced `## ` line inside a completed phase section leaves no orphaned line', () => {
+  const road = [
+    '# Roadmap', '', '## Phases', '', '- [x] **Phase 1: Store** - done', '- [ ] **Phase 2: Recall** - open', '',
+    '## Phase Details', '', '### Phase 1: Store', '', '**Goal:** Hold bytes.', '',
+    '```text', '## build output', '```', '', 'Closing prose of phase 1.', '',
+    '### Phase 2: Recall', '', '**Goal:** Find bytes.', '',
+  ].join('\n');
+  const r = pruneRoadmap(road, [1]);
+  assert.equal(r.removedSections, 1);
+  assert.deepEqual(r.missingSections, []);
+  for (const gone of ['Store', 'build output', 'Closing prose', '```']) assert.ok(!r.text.includes(gone), gone);
+  assert.ok(r.text.includes('### Phase 2: Recall') && r.text.includes('**Goal:** Find bytes.'));
+});

@@ -2620,3 +2620,22 @@ test('the SUMMARY, RECORD and CAPTURE snippet readers give a CRLF checkout the s
     assert.deepEqual(read(crlf(text)), expected, `${read.name} on CRLF`);
   }
 });
+
+// --- the phase detail locator sees fences (P3-2-01) ---------------------------
+
+test('phaseCriteria: a fenced `# ` line inside the criteria list does not end the block', () => {
+  const text = [
+    '# Roadmap', '', '## Phase Details', '', '### Phase 1: A', '**Goal:** a',
+    '**Success Criteria:**', '', '1. first', '2. second', '```sh', '# a comment', '```', '3. third', '',
+    '### Phase 2: B', '**Goal:** b', '**Success Criteria:**', '1. only one', '',
+  ].join('\n');
+  assert.deepEqual(phaseCriteria(text, 1), { found: true, count: 3 });
+  assert.deepEqual(phaseCriteria(text, 2), { found: true, count: 1 });
+});
+
+test('cutPhaseDetail: a fenced `### ` line inside the section is cut with it, not left behind', () => {
+  const head = '# R\n\n## Phase Details\n\n';
+  const next = '### Phase 2: Next\n**Goal:** b\n';
+  const section = ['### Phase 1: A', '**Goal:** a', '```', '### not a heading', '```', 'tail prose', '', ''].join('\n');
+  assert.equal(cutPhaseDetail(head + section + next, 1), head + next);
+});
