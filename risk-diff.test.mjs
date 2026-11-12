@@ -557,15 +557,17 @@ const recordBody = (rel) => (rel.endsWith('.json')
  * is a table looped INSIDE one test(), whose count hides a row that never ran.
  * Each name below is reported and fails on its own.
  */
+for (const [place, sub] of [['records', 'records/'], ['pre-layout', '']]) {
 for (const name of ['ADJUDICATION-risk_surface-plan-1.json', 'REVIEW-risk_surface-plan-1.md',
   'FINDINGS.json', 'verifier-findings.json']) {
-  test(`risk-check run: \`${name}\` is withheld from the range the gate reads`, () => {
-    const { r } = clearRange(`.planning/phases/1/records/${name}`, recordBody(name));
+  test(`risk-check run: \`${name}\` at its ${place} place is withheld from the range the gate reads`, () => {
+    const { r } = clearRange(`.planning/phases/1/${sub}${name}`, recordBody(name));
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.equal(r.checked, true, JSON.stringify(r));
     assert.deepEqual(r.matches, [], JSON.stringify(r));
     assert.equal(r.empty, false, JSON.stringify(r));
   });
+}
 }
 
 test('risk-check run: a PLAN.md in the SAME directory still trips - the boundary is the four shapes', () => {

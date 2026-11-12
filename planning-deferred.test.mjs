@@ -490,6 +490,25 @@ test('deferred carry: a symlink squatting the destination is refused, never foll
   assert.deepEqual(readdirSync(join(dir, 'elsewhere')), []);
 });
 
+test('deferred list and carry: a phase records folder that is a link is refused, never followed', () => {
+  const { dir } = adjRepo({ phase: 4 });
+  const outside = join(dir, 'elsewhere');
+  mkdirSync(outside);
+  const member = join(outside, 'DEFERRED-diff-plan-1.json');
+  writeFileSync(member, `${JSON.stringify({ phase: '4', trigger: 'diff', discriminator: 'plan-1', round: 1,
+    findings: defPayload().findings })}\n`);
+  symlinkSync(outside, join(dir, 'phases', '4', 'records'));
+
+  const listed = defList(dir);
+  assert.equal(listed.ok, false, JSON.stringify(listed));
+  assert.equal(listed.reason, 'unprovable-queue');
+  assert.deepEqual(listed.unreadable.map((u) => u.path), ['phases/4/records']);
+
+  const r = defCarry(dir, ['--phase', '4']);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(existsSync(member), true, 'the file outside the tree was moved');
+});
+
 test('deferred carry: a symlinked records folder is refused and nothing moves', () => {
   // one more path component is one more place a link could redirect the rename
   const { dir } = adjRepo({ phase: 4 });

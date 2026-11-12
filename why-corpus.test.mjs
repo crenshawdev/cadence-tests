@@ -288,7 +288,7 @@ test('an unparseable record warns by name and code, and the other records still 
 
   const { records, warnings } = readAdjudications(dir);
   assert.equal(records.length, 2);
-  assert.deepEqual(warnings, ['phases/1/ADJUDICATION-plan-bad.json: unparseable-json']);
+  assert.deepEqual(warnings, ['phases/1/records/ADJUDICATION-plan-bad.json: unparseable-json']);
 });
 
 test('a phase directory with no record at all is silent', () => {
