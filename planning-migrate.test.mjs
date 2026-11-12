@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { PLANNING, makeTree, run, stampState } from './planning.test.mjs';
 import { importState } from '../cadence-core/bin/planning/state-import.mjs';
 import { readState, statePath, STAMP_KEY, STATE_LAYOUT } from '../cadence-core/bin/lib/project-state.mjs';
@@ -499,6 +500,38 @@ test('a truncated state file makes every other seam refuse naming state-rebuild,
     assert.match(r.hint, /`planning\.mjs state-rebuild`/, args.join(' '));
   }
   assert.equal(readFileSync(statePath(dir), 'utf8'), torn);
+});
+
+test('through a linked planning directory a torn state file gets the same refusal, and state-rebuild through the link repairs it', () => {
+  const dir = truncated();
+  const link = join(mkdtempSync(join(tmpdir(), 'cad-migrate-link-')), '.planning');
+  symlinkSync(dir, link);
+  const torn = readFileSync(statePath(dir), 'utf8');
+  for (const args of [['status'], ['cursor', 'get'], ['audit'], ['criteria-coverage']]) {
+    const r = run(args, link);
+    assert.deepEqual([r.ok, r.reason], [false, 'invalid-state'], args.join(' '));
+    assert.match(r.hint, /`planning\.mjs state-rebuild`/, args.join(' '));
+  }
+  assert.equal(readFileSync(statePath(dir), 'utf8'), torn);
+  assert.equal(run(['state-rebuild'], link).rebuilt, true);
+  assert.deepEqual(readState(dir).state, importState(dir).state);
+  assert.equal(run(['status'], link).ok, true);
+});
+
+test('a state file that breaks between the gate and the write is refused invalid-state naming state-rebuild', () => {
+  const dir = truncated();
+  // changeState called straight, past the gate, is the write the race reaches
+  const mod = pathToFileURL(join(dirname(PLANNING), 'planning', 'state-import.mjs')).href;
+  let out;
+  let code = 0;
+  try {
+    out = execFileSync('node', ['--input-type=module', '-e', `import { changeState } from ${JSON.stringify(mod)}; changeState(process.argv[1], (s) => s, []);`, dir], { encoding: 'utf8' });
+  } catch (e) { out = e.stdout; code = e.status; }
+  assert.equal(code, 1, out);
+  const r = JSON.parse(out);
+  assert.deepEqual([r.ok, r.reason], [false, 'invalid-state']);
+  assert.match(r.detail, /not-json/);
+  assert.match(r.hint, /`planning\.mjs state-rebuild`/);
 });
 
 test('state-rebuild restores a state equal to a fresh import, moves no file, and status then answers ok:true', () => {
