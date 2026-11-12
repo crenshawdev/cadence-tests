@@ -341,3 +341,35 @@ test('a destination already taken with other bytes refuses the whole conversion;
   assert.equal(readFileSync(join(dir, 'records', 'ARCHIVE.md'), 'utf8'), 'ledger\n');
 });
 
+// --- who converts ------------------------------------------------------------
+
+test('a call from a linked worktree aimed at the main tree never converts; a --worktree main session converts its own project', () => {
+  const dir = v40();
+  const root = track(dir);
+  const exec = join(root, '..', `${root.split('/').pop()}-exec`);
+  git(root, 'worktree', 'add', '-q', '-b', 'side', exec);
+  const before = deep(dir);
+  const refused = runIn(exec, ['lease-check', '--phase', '1', '--plan', '1'], dir);
+  assert.deepEqual([refused.ok, refused.reason], [false, 'executor-cannot-convert']);
+  assert.match(refused.hint, /main session/);
+  assert.deepEqual(deep(dir), before);
+
+  // the worktree's own .planning is its own project, called with no --dir: the session is the main session there
+  const mine = join(exec, '.planning');
+  assert.equal(runIn(exec, ['status']).ok, true);
+  assert.equal(readState(mine).kind, 'valid');
+  assert.deepEqual(deep(dir), before);
+
+  // once the main session has converted the project, the same executor call runs as any call does
+  assert.equal(runIn(root, ['status'], dir).ok, true);
+  const again = runIn(exec, ['lease-check', '--phase', '1', '--plan', '1'], dir);
+  assert.notEqual(again.reason, 'executor-cannot-convert');
+});
+
+test('no hook script reaches the conversion', () => {
+  const bin = join(import.meta.dirname, '..', 'cadence-core', 'bin');
+  for (const f of ['read-trace.mjs', 'subagent-trace.mjs', 'git-guard.mjs']) {
+    assert.doesNotMatch(readFileSync(join(bin, f), 'utf8'), /migrate\.mjs/, f);
+  }
+});
+
