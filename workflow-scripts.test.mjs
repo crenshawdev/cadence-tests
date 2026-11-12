@@ -590,7 +590,7 @@ test('code-map: its real return writes the map through codemap write and bills o
   assert.equal(w1.brackets.written, 3);
   const built = cli('codemap', 'status');
   assert.deepEqual([built.built, built.stale, built.unbuilt], [3, 0, 0]);
-  for (const name of ['m1', 'm2', 'm3']) assert.ok(existsSync(join(repo, '.planning', 'codemap', entryFile(name))), `${name} has an entry file`);
+  for (const name of ['m1', 'm2', 'm3']) assert.ok(existsSync(join(repo, '.planning', 'records', 'codemap', entryFile(name))), `${name} has an entry file`);
   const billed = cli('trace', 'render', '--phase', '0');
   assert.equal(billed.brackets.length, 3);
   assert.deepEqual(billed.brackets.map((b) => b.role), ['cad-mapper', 'cad-mapper', 'cad-mapper']);

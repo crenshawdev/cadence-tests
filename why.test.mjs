@@ -159,8 +159,8 @@ test('two runs over an unchanged tree write byte-identical stdout', () => {
 test('the answer is unchanged whether .planning/trace.jsonl is present or absent', () => {
   const { dir } = repo();
   const before = run(['f.txt', '--dir', dir]).stdout;
-  execFileSync('mkdir', ['-p', join(dir, '.planning')]);
-  writeFileSync(join(dir, '.planning', 'trace.jsonl'), '{"not":"read"}\n');
+  execFileSync('mkdir', ['-p', recordsDir(join(dir, '.planning'))]);
+  writeFileSync(join(recordsDir(join(dir, '.planning')), 'trace.jsonl'), '{"not":"read"}\n');
   const after = run(['f.txt', '--dir', dir]).stdout;
   assert.equal(before, after);
 });
