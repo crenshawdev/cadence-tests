@@ -10,7 +10,7 @@ import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   appendFile, makeDir, movePath, copyFile, unlinkFile, removeTree, writeFile, writeFileNew, linkFile,
-  recordsDir, recordsPath, ensureRecordsDir,
+  recordsDir, recordsPath, ensureRecordsDir, ensureRecordsIgnore,
 } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const STORE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'lib', 'planning-store.mjs');
@@ -103,6 +103,26 @@ test('ensureRecordsDir creates the folder once, refuses a link, and never create
   const missing = join(tmp(), 'no-such-planning-root');
   assert.deepEqual(ensureRecordsDir(missing), { ok: false, reason: 'ENOENT' });
   assert.equal(existsSync(missing), false);
+});
+
+test('the records folder gets its .gitignore when created, once, and a hand-edited one is never overwritten', () => {
+  const root = tmp();
+  const ignore = recordsPath(root, '.gitignore');
+  ensureRecordsDir(root);
+  const written = readFileSync(ignore, 'utf8');
+  assert.match(written, /^\/trace\.jsonl$/m);
+  assert.match(written, /^\/risk-carry\/$/m);
+
+  writeFileSync(ignore, '# mine\n');
+  assert.equal(ensureRecordsIgnore(root), false);
+  assert.deepEqual(ensureRecordsDir(root), { ok: true });
+  assert.equal(readFileSync(ignore, 'utf8'), '# mine\n');
+
+  // a folder that already exists is not given a file on a later call, only a creation writes one
+  const old = tmp();
+  mkdirSync(recordsDir(old));
+  ensureRecordsDir(old);
+  assert.equal(existsSync(recordsPath(old, '.gitignore')), false);
 });
 
 test('the module imports node: builtins and the one text-util leaf only', () => {

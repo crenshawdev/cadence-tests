@@ -11,25 +11,30 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PLANNING, run, isEntryFile } from './planning.test.mjs';
 import {
-  READS_CLAIM_FILE, READS_EVICT_TEMP_FILE, READS_FILE, READS_ROTATE_TEMP_FILE,
-  ROTATED_READS_FILE, readsPath, rotatedReadsPath,
+  READS_CLAIM_FILE, READS_EVICT_TEMP_FILE, READS_FILE, READS_ROTATE_TEMP_FILE, MAX_READS_BYTES,
+  ROTATED_READS_FILE, appendRead, readsPath, rotateReads, rotatedReadsPath,
 } from '../cadence-core/bin/lib/read-trace.mjs';
+import {
+  ROTATED_TRACE_FILE, ROTATION_CLAIM_FILE, TRACE_FILE, appendEvent, rotateTrace, rotatedTracePath, tracePath,
+} from '../cadence-core/bin/lib/trace.mjs';
+import { ensureRecordsDir, recordsDir, recordsPath } from '../cadence-core/bin/lib/planning-store.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 
-// --- trace ignore: the run record stays out of git by itself (FLD-02) --------
+// --- trace ignore: the logs stay out of git by themselves (FLD-02) -----------
 //
 // The other `--root` subcommand, tested beside detect-commands for that reason.
-// `--root` is the PROJECT root here (that is where `.gitignore` lives), and the
-// write arm is scaffold-time only: `--check` is what /cad-health runs, and it
-// may not edit a file it did not create (D-03).
+// `--root` is the PROJECT root here, and the rules live in the records folder's
+// own `.gitignore`, which the write module creates with the folder. The write
+// arm is scaffold-time only: `--check` is what /cad-health runs, and it may not
+// edit a file it did not create (D-03).
 
 /** A scratch PROJECT root, a git repo unless `git:false`. */
 function ignoreRoot({ git = true, gitignore = null, planning = true } = {}) {
@@ -55,21 +60,28 @@ function traceIgnore(root, extra = []) {
   }
 }
 
-const gitignoreOf = (root) => readFileSync(join(root, '.gitignore'), 'utf8');
+/** The records folder's own `.gitignore`: where the rules live now. */
+const ignoreFileOf = (root) => recordsPath(join(root, '.planning'), '.gitignore');
+const gitignoreOf = (root) => readFileSync(ignoreFileOf(root), 'utf8');
+/** The rules in it, comments and blanks dropped. */
+const rulesOf = (root) => gitignoreOf(root).split('\n').filter((l) => l && !l.startsWith('#'));
+
+/** A path under the project root as git is asked about it. Derived from the write module, never spelled here. */
+const logPath = (base) => recordsPath('.planning', base).split(sep).join('/');
 
 /**
- * The reads record's six rules as the writer states them, DERIVED here the
- * same way the writer derives them: a test that copied the strings would stay
- * green on the day the two spellings diverged, which is the only failure the
- * derivation exists to catch.
+ * The reads record's six paths as the command states them, DERIVED here the
+ * same way it derives them: a test that copied the strings would stay green on
+ * the day the two spellings diverged, which is the only failure the derivation
+ * exists to catch.
  */
 const READS_RULES = [
-  `.planning/${READS_FILE}`,
-  `.planning/${ROTATED_READS_FILE}`,
-  `.planning/${READS_CLAIM_FILE}`,
-  `.planning/${READS_CLAIM_FILE}.*`,
-  `.planning/${READS_ROTATE_TEMP_FILE}.*`,
-  `.planning/${READS_EVICT_TEMP_FILE}.*`,
+  logPath(READS_FILE),
+  logPath(ROTATED_READS_FILE),
+  logPath(READS_CLAIM_FILE),
+  `${logPath(READS_CLAIM_FILE)}.*`,
+  `${logPath(READS_ROTATE_TEMP_FILE)}.*`,
+  `${logPath(READS_EVICT_TEMP_FILE)}.*`,
 ];
 
 /**
@@ -89,29 +101,26 @@ function ignoreSource(cwd, path) {
   } catch { return null; }
 }
 
-test('trace ignore: a fresh repo with no .gitignore gets the line written', () => {
+test('trace ignore: a fresh repo gets the records folder and its own .gitignore written', () => {
   const root = ignoreRoot();
   const r = traceIgnore(root);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.written, true);
   assert.equal(r.ignored, false);         // the state as FOUND
   assert.equal(r.tracked, false);
-  assert.equal(r.line, '.planning/trace.jsonl');
+  assert.equal(r.file, ignoreFileOf(root));
+  assert.equal(r.line, logPath(TRACE_FILE));
   // BOTH rules on one call: the live record and the generation a rotation at
   // its size bound leaves behind, which `git add .planning` would otherwise
   // sweep into the repository.
-  assert.equal(r.rotated_line, '.planning/trace.1.jsonl');
-  assert.match(gitignoreOf(root), /^\.planning\/trace\.jsonl$/m);
-  assert.match(gitignoreOf(root), /^\.planning\/trace\.1\.jsonl$/m);
-  // ...and the READ record's six, on the same call: the live record, the
-  // generation its own rotation leaves behind, the shared claim sidecar a
-  // completed rotation leaves inert, and the three private paths a killed one
-  // strands - its stamps, its unrenamed fresh record and the generation it
-  // evicted. Reported on a field of their own beside `line`.
+  assert.equal(r.rotated_line, logPath(ROTATED_TRACE_FILE));
+  // ...and the READ record's six, on a field of their own beside `line`.
   assert.deepEqual(r.reads_lines, READS_RULES);
-  for (const rule of READS_RULES) {
-    assert.ok(gitignoreOf(root).split('\n').includes(rule),
-      `${rule} was not written: ${gitignoreOf(root)}`);
+  // The root file is not touched at all, and the new file now answers for every one of them.
+  assert.equal(existsSync(join(root, '.gitignore')), false);
+  assert.equal(traceIgnore(root, ['--check']).ignored, true);
+  for (const path of [r.line, r.rotated_line, ...READS_RULES]) {
+    assert.equal(ignoreSource(root, path), logPath('.gitignore'), path);
   }
 });
 
@@ -126,18 +135,25 @@ test('trace ignore: a re-run adds no second line and touches no byte', () => {
   assert.equal(gitignoreOf(root), after);
 });
 
-test('trace ignore: a brownfield .gitignore keeps every line it had', () => {
-  // No trailing newline, deliberately: the shape that would otherwise glue the
-  // new line onto the last existing one.
+test('trace ignore: a brownfield root .gitignore is left byte-identical', () => {
+  // No trailing newline, deliberately: the old arm had to avoid gluing a line onto it. The new one never edits it.
   const root = ignoreRoot({ gitignore: 'node_modules/\ndist/\n*.log' });
   const r = traceIgnore(root);
   assert.equal(r.written, true, JSON.stringify(r));
-  const lines = gitignoreOf(root).split('\n');
-  for (const kept of ['node_modules/', 'dist/', '*.log']) {
-    assert.ok(lines.includes(kept), `lost ${kept}: ${JSON.stringify(lines)}`);
-  }
-  assert.ok(lines.includes('.planning/trace.jsonl'), JSON.stringify(lines));
-  assert.ok(lines.includes('.planning/trace.1.jsonl'), JSON.stringify(lines));
+  assert.equal(readFileSync(join(root, '.gitignore'), 'utf8'), 'node_modules/\ndist/\n*.log');
+  assert.equal(traceIgnore(root, ['--check']).ignored, true);
+});
+
+test('trace ignore: the old root lines for the old paths cover nothing at the new ones', () => {
+  // Cadence wrote these into the root file before the records folder existed. They stay harmless, and they are not
+  // mistaken for coverage: the logs are written elsewhere now.
+  const root = ignoreRoot({ gitignore: '.planning/trace.jsonl\n.planning/trace.1.jsonl\n.planning/reads.jsonl\n' });
+  const check = traceIgnore(root, ['--check']);
+  assert.equal(check.ignored, false, JSON.stringify(check));
+  const r = traceIgnore(root);
+  assert.equal(r.written, true, JSON.stringify(r));
+  assert.equal(readFileSync(join(root, '.gitignore'), 'utf8'),
+    '.planning/trace.jsonl\n.planning/trace.1.jsonl\n.planning/reads.jsonl\n');
 });
 
 test('trace ignore: a project ignoring .planning/ wholesale is already correct', () => {
@@ -148,10 +164,19 @@ test('trace ignore: a project ignoring .planning/ wholesale is already correct',
   assert.equal(r.method, 'git');          // only git can see a directory rule
   assert.equal(r.written, false);
   // ...and --check never writes, so the file is exactly what it was.
-  assert.equal(gitignoreOf(root), '.planning/\n');
-  // The write arm agrees: nothing to add.
+  assert.equal(readFileSync(join(root, '.gitignore'), 'utf8'), '.planning/\n');
+  // The write arm agrees: nothing to add, and no records folder made for it.
   assert.equal(traceIgnore(root).written, false);
-  assert.equal(gitignoreOf(root), '.planning/\n');
+  assert.equal(readFileSync(join(root, '.gitignore'), 'utf8'), '.planning/\n');
+  assert.equal(existsSync(recordsDir(join(root, '.planning'))), false);
+});
+
+test('trace ignore: --check writes nothing, not even the folder', () => {
+  const root = ignoreRoot();
+  const r = traceIgnore(root, ['--check']);
+  assert.equal(r.written, false);
+  assert.equal(r.ignored, false);
+  assert.equal(existsSync(recordsDir(join(root, '.planning'))), false);
 });
 
 test('trace ignore: a non-git root falls back to the literal scan and still writes', () => {
@@ -161,31 +186,33 @@ test('trace ignore: a non-git root falls back to the literal scan and still writ
   assert.equal(r.method, 'file');
   assert.equal(r.written, true);
   assert.equal(r.tracked, false);
-  assert.match(gitignoreOf(root), /^\.planning\/trace\.jsonl$/m);
+  assert.ok(rulesOf(root).includes(`/${TRACE_FILE}`), gitignoreOf(root));
   // ...and the literal scan reads its own write back on the next run.
   assert.equal(traceIgnore(root).reason, 'already-ignored');
 });
 
 test('trace ignore: a tracked run record is REPORTED, never quietly ignored', () => {
   const root = ignoreRoot();
-  writeFileSync(join(root, '.planning', 'trace.jsonl'), '{"phase":1}\n');
-  execFileSync('git', ['add', '--', '.planning/trace.jsonl'], { cwd: root });
+  mkdirSync(recordsDir(join(root, '.planning')), { recursive: true });
+  writeFileSync(tracePath(join(root, '.planning')), '{"phase":1}\n');
+  execFileSync('git', ['add', '--', r_(root)], { cwd: root });
   const r = traceIgnore(root, ['--check']);
   assert.equal(r.tracked, true, JSON.stringify(r));
   assert.equal(r.ignored, false);
 });
 
-test('trace ignore: a TRACKED record whose line is present reports ignored and writes nothing', () => {
+/** The live record's path under the project root. */
+function r_(root) { return logPath(TRACE_FILE); }
+
+test('trace ignore: a TRACKED record whose rule is present reports ignored and writes nothing', () => {
   // The regression the `--no-index` flag closes. `check-ignore` answers "would
   // this path be ignored if it were untracked", so a path in the INDEX matched
-  // nothing at all: `ignored` came back false with the rule sitting right there
-  // in `.gitignore`, and the write arm - which keys off that value - appended the
-  // comment and the line again on EVERY run. Two runs left three copies.
-  const root = ignoreRoot({
-    gitignore: `.planning/trace.jsonl\n.planning/trace.1.jsonl\n${READS_RULES.join('\n')}\n`,
-  });
-  writeFileSync(join(root, '.planning', 'trace.jsonl'), '{"phase":1}\n');
-  execFileSync('git', ['add', '-f', '--', '.planning/trace.jsonl'], { cwd: root });
+  // nothing at all: `ignored` came back false with the rule sitting right there,
+  // and the write arm - which keys off that value - wrote again on EVERY run.
+  const root = ignoreRoot();
+  assert.equal(ensureRecordsDir(join(root, '.planning')).ok, true);
+  writeFileSync(tracePath(join(root, '.planning')), '{"phase":1}\n');
+  execFileSync('git', ['add', '-f', '--', r_(root)], { cwd: root });
   const check = traceIgnore(root, ['--check']);
   assert.equal(check.ignored, true, JSON.stringify(check));
   assert.equal(check.tracked, true, JSON.stringify(check));
@@ -197,91 +224,59 @@ test('trace ignore: a TRACKED record whose line is present reports ignored and w
   assert.equal(traceIgnore(root).written, false);
   assert.equal(traceIgnore(root).written, false);
   assert.equal(gitignoreOf(root), before);
-  assert.equal(gitignoreOf(root).match(/^\.planning\/trace\.jsonl$/gm).length, 1);
+  assert.equal(rulesOf(root).filter((l) => l === `/${TRACE_FILE}`).length, 1);
 });
 
 test('trace ignore: a .git/info/exclude match does NOT satisfy the line', () => {
   // The reason `-v` is used instead of `-q`: neither `.git/info/exclude` nor
   // core.excludesFile is cloned, so a machine-local exclusion would report
-  // ignored:true and leave the project with no line of its own - and the
+  // ignored:true and leave the project with no rule of its own - and the
   // collaborator who clones it commits the run record.
   const root = ignoreRoot();
-  writeFileSync(join(root, '.git', 'info', 'exclude'), '.planning/trace.jsonl\n');
+  writeFileSync(join(root, '.git', 'info', 'exclude'), `${logPath(TRACE_FILE)}\n`);
   const check = traceIgnore(root, ['--check']);
   assert.equal(check.ignored, false, JSON.stringify(check));
   assert.equal(check.method, 'git');
   assert.match(check.source, /exclude$/);
   const r = traceIgnore(root);
   assert.equal(r.written, true, JSON.stringify(r));
-  assert.match(gitignoreOf(root), /^\.planning\/trace\.jsonl$/m);
+  assert.ok(rulesOf(root).includes(`/${TRACE_FILE}`));
 });
 
-test('trace ignore: a project covered for the record alone is REPORTED, then upgraded', () => {
+test('trace ignore: a hand-edited file in the records folder survives byte-identical, and the gap is reported', () => {
   // D-07's state: the live record is ignored and the generation its rotation
-  // leaves behind is not, so the first rotation drops an untracked file of up
-  // to a mebibyte for `git add .planning` to sweep in. Half-covered is not
-  // covered, and /cad-health has to say so rather than stay silent.
-  const root = ignoreRoot({ gitignore: '.planning/trace.jsonl\n' });
-  const check = traceIgnore(root, ['--check']);
-  assert.equal(check.ignored, false, JSON.stringify(check));
-  assert.equal(check.rotated_line, '.planning/trace.1.jsonl');
-  // ...and --check still writes nothing at all.
-  assert.equal(gitignoreOf(root), '.planning/trace.jsonl\n');
-
-  const r = traceIgnore(root);
-  assert.equal(r.written, true, JSON.stringify(r));
-  const lines = gitignoreOf(root).split('\n').filter((l) => l && !l.startsWith('#'));
-  // ONLY the missing rules were added: the existing one is not written twice.
-  assert.deepEqual(lines, ['.planning/trace.jsonl', '.planning/trace.1.jsonl', ...READS_RULES]);
-  // ...and now the re-run is the no-op again.
-  assert.equal(traceIgnore(root).reason, 'already-ignored');
-});
-
-test('trace ignore: the sibling rule names the file the writer actually creates', async () => {
-  // The drift this derivation exists to prevent: a rule spelled by hand here
-  // and a rotated path spelled in lib/trace.mjs are two statements of one fact,
-  // and the day they disagree the ignore rule covers nothing.
-  const { ROTATED_TRACE_FILE, rotatedTracePath } = await import('../cadence-core/bin/lib/trace.mjs');
+  // leaves behind is not. Half-covered is not covered, and /cad-health has to
+  // say so rather than stay silent. The file is the project's now, so the write
+  // arm leaves it alone and says why.
   const root = ignoreRoot();
-  const r = traceIgnore(root);
-  assert.equal(r.rotated_line, `.planning/${ROTATED_TRACE_FILE}`);
-  assert.equal(rotatedTracePath('.planning'), r.rotated_line);
-});
-
-test('trace ignore: a project covered for the trace AND the live reads line gains only the rest', () => {
-  // The upgrade path for a repository that hand-wrote the live reads line
-  // before this seam existed - which is what THIS repository had. Three rules
-  // are missing, the fourth is not written a second time.
-  const root = ignoreRoot({
-    gitignore: `.planning/trace.jsonl\n.planning/trace.1.jsonl\n${READS_RULES[0]}\n`,
-  });
+  ensureRecordsDir(join(root, '.planning'));
+  const mine = `# mine\n/${TRACE_FILE}\nextra-rule\n`;
+  writeFileSync(ignoreFileOf(root), mine);
   const check = traceIgnore(root, ['--check']);
   assert.equal(check.ignored, false, JSON.stringify(check));
-  assert.equal(gitignoreOf(root).includes(READS_RULES[1]), false, '--check wrote something');
+  assert.equal(check.rotated_line, logPath(ROTATED_TRACE_FILE));
+  assert.equal(gitignoreOf(root), mine);
 
   const r = traceIgnore(root);
-  assert.equal(r.written, true, JSON.stringify(r));
-  const lines = gitignoreOf(root).split('\n').filter((l) => l && !l.startsWith('#'));
-  assert.deepEqual(lines,
-    ['.planning/trace.jsonl', '.planning/trace.1.jsonl', ...READS_RULES]);
-  // The trace half was already whole, so its block is not re-emitted either.
-  assert.equal(gitignoreOf(root).match(/^\.planning\/trace\.jsonl$/gm).length, 1);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.written, false);
+  assert.equal(r.reason, 'records-gitignore-kept');
+  assert.equal(gitignoreOf(root), mine);
+});
 
-  // A re-run adds no second line and changes no byte.
-  const after = gitignoreOf(root);
-  assert.equal(traceIgnore(root).reason, 'already-ignored');
-  assert.equal(gitignoreOf(root), after);
+test('trace ignore: the sibling rule names the file the writer actually creates', () => {
+  // The drift this derivation exists to prevent: a path spelled by hand here
+  // and a rotated path spelled in lib/trace.mjs are two statements of one fact.
+  const r = traceIgnore(ignoreRoot());
+  assert.equal(r.rotated_line, rotatedTracePath('.planning').split(sep).join('/'));
+  assert.equal(r.line, tracePath('.planning').split(sep).join('/'));
 });
 
 test('trace ignore: the reads rules name the files the writer actually produces', () => {
-  // Same drift guard the sibling rule carries, one record over: a rule spelled
-  // by hand in planning/trace.mjs and a path spelled in lib/read-trace.mjs are
-  // two statements of one fact, and the day they disagree the rule covers
-  // nothing at all.
   const r = traceIgnore(ignoreRoot());
   assert.equal(r.reads_lines[0], readsPath('.planning'));
   assert.equal(r.reads_lines[1], rotatedReadsPath('.planning'));
-  assert.equal(r.reads_lines[2], `.planning/${READS_CLAIM_FILE}`);
+  assert.equal(r.reads_lines[2], logPath(READS_CLAIM_FILE));
   // The three paths a killed rotation strands - the stamps beside the sidecar,
   // the fresh record that never reached its rename, and the generation it
   // evicted - each carry a pid and a random suffix, so these three and only
@@ -292,23 +287,60 @@ test('trace ignore: the reads rules name the files the writer actually produces'
   assert.equal(r.reads_lines.length, 6);
 });
 
-test('trace ignore: git itself answers for the reads record and its sibling, from the repo\'s own .gitignore', () => {
+test('records folder: a fresh one ignores every log file a rotation can leave, and only those', () => {
+  // The file the write module writes holds its names as literals (it imports builtins only), so every name is
+  // DERIVED here from the libs that write the files, and git is the judge. This is what keeps a rule and a file
+  // from drifting.
   const root = ignoreRoot();
-  assert.equal(traceIgnore(root).written, true);
-  for (const path of ['.planning/reads.jsonl', '.planning/reads.1.jsonl']) {
-    assert.equal(ignoreSource(root, path), '.gitignore', path);
+  const planning = join(root, '.planning');
+  assert.equal(ensureRecordsDir(planning).ok, true);
+  const dated = (f) => `${f}.12345.k3j2h`;
+  const logs = [
+    TRACE_FILE, ROTATED_TRACE_FILE, ROTATION_CLAIM_FILE, dated(ROTATION_CLAIM_FILE),
+    READS_FILE, ROTATED_READS_FILE, READS_CLAIM_FILE, dated(READS_CLAIM_FILE),
+    dated(READS_ROTATE_TEMP_FILE), dated(READS_EVICT_TEMP_FILE),
+    join('risk-carry', '3', 'rulings.json'),
+  ];
+  for (const f of logs) {
+    assert.equal(ignoreSource(root, logPath(f)), logPath('.gitignore'), f);
+  }
+  // What the project commits is not ignored.
+  for (const f of ['ARCHIVE.md', 'FILED.md', 'DECLINED.md', join('deferred', '3', 'x.md'),
+    join('codemap', 'index.json'), '.gitignore']) {
+    assert.equal(ignoreSource(root, logPath(f)), null, f);
   }
 });
 
-test('trace ignore: THIS repository already covers the reads sibling (D-11)', () => {
-  // The rule this repo carries by hand, asserted through git rather than by
-  // reading `.gitignore`: its own record measured 93% full on 2026-08-28, so it
-  // WILL rotate, and the sibling is what `git add .planning` would sweep in.
-  const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
-  for (const path of ['.planning/reads.1.jsonl', '.planning/reads.1.jsonl.claim',
-    '.planning/reads.1.jsonl.claim.123.abc']) {
-    assert.equal(ignoreSource(repo, path), '.gitignore', path);
-  }
+test('records folder: git status shows no log after an append and a forced rotation of each', () => {
+  const root = ignoreRoot();
+  const planning = join(root, '.planning');
+  writeFileSync(join(planning, 'STATE.md'), 'state\n');
+  execFileSync('git', ['add', '--', '.planning/STATE.md'], { cwd: root });
+  execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd: root });
+  assert.equal(appendEvent(planning, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' }).written, true);
+  assert.equal(appendRead(planning, { ts: '2026-08-14T00:00:00.000Z', tool: 'Read', target: '/a' }).written, true);
+  // pad both past what a rotation keeps, then rotate them, so every generation and sidecar exists
+  writeFileSync(tracePath(planning), `${readFileSync(tracePath(planning), 'utf8')}${'x'.repeat(2000)}\n`);
+  writeFileSync(readsPath(planning), `${readFileSync(readsPath(planning), 'utf8')}${'x'.repeat(2000)}\n`);
+  assert.equal(rotateTrace(planning, 0).rotated, true);
+  assert.equal(rotateReads(planning, 0).rotated, true);
+  assert.equal(existsSync(rotatedTracePath(planning)), true);
+  assert.equal(existsSync(rotatedReadsPath(planning)), true);
+  const status = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'],
+    { cwd: root, encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+  // the only thing left to commit is the ignore file itself
+  assert.deepEqual(status, [`?? ${logPath('.gitignore')}`]);
+  assert.ok(MAX_READS_BYTES > 0);
+});
+
+test('trace ignore: a symlinked records folder is refused and nothing is written through it', () => {
+  const root = ignoreRoot();
+  const outside = mkdtempSync(join(tmpdir(), 'cad-ignore-outside-'));
+  symlinkSync(outside, recordsDir(join(root, '.planning')));
+  const r = traceIgnore(root);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.reason, 'symlinked-records');
+  assert.deepEqual(readdirSync(outside), []);
 });
 
 test('trace ignore: a --root present with nothing usable is refused, never the cwd', () => {
