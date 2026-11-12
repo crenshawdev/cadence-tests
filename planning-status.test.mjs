@@ -628,3 +628,60 @@ test('status: a four-line cursor block has exactly its five keys', () => {
   const r = run(['status'], positionTree(['PLAN-1.md']));
   assert.deepEqual(Object.keys(r.cursor).sort(), ['agrees', 'next', 'phase', 'status', 'updated']);
 });
+
+// --- status: plan completion is the state's (plan 7, task 4) --------------------------------------------
+
+const planStates = (dir, n) => readState(dir).state.phases.find((p) => p.n === n).plans.map((p) => `${p.file}:${p.finished}`);
+const writeReport = (dir, n, k, first = 'PLAN COMPLETE') => {
+  mkdirSync(join(dir, 'phases', String(n), 'records', 'reports'), { recursive: true });
+  writeFileSync(join(dir, 'phases', String(n), 'records', 'reports', `plan-${k}.md`), `${first}\nPlan: x\n`);
+};
+
+test('status: a PLAN COMPLETE report is drift until a seam folds it, then the plan is finished in the state and the position moves', () => {
+  const dir = positionTree(['PLAN-1.md', 'PLAN-2.md']);
+  const before = run(['status'], dir);
+  assert.deepEqual(phase2(before).plan, { k: 1, j: 2, name: 'Name 1' });
+  assert.deepEqual(before.outstanding, [{ phase: 2, plans: ['PLAN-1.md', 'PLAN-2.md'] }]);
+  assert.equal(before.drift, undefined);
+
+  writeReport(dir, 2, 1);
+  const drifted = run(['status'], dir);
+  const entries = drifted.drift.filter((d) => d.kind === 'plan-report');
+  assert.equal(entries.length, 1);
+  assert.deepEqual([entries[0].phase, entries[0].plan], [2, 1]);
+  assert.equal(typeof entries[0].detail, 'string');
+  assert.deepEqual(phase2(drifted).plan, { k: 1, j: 2, name: 'Name 1' }, 'status answers from the state and writes nothing');
+  assert.deepEqual(planStates(dir, 2), ['PLAN-1.md:false', 'PLAN-2.md:false']);
+
+  const replay = run(['replay-check', '--phase', '2'], dir);
+  assert.equal(replay.ok, true);
+  assert.deepEqual(planStates(dir, 2), ['PLAN-1.md:true', 'PLAN-2.md:false']);
+  const after = run(['status'], dir);
+  assert.equal((after.drift || []).filter((d) => d.kind === 'plan-report').length, 0);
+  assert.deepEqual(after.outstanding, [{ phase: 2, plans: ['PLAN-2.md'] }]);
+  assert.deepEqual(phase2(after).plan, { k: 2, j: 2, name: 'Name 2' });
+});
+
+test('cursor set folds a PLAN COMPLETE report into the state, and a first line that only quotes it does not count', () => {
+  const dir = positionTree(['PLAN-1.md', 'PLAN-2.md']);
+  assert.equal(run(['status'], dir).ok, true);
+  writeReport(dir, 2, 1);
+  writeReport(dir, 2, 2, 'PLAN PARTIAL - was PLAN COMPLETE');
+  const set = run(['cursor', 'set', '--phase', '2', '--status', 'planned', '--next', '/cad-execute 2'], dir);
+  assert.deepEqual(set.cursor.plan, { k: 2, j: 2, name: 'Name 2' });
+  assert.deepEqual(planStates(dir, 2), ['PLAN-1.md:true', 'PLAN-2.md:false']);
+});
+
+test('status: a phase held complete reads every plan finished even with no report (D-23)', () => {
+  const dir = positionTree(['PLAN-1.md', 'PLAN-2.md']);
+  assert.equal(run(['status'], dir).ok, true);
+  assert.equal(run(['phase-done', '--n', '2'], dir).ok, true);
+  assert.equal(run(['replay-check', '--phase', '2'], dir).ok, true);
+  assert.deepEqual(planStates(dir, 2), ['PLAN-1.md:true', 'PLAN-2.md:true']);
+  const r = run(['status'], dir);
+  assert.deepEqual(r.outstanding, []);
+  assert.ok(!('plan' in phase2(r)));
+  const replay = run(['replay-check', '--phase', '2'], dir);
+  assert.equal(replay.replay, true);
+  assert.deepEqual(replay.dispatch_set, []);
+});

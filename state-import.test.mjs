@@ -90,7 +90,7 @@ test('a plan whose report says PARTIAL or is missing is not finished, and only t
   assertMatchesStatus(dir, state);
 });
 
-test('every plan of a phase derived complete is finished, even with no report; status still lists it as outstanding', () => {
+test('every plan of a phase derived complete is finished, even with no report, and status (which reads the state) lists none as outstanding', () => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Base', checked: true }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'], summary: true, uat: [{ status: 'pass' }] } },
@@ -98,9 +98,9 @@ test('every plan of a phase derived complete is finished, even with no report; s
   const state = imported(dir);
   assert.equal(state.phases[0].status, 'complete');
   assert.deepEqual(state.phases[0].plans.map((p) => p.finished), [true, true]);
-  // the one place the two differ, on purpose: status reads reports only, the migration trusts the derived phase
-  assertMatchesStatus(dir, state, { skipOutstanding: true });
-  assert.equal(run(['status'], dir).outstanding.length, 1);
+  // status reads the state now, so the migration's rule and what status answers are one rule
+  assertMatchesStatus(dir, state);
+  assert.deepEqual(run(['status'], dir).outstanding, []);
 });
 
 test('a workflow run file never decides whether a plan finished', () => {
