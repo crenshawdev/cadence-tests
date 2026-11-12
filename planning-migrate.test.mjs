@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PLANNING, makeTree, run, stampState } from './planning.test.mjs';
@@ -180,6 +180,7 @@ function deep(dir, rel = '', out = {}) {
   for (const e of readdirSync(join(dir, rel), { withFileTypes: true })) {
     const p = join(rel, e.name);
     if (e.isDirectory()) { out[p] = 'dir'; deep(dir, p, out); }
+    else if (e.isSymbolicLink()) out[p] = `link ${readlinkSync(join(dir, p))}`;
     else out[p] = createHash('sha256').update(readFileSync(join(dir, p))).digest('hex');
   }
   return out;
@@ -358,6 +359,61 @@ test('a destination already taken with other bytes refuses the whole conversion;
   assert.deepEqual(readdirSync(join(dir, 'records')).sort(), ['.gitignore', 'ARCHIVE.md', 'FILED.md', 'state.json', 'trace.jsonl']);
   assert.equal(readFileSync(join(dir, 'records', 'trace.jsonl'), 'utf8'), 'one\n');
   assert.equal(readFileSync(join(dir, 'records', 'ARCHIVE.md'), 'utf8'), 'ledger\n');
+  // the twin at the old place is gone, so the top holds only what AC3 lists
+  assert.equal(existsSync(join(dir, 'FILED.md')), false);
+});
+
+const asRoot = process.getuid?.() === 0;
+
+test('a linked phase folder, a linked archive group and a folder that cannot be read each refuse; nothing moves', () => {
+  const elsewhere = mkdtempSync(join(tmpdir(), 'cad-migrate-elsewhere-'));
+  put(elsewhere, 'phase-2/reports/plan-1.md', 'PLAN COMPLETE\n');
+  put(elsewhere, 'archive/1/REVIEW-diff-plan-1.md');
+  const cases = [
+    ['layout-symlink', (dir) => { rmSync(join(dir, 'phases', '2'), { recursive: true }); symlinkSync(join(elsewhere, 'phase-2'), join(dir, 'phases', '2')); return join(dir, 'phases', '2'); }],
+    ['layout-symlink', (dir) => { symlinkSync(join(elsewhere, 'archive'), join(dir, '_archive-v1.0')); return join(dir, '_archive-v1.0'); }],
+  ];
+  // permissions do not stop root, so the unreadable case means nothing there
+  if (!asRoot) cases.push(['layout-unreadable', (dir) => { put(dir, 'phases/2/REVIEW-diff-plan-1.md'); chmodSync(join(dir, 'phases', '2'), 0o000); return join(dir, 'phases', '2'); }]);
+  for (const [reason, shape] of cases) {
+    const dir = v40();
+    put(dir, 'phases/1/REVIEW-diff-plan-1.md');
+    const named = shape(dir);
+    const before = reason === 'layout-unreadable' ? null : deep(dir, 'phases', {});
+    const r = run(['status'], dir);
+    if (reason === 'layout-unreadable') chmodSync(named, 0o755);
+    assert.deepEqual([r.ok, r.reason], [false, reason]);
+    assert.ok(r.detail.includes(named), r.detail);
+    assert.match(r.hint, /nothing was changed/);
+    assert.equal(existsSync(statePath(dir)), false);
+    assert.equal(existsSync(join(dir, 'phases', '1', 'records')), false);
+    if (before) assert.deepEqual(deep(dir, 'phases', {}), before);
+  }
+});
+
+test('a top records folder that is not a real folder refuses before a phase file moves; a state write that fails after says so', () => {
+  const dir = v40();
+  put(dir, 'phases/1/REVIEW-diff-plan-1.md');
+  symlinkSync(mkdtempSync(join(tmpdir(), 'cad-migrate-elsewhere-')), join(dir, 'records'));
+  const before = deep(dir);
+  const r = run(['status'], dir);
+  assert.deepEqual([r.ok, r.reason], [false, 'layout-records-not-dir']);
+  assert.ok(r.detail.includes(join(dir, 'records')));
+  assert.deepEqual(deep(dir), before);
+
+  // a real records folder whose state lock can't be made passes every check, so the phase file moves before the write fails
+  if (asRoot) return;
+  rmSync(join(dir, 'records'));
+  mkdirSync(join(dir, 'records'), { mode: 0o555 });
+  const late = run(['status'], dir);
+  chmodSync(join(dir, 'records'), 0o755);
+  assert.deepEqual([late.ok, late.reason], [false, 'state-write-failed']);
+  assert.doesNotMatch(late.hint, /not changed/);
+  assert.match(late.hint, /already moved/);
+  assert.equal(existsSync(join(dir, 'phases', '1', 'records', 'REVIEW-diff-plan-1.md')), true);
+  // the next run finishes it
+  assert.equal(run(['status'], dir).ok, true);
+  assert.equal(readState(dir).kind, 'valid');
 });
 
 // --- who converts ------------------------------------------------------------
