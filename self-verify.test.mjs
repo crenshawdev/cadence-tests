@@ -2955,3 +2955,23 @@ test('workflow scripts: a full tree missing workflows/ reports missing-input', (
   const hit = run(['--root', root]).problems.find((p) => p.kind === 'missing-input' && p.file === 'workflows');
   assert.ok(hit);
 });
+
+// --- check 37: node:fs writes go through the write module ---------------------
+
+test('check 37: a script under bin holding a writeFileSync is named with the write-module kind', () => {
+  const root = binFixture({});
+  mkdirSync(join(root, 'cadence-core', 'bin', 'planning'), { recursive: true });
+  writeFileSync(join(root, 'cadence-core', 'bin', 'planning', 'seam.mjs'),
+    "import { writeFileSync } from 'node:fs';\nwriteFileSync('.planning/STATE.md', 'x');\n");
+  const j = run(['--root', root]);
+  assert.equal(j.ok, false);
+  assert.match(j.checked, /write-module/);
+  const hits = j.problems.filter((p) => p.kind === 'fs-write-outside-write-module');
+  assert.equal(hits.length, 1, JSON.stringify(j.problems));
+  assert.equal(hits[0].file, 'cadence-core/bin/planning/seam.mjs');
+});
+
+test('check 37: a fixture with no bin directory is not a failure', () => {
+  const j = run(['--root', fixture('nothing to see\n')]);
+  assert.deepEqual(j.problems.filter((p) => p.kind.startsWith('fs-write-')), []);
+});
