@@ -22,7 +22,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PLANNING, ensureRoadmap, makeTree, stampState } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap, makeTree, stampState, verifyChecked } from './planning.test.mjs';
 
 /** The close gate this carry exists to keep fed. */
 const LAND = fileURLToPath(new URL('../cadence-core/bin/land-cleanup.mjs', import.meta.url));
@@ -589,6 +589,7 @@ test('risk-carry + milestone-prune --mode delete: the same verdict, off the carr
   // `/cad-land` straight after it. Before this carry the gate had nothing left
   // to read at the moment it had to decide.
   const dir = makeTree({ roadmap: [{ n: 3, name: 'Ruled', checked: true }] });
+  verifyChecked(dir);
   const root = join(dir, '..');
   writeFileSync(join(dir, 'config.json'), JSON.stringify({ git: { auto_close: true } }));
   const pdir = join(dir, 'phases', '3', 'records');

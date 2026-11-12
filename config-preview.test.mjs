@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileS
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { renderCursor } from '../cadence-core/bin/lib/planning-files.mjs';
+import { writeState } from '../cadence-core/bin/lib/project-state.mjs';
 import { appliesFlips, diffDecision, rolesFor, targetLayer } from '../cadence-core/bin/lib/config-preview.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
@@ -27,9 +27,10 @@ function fixture({ repo, global } = {}) {
   mkdirSync(join(planning, 'phases', '3'), { recursive: true });
   const body = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
   if (repo !== undefined) writeFileSync(join(planning, 'config.json'), body(repo));
-  writeFileSync(join(planning, 'STATE.md'), renderCursor({
-    phase: 3, total: 5, name: 'Fixture', status: 'planned', next: '/cad-execute 3', updated: '2026-01-01',
-  }));
+  // the cursor is read from the state file; a STATE.md beside it would only be output
+  const wrote = writeState(planning, { cycleOpen: true, requirements: [], phases: [],
+    cursor: { phase: 3, status: 'planned', next: '/cad-execute 3', updated: '2026-01-01' } });
+  if (!wrote.ok) throw new Error(`fixture: ${wrote.reason} ${wrote.detail}`);
   writeFileSync(join(planning, 'phases', '3', 'PLAN-1.md'),
     '---\nphase: 3\nplan: 1\nrequirements:\n  - X-01\nfiles:\n  - src/auth/session.rs\n---\n\n# Plan\n');
   const g = join(root, 'global', 'config.json');
