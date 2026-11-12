@@ -168,7 +168,7 @@ test('workflow-run: a blocker its checker proves high still needs an answer, and
   assert.deepEqual(over.needs_answer, []);
   const adj = adjudicate(t2, over.payload);
   assert.equal(adj.ok, true, JSON.stringify(adj));
-  const [entry] = readJson(join(t2.dir, 'phases', '1', 'ADJUDICATION-diff-abc1234.json')).entries;
+  const [entry] = readJson(join(t2.dir, 'phases', '1', 'records', 'ADJUDICATION-diff-abc1234.json')).entries;
   assert.deepEqual([entry.ruling, entry.overridden], ['survived', true]);
 
   // a blocker proved only medium leaves the halting severities and asks for nothing
@@ -191,7 +191,7 @@ test('workflow-run: a fix_commit, overridden: true and a refuted ruling with cou
   const adj = adjudicate(t, r.payload);
   assert.equal(adj.ok, true, JSON.stringify(adj));
   assert.equal(unfixedFindings(readJson(r.payload)).ok, true);
-  const record = readJson(join(t.dir, 'phases', '1', 'ADJUDICATION-diff-abc1234.json'));
+  const record = readJson(join(t.dir, 'phases', '1', 'records', 'ADJUDICATION-diff-abc1234.json'));
   for (const e of record.entries) for (const k of Object.keys(e)) assert.ok(ENTRY_KEYS.has(k), `a new record key: ${k}`);
   assert.deepEqual(record.entries.map((e) => e.ruling), ['survived', 'survived', 'refuted']);
   assert.equal(record.entries[1].overridden, true);
@@ -501,7 +501,7 @@ test('workflow-run: a retyped claim one character off loses to the envelope, lan
   const answered = seam(t, run, [{ voice: 'openai', index: 0, ruling: 'survived', ...texts() }]);
   assert.equal(answered.ready, true, answered.not_ready);
   assert.equal(adjudicate(t, answered.payload).ok, true);
-  const record = readJson(join(t.dir, 'phases', '1', 'ADJUDICATION-diff-abc1234.json'));
+  const record = readJson(join(t.dir, 'phases', '1', 'records', 'ADJUDICATION-diff-abc1234.json'));
   assert.equal(record.entries.find((e) => e.voice === 'openai' && e.claim.startsWith('the bound')).claim, 'the bound is off by one');
 });
 
@@ -695,7 +695,7 @@ test('workflow-run: two overlapping runs of one trigger keep scratch files, brac
   }
 
   // each fire has its own record and review file holding only its own finding
-  const phaseDir = join(t.dir, 'phases', '1');
+  const phaseDir = join(t.dir, 'phases', '1', 'records');
   const [a, b] = runs;
   for (const [mine, other] of [[a, b], [b, a]]) {
     const claim = mine === a ? 'alpha claim' : 'beta claim';
