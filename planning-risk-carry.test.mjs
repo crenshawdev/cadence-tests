@@ -22,7 +22,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PLANNING, ensureRoadmap, makeTree, stampState, verifyChecked } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap, makeTree, run, stampState, verifyChecked } from './planning.test.mjs';
 
 /** The close gate this carry exists to keep fed. */
 const LAND = fileURLToPath(new URL('../cadence-core/bin/land-cleanup.mjs', import.meta.url));
@@ -316,6 +316,8 @@ test('risk-carry: a symlinked phases/<N> is refused before it is listed', () => 
   const outside = join(dir, '..', 'outside');
   mkdirSync(outside, { recursive: true });
   writeFileSync(join(outside, record('plan-9')), recordBody('plan-9', 1, [entry()]));
+  // a linked phase folder refuses the conversion itself, so the project is converted first
+  assert.equal(run(['status'], dir).ok, true);
   symlinkSync(outside, join(dir, 'phases', '3'));
 
   const r = riskCarry(dir, ['--phase', '3']);
@@ -394,6 +396,8 @@ test('risk-carry: a phases/ that cannot be searched refuses, never reads as abse
   // 0o644 isolates the missing search bit; 0o000 is the other mode measured.
   for (const mode of [0o644, 0o000]) {
     const dir = carryTree(3, { [review('plan-1')]: '{"findings":[]}\n' });
+    // an unsearchable phases/ refuses the conversion itself, so the project is converted first
+    assert.equal(run(['status'], dir).ok, true);
     chmodSync(join(dir, 'phases'), mode);
     try {
       const spellings = mode === 0o644 ? ['3', '03'] : ['3'];

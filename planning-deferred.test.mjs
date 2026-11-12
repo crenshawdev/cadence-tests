@@ -259,6 +259,8 @@ test('deferred list: an unreadable directory refuses instead of reporting an emp
   // already states for a findings payload it could not parse. Reporting zero
   // here is what would let a land publish over a queue it never read.
   const { dir } = adjRepo();
+  // an unreadable phase folder refuses the conversion itself, so the project is converted first
+  assert.equal(run(['status'], dir).ok, true);
   chmodSync(join(dir, 'phases', '2'), 0o000);
   try {
     const r = defList(dir);
@@ -362,6 +364,8 @@ test('status: an unreadable queue rides the envelope without failing the status'
   // Degrading the whole envelope would take /cad-progress down over a queue it
   // was only reporting on, and the refusal reads `unreadable` for itself.
   const dir = makeTree({ roadmap: [{ n: 1, name: 'Auth' }], phases: { 1: { plan: true } } });
+  // an unreadable phase folder refuses the conversion itself, so the project is converted first
+  assert.equal(run(['status'], dir).ok, true);
   chmodSync(join(dir, 'phases', '1'), 0o000);
   try {
     const r = run(['status'], dir);
