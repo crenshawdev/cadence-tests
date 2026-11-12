@@ -3834,3 +3834,51 @@ test('triage-gate.md does not say a finding reaches the tracker unchanged', () =
   assert.match(text, /A finding's text reaches the user as raised, and the tracker with any credential replaced by `<redacted>`:/,
     'triage-gate.md does not say the tracker gets the finding with credentials redacted');
 });
+
+// Phase 1 plan 12 (D-13, D-04, D-05): every seam that rewrites a view rewrites
+// `.planning/records/state.json` first, and `status` trusts that file over the
+// views. A commit that stages a view without it leaves the tree dirty and the
+// committed state frozen behind the committed views, so a clone reads stale.
+
+/** Sentences that name a view and say commit or stage while instructing no commit, with why. */
+const STATE_FILE_EXCEPTIONS = [
+  { file: 'cadence-core/workflows/coverage.md', sentence: 'needs the commit range from SUMMARY.md',
+    reason: 'a batch of reads; the commit range is what the diff reads, nothing is committed' },
+  { file: 'cadence-core/workflows/progress.md', sentence: 'derives its own commit timeline',
+    reason: '--stats reads the commit history and writes nothing, STATE.md included' },
+];
+
+/**
+ * A Markdown file's sentences, whitespace flattened. A paragraph, a list item, a table row, a heading, a tag line and
+ * each fenced line is a unit of its own first, since a criteria list has no full stops to split it.
+ */
+const mdSentences = (text) => {
+  const units = [];
+  let cur = [];
+  let fence = false;
+  const flush = () => { if (cur.length) units.push(cur.join('\n')); cur = []; };
+  for (const line of text.split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) { flush(); fence = !fence; continue; }
+    if (fence) { units.push(line); continue; }
+    if (!line.trim() || /^\s*([-*+] |\d+[.)] |\||#|<)/.test(line)) flush();
+    cur.push(line);
+  }
+  flush();
+  return units.flatMap((u) => sentencesOf(flat(u).trim()));
+};
+
+test('every commit or stage sentence that names a generated view also names the state file', () => {
+  const VIEW = /STATE\.md|ROADMAP\.md|REQUIREMENTS\.md/;
+  const ACT = /commit|stag/i;
+  const mdUnder = (dir) => readdirSync(join(REPO, dir), { recursive: true })
+    .filter((f) => String(f).endsWith('.md')).map((f) => join(dir, String(f)).split(sep).join('/'));
+  const bad = [];
+  for (const file of ['cadence-core/workflows', 'cadence-core/references', 'skills'].flatMap(mdUnder)) {
+    for (const s of mdSentences(doc(file))) {
+      if (!ACT.test(s) || !VIEW.test(s) || s.includes('records/state.json')) continue;
+      if (STATE_FILE_EXCEPTIONS.some((e) => e.file === file && s.includes(e.sentence))) continue;
+      bad.push(`${file}: ${s}`);
+    }
+  }
+  assert.deepEqual(bad, [], 'these sentences commit or stage a view without .planning/records/state.json');
+});
