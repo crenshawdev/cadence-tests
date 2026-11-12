@@ -107,7 +107,7 @@ test('a four-line cursor written by 3.9.3 parses to exactly its six fields, and 
     writeFileSync(join(dir, '.planning', 'STATE.md'), BALEY);
     const out = JSON.parse(execFileSync(process.execPath,
       [join(BIN, 'planning.mjs'), 'cursor', 'get', '--dir', join(dir, '.planning')], { encoding: 'utf8' }));
-    const { ok, ...fields } = out;
+    const { ok, migration, ...fields } = out; // the converting call's added field is the migration's, not the cursor's
     assert.equal(ok, true);
     assert.deepEqual(fields, BALEY_FIELDS);
   } finally { rmSync(dir, { recursive: true, force: true }); }

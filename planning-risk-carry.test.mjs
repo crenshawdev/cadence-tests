@@ -340,6 +340,8 @@ test('risk-carry: an unlistable phases/<N> prints exactly the refusal it always 
   // what `/cad-milestone` already relays, and it may not move.
   for (const mode of [0o000, 0o311]) {
     const dir = carryTree(3, { [review('plan-1')]: '{"findings":[]}\n' });
+    // the first call converts the project and its answer says so; the pin is on the refusal after it
+    try { execFileSync('node', [PLANNING, '--dir', dir, 'status'], { stdio: 'ignore' }); } catch { /* the answer is not the point */ }
     chmodSync(join(dir, 'phases', '3', 'records'), mode);
     try {
       let stdout;

@@ -243,6 +243,7 @@ test('status: roadmap-box drift both directions, judged by the state against wha
 
 test('status: hand-checking a box, adding a phase line or breaking a line in the list changes nothing it answers', () => {
   const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }], phases: { 1: { plan: true } } });
+  run(['status'], dir); // converts the project; the answers compared are the ones after it
   const before = run(['status'], dir);
   const file = join(dir, 'ROADMAP.md');
   const text = readFileSync(file, 'utf8');
@@ -519,6 +520,7 @@ test('status: an unexecuted gap plan beside a SUMMARY is executed AND outstandin
 
 test('status: a PLAN COMPLETE report at the old reports/ path no longer counts', () => {
   const dir = gapPlanTree();
+  run(['status'], dir); // a project not yet converted would have this folder moved to its new place
   const old = join(dir, 'phases', '1', 'reports');
   mkdirSync(old, { recursive: true });
   for (const k of [1, 2]) writeFileSync(join(old, `plan-${k}.md`), 'PLAN COMPLETE\nTasks: 1 of 1\n');

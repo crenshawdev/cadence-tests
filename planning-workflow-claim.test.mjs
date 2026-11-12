@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { stampState } from './planning.test.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PLANNING = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
@@ -87,6 +88,7 @@ test('off: a release with the old claim\'s id leaves a new claim on the same lab
 
 test('off: a claim with no id is freed only by --stale, never by an id', async () => {
   const t = tree(null, null);
+  stampState(t.dir); // a project not yet converted refuses while any claim is held
   writeFileSync(join(t.root, '.git', 'cadence-workflow-claim'), JSON.stringify({ label: 'old-1', at: Date.now() - 5000 }));
   const lose = await cli(t, 'take', 'new-1');
   assert.equal(lose.launch, false); assert.equal(lose.holder, 'old-1'); assert.equal(lose.holder_id, null);
@@ -138,6 +140,8 @@ test('off: an executor worktree sees the same claim', async () => {
   const wt = join(t.root, '..', `${t.root.split('/').pop()}-wt`);
   t.git('worktree', 'add', '-q', wt, '-b', 'side');
   mkdirSync(join(wt, '.planning'), { recursive: true });
+  stampState(t.dir);
+  stampState(join(wt, '.planning')); // a project not yet converted refuses while any claim is held
   assert.equal((await cli(t, 'take', 'diff-plan-1')).launch, true);
   const r = await cli(t, 'take', 'diff-plan-2', join(wt, '.planning'));
   assert.equal(r.launch, false); assert.equal(r.holder, 'diff-plan-1');

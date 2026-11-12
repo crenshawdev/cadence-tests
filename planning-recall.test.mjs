@@ -88,6 +88,8 @@ test('recall: two runs on the same corpus are byte-identical', () => {
     capture: [{ section: 'Todos', text: 'wire the beta recall path', phase: 1 },
       { section: 'Seeds', text: 'gamma indexing idea' }],
   });
+  // the first call converts the project and its answer says so, so the compared calls are the ones after it
+  recall('beta gamma', dir);
   const a = recall('beta gamma', dir);
   const b = recall('beta gamma', dir);
   assert.equal(a.raw, b.raw);
@@ -135,6 +137,8 @@ test('recall: two runs over a corpus with ## Durable decisions are byte-identica
       1: { durableDecisions: ['alpha beta gamma durable'], contextDecisions: ['delta epsilon local'] },
     },
   });
+  // the first call converts the project and its answer says so, so the compared calls are the ones after it
+  recall('beta gamma', dir);
   const a = recall('beta gamma', dir);
   const b = recall('beta gamma', dir);
   assert.equal(a.raw, b.raw);
@@ -150,6 +154,7 @@ test('recall: bare words after the query are joined, not truncated (#47.2)', () 
       2: { summaryBody: { deviations: ['renumber phases desync report'] } },
     },
   });
+  recall('decimal phases', dir); // converts the project, and its answer says so
   const bare = recall(['decimal', 'phases'], dir);
   const quoted = recall('decimal phases', dir);
   assert.equal(bare.json.ok, true);
@@ -307,6 +312,8 @@ test('recall: two runs over a corpus holding live AND archived rows are byte-ide
     '`phases/1/SUMMARY.md`: beta gamma from the closed milestone',
     '`phases/1/CONTEXT.md`: D-01 (REC-01): gamma stays flat-ranked',
   ]);
+  // the first call converts the project and its answer says so, so the compared calls are the ones after it
+  recall('beta gamma', dir);
   const a = recall('beta gamma', dir);
   const b = recall('beta gamma', dir);
   assert.equal(a.raw, b.raw);
@@ -384,6 +391,8 @@ test('recall: two runs over a corpus holding a task record are byte-identical', 
   const dir = taskRecordIn(makeTree(TASK_TIER_SPEC), 'bound-plan-size',
     ['a plan-size ceiling nothing enforced', 'the beta gamma path this task took']);
   taskRecordIn(dir, 'another-task', ['a second beta record, sorted after the first']);
+  // the first call converts the project and its answer says so, so the compared calls are the ones after it
+  recall('beta gamma', dir);
   const a = recall('beta gamma', dir);
   const b = recall('beta gamma', dir);
   assert.equal(a.raw, b.raw);
@@ -474,6 +483,8 @@ test('recall: a note in FILED.md that is not a row mints no corpus entry', () =>
 test('recall: two runs over a corpus holding a filed row are byte-identical', () => {
   const dir = makeTree({ phases: { 1: { summaryBody: { deviations: ['alpha beta gamma'] } } } });
   filed(dir, ['2026-08-25 gitlab acme/widget aabbccddeeff0011: [cadence aabbccddeeff0011] beta gamma pointer']);
+  // the first call converts the project and its answer says so, so the compared calls are the ones after it
+  recall('beta gamma', dir);
   assert.equal(recall('beta gamma', dir).raw, recall('beta gamma', dir).raw);
 });
 

@@ -151,6 +151,8 @@ test('cite-count: two runs over an unchanged plan and payload are byte-identical
     { score: 9, source: 'v3.5.3/phases/2/CONTEXT.md', snippet: 'D-03 (area): cited' },
     { score: 8, source: 'phases/1/CAPTURE.md', snippet: 'a capture row' },
   ]);
+  // the first call converts the project and its answer says so, so the compared calls are the ones after it
+  citeCount(['--phase', '2', '--payload', payload], dir);
   const a = citeCount(['--phase', '2', '--payload', payload], dir);
   const b = citeCount(['--phase', '2', '--payload', payload], dir);
   assert.equal(a.raw, b.raw);
