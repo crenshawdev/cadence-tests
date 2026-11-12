@@ -11,7 +11,9 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync, chmodSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync, chmodSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { classifyAcceptanceCriteria } from '../cadence-core/bin/lib/planning-files.mjs';
 import { readState } from '../cadence-core/bin/lib/project-state.mjs';
@@ -102,6 +104,32 @@ test('renumber insert and remove keep the state, the list and the detail section
   assert.deepEqual(afterRemove.match(/^- \[ \] \*\*Phase \d+: \w+\*\*/gm), ['- [ ] **Phase 1: One**', '- [ ] **Phase 3: Three**']);
   assert.doesNotMatch(afterRemove, /^### Phase \d+: Two$/m);
   assert.equal(rem.total, 2);
+});
+
+test('renumber insert: a fact another seam commits while the directories move is kept, and shifted like the rest', {
+  skip: process.platform === 'win32' ? 'a shell git stand-in' : false,
+}, () => {
+  const dir = renumberTree();
+  assert.equal(run(['status'], dir).ok, true);
+  // a git stand-in that lands a state write mid-apply, then fails so the move falls back to the filesystem
+  const bin = mkdtempSync(join(tmpdir(), 'cad-fakegit-'));
+  const writer = join(bin, 'write.mjs');
+  writeFileSync(writer, `import { updateState } from ${JSON.stringify(pathToFileURL(join(PLANNING_DIR, '..', 'lib', 'project-state.mjs')).href)};
+const r = updateState(process.argv[2], (s) => ({ ...s,
+  requirements: s.requirements.map((q) => (q.id === 'REQ-3' ? { ...q, status: 'Complete' } : q)),
+  cursor: { ...s.cursor, next: '/cad-execute 3' } }));
+if (!r.ok) process.exit(2);
+`);
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\nnode ${JSON.stringify(writer)} ${JSON.stringify(dir)} || exit 2\nexit 1\n`);
+  chmodSync(join(bin, 'git'), 0o755);
+  const r = run(['renumber', 'insert', '--at', '2'], dir, undefined, { PATH: `${bin}:${process.env.PATH}` });
+  assert.equal(r.ok, true);
+  const st = readState(dir).state;
+  assert.deepEqual(st.requirements.map((q) => [q.id, q.phase, q.status]),
+    [['REQ-1', 1, 'Pending'], ['REQ-2', 3, 'Pending'], ['REQ-3', 3, 'Complete']],
+    'REQ-3 stays Complete from the other seam; the Pending row still shifts');
+  assert.equal(st.cursor.next, '/cad-execute 4', 'the cursor the other seam wrote is shifted');
+  assert.equal(st.cursor.phase, 3);
 });
 
 test('renumber shifts only Pending rows in the state, leaves Complete and Deferred as they were, and the table agrees', () => {

@@ -10,10 +10,11 @@
 // a sibling that imports a fixture from here registers nothing twice.
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
-import { makeTree, run, isEntryFile } from './planning.test.mjs';
-import { readState } from '../cadence-core/bin/lib/project-state.mjs';
+import { makeTree, run, isEntryFile, PLANNING } from './planning.test.mjs';
+import { readState, statePath } from '../cadence-core/bin/lib/project-state.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -206,4 +207,24 @@ test('seed-reqs: a missing traceability table is still refused and nothing is wr
   const r = run(['seed-reqs', '--phase', '1'], dir);
   assert.equal(r.reason, 'no-traceability-table');
   assert.deepEqual(readState(dir).state, before);
+});
+
+test('seed-reqs: an id another seed adds while this one waits on the lock is skipped, not stored twice', async () => {
+  const dir = seedTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true, planReqs: ['X'] } }, active: ['X'] });
+  assert.equal(run(['status'], dir).ok, true);
+  const lock = `${statePath(dir)}.lock`;
+  writeFileSync(lock, ''); // the other seed holds the state file
+  const child = spawn('node', [PLANNING, 'seed-reqs', '--phase', '1', '--dir', dir], { stdio: ['ignore', 'pipe', 'inherit'] });
+  let out = '';
+  child.stdout.on('data', (d) => { out += d; });
+  await new Promise((r) => setTimeout(r, 600)); // it has read the state and is polling for the lock
+  // written around the lock, the way the other seed's commit would land
+  const raw = JSON.parse(readFileSync(statePath(dir), 'utf8'));
+  writeFileSync(statePath(dir), `${JSON.stringify({ ...raw, requirements: [{ id: 'X', phase: 1, status: 'Pending' }] }, null, 2)}\n`);
+  rmSync(lock);
+  await new Promise((r) => child.on('close', r));
+  const res = JSON.parse(out);
+  assert.equal(res.ok, true);
+  assert.deepEqual([res.seeded, res.skipped], [[], ['X']]);
+  assert.deepEqual(readState(dir).state.requirements, [{ id: 'X', phase: 1, status: 'Pending' }]);
 });

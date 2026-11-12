@@ -10,11 +10,11 @@
 // a sibling that imports a fixture from here registers nothing twice.
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { makeTree, run, isEntryFile, verifyChecked } from './planning.test.mjs';
 import { archive } from './planning-recall.test.mjs';
-import { readState } from '../cadence-core/bin/lib/project-state.mjs';
+import { readState, statePath } from '../cadence-core/bin/lib/project-state.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -109,4 +109,23 @@ test('milestone-prune: a close leaves ## Shipped holding the rows with their sum
   assert.match(text, /\| REQ-1 \(it ships\) \| 1 \| Complete \| v1 \|/);
   assert.match(text, /\| REQ-2 \| Phase 2 \| Pending \|/);
   assert.match(text, /Notes under the table\./);
+});
+
+test('milestone-prune: a re-run after a refused state write finishes the state and files each shipped row once', () => {
+  const dir = pruneTree();
+  writeFileSync(join(dir, 'REQUIREMENTS.md'),
+    '# Requirements\n\n## Active\n\n- **REQ-1**: it ships\n- **REQ-2**: it waits\n\n## Traceability\n\n'
+    + '| Requirement | Phase | Status |\n|---|---|---|\n| REQ-1 | Phase 1 | Complete |\n| REQ-2 | Phase 2 | Pending |\n');
+  verifyChecked(dir);
+  const lock = `${statePath(dir)}.lock`;
+  writeFileSync(lock, ''); // a live writer holds the state file
+  const first = run(['milestone-prune', '--label', 'v1', '--mode', 'delete'], dir);
+  assert.equal(first.reason, 'state-write-failed');
+  rmSync(lock);
+  const again = run(['milestone-prune', '--label', 'v1', '--mode', 'delete'], dir);
+  assert.equal(again.ok, true);
+  assert.deepEqual(again.requirements.moved, []);
+  assert.deepEqual(readState(dir).state.requirements, [{ id: 'REQ-2', phase: 2, status: 'Pending' }]);
+  assert.equal(readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8').match(/^\| REQ-1 /gm).length, 1);
+  assert.match(readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8'), /\| REQ-1 \(it ships\) \| 1 \| Complete \| v1 \|/);
 });

@@ -136,3 +136,10 @@ test('a malformed entry inside the list is replaced with the rest of it, while a
   const r = renderPhasesList(state({ phases: [phase(1, 'Base', 'lay it', 'complete')] }), text);
   assert.equal(r.text, '# R\n\n## Phases\n\n- [x] **Phase 1: Base** - lay it\n- depends on Phase 2 landing\n\n## Phase Details\n');
 });
+
+test('detail sections directly under the phases heading keep every line, including criteria that open with a phase', () => {
+  const text = '# R\n\n## Phases\n\n- [ ] **Phase 1: Base** - lay it\n\n### Phase 1: Base\n**Goal:** lay it\n\n'
+    + '1. Phase 2 can read the file this writes\n- Phase 1 must ship first\n| Phase 1 | output | consumed here |\n';
+  const r = renderPhasesList(state({ phases: [phase(1, 'Base', 'lay it', 'complete')] }), text);
+  assert.equal(r.text, text.replace('- [ ] **Phase 1: Base**', '- [x] **Phase 1: Base**'));
+});
