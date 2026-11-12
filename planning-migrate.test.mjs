@@ -243,3 +243,101 @@ test('a held workflow claim and a live plan worktree each refuse the conversion,
   assert.equal(readState(dir).kind, 'valid');
 });
 
+/** A v4.0 project built file by file: what scripts keep sits at the old places, plus things Cadence does not own. */
+function layoutFixture() {
+  const dir = makeTree({
+    roadmap: [{ n: 1, name: 'Base', checked: true }, { n: 2, name: 'Auth' }],
+    phases: { 1: { plan: true, summary: true, uat: [{ status: 'pass' }] }, 2: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
+    reqs: [['REQ-1', 1, 'Complete'], ['REQ-2', 2, 'Pending']],
+    cursor: { phase: 2, total: 2, name: 'Auth', status: 'planned', next: '/cad-execute 2', updated: '2026-02-03' },
+    capture: [{ section: 'Notes', text: 'a note' }],
+    config: { planning: { commit_docs: true } },
+  });
+  const moved = [
+    'trace.jsonl', 'trace.1.jsonl', 'trace.1.jsonl.claim', 'reads.jsonl', 'reads.1.jsonl', 'reads.jsonl.rotate.42.ab',
+    'ARCHIVE.md', 'FILED.md', 'DECLINED.md', 'deferred/DEFERRED-diff-plan-1.json', 'risk-carry/ruling.json', 'codemap/map.json',
+  ];
+  for (const f of moved) put(dir, f);
+  const inPhase = ['reports/plan-1.md', 'reports/plan-1.1.md', 'REVIEW-diff-plan-1.md', 'REVIEW-diff-plan-1.json',
+    'ADJUDICATION-diff-plan-1.json', 'DEFERRED-diff-plan-1.json', 'FINDINGS.json', 'verifier-findings.json'];
+  for (const f of inPhase) {
+    put(dir, `phases/1/${f}`);
+    put(dir, `_archive-v1.0/1/${f}`);
+  }
+  put(dir, 'phases/2/reports/plan-1.md', 'PLAN COMPLETE\nPlan: PLAN-1.md\n');
+  put(dir, '_archive-v1.0/1/PLAN.md', '# old plan\n');
+  const kept = ['tasks/slug/PLAN.md', 'tasks/slug/REVIEW-diff-slug.md', 'spikes/s.md', 'debug/d.md', 'research/r.md', 'PROJECT.md',
+    'state.json', 'drafts/draft.md', 'phases/1/notes.txt'];
+  for (const f of kept) put(dir, f);
+  return { dir, moved, inPhase, kept };
+}
+
+test('a first seam call moves the records into the layout, byte for byte, and leaves what Cadence does not own in place', () => {
+  const { dir, moved, inPhase, kept } = layoutFixture();
+  const root = track(dir);
+  const was = deep(dir);
+  const commits = git(root, 'rev-list', '--count', 'HEAD');
+  const r = runIn(root, ['status'], dir);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.phases.map((p) => [p.n, p.status]), [[1, 'complete'], [2, 'planned']]);
+  assert.equal(git(root, 'rev-list', '--count', 'HEAD'), commits);
+
+  // the top of .planning: AC3's entries, the archive folder and what Cadence does not own
+  assert.deepEqual(readdirSync(dir).sort(), ['CAPTURE.md', 'PROJECT.md', 'REQUIREMENTS.md', 'ROADMAP.md', 'STATE.md', '_archive-v1.0',
+    'config.json', 'debug', 'drafts', 'phases', 'records', 'research', 'spikes', 'state.json', 'tasks'].sort());
+  assert.deepEqual(readdirSync(join(dir, 'phases', '1')).sort(), ['PLAN.md', 'SUMMARY.md', 'UAT.md', 'notes.txt', 'records']);
+  assert.deepEqual(readdirSync(join(dir, '_archive-v1.0', '1')).sort(), ['PLAN.md', 'records']);
+  assert.deepEqual(readdirSync(join(dir, 'phases', '1', 'records')).sort(), [...inPhase.map((f) => f.split('/')[0])].filter((n, i, a) => a.indexOf(n) === i).sort());
+  // every moved file is the same bytes at its new place
+  const at = (f) => (f.includes('/') && !f.startsWith('deferred/') && !f.startsWith('risk-carry/') && !f.startsWith('codemap/') ? f : `records/${f}`);
+  for (const f of moved) assert.equal(deep(dir)[at(f)], was[f], f);
+  for (const base of ['phases/1', '_archive-v1.0/1']) {
+    for (const f of inPhase) assert.equal(deep(dir)[`${base}/records/${f}`], was[`${base}/${f}`], `${base}/${f}`);
+  }
+  assert.equal(deep(dir)['phases/2/records/reports/plan-1.md'], was['phases/2/reports/plan-1.md']);
+  // nothing else moved or changed
+  const now = deep(dir);
+  for (const f of kept) assert.equal(now[f], was[f], f);
+  assert.equal(readState(dir).kind, 'valid');
+  assert.equal(JSON.parse(readFileSync(statePath(dir), 'utf8'))[STAMP_KEY], STATE_LAYOUT);
+
+  // one commit leaves the tree clean, and the carried risk rulings are not tracked
+  git(root, 'add', '-A', '.');
+  git(root, 'commit', '-q', '-m', 'convert');
+  assert.equal(git(root, 'status', '--porcelain'), '');
+  assert.equal(git(root, 'ls-files', '--', '.planning/records/risk-carry'), '');
+
+  // a second call changes no byte, and files in the review and return areas leave the layout alone
+  const settled = deep(dir);
+  assert.equal(runIn(root, ['status'], dir).ok, true);
+  assert.deepEqual(deep(dir), settled);
+  put(dir, 'phases/1/records/reviews/x.json', '{}');
+  put(dir, 'phases/1/records/returns/y.json', '{}');
+  assert.equal(runIn(root, ['status'], dir).ok, true);
+  assert.equal(JSON.parse(readFileSync(statePath(dir), 'utf8'))[STAMP_KEY], STATE_LAYOUT);
+});
+
+test('a destination already taken with other bytes refuses the whole conversion; a run that stopped part way is finished', () => {
+  const dir = v40();
+  put(dir, 'trace.jsonl', 'one\n');
+  put(dir, 'ARCHIVE.md', 'ledger\n');
+  put(dir, 'records/trace.jsonl', 'two\n');
+  const before = deep(dir);
+  const r = run(['status'], dir);
+  assert.deepEqual([r.ok, r.reason], [false, 'layout-destination-exists']);
+  assert.ok(r.detail.includes(join(dir, 'records', 'trace.jsonl')));
+  assert.ok(r.hint);
+  assert.deepEqual(deep(dir), before);
+
+  // as if an earlier run stopped after its first move: one log is already home, the ledger is not
+  rmSync(join(dir, 'records'), { recursive: true });
+  mkdirSync(join(dir, 'records'));
+  renameSync(join(dir, 'trace.jsonl'), join(dir, 'records', 'trace.jsonl'));
+  put(dir, 'FILED.md', 'filed\n');
+  put(dir, 'records/FILED.md', 'filed\n');
+  assert.equal(run(['status'], dir).ok, true);
+  assert.deepEqual(readdirSync(join(dir, 'records')).sort(), ['.gitignore', 'ARCHIVE.md', 'FILED.md', 'state.json', 'trace.jsonl']);
+  assert.equal(readFileSync(join(dir, 'records', 'trace.jsonl'), 'utf8'), 'one\n');
+  assert.equal(readFileSync(join(dir, 'records', 'ARCHIVE.md'), 'utf8'), 'ledger\n');
+});
+
