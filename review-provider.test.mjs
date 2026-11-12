@@ -38,7 +38,7 @@ import {
 // its assertions (what it is watching) instead of on module resolution.
 import * as reviewProvider from '../cadence-core/bin/review-provider.mjs';
 import { evaluateSchema } from '../cadence-core/bin/lib/schema-eval.mjs';
-import { renderCursor } from '../cadence-core/bin/lib/planning-files.mjs';
+import { writeState } from '../cadence-core/bin/lib/project-state.mjs';
 import { appendEvent, renderTrace } from '../cadence-core/bin/lib/trace.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
@@ -858,6 +858,12 @@ test('cli: key-file paths expand ~ and default to XDG_CONFIG_HOME', () => {
 // trigger is NAMED, and a reviewer with no key drops out exactly as hard as one
 // the wire refused.
 
+/** Put a cursor in the planning root's state file, where `cursorPhase` reads it. */
+function stateCursor(planning, cursor) {
+  const wrote = writeState(planning, { cycleOpen: true, cursor, phases: [], requirements: [] });
+  if (!wrote.ok) throw new Error(`stateCursor: ${wrote.reason} ${wrote.detail}`);
+}
+
 /**
  * A cwd holding a `.planning` the seam will look for, optionally unwritable.
  * `config` is the repo config layer, so a fixture can lower a bound (the prompt
@@ -868,10 +874,7 @@ function providerCwd(name, breakTrace, config = {}) {
   const planning = join(cwd, '.planning');
   mkdirSync(planning);
   writeFileSync(join(planning, 'config.json'), JSON.stringify(config));
-  writeFileSync(join(planning, 'STATE.md'), renderCursor({
-    phase: 3, total: 5, name: 'Fixture', status: 'planned',
-    next: '/cad-execute 3', updated: '2026-01-01',
-  }));
+  stateCursor(planning, { phase: 3, status: 'planned', next: '/cad-execute 3', updated: '2026-01-01' });
   // A DIRECTORY at trace.jsonl fails EISDIR for any uid - deterministic where
   // a chmod is a no-op under a root test runner.
   if (breakTrace) mkdirSync(join(recordsDir(planning), 'trace.jsonl'), { recursive: true });
@@ -1003,10 +1006,7 @@ mkdirSync(join(faultCwd, '.planning'));
 // value reached the transport rather than a default nobody set.
 writeFileSync(join(faultCwd, '.planning', 'config.json'),
   JSON.stringify({ review: { request_timeout_ms: 25 } }));
-writeFileSync(join(faultCwd, '.planning', 'STATE.md'), renderCursor({
-  phase: 7, total: 9, name: 'Fault fixture', status: 'executing',
-  next: '/cad-execute 7', updated: '2026-01-01',
-}));
+stateCursor(join(faultCwd, '.planning'), { phase: 7, status: 'planned', next: '/cad-execute 7', updated: '2026-01-01' });
 const FAULT_TRACE = join(recordsDir(join(faultCwd, '.planning')), 'trace.jsonl');
 const FAULT_PAYLOAD = join(faultCwd, 'payload.json');
 writeFileSync(FAULT_PAYLOAD, JSON.stringify({

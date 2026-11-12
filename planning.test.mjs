@@ -344,7 +344,7 @@ test('renumber: a decimal cursor is warned about, never shifted (#37)', () => {
   assert.equal(r2.ok, true);
   const cursor2 = run(['cursor', 'get'], dir2);
   assert.equal(cursor2.phase, 2.1);
-  assert.equal(cursor2.total, 5);
+  assert.equal(cursor2.total, 4); // the list's length: the inserted phase's line is added afterwards
   assert.ok(r2.warn);
 
   const dir3 = decimalCursorTree();

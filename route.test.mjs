@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rungFile, RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
-import { renderCursor } from '../cadence-core/bin/lib/planning-files.mjs';
+import { writeState } from '../cadence-core/bin/lib/project-state.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const ROUTE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'route.mjs');
@@ -1343,6 +1343,12 @@ function traceRoot(name, breakTrace) {
   return planning;
 }
 
+/** Put a cursor in the planning root's state file, where `cursorPhase` reads it. */
+function stateCursor(planning, cursor) {
+  const wrote = writeState(planning, { cycleOpen: true, cursor, phases: [], requirements: [] });
+  if (!wrote.ok) throw new Error(`stateCursor: ${wrote.reason} ${wrote.detail}`);
+}
+
 /** The raw stdout bytes, for the comparison that has to be byte-for-byte. */
 function resolveRaw(file, extra = []) {
   const args = ['resolve', '--role', 'cad-executor', '--file', file, ...extra];
@@ -1425,10 +1431,7 @@ test('no phase and no cursor records nothing rather than an unjoinable line', ()
 
 test('the cursor supplies the phase when --phase is absent', () => {
   const planning = traceRoot('trace-cursor', false);
-  writeFileSync(join(planning, 'STATE.md'), renderCursor({
-    phase: 2, total: 5, name: 'Fixture', status: 'planned',
-    next: '/cad-execute 2', updated: '2026-01-01',
-  }));
+  stateCursor(planning, { phase: 2, status: 'planned', next: '/cad-execute 2', updated: '2026-01-01' });
   assert.equal(resolve('cad-executor', join(planning, 'config.json')).ok, true);
   assert.equal(traceLines(planning)[0].phase, 2);
 });
@@ -1442,10 +1445,7 @@ test('CER-01: a malformed --phase is REFUSED and routes nothing, reversing the w
   // the resolved bundle reveals as wrong. Refusing is the only disposition that
   // cannot silently route a phase off another phase's plans.
   const planning = traceRoot('trace-badphase', false);
-  writeFileSync(join(planning, 'STATE.md'), renderCursor({
-    phase: 2, total: 5, name: 'Fixture', status: 'planned',
-    next: '/cad-execute 2', updated: '2026-01-01',
-  }));
+  stateCursor(planning, { phase: 2, status: 'planned', next: '/cad-execute 2', updated: '2026-01-01' });
   const cfgPath = join(planning, 'config.json');
   for (const bad of [['--phase', '1.10.3'], ['--phase', 'abc'], ['--phase', ''], ['--phase']]) {
     const r = resolve('cad-executor', cfgPath, bad);

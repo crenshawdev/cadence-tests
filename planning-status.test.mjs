@@ -93,10 +93,10 @@ test('status: an interrupted close reports the closed state AND a phase-dir drif
 });
 
 test('status: a tagged close that never ran cursor set reports cursor drift on the stale total, while still agreeing', () => {
-  const dir = makeTree({
-    roadmap: [],
-    cursor: { phase: 5, total: 5, name: 'Old', status: 'phase complete', next: '/cad-milestone', updated: '2026-01-01' },
-  });
+  const dir = makeTree({ roadmap: [1, 2, 3, 4, 5].map((n) => ({ n, name: `P${n}` })) });
+  assert.equal(run(['cursor', 'set', '--phase', '5', '--status', 'phase complete', '--next', '/cad-milestone'], dir).ok, true);
+  // the close pruned the roadmap and never reached the cursor, so the state still holds the five phases
+  writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap: Fixture\n\n## Phases\n\n');
   const r = run(['status'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.cycle, 'none');

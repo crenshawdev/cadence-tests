@@ -10,9 +10,11 @@
 // a sibling that imports a fixture from here registers nothing twice.
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, accessSync, constants, mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, accessSync, constants, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeTree, run, stampState, today, isEntryFile } from './planning.test.mjs';
+import { readState } from '../cadence-core/bin/lib/project-state.mjs';
+import { renderStateMd } from '../cadence-core/bin/lib/state-views.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -33,25 +35,68 @@ test('cursor get: parses the canonical schema; missing file is no-cursor', () =>
   assert.equal(none.reason, 'no-cursor');
 });
 
-test('cursor get: malformed STATE.md degrades to unparseable-cursor', () => {
+test('cursor get: a STATE.md that is not a cursor changes nothing, since it is output and never read', () => {
   const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
   writeFileSync(join(dir, 'STATE.md'), '# State\n\nWorking on stuff, back soon\n');
   const r = run(['cursor', 'get'], dir);
   assert.equal(r.ok, false);
-  assert.equal(r.reason, 'unparseable-cursor');
+  assert.equal(r.reason, 'no-cursor');
   assert.equal(r._exit, 1);
 });
 
-test('cursor set: falls back to the existing cursor when ROADMAP is absent', () => {
-  const dir = makeTree({
-    cursor: { phase: 1, total: 3, name: 'Solo', status: 'planned', next: 'x', updated: '2026-01-01' },
-  });
-  // a project with a cursor and no roadmap is refused on its first seam call, so this one was stamped before it lost its roadmap
-  stampState(dir);
+test('cursor set then cursor get round-trips through the state file with STATE.md deleted in between', () => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
+  const set = run(['cursor', 'set', '--phase', '2', '--status', 'planned', '--next', '/cad-execute 2'], dir);
+  assert.equal(set.ok, true);
+  rmSync(join(dir, 'STATE.md'));
+  const got = run(['cursor', 'get'], dir);
+  assert.equal(got.ok, true);
+  const { ok: _ok, _exit, ...fields } = got;
+  assert.deepEqual(fields, set.cursor);
+  assert.equal(existsSync(join(dir, 'STATE.md')), false, 'cursor get never writes it back');
+});
+
+test('cursor set: STATE.md is the renderer\'s output for the state, and a hand edit changes neither cursor get nor status and is overwritten', () => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
+  const args = ['cursor', 'set', '--phase', '1', '--status', 'planned', '--next', '/cad-execute 1'];
+  const first = run(args, dir);
+  const state = readState(dir);
+  assert.equal(state.kind, 'valid');
+  assert.equal(readFileSync(join(dir, 'STATE.md'), 'utf8'), renderStateMd(state.state));
+
+  const getBefore = run(['cursor', 'get'], dir);
+  const statusBefore = run(['status'], dir);
+  writeFileSync(join(dir, 'STATE.md'),
+    '# State\n\nPhase: 2 of 2 (Two)\nStatus: executed\nNext: /cad-verify 2\nUpdated: 2020-01-01\n');
+  assert.deepEqual(run(['cursor', 'get'], dir), getBefore);
+  assert.deepEqual(run(['status'], dir), statusBefore);
+
+  const again = run(args, dir);
+  assert.equal(again.ok, true);
+  assert.deepEqual(again.cursor, first.cursor);
+  assert.equal(readFileSync(join(dir, 'STATE.md'), 'utf8'), renderStateMd(readState(dir).state));
+});
+
+test('cursor set on a closed roadmap writes the no-cycle STATE.md, and cursor get still answers phase, total and name', () => {
+  const dir = makeTree({ roadmap: [] });
+  const r = run(['cursor', 'set', '--phase', '1', '--status', 'ready to plan', '--next', '/cad-phase add'], dir);
+  assert.equal(r.ok, true);
+  const text = readFileSync(join(dir, 'STATE.md'), 'utf8');
+  assert.match(text, /^No cycle is open/m);
+  assert.doesNotMatch(text, /Phase: 1 of 0/);
+  assert.equal(readState(dir).state.cycleOpen, false);
+  const g = run(['cursor', 'get'], dir);
+  assert.deepEqual([g.phase, g.total, g.name], [1, 0, 'no active cycle']);
+});
+
+test('cursor set: falls back to the state\'s phase list when ROADMAP is absent', () => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Solo' }, { n: 2, name: 'Duo' }, { n: 3, name: 'Trio' }] });
+  assert.equal(run(['cursor', 'set', '--phase', '1', '--status', 'planned', '--next', 'x'], dir).ok, true);
+  rmSync(join(dir, 'ROADMAP.md'));
   const r = run(['cursor', 'set', '--phase', '1', '--status', 'executed', '--next', '/cad-verify 1'], dir);
   assert.equal(r.ok, true);
-  assert.equal(r.cursor.name, 'Solo');   // from the prior cursor (same phase)
-  assert.equal(r.cursor.total, 3);       // prior total carried forward
+  assert.equal(r.cursor.name, 'Solo');   // the state's own entry for the same phase
+  assert.equal(r.cursor.total, 3);       // the length of the state's list
   assert.equal(r.cursor.status, 'executed');
 });
 
@@ -109,7 +154,8 @@ test('cursor set: derives `of 0 (no active cycle)` from a pruned roadmap, with n
   assert.equal(r.cursor.total, 0);
   assert.equal(r.cursor.name, 'no active cycle');
   const text = readFileSync(join(dir, 'STATE.md'), 'utf8');
-  assert.match(text, /^Phase: 1 of 0 \(no active cycle\)$/m);
+  assert.match(text, /^No cycle is open/m);
+  assert.doesNotMatch(text, /^Phase: 1 of 0/m);
 });
 
 test('cursor set: the closed cursor it writes round-trips through cursor get, never unparseable-cursor', () => {
@@ -137,9 +183,11 @@ test('cursor set: the closed arm beats the prior cursor, so a stale total is not
 
 test('cursor set: --status paused preserves a non-zero prior total, so a pause cannot erase the interrupted-close evidence', () => {
   const dir = makeTree({
-    roadmap: [],
-    cursor: { phase: 3, total: 5, name: 'Billing', status: 'executed', next: '/cad-verify 3', updated: '2026-01-01' },
+    roadmap: [1, 2, 3, 4, 5].map((n) => ({ n, name: n === 3 ? 'Billing' : `P${n}` })),
   });
+  assert.equal(run(['cursor', 'set', '--phase', '3', '--status', 'executed', '--next', '/cad-verify 3'], dir).ok, true);
+  // the milestone was pruned from the roadmap and the close never reached the cursor
+  writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap: Fixture\n\n## Phases\n\n');
   const r = run(['cursor', 'set', '--phase', '3', '--status', 'paused',
     '--next', 'mid-close, resume at /cad-milestone'], dir);
   assert.equal(r.ok, true);

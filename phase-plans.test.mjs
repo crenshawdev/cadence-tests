@@ -11,17 +11,21 @@ import { join } from 'node:path';
 import {
   byPlanNumber, cursorPhase, declaredFilesIn, declaredPhaseFiles, declaredPlanFiles, phaseDirsIn,
 } from '../cadence-core/bin/lib/phase-plans.mjs';
-import { renderCursor } from '../cadence-core/bin/lib/planning-files.mjs';
+import { writeState } from '../cadence-core/bin/lib/project-state.mjs';
 
 /** A fresh planning root. `plans` is keyed `<phase>/<filename>`. */
-function planningRoot(plans = {}, stateText = null) {
+function planningRoot(plans = {}, cursor = null) {
   const root = mkdtempSync(join(tmpdir(), 'cad-phase-plans-'));
   for (const [rel, text] of Object.entries(plans)) {
     const file = join(root, 'phases', rel);
     mkdirSync(join(file, '..'), { recursive: true });
     writeFileSync(file, text);
   }
-  if (stateText !== null) writeFileSync(join(root, 'STATE.md'), stateText);
+  // the cursor lives in the state file; a hand-written STATE.md beside it is output and `cursorPhase` never opens it
+  if (cursor !== null) {
+    const wrote = writeState(root, { cycleOpen: true, cursor, phases: [], requirements: [] });
+    if (!wrote.ok) throw new Error(`planningRoot: ${wrote.reason} ${wrote.detail}`);
+  }
   return root;
 }
 
@@ -45,28 +49,32 @@ test('byPlanNumber keeps PLAN.md beside PLAN-1.md in one fixed order either way 
 // --- cursorPhase -------------------------------------------------------------
 
 test('cursorPhase returns the cursor phase', () => {
-  const root = planningRoot({}, renderCursor({
-    phase: 4, total: 6, name: 'The computed floor',
-    status: 'planned', next: '/cad-execute 4', updated: '2026-07-29',
-  }));
+  const root = planningRoot({}, { phase: 4, status: 'planned', next: '/cad-execute 4', updated: '2026-07-29' });
   assert.equal(cursorPhase(root), 4);
 });
 
 test('cursorPhase returns a decimal phase as a Number', () => {
-  const root = planningRoot({}, renderCursor({
-    phase: 2.1, total: 6, name: 'Inserted',
-    status: 'planned', next: '/cad-execute 2.1', updated: '2026-07-29',
-  }));
+  const root = planningRoot({}, { phase: 2.1, status: 'planned', next: '/cad-execute 2.1', updated: '2026-07-29' });
   assert.equal(cursorPhase(root), 2.1);
 });
 
-test('a missing STATE.md is null, silently - the ordinary pre-project state', () => {
+test('a missing state file is null, silently - the ordinary pre-project state', () => {
   assert.equal(cursorPhase(planningRoot({})), null);
   assert.equal(cursorPhase(join(tmpdir(), 'cad-no-such-root-67890')), null);
 });
 
-test('a garbled STATE.md is null, never a throw', () => {
-  assert.equal(cursorPhase(planningRoot({}, '# State\n\nnot a cursor at all\n')), null);
+test('a garbled state file is null, never a throw', () => {
+  const root = planningRoot({});
+  mkdirSync(join(root, 'records'), { recursive: true });
+  writeFileSync(join(root, 'records', 'state.json'), '{ not json');
+  assert.equal(cursorPhase(root), null);
+});
+
+test('a hand-written STATE.md is never read: the state file answers', () => {
+  const root = planningRoot({}, { phase: 4, status: 'planned', next: '/cad-execute 4', updated: '2026-07-29' });
+  writeFileSync(join(root, 'STATE.md'), 'Phase: 9 of 9 (Elsewhere)\nStatus: planned\nNext: x\nUpdated: 2026-07-29\n');
+  assert.equal(cursorPhase(root), 4);
+  assert.equal(cursorPhase(planningRoot({})), null);
 });
 
 // --- declaredPhaseFiles: the union face --------------------------------------

@@ -59,7 +59,8 @@ test('renumber insert: shifts dirs, tokens, traceability, and cursor', () => {
   assert.match(reqs, /REQ-1 \| Phase 1 \|/); // below the insertion point - untouched
   const cursor = run(['cursor', 'get'], dir);
   assert.equal(cursor.phase, 3); // was 2, shifted with its phase
-  assert.equal(cursor.total, 4);
+  // the total is the phase list's length and the new phase's line is added afterwards, so it has not grown yet
+  assert.equal(cursor.total, 3);
 });
 
 test('renumber remove: cuts line + detail, orphans reqs, shifts down, reports prose refs', () => {
@@ -89,7 +90,7 @@ test('renumber insert at total+1 appends: nothing shifts, only the slot opens', 
   assert.match(readFileSync(join(dir, 'ROADMAP.md'), 'utf8'), /- \[ \] \*\*Phase 3: Three\*\*/);
   const cursor = run(['cursor', 'get'], dir);
   assert.equal(cursor.phase, 2); // below the insertion point - untouched
-  assert.equal(cursor.total, 4); // but the denominator grew
+  assert.equal(cursor.total, 3); // the denominator is the phase list's length, which grows when the new line is added
 });
 
 // --- renumber vs CONTEXT acceptance-criteria ids: a NON-event ----------------
@@ -1140,7 +1141,7 @@ test('renumber: a present Plan: line stays byte-identical across insert and remo
   const insert = setup();
   assert.equal(run(['renumber', 'insert', '--at', '2'], insert).ok, true);
   const afterInsert = readFileSync(join(insert, 'STATE.md'), 'utf8');
-  assert.match(afterInsert, /^Phase: 3 of 4 \(Two\)\nPlan: 2 of 3 \(The cursor seams\)\nStatus:/m);
+  assert.match(afterInsert, /^Phase: 3 of 3 \(Two\)\nPlan: 2 of 3 \(The cursor seams\)\nStatus:/m);
   assert.ok(afterInsert.split('\n').includes(planLine));
 
   const remove = setup();

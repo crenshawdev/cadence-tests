@@ -116,7 +116,8 @@ const REASON_TOKENS = Object.freeze([
   'the repository selector is not an owner/name a forge serves',
   'this create was not confirmed: no repository is created without the user answering the question first',
   'uat-exists', 'uncommitted-work', 'undeclared-census-files', 'undeclared-files',
-  'unknown-item', 'unknown-key', 'unknown-phase', 'unknown-role', 'unparseable-cursor',
+  'unknown-item', 'unknown-key', 'unknown-phase', 'unknown-role',
+  // 'unparseable-cursor' left the list in phase 1 plan 7: `cursor get` reads the state file now and never parses STATE.md, so no state can produce it
   'unparseable-roadmap', 'unprovable-queue', 'unreadable-capture', 'unreadable-carried-copy', 'unreadable-changelog',
   'unreadable-git-state', 'unreadable-manifest', 'unreadable-requirements', 'unreadable-ruling',
   'unreadable-sibling-manifest', 'unrepresentable-paths', 'unresolved', 'unresolved-range',

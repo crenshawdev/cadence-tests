@@ -180,6 +180,29 @@ test('two interleaved updates of different facts both land', async () => {
   assert.equal(got.requirements[0].status, 'Pending');
 });
 
+test('afterWrite runs once the state is down and gets it as written; its throw is a failure that says the state landed', () => {
+  const root = tmp();
+  writeState(root, sample());
+  let seen = null;
+  const ok = updateState(root, (s) => { s.phases[0].status = 'executed'; return s; }, (s) => {
+    seen = { onDisk: readState(root).state.phases[0].status, given: s.phases[0].status };
+  });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(seen, { onDisk: 'executed', given: 'executed' });
+
+  const bad = updateState(root, (s) => { s.phases[0].status = 'complete'; return s; }, () => { throw new Error('view write failed'); });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.reason, 'write-failed');
+  assert.equal(bad.stateWritten, true);
+  assert.equal(readState(root).state.phases[0].status, 'complete');
+
+  // a change the shape refuses never reaches the hook
+  let ran = false;
+  const refused = updateState(root, (s) => ({ ...s, cycleOpen: 'yes' }), () => { ran = true; });
+  assert.equal(refused.reason, 'bad-shape');
+  assert.equal(ran, false);
+});
+
 test('a file at .planning/state.json is never opened or changed', () => {
   const root = tmp();
   const rust = '{"version":1,"generation":4,"state":"leftover"}';
