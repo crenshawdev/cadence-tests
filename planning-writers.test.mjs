@@ -34,6 +34,13 @@ test('a namespace import, a renamed binding and the promises API are all calls',
   assert.equal(fsWriteCalls("import { writeFile } from 'node:fs/promises';\nawait writeFile('a', 'b');\n").length, 1);
 });
 
+test('a disposable temp directory and a write-stream constructor are calls', () => {
+  assert.equal(fsWriteCalls("import { mkdtempDisposableSync } from 'node:fs';\nmkdtempDisposableSync(p);\n").length, 1);
+  assert.equal(fsWriteCalls("import fs from 'node:fs';\nfs.promises.mkdtempDisposable(p);\n").length, 1);
+  assert.equal(fsWriteCalls("import { WriteStream } from 'node:fs';\nnew WriteStream(p);\n").length, 1);
+  assert.equal(fsWriteCalls("import * as fs from 'node:fs';\nnew fs.WriteStream(p);\n").length, 1);
+});
+
 test('a re-export of a write function is flagged, a read function is not', () => {
   assert.equal(fsWriteCalls("export { rmSync } from 'node:fs';\n").length, 1);
   assert.equal(fsWriteCalls("export * from 'node:fs';\n").length, 1);
