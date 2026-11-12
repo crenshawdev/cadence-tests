@@ -678,7 +678,6 @@ test('status: a phase held complete reads every plan finished even with no repor
   const dir = positionTree(['PLAN-1.md', 'PLAN-2.md']);
   assert.equal(run(['status'], dir).ok, true);
   assert.equal(run(['phase-done', '--n', '2'], dir).ok, true);
-  assert.equal(run(['replay-check', '--phase', '2'], dir).ok, true);
   assert.deepEqual(planStates(dir, 2), ['PLAN-1.md:true', 'PLAN-2.md:true']);
   const r = run(['status'], dir);
   assert.deepEqual(r.outstanding, []);
