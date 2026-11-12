@@ -88,7 +88,7 @@ test('a state file that does not parse is refused naming the file and the reason
   assert.equal(r.reason, 'invalid-state');
   assert.ok(r.detail.includes(statePath(dir)));
   assert.match(r.detail, /not-json/);
-  assert.match(r.hint, /\/cad-progress/);
+  assert.match(r.hint, /`planning\.mjs state-rebuild`/);
   assert.equal(readFileSync(statePath(dir), 'utf8'), '{torn');
   assert.deepEqual(snapshot(dir), before);
 });
@@ -477,4 +477,66 @@ test('the converting call says a commit is due, or not, and no other call carrie
 
   // not due outside a repository
   assert.equal(run(['status'], v40()).migration.commit_due, false);
+});
+
+// --- rebuilding a state file that does not parse -----------------------------
+
+/** A converted v4.0 project whose state file was cut off half way. */
+function truncated() {
+  const dir = v40();
+  assert.equal(run(['status'], dir).ok, true);
+  const text = readFileSync(statePath(dir), 'utf8');
+  writeFileSync(statePath(dir), text.slice(0, Math.floor(text.length / 2)));
+  return dir;
+}
+
+test('a truncated state file makes every other seam refuse naming state-rebuild, and leaves the file as it was', () => {
+  const dir = truncated();
+  const torn = readFileSync(statePath(dir), 'utf8');
+  for (const args of [['status'], ['cursor', 'get'], ['audit'], ['criteria-coverage'], ['deferred', 'list'], ['trace', 'render', '--phase', '1']]) {
+    const r = run(args, dir);
+    assert.deepEqual([r.ok, r.reason], [false, 'invalid-state'], args.join(' '));
+    assert.match(r.hint, /`planning\.mjs state-rebuild`/, args.join(' '));
+  }
+  assert.equal(readFileSync(statePath(dir), 'utf8'), torn);
+});
+
+test('state-rebuild restores a state equal to a fresh import, moves no file, and status then answers ok:true', () => {
+  const dir = truncated();
+  const paths = Object.keys(deep(dir)).sort();
+  const r = run(['state-rebuild'], dir);
+  assert.equal(r.ok, true);
+  assert.deepEqual([r.rebuilt, r.was, r.layout], [true, 'not-json', STATE_LAYOUT]);
+  const got = readState(dir);
+  assert.equal(got.kind, 'valid');
+  assert.deepEqual(got.state, importState(dir).state);
+  assert.equal(JSON.parse(readFileSync(statePath(dir), 'utf8'))[STAMP_KEY], STATE_LAYOUT);
+  assert.deepEqual(Object.keys(deep(dir)).sort(), paths);
+  assert.equal(run(['status'], dir).ok, true);
+  // a valid state is never rebuilt over
+  const bytes = readFileSync(statePath(dir), 'utf8');
+  assert.equal(run(['state-rebuild'], dir).rebuilt, false);
+  assert.equal(readFileSync(statePath(dir), 'utf8'), bytes);
+});
+
+test('state-rebuild on a project the importer refuses answers that refusal and leaves the damaged file byte-identical', () => {
+  const dir = truncated();
+  writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap\n\n## Phases\n\n- Phase 1: Ship auth\n');
+  const before = deep(dir);
+  const r = run(['state-rebuild'], dir);
+  assert.deepEqual([r.ok, r.reason], [false, 'unparseable-roadmap']);
+  assert.ok(r.hint);
+  assert.deepEqual(deep(dir), before);
+});
+
+test('state-rebuild refuses a state file of a newer layout and leaves it alone', () => {
+  const dir = v40();
+  mkdirSync(join(dir, 'records'));
+  const newer = JSON.stringify({ [STAMP_KEY]: STATE_LAYOUT + 1 });
+  writeFileSync(statePath(dir), newer);
+  const r = run(['state-rebuild'], dir);
+  assert.deepEqual([r.ok, r.reason], [false, 'invalid-state']);
+  assert.match(r.detail, /newer-layout/);
+  assert.match(r.hint, /update the plugin/);
+  assert.equal(readFileSync(statePath(dir), 'utf8'), newer);
 });

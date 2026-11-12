@@ -164,6 +164,7 @@ test('subcommandKey: the words a script was invoked with, resolved to its table 
     [['risk-check', 'run'], 'risk-check run', 'a hyphenated first word is still one word'],
     [['renumber', 'insert'], 'renumber insert', 'the same'],
     [['status'], 'status', 'a one-word subcommand takes no second word'],
+    [['state-rebuild'], 'state-rebuild', 'the rebuild of a state file that does not parse is one hyphenated word'],
     [['recall', 'some', 'query'], 'recall', "recall's trailing words are its QUERY, not a sub-subcommand"],
     [['status', '--dir'], 'status', 'a flag after a one-word subcommand is a flag, not a key'],
     [[], '', 'no words at all is the bare form'],
@@ -221,6 +222,15 @@ test('evaluateRow: the first refusal, over the flags actually present', () => {
   // subcommand still falls through to the caller's own usage refusal.
   assert.equal(row(['bogus', '--name'], 'bogus').ok, true);
   assert.equal(row(['bogus', '--dir'], 'bogus').detail, '--dir');
+});
+
+test('state-rebuild: no flags of its own, and the global --dir rail still applies to it', () => {
+  const table = CONTRACTS['planning.mjs'];
+  assert.deepEqual(table['state-rebuild'], {});
+  assert.deepEqual(evaluateRow(['state-rebuild', '--dir', '/p/.planning'], table, 'state-rebuild'),
+    { ok: true, detail: '', values: { '--dir': '/p/.planning' }, warned: [] });
+  assert.deepEqual([evaluateRow(['state-rebuild', '--dir'], table, 'state-rebuild').ok,
+    evaluateRow(['state-rebuild', '--dir'], table, 'state-rebuild').detail], [false, '--dir']);
 });
 
 // --- the conditional PRESENCE rule: a value that obliges another flag --------
