@@ -15,7 +15,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, exist
 import { tmpdir } from 'node:os';
 import { join, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PLANNING, run, isEntryFile } from './planning.test.mjs';
+import { PLANNING, run, isEntryFile, stampState } from './planning.test.mjs';
 import {
   READS_CLAIM_FILE, READS_EVICT_TEMP_FILE, READS_FILE, READS_ROTATE_TEMP_FILE, MAX_READS_BYTES,
   ROTATED_READS_FILE, appendRead, readsPath, rotateReads, rotatedReadsPath,
@@ -316,7 +316,9 @@ test('records folder: git status shows no log after an append and a forced rotat
   const root = ignoreRoot();
   const planning = join(root, '.planning');
   writeFileSync(join(planning, 'STATE.md'), 'state\n');
-  execFileSync('git', ['add', '--', '.planning/STATE.md'], { cwd: root });
+  // stamped, or the appenders write nothing; the state file is committed, the ignore file it brought is left for the check
+  stampState(planning);
+  execFileSync('git', ['add', '--', '.planning/STATE.md', '.planning/records/state.json'], { cwd: root });
   execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd: root });
   assert.equal(appendEvent(planning, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' }).written, true);
   assert.equal(appendRead(planning, { ts: '2026-08-14T00:00:00.000Z', tool: 'Read', target: '/a' }).written, true);
