@@ -226,11 +226,11 @@ test('audit: the partially-planned state - a row for AUD-01, none for AUD-02, so
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'] } },
   });
-  verifyChecked(dir);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **AUD-01**: planned\n- **AUD-02**: not picked up\n\n' +
     '## Traceability\n\n| Requirement | Phase | Status |\n|---|---|---|\n' +
     '| AUD-01 | Phase 1 | Complete |\n');
+  verifyChecked(dir);
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   const byId = Object.fromEntries(r.requirements.map((q) => [q.id, q]));
@@ -247,12 +247,12 @@ test('audit: a ## Deferred id is excluded by SECTION PLACEMENT, and a Deferred-s
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'] } },
   });
-  verifyChecked(dir);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **AUD-01**: planned\n- **AUD-02**: deferred by status\n\n' +
     '## Traceability\n\n| Requirement | Phase | Status |\n|---|---|---|\n' +
     '| AUD-01 | Phase 1 | Complete |\n| AUD-02 | Phase 1 | Deferred |\n\n' +
     '## Deferred\n\n- **RCL-06**: never in Active, never audited\n');
+  verifyChecked(dir);
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.requirements.some((q) => q.id === 'RCL-06'), false);
@@ -325,12 +325,12 @@ test('audit: a v1.3.1-shaped ## Active table is reported in active_issues - and 
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['A'] } },
   });
-  verifyChecked(dir);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n| Requirement | Milestone |\n|---|---|\n' +
     '| TRI-01 (triage every open bug) | v1.3.1 |\n\n' +
     '## Traceability\n\n| Requirement | Phase | Status |\n|---|---|---|\n' +
     '| A | Phase 1 | Complete |\n');
+  verifyChecked(dir);
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.active_issues.length, 1);
@@ -354,12 +354,12 @@ test('audit: a prose bold bullet in ## Active is REPORTED, never a break - the p
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'] } },
   });
-  verifyChecked(dir);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **AUD-01**: the audit gate\n' +
     '- **Note**: scope frozen 2026-07-01\n\n' +
     '## Traceability\n\n| Requirement | Phase | Status |\n|---|---|---|\n' +
     '| AUD-01 | Phase 1 | Complete |\n');
+  verifyChecked(dir);
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.requirements.some((q) => q.break), false);
@@ -375,11 +375,11 @@ test('audit: a colon INSIDE the bold span reports, and is never normalized into 
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'] } },
   });
-  verifyChecked(dir);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **AUD-01:** the colon belongs outside the span\n\n' +
     '## Traceability\n\n| Requirement | Phase | Status |\n|---|---|---|\n' +
     '| AUD-01 | Phase 1 | Complete |\n');
+  verifyChecked(dir);
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.requirements.some((q) => q.break), false);

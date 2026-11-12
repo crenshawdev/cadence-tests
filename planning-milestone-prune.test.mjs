@@ -10,7 +10,7 @@
 // a sibling that imports a fixture from here registers nothing twice.
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { makeTree, run, isEntryFile, verifyChecked } from './planning.test.mjs';
 import { archive } from './planning-recall.test.mjs';
@@ -95,4 +95,18 @@ test('milestone-prune: the pruned phases leave the state and the regenerated lis
   assert.deepEqual([state.phases, state.cycleOpen], [[], false]);
   assert.equal(readFileSync(join(closing, 'ROADMAP.md'), 'utf8').match(/^- \[.\] \*\*Phase/gm), null);
   assert.match(readFileSync(join(closing, 'STATE.md'), 'utf8'), /^No cycle is open/m);
+});
+
+test('milestone-prune: a close leaves ## Shipped holding the rows with their summaries and the state holding none of them', () => {
+  const dir = pruneTree();
+  writeFileSync(join(dir, 'REQUIREMENTS.md'),
+    '# Requirements\n\n## Active\n\n- **REQ-1**: it ships\n- **REQ-2**: it waits\n\n## Traceability\n\n'
+    + '| Requirement | Phase | Status |\n|---|---|---|\n| REQ-1 | Phase 1 | Complete |\n| REQ-2 | Phase 2 | Pending |\n\nNotes under the table.\n');
+  verifyChecked(dir);
+  assert.equal(run(['milestone-prune', '--label', 'v1', '--mode', 'delete'], dir).ok, true);
+  assert.deepEqual(readState(dir).state.requirements, [{ id: 'REQ-2', phase: 2, status: 'Pending' }]);
+  const text = readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8');
+  assert.match(text, /\| REQ-1 \(it ships\) \| 1 \| Complete \| v1 \|/);
+  assert.match(text, /\| REQ-2 \| Phase 2 \| Pending \|/);
+  assert.match(text, /Notes under the table\./);
 });

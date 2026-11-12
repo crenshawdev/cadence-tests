@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeTree, run, isEntryFile } from './planning.test.mjs';
+import { readState } from '../cadence-core/bin/lib/project-state.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -168,4 +169,41 @@ test('seed-reqs: a seeded row survives renumber insert, reading Phase 2', () => 
   assert.equal(run(['renumber', 'insert', '--at', '1'], dir).ok, true);
   const after = readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8');
   assert.match(after, /\| X \| Phase 2 \| Pending \|/);
+});
+
+// --- the table is output the state renders ------------------------------------------------------------
+
+test('seed-reqs: the rows land in the state, the table agrees, a hand edit changes nothing reported and the next write undoes it', () => {
+  const dir = seedTree({
+    roadmap: [{ n: 1, name: 'One' }],
+    phases: { 1: { plan: true, planReqs: ['X', 'Y'] } },
+    active: ['X', 'Y'],
+  });
+  assert.deepEqual(run(['seed-reqs', '--phase', '1'], dir).seeded, ['X', 'Y']);
+  assert.deepEqual(readState(dir).state.requirements, [
+    { id: 'X', phase: 1, status: 'Pending' }, { id: 'Y', phase: 1, status: 'Pending' }]);
+  const file = join(dir, 'REQUIREMENTS.md');
+  const generated = readFileSync(file, 'utf8');
+  assert.match(generated, /\n\nEmpty note\.\n$/, 'the prose under the table survives regeneration');
+
+  const statusBefore = run(['status'], dir);
+  const auditBefore = run(['audit'], dir);
+  writeFileSync(file, generated.replace('| X | Phase 1 | Pending |', '| X | Phase 1 | Complete |')
+    .replace('| Y | Phase 1 | Pending |\n', ''));
+  assert.deepEqual(run(['status'], dir), statusBefore);
+  assert.deepEqual(run(['audit'], dir), auditBefore);
+
+  const again = run(['seed-reqs', '--phase', '1'], dir);
+  assert.deepEqual([again.seeded, again.skipped], [[], ['X', 'Y']]);
+  assert.equal(readFileSync(file, 'utf8'), generated, 'the next state-writing seam puts the generated rows back');
+});
+
+test('seed-reqs: a missing traceability table is still refused and nothing is written', () => {
+  const dir = seedTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true, planReqs: ['X'] } }, active: ['X'] });
+  assert.equal(run(['status'], dir).ok, true);
+  writeFileSync(join(dir, 'REQUIREMENTS.md'), '# Requirements\n\n## Active\n\n- **X**: desc\n');
+  const before = readState(dir).state;
+  const r = run(['seed-reqs', '--phase', '1'], dir);
+  assert.equal(r.reason, 'no-traceability-table');
+  assert.deepEqual(readState(dir).state, before);
 });

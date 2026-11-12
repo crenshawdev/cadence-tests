@@ -233,6 +233,27 @@ test('phase-done: hand edits to the list change nothing, and the next close puts
   assert.equal(after, generated.replace('- [ ] **Phase 2: Two**', '- [x] **Phase 2: Two**'));
 });
 
+test('phase-done and its undo set the state\'s rows, Deferred ones apart, and the table agrees; a hand-set row is put back', () => {
+  const dir = makeTree({
+    roadmap: [{ n: 1, name: 'One' }],
+    reqs: [['REQ-1', 1, 'Pending'], ['REQ-2', 1, 'Deferred'], ['REQ-3', 1, 'Pending']],
+  });
+  const rows = () => Object.fromEntries(readState(dir).state.requirements.map((r) => [r.id, r.status]));
+  assert.deepEqual(run(['phase-done', '--n', '1', '--reqs', 'REQ-1'], dir).reqs, ['REQ-1']);
+  assert.deepEqual(rows(), { 'REQ-1': 'Complete', 'REQ-2': 'Deferred', 'REQ-3': 'Pending' });
+  const file = join(dir, 'REQUIREMENTS.md');
+  assert.match(readFileSync(file, 'utf8'), /REQ-1 \| Phase 1 \| Complete/);
+
+  const statusBefore = run(['status'], dir);
+  writeFileSync(file, readFileSync(file, 'utf8').replace('REQ-3 | Phase 1 | Pending', 'REQ-3 | Phase 1 | Complete'));
+  assert.deepEqual(run(['status'], dir), statusBefore, 'a hand-set row is not read');
+  assert.deepEqual(run(['phase-done', '--n', '1'], dir).reqs, ['REQ-1', 'REQ-3']);
+  assert.deepEqual(rows(), { 'REQ-1': 'Complete', 'REQ-2': 'Deferred', 'REQ-3': 'Complete' });
+  assert.deepEqual(run(['phase-done', '--n', '1', '--undo'], dir).reqs, ['REQ-1', 'REQ-3']);
+  assert.deepEqual(rows(), { 'REQ-1': 'Pending', 'REQ-2': 'Deferred', 'REQ-3': 'Pending' });
+  assert.match(readFileSync(file, 'utf8'), /REQ-3 \| Phase 1 \| Pending/);
+});
+
 test('phase-done: a roadmap with no ## Phases heading is refused and nothing is written', () => {
   const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
   assert.equal(run(['status'], dir).ok, true);

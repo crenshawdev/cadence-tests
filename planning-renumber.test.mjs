@@ -104,6 +104,24 @@ test('renumber insert and remove keep the state, the list and the detail section
   assert.equal(rem.total, 2);
 });
 
+test('renumber shifts only Pending rows in the state, leaves Complete and Deferred as they were, and the table agrees', () => {
+  const dir = makeTree({
+    roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }, { n: 3, name: 'Three' }],
+    phases: { 1: { plan: true }, 2: { plan: true }, 3: { plan: true } },
+    reqs: [['REQ-1', 2, 'Pending'], ['REQ-2', 2, 'Complete'], ['REQ-3', 3, 'Deferred'], ['REQ-4', 3, 'Pending']],
+  });
+  const r = run(['renumber', 'insert', '--at', '2'], dir);
+  assert.equal(r.ok, true);
+  assert.deepEqual(readState(dir).state.requirements, [
+    { id: 'REQ-1', phase: 3, status: 'Pending' }, { id: 'REQ-2', phase: 2, status: 'Complete' },
+    { id: 'REQ-3', phase: 3, status: 'Deferred' }, { id: 'REQ-4', phase: 4, status: 'Pending' }]);
+  const table = readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8');
+  assert.match(table, /REQ-1 \| Phase 3 \| Pending/);
+  assert.match(table, /REQ-2 \| Phase 2 \| Complete/);
+  assert.deepEqual(r.req_row_changes.map((c) => c.line).length, 2);
+  assert.ok(r.req_row_changes.every((c) => c.after === table.split('\n')[c.line - 1]), 'after is the regenerated file\'s row');
+});
+
 test('renumber insert at total+1 appends: nothing shifts, only the slot opens', () => {
   const dir = renumberTree();
   const r = run(['renumber', 'insert', '--at', '4'], dir);
@@ -761,8 +779,9 @@ test('renumber insert: only Pending Traceability rows move, every other line is 
   assert.equal(r.ok, true);
   const after = readFileSync(reqFile, 'utf8').split('\n');
   assert.equal(after.length, before.length);
-  assert.equal(after[PND_03], '| PND-03 | Phase 4 (phases/4/) | Pending |');
-  assert.equal(after[PND_04], '| PND-04 | Phase 5 (phases/5/) | Pending |');
+  // a row the shift changes is the row the renderer writes, so the annotation after the phase is gone with it
+  assert.equal(after[PND_03], '| PND-03 | Phase 4 | Pending |');
+  assert.equal(after[PND_04], '| PND-04 | Phase 5 | Pending |');
   for (let i = 0; i < before.length; i++) {
     if (i === PND_03 || i === PND_04) continue;
     assert.equal(after[i], before[i], `line ${i + 1} changed: ${before[i]}`);
@@ -779,18 +798,18 @@ test('renumber insert: a CRLF REQUIREMENTS.md stays CRLF and only its Pending ro
   assert.doesNotMatch(text, /(^|[^\r])\n/, 'an LF lost its CR');
   const after = text.split('\n');
   assert.equal(after.length, before.length);
-  assert.equal(after[PND_03], '| PND-03 | Phase 4 (phases/4/) | Pending |\r');
-  assert.equal(after[PND_04], '| PND-04 | Phase 5 (phases/5/) | Pending |\r');
+  assert.equal(after[PND_03], '| PND-03 | Phase 4 | Pending |\r');
+  assert.equal(after[PND_04], '| PND-04 | Phase 5 | Pending |\r');
   for (let i = 0; i < before.length; i++) {
     if (i === PND_03 || i === PND_04) continue;
     assert.equal(after[i], before[i], `line ${i + 1} changed: ${before[i]}`);
   }
 });
 
-// The rows the gate shows, 1-indexed like in_text_refs, terminator dropped.
+// The rows the gate shows, 1-indexed like in_text_refs, terminator dropped; `after` is the row the regenerated file carries.
 const HISTORY_ROW_CHANGES = [
-  { line: 7, before: '| PND-03 | Phase 3 (phases/3/) | Pending |', after: '| PND-03 | Phase 4 (phases/4/) | Pending |' },
-  { line: 8, before: '| PND-04 | Phase 4 (phases/4/) | Pending |', after: '| PND-04 | Phase 5 (phases/5/) | Pending |' },
+  { line: 7, before: '| PND-03 | Phase 3 (phases/3/) | Pending |', after: '| PND-03 | Phase 4 | Pending |' },
+  { line: 8, before: '| PND-04 | Phase 4 (phases/4/) | Pending |', after: '| PND-04 | Phase 5 | Pending |' },
 ];
 
 test('renumber insert --dry-run: req_row_changes lists each REQUIREMENTS line the insert changes', () => {
@@ -940,7 +959,7 @@ function v2HistoryRenumberTree() {
 }
 
 const REMOVED_PND_03 = '| PND-03 |  | Pending |';
-const REMOVED_PND_04 = '| PND-04 | Phase 3 (phases/3/) | Pending |';
+const REMOVED_PND_04 = '| PND-04 | Phase 3 | Pending |';
 
 test('renumber remove: only Pending Traceability rows change, every other line is byte-identical (GH-301)', () => {
   const dir = v2HistoryRenumberTree();

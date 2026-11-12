@@ -550,7 +550,8 @@ test('a fenced `## ` inside ## Shipped does not cut the append scan short', () =
 
 // --- the seam ---------------------------------------------------------------
 
-function scaffold() {
+/** `stamp: false` leaves the state to the caller, for a test that rewrites a document the state is built from. */
+function scaffold({ stamp = true } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'cad-prune-'));
   const dir = join(root, '.planning');
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
@@ -561,7 +562,7 @@ function scaffold() {
   writeFileSync(join(dir, 'phases', '3', 'CONTEXT.md'), 'open');
   writeFileSync(join(dir, 'ROADMAP.md'), ROADMAP);
   writeFileSync(join(dir, 'REQUIREMENTS.md'), REQUIREMENTS);
-  verifyChecked(dir);
+  if (stamp) verifyChecked(dir);
   return dir;
 }
 
@@ -681,8 +682,9 @@ const TEMPLATE_PLUS_REAL = `${TEMPLATE_SHAPED}
 `;
 
 test('seam: a REQUIREMENTS.md whose sections are only fenced comes back byte-identical', () => {
-  const dir = scaffold();
+  const dir = scaffold({ stamp: false });
   writeFileSync(join(dir, 'REQUIREMENTS.md'), TEMPLATE_SHAPED);
+  verifyChecked(dir);
   const r = run(dir, ['--label', 'v1.2.0', '--mode', 'delete']);
   assert.equal(r.ok, true);
   assert.deepEqual(r.requirements.moved, [], 'no section outside a fence: nothing to move');
@@ -694,8 +696,9 @@ test('seam: a REQUIREMENTS.md whose sections are only fenced comes back byte-ide
 });
 
 test('seam: with real sections below the fence, the row lands under the REAL ## Shipped', () => {
-  const dir = scaffold();
+  const dir = scaffold({ stamp: false });
   writeFileSync(join(dir, 'REQUIREMENTS.md'), TEMPLATE_PLUS_REAL);
+  verifyChecked(dir);
   const r = run(dir, ['--label', 'v1.2.0', '--mode', 'delete']);
   assert.equal(r.ok, true);
   assert.deepEqual(r.requirements.moved, [{ id: 'STOR-01', phase: 1 }]);
