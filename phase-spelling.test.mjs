@@ -518,6 +518,9 @@ const CALLSITES = [
     why: 'wantPhase selects a directory under phases/ by exact name inside readQueue' },
   { file: 'lease-check.mjs', fn: 'cmdLeaseCheck', ordinal: 1, disposition: 'tree-aware',
     why: 'resolves the plan file under the phase directory and echoes phase: <value>' },
+  { file: 'phase-entry.mjs', fn: 'cmdPhaseEntry', ordinal: 1, disposition: 'unconditional',
+    why: 'a WRITE face: the phase number it adds or edits is the state\'s phase identity, so a lossy'
+      + ' spelling is refused whatever is on disk (D-07)' },
   { file: 'phase-done.mjs', fn: 'cmdPhaseDone', ordinal: 1, disposition: 'exempt',
     why: 'value only - it flips ROADMAP and STATE rows and opens no phase directory' },
   { file: 'plan-overlap.mjs', fn: 'cmdPlanOverlap', ordinal: 1, disposition: 'tree-aware',
@@ -528,6 +531,9 @@ const CALLSITES = [
     why: 'makes the directory under the phase directory fireHome resolves, by the caller\'s spelling' },
   { file: 'replay-check.mjs', fn: 'cmdReplayCheck', ordinal: 1, disposition: 'tree-aware',
     why: "reads each plan's reports/plan-<k>.md under the phase directory and echoes phase: <value>" },
+  { file: 'req-row.mjs', fn: 'cmdReqRow', ordinal: 1, disposition: 'unconditional',
+    why: 'a WRITE face: the traceability row it re-points carries the phase, so a lossy spelling is'
+      + ' refused whatever is on disk (D-07)' },
   { file: 'risk-carry.mjs', fn: 'cmdRiskCarry', ordinal: 1, disposition: 'tree-aware',
     why: 'copies the phase directory\'s risk_surface review and adjudication records out to'
       + ' risk-carry/<N>/ and echoes phase: <value> over them' },
@@ -609,11 +615,11 @@ test('census: every phase-guard call and direct phase-argument parse under plann
     'CALLSITES names a callsite the walk no longer finds - delete the row if the callsite is gone,'
     + ' or re-key it if its enclosing function was renamed.');
 
-  // CADENCE-CENSUS: phase-spelling-callsites | asserts: 28 phase-guard calls and direct phase-argument parses under cadence-core/bin/planning/, 15 of them tree-aware, 2 unconditional and 11 exempt
-  assert.equal(found.length, 28, `callsite count moved: ${found.length}`);
+  // CADENCE-CENSUS: phase-spelling-callsites | asserts: 30 phase-guard calls and direct phase-argument parses under cadence-core/bin/planning/, 15 of them tree-aware, 4 unconditional and 11 exempt
+  assert.equal(found.length, 30, `callsite count moved: ${found.length}`);
   const by = (d) => CALLSITES.filter((c) => c.disposition === d).length;
   assert.equal(by('tree-aware'), 15);
-  assert.equal(by('unconditional'), 2);
+  assert.equal(by('unconditional'), 4);
   assert.equal(by('exempt'), 11);
 });
 
