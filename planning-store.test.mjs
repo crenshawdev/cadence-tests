@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  appendFile, makeDir, movePath, copyFile, unlinkFile, removeTree,
+  appendFile, makeDir, movePath, copyFile, unlinkFile, removeTree, writeFile, writeFileNew, linkFile,
 } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const STORE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'lib', 'planning-store.mjs');
@@ -60,6 +60,26 @@ test('removeTree removes a directory with contents', () => {
   writeFileSync(join(d, 'inner', 'f'), 'x');
   removeTree(d);
   assert.ok(!existsSync(d));
+});
+
+test('writeFile overwrites, and writeFileNew refuses a file already there', () => {
+  const f = join(tmp(), 'w');
+  writeFile(f, 'one');
+  writeFile(f, 'two');
+  assert.equal(readFileSync(f, 'utf8'), 'two');
+  assert.throws(() => writeFileNew(f, 'three'), { code: 'EEXIST' });
+  assert.equal(readFileSync(f, 'utf8'), 'two');
+  const g = join(tmp(), 'g');
+  writeFileNew(g, 'fresh');
+  assert.equal(readFileSync(g, 'utf8'), 'fresh');
+});
+
+test('linkFile hard-links, and throws EEXIST when the path is taken', () => {
+  const root = tmp();
+  writeFileSync(join(root, 'live'), 'body');
+  linkFile(join(root, 'live'), join(root, 'sibling'));
+  assert.equal(readFileSync(join(root, 'sibling'), 'utf8'), 'body');
+  assert.throws(() => linkFile(join(root, 'live'), join(root, 'sibling')), { code: 'EEXIST' });
 });
 
 test('the module imports node: builtins and the one text-util leaf only', () => {
