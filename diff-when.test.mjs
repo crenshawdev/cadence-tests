@@ -69,7 +69,7 @@ test('execute_sequential skips the per-plan fire under phase_end and fires once 
   assert.match(body, /\{base_ref: PHASE_BASE, head_ref: HEAD\}/);
   // finding 1: the base is the phase's OLDEST phase_start anchor, so an earlier run's plans are inside the range
   assert.match(body, /PHASE_BASE is the phase's OLDEST `phase_start` anchor/);
-  assert.match(body, /the `sha` on the first line of `grep '"event":"phase_start"' \.planning\/trace\.jsonl` that carries `"phase":"<N>"`, and PHASE_START when there is none/);
+  assert.match(body, /the `sha` on the first line of `grep '"event":"phase_start"' \.planning\/records\/trace\.jsonl` that carries `"phase":"<N>"`, and PHASE_START when there is none/);
   // finding 2: the fix has its own worker key and discriminator, so a plan's record, receipts and re-arm count are untouched
   assert.match(body, /under worker key `phase`, never a plan's/);
   assert.match(body, /\(`--plan phase`\)/);

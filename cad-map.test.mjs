@@ -57,7 +57,7 @@ test('a current map starts nothing and asks nothing', () => {
 });
 
 test('it names oversized and the line that re-cuts, and says the first build\'s cost is not measured', () => {
-  assert.match(MAP, /Name each module in `oversized`[^.]*`rm \.planning\/codemap\/index\.json`/);
+  assert.match(MAP, /Name each module in `oversized`[^.]*`rm \.planning\/records\/codemap\/index\.json`/);
   assert.match(MAP, /first build's token cost isn't measured/);
 });
 
