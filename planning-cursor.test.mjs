@@ -352,12 +352,12 @@ test('usage: unknown subcommand degrades, never crashes', () => {
 function planTree({ files, complete = [], heads = {} }) {
   const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Auth' }] });
   const pdir = join(dir, 'phases', '2');
-  mkdirSync(join(pdir, 'reports'), { recursive: true });
+  mkdirSync(join(pdir, 'records', 'reports'), { recursive: true });
   for (const f of files) {
     const k = Number(/PLAN-(\d+)\.md/.exec(f)?.[1] ?? 1);
     writeFileSync(join(pdir, f), `${heads[f] ?? `# Phase 2: Auth - Plan ${k}: Name ${k}`}\n\n## Tasks\n`);
   }
-  for (const k of complete) writeFileSync(join(pdir, 'reports', `plan-${k}.md`), 'PLAN COMPLETE\nPlan: x\n');
+  for (const k of complete) writeFileSync(join(pdir, 'records', 'reports', `plan-${k}.md`), 'PLAN COMPLETE\nPlan: x\n');
   return dir;
 }
 const SET = ['cursor', 'set', '--phase', '2', '--status', 'planned', '--next', '/cad-execute 2'];
@@ -373,7 +373,7 @@ test('cursor set: the Plan: line names the lowest plan not complete, after Phase
   assert.equal(lines[3], 'Plan: 1 of 3 (Name 1)');
   assert.deepEqual(run(['cursor', 'get'], dir).plan, r.cursor.plan);
 
-  writeFileSync(join(dir, 'phases', '2', 'reports', 'plan-1.md'), 'PLAN COMPLETE\n');
+  writeFileSync(join(dir, 'phases', '2', 'records', 'reports', 'plan-1.md'), 'PLAN COMPLETE\n');
   const r2 = run(SET, dir);
   assert.deepEqual(r2.cursor.plan, { k: 2, j: 3, name: 'Name 2' });
   assert.equal(stateLines(dir)[3], 'Plan: 2 of 3 (Name 2)');
@@ -415,6 +415,6 @@ test('cursor set: K is the numeric minimum, not the first of the lexical sort', 
 test('cursor set: a bare PLAN.md is plan 1 beside PLAN-2.md', () => {
   const dir = planTree({ files: ['PLAN.md', 'PLAN-2.md'] });
   assert.deepEqual(run(SET, dir).cursor.plan, { k: 1, j: 2, name: 'Name 1' });
-  writeFileSync(join(dir, 'phases', '2', 'reports', 'plan-1.md'), 'PLAN COMPLETE\n');
+  writeFileSync(join(dir, 'phases', '2', 'records', 'reports', 'plan-1.md'), 'PLAN COMPLETE\n');
   assert.deepEqual(run(SET, dir).cursor.plan, { k: 2, j: 2, name: 'Name 2' });
 });

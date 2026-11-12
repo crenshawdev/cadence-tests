@@ -98,13 +98,21 @@ test('lease-check: an undeclared staged path is refused and NAMED', () => {
 
 test('lease-check: the plan\'s OWN report file is the one exemption', () => {
   const { repo, dir } = leaseRepo({ files: ['a.txt'] });
-  stage(repo, '.planning/phases/1/reports/plan-1.md');
+  stage(repo, '.planning/phases/1/records/reports/plan-1.md');
   assert.equal(leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']).ok, true);
   // ...and nothing else under reports/ is: another plan's report is undeclared.
-  stage(repo, '.planning/phases/1/reports/plan-2.md');
+  stage(repo, '.planning/phases/1/records/reports/plan-2.md');
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
   assert.equal(r.ok, false);
-  assert.deepEqual(r.undeclared, ['.planning/phases/1/reports/plan-2.md']);
+  assert.deepEqual(r.undeclared, ['.planning/phases/1/records/reports/plan-2.md']);
+});
+
+test('lease-check: a report at the old reports/ path is no longer exempt', () => {
+  const { repo, dir } = leaseRepo({ files: ['a.txt'] });
+  stage(repo, '.planning/phases/1/reports/plan-1.md');
+  const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.undeclared, ['.planning/phases/1/reports/plan-1.md']);
 });
 
 test('lease-check: the ROTATED report is exempt too, beside the canonical one', () => {
@@ -115,8 +123,8 @@ test('lease-check: the ROTATED report is exempt too, beside the canonical one', 
   // own contract - the one place SUMMARY.md named the two halves as able to
   // collide.
   const { repo, dir } = leaseRepo({ files: ['a.txt'] });
-  stage(repo, '.planning/phases/1/reports/plan-1.md');
-  stage(repo, '.planning/phases/1/reports/plan-1.1.md');
+  stage(repo, '.planning/phases/1/records/reports/plan-1.md');
+  stage(repo, '.planning/phases/1/records/reports/plan-1.1.md');
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r._exit, 0);
@@ -127,7 +135,7 @@ test('lease-check: the ROTATED report is exempt too, beside the canonical one', 
 
   // A two-digit suffix is the same name shape; the picker mints one once nine
   // are taken.
-  stage(repo, '.planning/phases/1/reports/plan-1.12.md');
+  stage(repo, '.planning/phases/1/records/reports/plan-1.12.md');
   assert.equal(leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']).ok, true);
 });
 
@@ -137,17 +145,17 @@ test('lease-check: the widened exemption is still THIS plan\'s, not the director
   // diffs live in this same directory and a `risk_surface` checkpoint
   // deliberately leaves them staged, so a directory lease would let a blocking
   // gate's own flagged evidence ride into a task commit. `PLAN-1.1.MD` is a
-  // name no executor produces (D-08), and a nested `reports/old/plan-1.1.md` is
+  // name no executor produces (D-08), and a nested `records/reports/old/plan-1.1.md` is
   // not directly in the directory the exemption names.
   for (const name of ['plan-2.md', 'plan-11.md', 'plan-1-risk.diff',
     'plan-1-risk-task-2.diff', 'PLAN-1.1.MD', 'old/plan-1.1.md']) {
     const { repo, dir } = leaseRepo({ files: ['a.txt'] });
-    stage(repo, '.planning/phases/1/reports/plan-1.md');
-    stage(repo, `.planning/phases/1/reports/${name}`);
+    stage(repo, '.planning/phases/1/records/reports/plan-1.md');
+    stage(repo, `.planning/phases/1/records/reports/${name}`);
     const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
     assert.equal(r.ok, false, `${name} was exempted: ${JSON.stringify(r)}`);
     assert.equal(r.reason, 'undeclared-files');
-    assert.deepEqual(r.undeclared, [`.planning/phases/1/reports/${name}`]);
+    assert.deepEqual(r.undeclared, [`.planning/phases/1/records/reports/${name}`]);
     assert.equal(r._exit, 1);
   }
 });

@@ -460,9 +460,9 @@ test('status: distinct sub-phase numbers report no collision', () => {
 // dispatches on, off ONE definition (`readPlanReports`), and the third row
 // below is that one-definition claim made observable rather than asserted.
 
-/** Executor reports under `phases/<n>/reports/`, keyed by plan number. */
+/** Executor reports under `phases/<n>/records/reports/`, keyed by plan number. */
 function writeReports(dir, n, byPlan) {
-  const rdir = join(dir, 'phases', String(n), 'reports');
+  const rdir = join(dir, 'phases', String(n), 'records', 'reports');
   mkdirSync(rdir, { recursive: true });
   for (const [k, body] of Object.entries(byPlan)) {
     writeFileSync(join(rdir, `plan-${k}.md`), body);
@@ -484,6 +484,16 @@ test('status: an unexecuted gap plan beside a SUMMARY is executed AND outstandin
   // router, it does not mint a status or invert the row.
   assert.equal(r.phases[0].status, 'executed', JSON.stringify(r.phases));
   assert.deepEqual(r.outstanding, [{ phase: 1, plans: ['PLAN-2.md'] }], JSON.stringify(r.outstanding));
+});
+
+test('status: a PLAN COMPLETE report at the old reports/ path no longer counts', () => {
+  const dir = gapPlanTree();
+  const old = join(dir, 'phases', '1', 'reports');
+  mkdirSync(old, { recursive: true });
+  for (const k of [1, 2]) writeFileSync(join(old, `plan-${k}.md`), 'PLAN COMPLETE\nTasks: 1 of 1\n');
+  const r = run(['status'], dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.outstanding, [{ phase: 1, plans: ['PLAN.md', 'PLAN-2.md'] }], JSON.stringify(r.outstanding));
 });
 
 test('status: every plan reporting complete lists the phase nowhere, and the key is still there', () => {
@@ -546,14 +556,14 @@ function positionTree(files, complete = [], stateExtra = '') {
   const dir = makeTree({ roadmap: [{ n: 1, name: 'One', checked: true }, { n: 2, name: 'Auth' }],
     phases: { 1: { plan: true, summary: true, uat: [{ status: 'pass' }] } } });
   const pdir = join(dir, 'phases', '2');
-  mkdirSync(join(pdir, 'reports'), { recursive: true });
-  mkdirSync(join(dir, 'phases', '1', 'reports'), { recursive: true });
-  writeFileSync(join(dir, 'phases', '1', 'reports', 'plan-1.md'), 'PLAN COMPLETE\n');
+  mkdirSync(join(pdir, 'records', 'reports'), { recursive: true });
+  mkdirSync(join(dir, 'phases', '1', 'records', 'reports'), { recursive: true });
+  writeFileSync(join(dir, 'phases', '1', 'records', 'reports', 'plan-1.md'), 'PLAN COMPLETE\n');
   for (const f of files) {
     const k = Number(/PLAN-(\d+)\.md/.exec(f)?.[1] ?? 1);
     writeFileSync(join(pdir, f), `# Phase 2: Auth - Plan ${k}: Name ${k}\n`);
   }
-  for (const k of complete) writeFileSync(join(pdir, 'reports', `plan-${k}.md`), 'PLAN COMPLETE\n');
+  for (const k of complete) writeFileSync(join(pdir, 'records', 'reports', `plan-${k}.md`), 'PLAN COMPLETE\n');
   writeFileSync(join(dir, 'STATE.md'),
     `# State\n\nPhase: 2 of 2 (Auth)\n${stateExtra}Status: planned\nNext: /cad-execute 2\nUpdated: 2026-01-01\n`);
   return dir;
