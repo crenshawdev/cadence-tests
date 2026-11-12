@@ -54,7 +54,7 @@ function traceIgnore(root, extra = []) {
   const args = root === null ? ['trace', 'ignore', ...extra]
     : ['trace', 'ignore', '--root', root, ...extra];
   try {
-    return JSON.parse(execFileSync('node', [PLANNING, ...args], { encoding: 'utf8' }));
+    return JSON.parse(execFileSync('node', [PLANNING, ...args], { encoding: 'utf8', ...(root ? { cwd: root } : {}) }));
   } catch (e) {
     return JSON.parse(e.stdout);
   }
@@ -165,10 +165,11 @@ test('trace ignore: a project ignoring .planning/ wholesale is already correct',
   assert.equal(r.written, false);
   // ...and --check never writes, so the file is exactly what it was.
   assert.equal(readFileSync(join(root, '.gitignore'), 'utf8'), '.planning/\n');
-  // The write arm agrees: nothing to add, and no records folder made for it.
+  assert.equal(existsSync(recordsDir(join(root, '.planning'))), false);
+  // The write arm agrees: nothing to add. The only thing under records/ is the stamp every seam leaves behind.
   assert.equal(traceIgnore(root).written, false);
   assert.equal(readFileSync(join(root, '.gitignore'), 'utf8'), '.planning/\n');
-  assert.equal(existsSync(recordsDir(join(root, '.planning'))), false);
+  assert.deepEqual(readdirSync(recordsDir(join(root, '.planning'))).sort(), ['.gitignore', 'state.json']);
 });
 
 test('trace ignore: --check writes nothing, not even the folder', () => {

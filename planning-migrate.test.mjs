@@ -3,7 +3,8 @@
 // Driven through `node cadence-core/bin/planning.mjs status --dir <fixture>`, the way a user's seam call meets it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makeTree, run } from './planning.test.mjs';
@@ -137,4 +138,34 @@ test('no planning directory and an unknown subcommand create nothing', () => {
   const dir = v40();
   assert.equal(run(['no-such-subcommand'], dir).reason, 'usage');
   assert.equal(existsSync(join(dir, 'records')), false);
+});
+
+/** `trace ignore` the way the workflows call it: from the project root, no --dir. */
+function traceIgnoreFromRoot(root, extra = []) {
+  const bin = join(import.meta.dirname, '..', 'cadence-core', 'bin', 'planning.mjs');
+  try {
+    return JSON.parse(execFileSync('node', [bin, 'trace', 'ignore', '--root', '.', ...extra], { cwd: root, encoding: 'utf8' }));
+  } catch (e) { return JSON.parse(e.stdout); }
+}
+
+test('trace ignore answers what the project had before the stamp, then stamps it; --check writes nothing', () => {
+  for (const extra of [[], ['--check']]) {
+    const root = mkdtempSync(join(tmpdir(), 'cad-migrate-ignore-'));
+    mkdirSync(join(root, '.planning'));
+    const r = traceIgnoreFromRoot(root, extra);
+    assert.equal(r.ok, true);
+    assert.equal(r.ignored, false);
+    assert.equal(r.written, extra.length === 0);
+    assert.notEqual(r.reason, 'already-ignored');
+    if (extra.length === 0) assert.equal(readState(join(root, '.planning')).kind, 'valid');
+    else assert.deepEqual(readdirSync(join(root, '.planning')), []);
+  }
+});
+
+test('trace ignore on a symlinked records folder keeps its own refusal, not state-write-failed', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cad-migrate-ignore-'));
+  mkdirSync(join(root, '.planning'));
+  symlinkSync(mkdtempSync(join(tmpdir(), 'cad-migrate-elsewhere-')), join(root, '.planning', 'records'));
+  const r = traceIgnoreFromRoot(root);
+  assert.deepEqual([r.ok, r.reason], [false, 'symlinked-records']);
 });
