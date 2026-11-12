@@ -630,11 +630,11 @@ test('source: the renumber rm fallback\'s recursive delete is gated by the .git 
   const end = src.indexOf('for (const [f, t] of dirMoves)', start);
   assert.ok(end > start, 'the rm step is no longer followed by the dir-move loop');
   const step = src.slice(start, end);
-  assert.match(step, /rmSync\([\s\S]*?recursive: true/, 'the recursive fallback this row guards is gone');
-  // Guarded, and guarded BEFORE the delete - a probe after the rmSync would
+  assert.match(step, /removeTree\(/, 'the recursive fallback this row guards is gone');
+  // Guarded, and guarded BEFORE the delete - a probe after the removeTree would
   // pass a substring check while deleting exactly as it did.
   const probe = step.indexOf('gitDirAbove(');
-  const del = step.search(/rmSync\(/);
+  const del = step.search(/removeTree\(/);
   assert.ok(probe > 0 && probe < del,
     'the recursive delete runs without the .git probe deciding first');
   // The probe looks UP from the planning root, so it cannot see a repository
@@ -644,7 +644,7 @@ test('source: the renumber rm fallback\'s recursive delete is gated by the .git 
   const under = step.indexOf('gitDirUnder(');
   assert.ok(under > 0 && under < del,
     'the recursive delete runs without the nested-repository probe deciding first');
-  assert.doesNotMatch(step, /catch \{ rmSync/, 'the unguarded one-line fallback is back');
+  assert.doesNotMatch(step, /catch \{ removeTree/, 'the unguarded one-line fallback is back');
 });
 
 // --- decimal phases under renumber (the desync fix) ----------------------------
