@@ -1266,13 +1266,13 @@ test('D-04: the recount does NOT widen to deferred/<N>/, which keeps its stated 
   // may not be for. Asserted rather than assumed, so the half-reversal is a
   // choice on the record instead of an oversight nobody re-reads.
   const { repo, dir, base, headFull } = adjRepo();
-  mkdirSync(join(dir, 'deferred', '3'), { recursive: true });
+  mkdirSync(join(dir, 'records', 'deferred', '3'), { recursive: true });
   const payload = adjPayloadFile(repo, adjPayload());
   const rec = plRun(repo, dir, ['adjudication', '--phase', '3',
     '--trigger', 'risk_surface', '--discriminator', `cad-task-${headFull.slice(0, 7)}`,
     '--base', base, '--head', 'HEAD', '--payload', payload]);
   assert.equal(rec.ok, true, JSON.stringify(rec));
-  assert.equal(rec.record, `deferred/3/ADJUDICATION-risk_surface-cad-task-${headFull.slice(0, 7)}.json`);
+  assert.equal(rec.record, `records/deferred/3/ADJUDICATION-risk_surface-cad-task-${headFull.slice(0, 7)}.json`);
 
   const before = traceLines(dir).length;
   const r = plRun(repo, dir, ['trace', 'append', '--phase', '3',

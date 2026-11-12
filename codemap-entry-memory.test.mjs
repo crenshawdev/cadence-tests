@@ -33,7 +33,7 @@ function padded() {
   }
   git('add', '-A'); git('commit', '-q', '-m', 'base');
   assert.equal(cli(root, 4096, 'scan').modules, MODULES);
-  const map = join(root, '.planning', 'codemap');
+  const map = join(root, '.planning', 'records', 'codemap');
   const { modules } = JSON.parse(readFileSync(join(map, 'index.json'), 'utf8'));
   for (const m of modules) writeFileSync(join(map, m.entry), `{"built_from":{},"pad":[${PAD}{}]}`);
   return root;

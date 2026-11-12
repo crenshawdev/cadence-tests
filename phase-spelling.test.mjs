@@ -287,7 +287,7 @@ test('deferred carry: --phase 1.10 carries out of phases/1.10/ when no phases/1.
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.carried, 1, JSON.stringify(r));
   assert.equal(r.moved[0].from, 'phases/1.10/DEFERRED-diff-plan-1.json', JSON.stringify(r));
-  assert.equal(r.moved[0].to, 'deferred/1.10/DEFERRED-diff-plan-1.json', JSON.stringify(r));
+  assert.equal(r.moved[0].to, 'records/deferred/1.10/DEFERRED-diff-plan-1.json', JSON.stringify(r));
 });
 
 test('deferred carry: --phase 1.10 refuses against a tree holding phases/1.1/, moving nothing', () => {
@@ -299,7 +299,7 @@ test('deferred carry: --phase 1.10 refuses against a tree holding phases/1.1/, m
   // The refusal is ahead of every rename, which is the whole reason it sits
   // where it does: this face MOVES committed artifacts.
   assert.equal(existsSync(join(dir, 'phases', '1.10', 'DEFERRED-diff-plan-1.json')), true);
-  assert.equal(existsSync(join(dir, 'deferred')), false);
+  assert.equal(existsSync(join(dir, 'records', 'deferred')), false);
 });
 
 test('deferred carry: --phase 08 refuses against a tree holding phases/8/', () => {

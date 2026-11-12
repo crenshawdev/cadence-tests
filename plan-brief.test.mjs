@@ -484,7 +484,7 @@ test('brief reads: a path outside the repository is reported and its file is nev
 
 test('brief reads: an index that lost its symbols judges the path alone', () => {
   const { dir } = gitProject({ plans: readsOnly('src/a.mjs#nope, src/gone.mjs#x') });
-  const file = join(dir, 'codemap', 'index.json');
+  const file = join(dir, 'records', 'codemap', 'index.json');
   const index = JSON.parse(readFileSync(file, 'utf8'));
   index.symbols_shed = true;
   for (const row of index.rows) delete row.symbols;
@@ -579,10 +579,10 @@ const rowsOf = (text) => {
 const symbolsIn = (answer) => answer.rows.reduce((n, r) => n + (r.symbols ? r.symbols.length : 0), 0);
 /** The index's hashes become the entry's built_from, as `build()` does in codemap-slice.test.mjs. */
 function build(dir, path, entry = { summary: 'built' }) {
-  const index = JSON.parse(readFileSync(join(dir, 'codemap', 'index.json'), 'utf8'));
+  const index = JSON.parse(readFileSync(join(dir, 'records', 'codemap', 'index.json'), 'utf8'));
   const m = index.modules.find((x) => x.paths.includes(path));
   const built_from = Object.fromEntries(m.paths.map((p) => [p, index.rows.find((r) => r.path === p).hash]));
-  writeFileSync(join(dir, 'codemap', entryFile(m.name)), JSON.stringify({ built_from, ...entry }));
+  writeFileSync(join(dir, 'records', 'codemap', entryFile(m.name)), JSON.stringify({ built_from, ...entry }));
 }
 const filesPlan = (files, tasks) => planText({ files, tasks });
 const oneTask = (reads, pad) => `### Task 1: Rows\n\n${reads ? `- **Reads:** ${reads}\n` : ''}- **Action:** ${'x'.repeat(pad)}\n- **Verify:** v\n`;
