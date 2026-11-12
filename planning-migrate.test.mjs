@@ -4,10 +4,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { makeTree, run } from './planning.test.mjs';
+import { dirname, join } from 'node:path';
+import { PLANNING, makeTree, run, stampState } from './planning.test.mjs';
 import { importState } from '../cadence-core/bin/planning/state-import.mjs';
 import { readState, statePath, STAMP_KEY, STATE_LAYOUT } from '../cadence-core/bin/lib/project-state.mjs';
 
@@ -169,3 +170,76 @@ test('trace ignore on a symlinked records folder keeps its own refusal, not stat
   const r = traceIgnoreFromRoot(root);
   assert.deepEqual([r.ok, r.reason], [false, 'symlinked-records']);
 });
+
+// --- the conversion into the layout (Plan 8) ---------------------------------
+
+const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+
+/** Every path under `dir` (folders included) as path -> sha of the bytes, for the byte-identical checks. */
+function deep(dir, rel = '', out = {}) {
+  for (const e of readdirSync(join(dir, rel), { withFileTypes: true })) {
+    const p = join(rel, e.name);
+    if (e.isDirectory()) { out[p] = 'dir'; deep(dir, p, out); }
+    else out[p] = createHash('sha256').update(readFileSync(join(dir, p))).digest('hex');
+  }
+  return out;
+}
+
+/** planning.mjs from `cwd`, with --dir only when given: the way a session in a worktree calls it. */
+function runIn(cwd, args, dir) {
+  let stdout;
+  try {
+    stdout = execFileSync('node', [PLANNING, ...args, ...(dir ? ['--dir', dir] : [])], { cwd, encoding: 'utf8' });
+  } catch (e) { stdout = e.stdout; }
+  return JSON.parse(stdout);
+}
+
+/** Make the project's root a git repository that tracks everything in it. Returns the root. */
+function track(dir, extra = {}) {
+  const root = dirname(dir);
+  for (const [name, text] of Object.entries(extra)) writeFileSync(join(root, name), text);
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'config', 'user.email', 't@example.com');
+  git(root, 'config', 'user.name', 'T');
+  git(root, 'config', 'commit.gpgsign', 'false');
+  git(root, 'add', '-A', '.');
+  git(root, 'commit', '-q', '-m', 'init');
+  return root;
+}
+
+const put = (dir, rel, text = `bytes of ${rel}\n`) => {
+  mkdirSync(dirname(join(dir, rel)), { recursive: true });
+  writeFileSync(join(dir, rel), text);
+};
+
+// a refused conversion changes nothing, so the whole tree is compared, records/ included
+test('a held workflow claim and a live plan worktree each refuse the conversion, and releasing them lets it through', () => {
+  const dir = v40();
+  const root = track(dir);
+  const other = join(root, 'other', '.planning');
+  mkdirSync(other, { recursive: true });
+  stampState(other);
+  const taken = runIn(root, ['workflow-claim', 'take', '--fire', 'review-1'], other);
+  assert.equal(taken.launch, true);
+  const before = deep(dir);
+  const held = runIn(root, ['status'], dir);
+  assert.deepEqual([held.ok, held.reason], [false, 'workflow-claim-held']);
+  assert.match(held.detail, /review-1/);
+  assert.ok(held.hint);
+  assert.equal(existsSync(statePath(dir)), false);
+  assert.deepEqual(deep(dir), before);
+  runIn(root, ['workflow-claim', 'release', '--fire', 'review-1', '--id', taken.id], other);
+
+  const wt = join(root, '..', `${root.split('/').pop()}-wt`);
+  git(root, 'worktree', 'add', '-q', '-b', 'cadence/phase-1-plan-2', wt);
+  const live = runIn(root, ['status'], dir);
+  assert.deepEqual([live.ok, live.reason], [false, 'plan-worktree-live']);
+  assert.match(live.detail, /cadence\/phase-1-plan-2/);
+  assert.ok(live.detail.includes(wt));
+  assert.equal(existsSync(statePath(dir)), false);
+  assert.deepEqual(deep(dir), before);
+  git(root, 'worktree', 'remove', '--force', wt);
+  assert.equal(runIn(root, ['status'], dir).ok, true);
+  assert.equal(readState(dir).kind, 'valid');
+});
+

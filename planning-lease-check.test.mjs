@@ -14,7 +14,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, renameSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { PLANNING, ensureRoadmap, seamSource, run, isEntryFile } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap, seamSource, run, isEntryFile, stampState } from './planning.test.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
@@ -601,6 +601,8 @@ function planTimeTree(files, body = '', how) {
   const pdir = join(dir, 'phases', '1');
   mkdirSync(pdir, { recursive: true });
   ensureRoadmap(dir);
+  // stamped, or the first call would convert the project: that call spawns git and its answer carries the conversion's field
+  stampState(dir);
   writePlanTimePlan(pdir, files, body, how);
   if (how && how.cadence) writeCadenceManifest(cwd);
   return { cwd, dir, pdir };
