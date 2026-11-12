@@ -9,6 +9,10 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { mkdirSync as plantMkdir, writeFileSync as plantWrite } from 'node:fs';
+import { dirname as plantDirname } from 'node:path';
+const plantFile = (file, data) => { plantMkdir(plantDirname(file), { recursive: true }); plantWrite(file, data); };
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const SEAM = join(HERE, 'why.mjs');
@@ -224,7 +228,7 @@ function repoWithArchivedPhase() {
 
   git('rm', '-q', '-r', join('.planning', 'phases', '1'));
   phase('_archive-v9.0.0');
-  writeFileSync(join(dir, '.planning', 'ARCHIVE.md'),
+  plantFile(join(recordsDir(join(dir, '.planning')), 'ARCHIVE.md'),
     ['# Archive', '', '## v9.0.0', '', '- `phases/1/SUMMARY.md`: archived', ''].join('\n'));
   git('add', '-A');
   at('chore: prune v9.0.0 completed phases', '2026-01-03T00:00:00-05:00');
@@ -597,7 +601,7 @@ function repoWithNoRecord(opts = {}) {
     at('feat: the phase', '2026-01-02T00:00:00-05:00');
     git('rm', '-q', '-r', join('.planning', 'phases', '1'));
     mkdirSync(join(dir, '.planning'), { recursive: true });
-    writeFileSync(join(dir, '.planning', 'ARCHIVE.md'), [
+    plantFile(join(recordsDir(join(dir, '.planning')), 'ARCHIVE.md'), [
       '# Archive', '', `## ${opts.close}`, '',
       '- `phases/1/SUMMARY.md`: the residue this close kept', '',
     ].join('\n'));
@@ -651,7 +655,7 @@ test('a close labelled in ARCHIVE.md contributes its section rows, bound to the 
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   const entry = entryFor(env.text, sha);
   assert.match(entry, /^ {2}the gap sits under the close at [0-9a-f]{8}, labelled v9\.9\.0$/m);
-  assert.match(entry, /^ {2}\.planning\/ARCHIVE\.md keeps 1 residue row\(s\) under that label, bound to the label and to no commit \(D-04\):$/m);
+  assert.match(entry, /^ {2}\.planning\/records\/ARCHIVE\.md keeps 1 residue row\(s\) under that label, bound to the label and to no commit \(D-04\):$/m);
   assert.match(entry, /^ {4}phases\/1\/SUMMARY\.md: the residue this close kept$/m,
     "the row's origin and text, exactly as parseArchiveRows split them");
   assert.match(entry, /^phase: NOT RESOLVED - /m, 'ARCHIVE.md supplies no commit-to-phase edge and none is invented');

@@ -19,6 +19,10 @@ import { PLANNING, makeTree, run, isEntryFile } from './planning.test.mjs';
 // its fixtures come from the arms that own that seam rather than a second
 // copy of them here.
 import { taskRepo, runIn, TASK_COMMITS } from './planning-task-record.test.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { mkdirSync as plantMkdir, writeFileSync as plantWrite } from 'node:fs';
+import { dirname as plantDirname } from 'node:path';
+const plantFile = (file, data) => { plantMkdir(plantDirname(file), { recursive: true }); plantWrite(file, data); };
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -242,7 +246,7 @@ test('recall: memory.backend none reports off with empty results, exit 0', () =>
 
 /** Write an ARCHIVE.md into a fixture tree; `rows` are raw grammar lines. */
 export function archive(dir, label, rows) {
-  writeFileSync(join(dir, 'ARCHIVE.md'),
+  plantFile(join(recordsDir(dir), 'ARCHIVE.md'),
     `# Archive\n\n## ${label}\n\n${rows.map((r) => `- ${r}`).join('\n')}\n`);
   return dir;
 }
@@ -422,7 +426,7 @@ test('task-record -> recall: a record written by the seam is found by what it sa
 
 /** Write a FILED.md into a fixture tree; `rows` are raw grammar lines. */
 function filed(dir, rows) {
-  writeFileSync(join(dir, 'FILED.md'),
+  plantFile(join(recordsDir(dir), 'FILED.md'),
     `# Filed\n\n${rows.map((r) => `- ${r}`).join('\n')}\n`);
   return dir;
 }
@@ -461,7 +465,7 @@ test('recall: a tree with no FILED.md answers byte-identically to one that never
 
 test('recall: a note in FILED.md that is not a row mints no corpus entry', () => {
   const dir = makeTree({ phases: { 1: { summaryBody: { deviations: ['a live deviation'] } } } });
-  writeFileSync(join(dir, 'FILED.md'),
+  plantFile(join(recordsDir(dir), 'FILED.md'),
     '# Filed\n\nsomeone wrote a paragraph about zebrafish here.\n\n- not a row either\n');
   const r = recall('zebrafish', dir);
   assert.deepEqual(r.json.results.filter((x) => x.source === 'FILED.md'), []);

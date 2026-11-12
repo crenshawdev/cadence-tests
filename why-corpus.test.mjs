@@ -23,6 +23,10 @@ import {
 import {
   decisionsFor, declaringTasks, parseCommitRows, parseDeviations, taskDeclaredFiles,
 } from '../cadence-core/bin/lib/why-record.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { mkdirSync as plantMkdir, writeFileSync as plantWrite } from 'node:fs';
+import { dirname as plantDirname } from 'node:path';
+const plantFile = (file, data) => { plantMkdir(plantDirname(file), { recursive: true }); plantWrite(file, data); };
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 /**
@@ -378,7 +382,8 @@ test('a close older than ARCHIVE.md itself reports an ABSENT label rather than g
  * @param {string[]} labels
  * @returns {string}
  */
-function repoWithCloses(labels, summaryFor = (label, phase) => `# ${label} phase ${phase}\n`, extraFiles = () => ({})) {
+function repoWithCloses(labels, summaryFor = (label, phase) => `# ${label} phase ${phase}\n`, extraFiles = () => ({}),
+  archiveFileOf = (planning) => join(recordsDir(planning), 'ARCHIVE.md')) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-why-prune-'));
   gitIn(dir, ['init', '-q', '-b', 'main']);
   let archive = '# Archive\n';
@@ -399,7 +404,7 @@ function repoWithCloses(labels, summaryFor = (label, phase) => `# ${label} phase
     // `git rm -r` on the last tracked file under `.planning/` takes the empty
     // directory with it, so the close re-creates it before writing ARCHIVE.md.
     mkdirSync(join(dir, '.planning'), { recursive: true });
-    writeFileSync(join(dir, '.planning', 'ARCHIVE.md'), archive);
+    plantFile(archiveFileOf(join(dir, '.planning')), archive);
     gitIn(dir, ['add', '-A']);
     execFileSync('git', ['-C', dir, 'commit', '-q', '-m', `chore: prune ${label} completed phases`],
       { env: { ...GIT_ENV, GIT_AUTHOR_DATE: `2026-01-0${i + 1}T12:00:00-05:00`, GIT_COMMITTER_DATE: `2026-01-0${i + 1}T12:00:00-05:00` }, stdio: 'ignore' });
@@ -415,6 +420,11 @@ test('two closes in one repository each come back under their own label, in a st
   assert.deepEqual(first.prunes.map((p) => p.label), ['v9.1.0', 'v9.0.0'], 'newest close first');
   assert.deepEqual(first.prunes.map((p) => p.phases.map((x) => x.phase)), [['2'], ['1']]);
   assert.deepEqual(second, first, 'two runs over an unchanged repository answer identically');
+});
+
+test('a close committed before the ledger moved still binds its label from the old path', () => {
+  const dir = repoWithCloses(['v9.0.0'], undefined, undefined, (planning) => join(planning, 'ARCHIVE.md'));
+  assert.deepEqual(findPruneCommits(dir).prunes.map((p) => p.label), ['v9.0.0']);
 });
 
 test('a merge-shaped prune record is REPORTED, never answered out of an arbitrary parent', () => {

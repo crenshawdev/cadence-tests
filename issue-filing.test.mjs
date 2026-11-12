@@ -29,6 +29,10 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { DECLINE_LABEL, fingerprint, issueTitle } from '../cadence-core/bin/lib/filing-decision.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { mkdirSync as plantMkdir, writeFileSync as plantWrite } from 'node:fs';
+import { dirname as plantDirname } from 'node:path';
+const plantFile = (file, data) => { plantMkdir(plantDirname(file), { recursive: true }); plantWrite(file, data); };
 
 const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'issue-filing.mjs');
 
@@ -196,12 +200,12 @@ const FIVE = [
 const declinedWith = (findings) => (dir) => {
   mkdirSync(join(dir, '.planning'), { recursive: true });
   const rows = findings.map((f) => `- 2026-08-25 github acme/widget ${fingerprint(f)}: ${issueTitle(f)}`);
-  writeFileSync(join(dir, '.planning', 'DECLINED.md'),
+  plantFile(join(recordsDir(join(dir, '.planning')), 'DECLINED.md'),
     `# Declined: findings this repository said no to\n\n${rows.join('\n')}\n`);
 };
 
 const declinedText = (dir) => {
-  const p = join(dir, '.planning', 'DECLINED.md');
+  const p = join(recordsDir(join(dir, '.planning')), 'DECLINED.md');
   return existsSync(p) ? readFileSync(p, 'utf8') : '';
 };
 
@@ -405,7 +409,7 @@ test('an unreadable DECLINED.md refuses rather than re-asking what was declined'
   // expected reads as EISDIR, which is not ENOENT and so is not "none yet".
   const payload = payloadFile(payloadFor([[FIVE[0], 'survived']]));
   const { status, envelope, calls } = run(['unfixed', '--payload', payload], {
-    prepare: (dir) => mkdirSync(join(dir, '.planning', 'DECLINED.md'), { recursive: true }),
+    prepare: (dir) => mkdirSync(join(recordsDir(join(dir, '.planning')), 'DECLINED.md'), { recursive: true }),
   });
   assert.equal(status, 1);
   assert.equal(envelope.ok, false);
@@ -466,7 +470,7 @@ test('a decline written by `file` is what the next `unfixed` reads back', () => 
   const { dir } = run(['file', '--payload', dispositions([[f, 'decline']])]);
   const payload = payloadFile(payloadFor([[f, 'survived']]));
   const { envelope } = run(['unfixed', '--payload', payload],
-    { prepare: (d) => writeFileSync(join(d, '.planning', 'DECLINED.md'), declinedText(dir)) });
+    { prepare: (d) => plantFile(join(recordsDir(join(d, '.planning')), 'DECLINED.md'), declinedText(dir)) });
   assert.equal(envelope.ok, true);
   assert.equal(envelope.already_declined, 1);
   assert.deepEqual(envelope.findings, []);
@@ -821,7 +825,7 @@ test('a CLI that prints a URL on create leaks none of it onto the envelope', () 
 
 /** `.planning/FILED.md` as text, or '' when the seam never wrote one. */
 const filedText = (dir) => {
-  const p = join(dir, '.planning', 'FILED.md');
+  const p = join(recordsDir(join(dir, '.planning')), 'FILED.md');
   return existsSync(p) ? readFileSync(p, 'utf8') : '';
 };
 
@@ -930,7 +934,7 @@ test('a create failure whose mirror ALSO failed says so, and the hint stops the 
   ]);
   const { status, envelope, dir } = run(['file', '--payload', payload], {
     stub: { failAt: 3 },
-    prepare: (d) => writeFileSync(join(d, '.planning', 'FILED.md.lock'), ''),
+    prepare: (d) => plantFile(join(recordsDir(join(d, '.planning')), 'FILED.md.lock'), ''),
   });
   assert.equal(status, 1);
   assert.equal(envelope.reason, 'create-failed');
@@ -947,7 +951,7 @@ test('a create failure whose mirror ALSO failed says so, and the hint stops the 
   // do not re-file the filed ones whose pointer is missing.
   assert.match(envelope.hint, /ONLY the unfiled entries/);
   assert.match(envelope.hint, /recall pointer was NOT written/);
-  assert.match(envelope.hint, /\.planning\/FILED\.md/);
+  assert.match(envelope.hint, /\.planning\/records\/FILED\.md/);
   assert.match(envelope.hint, /[Dd]o not re-file them/);
 });
 
@@ -972,7 +976,7 @@ test('the create-failed hint is honest that the failed create may have LANDED', 
   // pointer and asks the tracker itself on the next fire.
   assert.doesNotMatch(envelope.hint, /BEFORE re-filing it/, envelope.hint);
   assert.doesNotMatch(envelope.hint, /SEARCH acme\/widget's issues/, envelope.hint);
-  assert.match(envelope.hint, /`unconfirmed` row in \.planning\/FILED\.md/, envelope.hint);
+  assert.match(envelope.hint, /`unconfirmed` row in \.planning\/records\/FILED\.md/, envelope.hint);
   assert.match(envelope.hint, /before it creates anything/, envelope.hint);
   // The instruction is runnable only because the title carries that token, so
   // assert the two agree rather than trusting the sentence.
@@ -994,7 +998,7 @@ test('a fingerprint FILED.md already carries gets no SECOND row, even when it is
   const payload = dispositions([[FIVE[0], 'accept']]);
   const planted = (dir) => {
     mkdirSync(join(dir, '.planning'), { recursive: true });
-    writeFileSync(join(dir, '.planning', 'FILED.md'),
+    plantFile(join(recordsDir(join(dir, '.planning')), 'FILED.md'),
       `# Filed\n\n- 2026-08-25 github acme/widget ${fingerprint(FIVE[0])}: ${issueTitle(FIVE[0])}\n`);
   };
   const { status, envelope, calls, dir } = run(['file', '--payload', payload],
@@ -1015,7 +1019,7 @@ test('an UNCONFIRMED write over a CONFIRMED row rewrites that row rather than ad
   const payload = dispositions([[FIVE[0], 'accept']]);
   const planted = (dir) => {
     mkdirSync(join(dir, '.planning'), { recursive: true });
-    writeFileSync(join(dir, '.planning', 'FILED.md'),
+    plantFile(join(recordsDir(join(dir, '.planning')), 'FILED.md'),
       `# Filed\n\n- 2026-08-25 github acme/widget ${fingerprint(FIVE[0])}: ${issueTitle(FIVE[0])}\n`);
   };
   const { status, envelope, dir } = run(['file', '--payload', payload],
@@ -1069,7 +1073,7 @@ const filedWith = (pairs) => (dir) => {
   mkdirSync(join(dir, '.planning'), { recursive: true });
   const rows = pairs.map(([f, unconfirmed]) => `- 2026-08-25 github acme/widget `
     + `${fingerprint(f)}${unconfirmed ? ' unconfirmed' : ''}: ${issueTitle(f)}`);
-  writeFileSync(join(dir, '.planning', 'FILED.md'),
+  plantFile(join(recordsDir(join(dir, '.planning')), 'FILED.md'),
     `# Filed: issues this repository's gates opened\n\n${rows.join('\n')}\n`);
 };
 
@@ -1118,7 +1122,7 @@ test('on a forge whose lookup is UNMEASURED, a complete miss cannot overrule a c
     stub: { listBody: '[]' },
     prepare: (d) => {
       mkdirSync(join(d, '.planning'), { recursive: true });
-      writeFileSync(join(d, '.planning', 'FILED.md'),
+      plantFile(join(recordsDir(join(d, '.planning')), 'FILED.md'),
         '# Filed\n\n- 2026-08-25 gitlab acme/widget '
         + `${fingerprint(FIVE[0])}: ${issueTitle(FIVE[0])}\n`);
     },
@@ -1191,7 +1195,7 @@ test('an unreadable FILED.md refuses BEFORE any create, like the decline record'
   const { status, envelope, calls } = run(['file', '--payload', payload], {
     prepare: (d) => {
       filedWith([[FIVE[0], false]])(d);
-      chmodSync(join(d, '.planning', 'FILED.md'), 0o000);
+      chmodSync(join(recordsDir(join(d, '.planning')), 'FILED.md'), 0o000);
     },
   });
   assert.equal(status, 1);
@@ -1230,12 +1234,12 @@ test('an unreadable EXISTING DECLINED.md is never replaced by this batch alone',
   const { status, envelope, dir } = run(['file', '--payload', dispositions([[FIVE[0], 'decline']])], {
     prepare: (d) => {
       declinedWith([FIVE[2], FIVE[3]])(d);
-      chmodSync(join(d, '.planning', 'DECLINED.md'), 0o000);
+      chmodSync(join(recordsDir(join(d, '.planning')), 'DECLINED.md'), 0o000);
     },
   });
   // Whatever the run reports, the rows that were there must still be there.
-  chmodSync(join(dir, '.planning', 'DECLINED.md'), 0o644);
-  const text = readFileSync(join(dir, '.planning', 'DECLINED.md'), 'utf8');
+  chmodSync(join(recordsDir(join(dir, '.planning')), 'DECLINED.md'), 0o644);
+  const text = readFileSync(join(recordsDir(join(dir, '.planning')), 'DECLINED.md'), 'utf8');
   assert.ok(text.includes(fingerprint(FIVE[2])), 'an existing decline was erased');
   assert.ok(text.includes(fingerprint(FIVE[3])), 'an existing decline was erased');
   assert.equal(status, 1, JSON.stringify(envelope));
@@ -1260,8 +1264,8 @@ test('a DANGLING SYMLINK at DECLINED.md refuses; it is an entry, not an absence'
   const payload = payloadFile(payloadFor([[FIVE[0], 'survived']]));
   const { status, envelope } = run(['unfixed', '--payload', payload], {
     prepare: (d) => {
-      mkdirSync(join(d, '.planning'), { recursive: true });
-      symlinkSync(join(d, '.planning', 'nowhere.md'), join(d, '.planning', 'DECLINED.md'));
+      mkdirSync(recordsDir(join(d, '.planning')), { recursive: true });
+      symlinkSync(join(d, '.planning', 'nowhere.md'), join(recordsDir(join(d, '.planning')), 'DECLINED.md'));
     },
   });
   assert.equal(status, 1);
@@ -1277,7 +1281,7 @@ test('a conflicted DECLINED.md refuses rather than reading past the damage', () 
   const { status, envelope } = run(['unfixed', '--payload', payload], {
     prepare: (d) => {
       declinedWith([FIVE[0]])(d);
-      const f = join(d, '.planning', 'DECLINED.md');
+      const f = join(recordsDir(join(d, '.planning')), 'DECLINED.md');
       writeFileSync(f, `${readFileSync(f, 'utf8')}<<<<<<< HEAD\n- a row\n=======\n- another\n>>>>>>> other\n`);
     },
   });
