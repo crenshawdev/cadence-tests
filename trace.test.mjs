@@ -24,6 +24,7 @@ import {
 } from '../cadence-core/bin/lib/trace.mjs';
 import { STEP_WINDOW } from '../cadence-core/bin/lib/trace.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { ensureRoadmap } from './planning.test.mjs';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const TESTS = dirname(fileURLToPath(import.meta.url));
@@ -1574,6 +1575,7 @@ function fireRepo(phase = 2) {
   git('config', 'user.name', 'T');
   const dir = join(repo, '.planning');
   mkdirSync(join(dir, 'phases', String(phase)), { recursive: true });
+  ensureRoadmap(dir);
   writeFileSync(join(repo, 'src.js'), 'let x = 1;\n');
   git('add', '-A');
   git('commit', '-q', '-m', 'base');

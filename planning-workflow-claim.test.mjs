@@ -64,7 +64,9 @@ for (const [name, repo, global] of OFF_SHAPES) {
     assert.equal((await rel(t, 'diff-plan-1', a.id)).released, true);
     assert.equal((await rel(t, 'diff-plan-1', a.id)).released, false, 'a retried release is fine');
     assert.equal((await cli(t, 'take', 'diff-plan-2')).launch, true);
-    assert.equal(t.git('status', '--porcelain'), '');
+    // the first seam call stamped the project: its state file and the records folder's ignore file are the only new files
+    assert.equal(t.git('status', '--porcelain', '--untracked-files=all'),
+      '?? .planning/records/.gitignore\n?? .planning/records/state.json');
     assert.deepEqual(claimFiles(t), ['cadence-workflow-claim'], 'no temp file is left beside the claim');
   });
 }
@@ -119,7 +121,9 @@ test('on in both layers: two claims both launch and no file exists', async () =>
   assert.equal((await cli(t, 'take', 'diff-plan-1')).launch, true);
   assert.equal((await cli(t, 'take', 'diff-plan-2')).launch, true);
   assert.deepEqual(claimFiles(t), []);
-  assert.equal(t.git('status', '--porcelain'), '');
+  // the state file and the records folder's ignore file are all the stamped project gained
+  assert.equal(t.git('status', '--porcelain', '--untracked-files=all'),
+    '?? .planning/records/.gitignore\n?? .planning/records/state.json');
 });
 
 test('off: eight processes claiming at once yield exactly one launch', async () => {

@@ -12,7 +12,7 @@ import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, accessSync, constants, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { makeTree, run, today, isEntryFile } from './planning.test.mjs';
+import { makeTree, run, stampState, today, isEntryFile } from './planning.test.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -34,7 +34,7 @@ test('cursor get: parses the canonical schema; missing file is no-cursor', () =>
 });
 
 test('cursor get: malformed STATE.md degrades to unparseable-cursor', () => {
-  const dir = makeTree({});
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
   writeFileSync(join(dir, 'STATE.md'), '# State\n\nWorking on stuff, back soon\n');
   const r = run(['cursor', 'get'], dir);
   assert.equal(r.ok, false);
@@ -46,6 +46,8 @@ test('cursor set: falls back to the existing cursor when ROADMAP is absent', () 
   const dir = makeTree({
     cursor: { phase: 1, total: 3, name: 'Solo', status: 'planned', next: 'x', updated: '2026-01-01' },
   });
+  // a project with a cursor and no roadmap is refused on its first seam call, so this one was stamped before it lost its roadmap
+  stampState(dir);
   const r = run(['cursor', 'set', '--phase', '1', '--status', 'executed', '--next', '/cad-verify 1'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.cursor.name, 'Solo');   // from the prior cursor (same phase)
@@ -176,6 +178,8 @@ test('cursor set: every non-paused status still derives of 0 against a stale pri
 
 test('cursor set: an out-of-grammar roadmap is broken, not closed - still cannot-derive', () => {
   const dir = makeTree({});
+  // stamped first: on an unstamped project the migration refuses this roadmap before the handler is reached
+  stampState(dir);
   writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap\n\n## Phases\n\n- Phase 1: Ship auth\n');
   const r = run(['cursor', 'set', '--phase', '1', '--status', 'ready to plan',
     '--next', '/cad-phase add'], dir);

@@ -3,12 +3,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { writeFileSync, mkdtempSync, mkdirSync, readFileSync, existsSync, symlinkSync, readdirSync, chmodSync, accessSync, constants } from 'node:fs';
+import { writeFileSync, mkdtempSync, mkdirSync, readFileSync, existsSync, symlinkSync, readdirSync, chmodSync, accessSync, constants, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pruneRoadmap, archiveRequirements, completedPhases } from '../cadence-core/bin/lib/milestone-prune.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { stampState } from './planning.test.mjs';
 import { mkdirSync as plantMkdir, writeFileSync as plantWrite } from 'node:fs';
 import { dirname as plantDirname } from 'node:path';
 const plantFile = (file, data) => { plantMkdir(plantDirname(file), { recursive: true }); plantWrite(file, data); };
@@ -1218,12 +1219,17 @@ test('seam: a held ARCHIVE.md lock refuses the close before any directory moves'
 test('seam: a symlinked records folder refuses the close before any directory moves', () => {
   const dir = scaffoldWithArtifacts();
   const outside = mkdtempSync(join(tmpdir(), 'cad-prune-outside-'));
+  // a link where the records folder belongs is refused at the state-file door, so the project is stamped first and its
+  // records folder then moved behind the link, state file and all
+  stampState(dir);
+  rmSync(outside, { recursive: true });
+  renameSync(recordsDir(dir), outside);
   symlinkSync(outside, recordsDir(dir));
   const r = run(dir, ['--label', 'v3.5.2', '--mode', 'delete']);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'records-unusable');
   assert.ok(existsSync(join(dir, 'phases', '1')), 'the phase directory must survive a refused close');
-  assert.deepEqual(readdirSync(outside), [], 'nothing was written through the link');
+  assert.deepEqual(readdirSync(outside).sort(), ['.gitignore', 'state.json'], 'nothing was written through the link');
 });
 
 test('a bullet carrying its tracker suffix is removed WHOLE, and keeps the ref', () => {

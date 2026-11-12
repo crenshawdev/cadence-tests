@@ -24,6 +24,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // were written for and imported by name here: the two regions below that
 // drive them span several subcommands, which is why they stayed.
 import { renumberTree } from './planning-renumber.test.mjs';
+import { writeState } from '../cadence-core/bin/lib/project-state.mjs';
 import { leaseRepo, leaseCheck, stage } from './planning-lease-check.test.mjs';
 
 /** True iff the module at `url` is what node was told to run; realpath on both
@@ -54,6 +55,30 @@ export const PLANNING_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 
 export const seamSource = () => [PLANNING, ...readdirSync(PLANNING_DIR)
   .filter((f) => f.endsWith('.mjs')).sort().map((f) => join(PLANNING_DIR, f))]
   .map((f) => readFileSync(f, 'utf8')).join('\n');
+
+/**
+ * Give a hand-built planning directory the ROADMAP.md its `phases/` folders imply. Every seam now stamps a state file
+ * first, and a planning tree with phase folders and no roadmap is one it refuses, so a fixture that builds folders
+ * without a roadmap calls this. An existing ROADMAP.md is left alone; only legal phase folder names are listed.
+ */
+export function ensureRoadmap(dir) {
+  const file = join(dir, 'ROADMAP.md');
+  if (existsSync(file)) return;
+  let names = [];
+  try { names = readdirSync(join(dir, 'phases')); } catch { /* no folders, an empty list is a closed roadmap */ }
+  const legal = names.filter((n) => /^[1-9]\d*(?:\.[1-9]\d*)?$/.test(n)).sort((a, b) => Number(a) - Number(b));
+  const lines = legal.map((n) => `- [ ] **Phase ${n}: Phase ${n}** - fixture`);
+  writeFileSync(file, `# Roadmap: Fixture\n\n## Phases\n\n${lines.join('\n')}${lines.length ? '\n' : ''}`);
+}
+
+/**
+ * Stamp a planning directory with an empty, valid state file, as if an earlier seam call had met it. For a scenario
+ * that is only reachable on a project that already has its state: a roadmap that went missing or broke afterwards.
+ */
+export function stampState(dir) {
+  const r = writeState(dir, { cycleOpen: false, cursor: null, phases: [], requirements: [] });
+  if (r.ok !== true) throw new Error(`stampState: ${r.reason} ${r.detail}`);
+}
 
 // ---------------------------------------------------------------------------
 // Fixture builder: fabricate a .planning tree from a compact spec.
@@ -155,6 +180,9 @@ export function makeTree(spec) {
   // config.json written verbatim from `spec.config` (the backend-off test pins
   // memory.backend here).
   if (spec.config) writeFileSync(join(dir, 'config.json'), JSON.stringify(spec.config));
+
+  // folders without a roadmap would be refused by every seam; a fixture that wants none says `roadmap: false`
+  if (!spec.roadmap && spec.roadmap !== false && spec.phases) ensureRoadmap(dir);
 
   if (spec.reqs) {
     const rows = spec.reqs.map(([id, ph, st]) =>

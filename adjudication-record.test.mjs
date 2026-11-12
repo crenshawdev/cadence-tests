@@ -23,6 +23,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { ensureRoadmap } from './planning.test.mjs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -813,6 +814,7 @@ function scratchRepo() {
   git('config', 'user.name', 'T');
   const dir = join(repo, '.planning');
   mkdirSync(join(dir, 'phases', '2'), { recursive: true });
+  ensureRoadmap(dir);
   writeFileSync(join(repo, 'src.js'), 'let x = 1;\n');
   git('add', '-A');
   git('commit', '-q', '-m', 'base');

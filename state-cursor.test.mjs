@@ -40,6 +40,7 @@ test('agrees with planning.mjs cursor get on a fixture STATE.md', () => {
   const root = mkdtempSync(join(tmpdir(), 'state-cursor-'));
   try {
     mkdirSync(join(root, '.planning'));
+    writeFileSync(join(root, '.planning', 'ROADMAP.md'), '# Roadmap\n\n## Phases\n\n'); // a cursor beside no roadmap is refused by every seam
     writeFileSync(join(root, '.planning', 'STATE.md'), STATE);
     const out = execFileSync(process.execPath,
       [join(BIN, 'planning.mjs'), '--dir', join(root, '.planning'), 'cursor', 'get'],
@@ -93,6 +94,7 @@ test('a four-line cursor written by 3.9.3 parses to exactly its six fields, and 
   const dir = mkdtempSync(join(tmpdir(), 'cad-cursor-'));
   try {
     mkdirSync(join(dir, '.planning'));
+    writeFileSync(join(dir, '.planning', 'ROADMAP.md'), '# Roadmap\n\n## Phases\n\n'); // a cursor beside no roadmap is refused by every seam
     writeFileSync(join(dir, '.planning', 'STATE.md'), BALEY);
     const out = JSON.parse(execFileSync(process.execPath,
       [join(BIN, 'planning.mjs'), 'cursor', 'get', '--dir', join(dir, '.planning')], { encoding: 'utf8' }));

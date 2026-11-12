@@ -7,6 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, existsSync, lstatSy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ensureRoadmap } from './planning.test.mjs';
 
 const PLANNING = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'planning.mjs');
 
@@ -20,6 +21,7 @@ function tree() {
   const root = mkdtempSync(join(tmpdir(), 'cad-rd-'));
   const dir = join(root, '.planning');
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
+  ensureRoadmap(dir);
   return { root, dir };
 }
 

@@ -142,7 +142,7 @@ test('a directory that is not a repository answers ok:false', () => {
 });
 
 test('git add .planning never stages the map, and a nested rule is what ignores it', () => {
-  const { root, git } = repo({ 'a.js': 'a\n', '.planning/STATE.md': 'state\n' });
+  const { root, git } = repo({ 'a.js': 'a\n', '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
   assert.equal(codemap(root, 'scan').ok, true);
   git('add', '.planning');
   assert.equal(git('status', '--short').split('\n').filter((l) => l.includes('.planning/records/codemap')).length, 0);
@@ -268,7 +268,7 @@ const mapFile = (root, f) => join(root, '.planning', 'records', 'codemap', f);
 test('scan stores the module list, and a removed last file removes its module and its entry file', () => {
   // 100 KiB each, so the two directories cannot share one 128 KiB module
   const big = 'x'.repeat(100 * 1024);
-  const { root, git } = repo({ 'a/1.js': big, 'b/2.js': big, '.planning/STATE.md': 's\n' });
+  const { root, git } = repo({ 'a/1.js': big, 'b/2.js': big, '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
   const first = codemap(root, 'scan');
   assert.equal(first.modules, 3);
   assert.equal(first.no_reader, 1);
@@ -308,7 +308,7 @@ test('a torn index.json is a fresh cut, not a failure', () => {
 const KB = (n) => 'x'.repeat(n * 1024);
 /** a/ holds 80 KiB of text and a binary file, b/ holds 100 KiB, so the two are separate modules; .planning has its own */
 function mapped() {
-  const t = repo({ 'a/1.js': KB(50), 'a/2.js': KB(30), 'b/3.js': KB(100), '.planning/STATE.md': 's\n' });
+  const t = repo({ 'a/1.js': KB(50), 'a/2.js': KB(30), 'b/3.js': KB(100), '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
   writeFileSync(join(t.root, 'a', 'img.bin'), Buffer.from([0, 1, 2]));
   t.git('add', '-A'); t.git('commit', '-q', '-m', 'more');
   assert.equal(codemap(t.root, 'scan').modules, 3);
@@ -366,7 +366,7 @@ test('a module with no entry or a torn one reads unbuilt, never stale, and a no-
   writeFileSync(mapFile(root, moduleHolding(root, 'a/1.js').entry), '{"built_from": {');
   r = codemap(root, 'status');
   assert.deepEqual([r.stale, r.unbuilt, r.no_reader], [0, 2, 1]);
-  const planning = moduleHolding(root, '.planning/STATE.md').name;
+  const planning = moduleHolding(root, '.planning/ROADMAP.md').name;
   assert.ok(!r.unbuilt_modules.includes(planning) && !r.stale_modules.includes(planning));
 });
 
@@ -374,7 +374,7 @@ test('scan prices a launch by the stale and unbuilt modules and the text bytes a
   const { root } = mapped();
   let r = codemap(root, 'scan');
   assert.deepEqual([r.modules, r.readers, r.reader_bytes], [3, 2, (50 + 30 + 100) * 1024], 'no entries: every reader module, text only');
-  assert.equal(r.bytes, (50 + 30 + 100) * 1024 + 3 + 2, 'the total counts every byte, the picture and STATE.md too');
+  assert.equal(r.bytes, (50 + 30 + 100) * 1024 + 3 + 22, 'the total counts every byte, the picture and ROADMAP.md too');
   build(root);
   assert.deepEqual([codemap(root, 'scan').readers, codemap(root, 'scan').reader_bytes], [0, 0]);
   writeFileSync(join(root, 'a', '2.js'), KB(30) + 'y');
@@ -524,7 +524,7 @@ test('an assume-unchanged or skip-worktree file that was edited takes its workin
 });
 
 test('a non-UTF-8 .planning path stays out of code modules, and a non-UTF-8 .js path still holds its symbols', () => {
-  const { root, git } = repo({ 'a.js': 'a\n', '.planning/STATE.md': 's\n' });
+  const { root, git } = repo({ 'a.js': 'a\n', '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
   const odd = (dir, ext) => Buffer.concat([Buffer.from(`${root}/${dir}caf`), Buffer.from([0xe9]), Buffer.from(ext)]);
   writeFileSync(odd('.planning/', '.md'), '# note\n');
   writeFileSync(odd('', '.js'), 'export const beta = 1;\n');

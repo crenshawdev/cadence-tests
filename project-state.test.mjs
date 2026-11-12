@@ -13,6 +13,7 @@ import {
 import { CURSOR_STATUSES } from '../cadence-core/bin/lib/planning-files.mjs';
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'lib', 'project-state.mjs');
+const TEXT_UTIL = join(dirname(LIB), 'text-util.mjs');
 const tmp = () => mkdtempSync(join(tmpdir(), 'cad-pstate-'));
 
 const NEXT = `${'a long next step, word for word. '.repeat(20)}end`;
@@ -164,8 +165,9 @@ test('two interleaved updates of different facts both land', async () => {
   });
   const body = (change) => `
     import { updateState } from ${JSON.stringify(LIB)};
+    import { sleep } from ${JSON.stringify(TEXT_UTIL)};
     const root = ${JSON.stringify(root)};
-    const r = updateState(root, (s) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150); ${change}; return s; });
+    const r = updateState(root, (s) => { sleep(150); ${change}; return s; });
     process.exit(r.ok ? 0 : 3);
   `;
   const codes = await Promise.all([

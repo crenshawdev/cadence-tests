@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { ensureRoadmap } from './planning.test.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PLANNING = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
@@ -32,6 +33,7 @@ function tree() {
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');
   const dir = join(repo, '.planning');
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
+  ensureRoadmap(dir);
   writeFileSync(join(repo, 'src.js'), 'let x = 1;\n'); git('add', '-A'); git('commit', '-q', '-m', 'base');
   const base = git('rev-parse', 'HEAD');
   writeFileSync(join(repo, 'src.js'), 'let x = 2;\n'); git('add', '-A'); git('commit', '-q', '-m', 'head');

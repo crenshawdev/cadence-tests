@@ -372,6 +372,8 @@ test('through the real seams a scratch project reads the switch false and brief 
     assert.equal(readSwitch(undefined), false);
     const phase = join(root, '.planning', 'phases', '1');
     mkdirSync(phase, { recursive: true });
+    // phase folders with no roadmap are refused by every seam
+    writeFileSync(join(root, '.planning', 'ROADMAP.md'), '# Roadmap\n\n## Phases\n\n- [ ] **Phase 1: x** - y\n');
     writeFileSync(join(phase, 'PLAN.md'), '---\nphase: 1\nplan: 1\nfiles:\n  - a.txt\n---\n\n# Phase 1: x - Plan 1: y\n\n## Goal\n\nDo it.\n\n## Tasks\n\n### Task 1: one\n\n- **Files:** a.txt\n- **Action:** write it\n- **Verify:** cat a.txt\n');
     const out = mkdtempSync(join(tmpdir(), 'cad-wfbrief-out-'));
     try {

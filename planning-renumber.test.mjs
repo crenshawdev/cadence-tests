@@ -443,6 +443,8 @@ test('renumber remove: a partial apply reports which ops completed (#49.2)', {
   skip: typeof process.getuid === 'function' && process.getuid() === 0 ? 'root bypasses mode bits' : false,
 }, () => {
   const dir = renumberTree();
+  // the state file is written by the first seam call, which a read-only root would refuse, so it is already there
+  assert.equal(run(['status'], dir).ok, true);
   chmodSync(dir, 0o555); // .planning root read-only; phases/ stays writable
   let r;
   try {

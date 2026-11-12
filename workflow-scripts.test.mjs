@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { ensureRoadmap } from './planning.test.mjs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -343,6 +344,7 @@ test('review-panel: its real return, with a local voice and a provider voice, pl
   const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim();
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');
   mkdirSync(join(repo, '.planning', 'phases', '1'), { recursive: true });
+  ensureRoadmap(join(repo, '.planning'));
   writeFileSync(join(repo, 'f.js'), '1\n'); git('add', 'f.js'); git('commit', '-q', '-m', 'base');
   const base = git('rev-parse', 'HEAD');
   writeFileSync(join(repo, 'f.js'), '2\n'); git('add', 'f.js'); git('commit', '-q', '-m', 'head');
@@ -726,6 +728,7 @@ test('execute-wave: its real return, placed in a run file with one row per call,
   const out = JSON.parse(JSON.stringify(await runScript(WAVE, h, WAVE_ARGS)));
   const repo = mkdtempSync(join(tmpdir(), 'cad-wfs-wave-'));
   mkdirSync(join(repo, '.planning', 'phases', '1'), { recursive: true });
+  ensureRoadmap(join(repo, '.planning'));
   mkdirSync(join(repo, 'scratch'));
   const rows = h.calls.map((c, i) => ({ type: 'workflow_agent', index: i + 1, label: c.opts.label, agentId: `wave-a${i + 1}`, agentType: c.opts.agentType, state: 'done', attempt: 1, tokens: 500 * (i + 1), toolCalls: 5 + i, durationMs: 90 }));
   writeFileSync(join(repo, 'run.json'), JSON.stringify({ runId: 'wf_wave', status: 'completed', result: out, workflowProgress: rows }));

@@ -148,7 +148,7 @@ test('no ROADMAP.md: a planning directory with nothing in it is a project not se
 });
 
 test('no ROADMAP.md beside a phases entry, an archive folder or STATE.md is a refusal', () => {
-  const withPhase = makeTree({ phases: { 1: { plan: true } } });
+  const withPhase = makeTree({ phases: { 1: { plan: true } }, roadmap: false });
   const withArchive = makeTree({});
   mkdirSync(join(withArchive, '_archive-v1.0.0'));
   const withState = makeTree({ cursor: cursor(1, 1, 'Base', 'planned', 'x') });

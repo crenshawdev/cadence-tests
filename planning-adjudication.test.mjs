@@ -14,7 +14,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PLANNING, run, isEntryFile } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap, run, isEntryFile } from './planning.test.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
@@ -42,6 +42,7 @@ export function adjRepo({ phase = 2 } = {}) {
   git('config', 'user.name', 'T');
   const dir = join(repo, '.planning');
   mkdirSync(join(dir, 'phases', String(phase)), { recursive: true });
+  ensureRoadmap(dir);
   writeFileSync(join(repo, 'src.js'), 'let x = 1;\n');
   git('add', '-A');
   git('commit', '-q', '-m', 'base');

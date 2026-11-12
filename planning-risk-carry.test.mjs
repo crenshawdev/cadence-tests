@@ -16,13 +16,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
+  chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync,
   symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PLANNING, makeTree } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap, makeTree, stampState } from './planning.test.mjs';
 
 /** The close gate this carry exists to keep fed. */
 const LAND = fileURLToPath(new URL('../cadence-core/bin/land-cleanup.mjs', import.meta.url));
@@ -38,6 +38,7 @@ function carryTree(phase, files) {
   const dir = join(mkdtempSync(join(tmpdir(), 'cad-risk-carry-')), '.planning');
   const pdir = join(dir, 'phases', String(phase));
   mkdirSync(join(pdir, 'records'), { recursive: true });
+  ensureRoadmap(dir);
   // a person's document stays at the phase top; every other file is a record
   for (const [name, body] of Object.entries(files)) {
     writeFileSync(join(pdir, name === 'SUMMARY.md' ? '' : 'records', name), body);
@@ -203,14 +204,17 @@ test('risk-carry: a symlink squatting the destination is refused, never followed
 test('risk-carry: a symlinked records folder is refused and nothing is copied', () => {
   // one more path component is one more place a link could redirect the copy
   const dir = carryTree(3, { [review('plan-1')]: '{"findings":[]}\n' });
-  mkdirSync(join(dir, 'elsewhere'));
+  // a link where the records folder belongs is refused at the state-file door, so the project is stamped first and its
+  // records folder then moved behind the link, state file and all
+  stampState(dir);
+  renameSync(join(dir, 'records'), join(dir, 'elsewhere'));
   symlinkSync(join(dir, 'elsewhere'), join(dir, 'records'));
 
   const r = riskCarry(dir, ['--phase', '3']);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'carry-dest-unusable');
   assert.match(r.detail, /would follow out of the planning root/);
-  assert.deepEqual(readdirSync(join(dir, 'elsewhere')), [],
+  assert.deepEqual(readdirSync(join(dir, 'elsewhere')).sort(), ['.gitignore', 'state.json'],
     'the carry wrote through the link');
   assert.equal(existsSync(join(dir, 'phases', '3', 'records', review('plan-1'))), true);
 });
@@ -447,6 +451,7 @@ test('risk-carry: a symlinked phases/ is refused too', () => {
   writeFileSync(join(outside, '3', review('plan-1')), '{"findings":[]}\n');
   mkdirSync(dir, { recursive: true });
   symlinkSync(outside, join(dir, 'phases'));
+  ensureRoadmap(dir); // lists what the link shows, so the project is readable and the carry's own refusal is reached
 
   const r = riskCarry(dir, ['--phase', '3']);
   assert.equal(r.ok, false, JSON.stringify(r));

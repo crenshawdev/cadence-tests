@@ -11,6 +11,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, exist
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ensureRoadmap } from './planning.test.mjs';
 
 const PLANNING = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'planning.mjs');
 const HEADINGS = ['What breaks', 'Why I should care', 'What triggers it', 'What proves it',
@@ -21,6 +22,7 @@ function tree() {
   const dir = join(root, '.planning');
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
   mkdirSync(join(dir, 'tasks', 'a-task'), { recursive: true });
+  ensureRoadmap(dir);
   return { root, dir };
 }
 

@@ -16,6 +16,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { ensureRoadmap } from './planning.test.mjs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -247,6 +248,8 @@ function commitFile(repo, rel, body) {
 
 /** Run the seam inside a repo; parse its one JSON line and its exit code. */
 function riskCheck(repo, dir, args) {
+  // the fixtures commit files under phases/, and phase folders with no roadmap are refused by every seam
+  ensureRoadmap(dir);
   let stdout;
   let code = 0;
   try {

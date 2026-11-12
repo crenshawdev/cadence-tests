@@ -14,7 +14,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, renameSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { PLANNING, seamSource, run, isEntryFile } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap, seamSource, run, isEntryFile } from './planning.test.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
@@ -47,6 +47,7 @@ export function leaseRepo({ phase = 1, plan = 'PLAN.md', files = ['a.txt'], body
   const dir = join(repo, '.planning');
   const pdir = join(dir, 'phases', String(phase));
   mkdirSync(pdir, { recursive: true });
+  ensureRoadmap(dir);
   const fm = files === null ? '' : `---\nphase: ${phase}\nfiles:\n${files.map((f) => `  - ${f}\n`).join('')}---\n`;
   writeFileSync(join(pdir, plan), `${fm}# Plan\n${body}`);
   if (cadence) writeCadenceManifest(repo);
@@ -286,6 +287,7 @@ test('lease-check: an unreadable staged set is ok:false, never a pass', () => {
   const outside = mkdtempSync(join(tmpdir(), 'cad-lease-nogit-'));
   const dir = join(outside, '.planning');
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
+  ensureRoadmap(dir);
   writeFileSync(join(dir, 'phases', '1', 'PLAN.md'), '---\nphase: 1\nfiles:\n  - a.txt\n---\n');
   const r = leaseCheck(outside, dir, ['--phase', '1', '--plan', '1']);
   assert.equal(r.ok, false);
@@ -302,6 +304,7 @@ test('lease-check: the no-staged-set detail names the failure without a credenti
   const outside = mkdtempSync(join(tmpdir(), 'cad-lease-leak-'));
   const dir = join(outside, '.planning');
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
+  ensureRoadmap(dir);
   writeFileSync(join(dir, 'phases', '1', 'PLAN.md'), '---\nphase: 1\nfiles:\n  - a.txt\n---\n');
   const r = leaseCheck(outside, dir, ['--phase', '1', '--plan', '1'],
     { GIT_DIR: '/nonexistent/cad:s3cr3t-tok@host.invalid/g' });
@@ -597,6 +600,7 @@ function planTimeTree(files, body = '', how) {
   const dir = join(cwd, '.planning');
   const pdir = join(dir, 'phases', '1');
   mkdirSync(pdir, { recursive: true });
+  ensureRoadmap(dir);
   writePlanTimePlan(pdir, files, body, how);
   if (how && how.cadence) writeCadenceManifest(cwd);
   return { cwd, dir, pdir };
@@ -761,6 +765,7 @@ test('lease-check --plan-time: a phase with no plan file is still no-plan on thi
   // branch: an unreadable lease is never a plan-time pass either.
   const cwd = mkdtempSync(join(tmpdir(), 'cad-plantime-'));
   mkdirSync(join(cwd, '.planning', 'phases', '1'), { recursive: true });
+  ensureRoadmap(join(cwd, '.planning'));
 
   const r = planTime(cwd, join(cwd, '.planning'));
   assert.equal(r.ok, false, JSON.stringify(r));

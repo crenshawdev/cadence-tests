@@ -513,14 +513,17 @@ test('deferred carry: a symlinked records folder is refused and nothing moves', 
   // one more path component is one more place a link could redirect the rename
   const { dir } = adjRepo({ phase: 4 });
   putMember(dir, 4, 'diff', 'plan-1', 1, 1);
-  mkdirSync(join(dir, 'elsewhere'));
+  // a seam call stamps the project first, and a link where the records folder belongs is refused at that door, so
+  // the project is stamped and its records folder then moved behind the link, state file and all
+  assert.equal(run(['status'], dir).ok, true);
+  renameSync(join(dir, 'records'), join(dir, 'elsewhere'));
   symlinkSync(join(dir, 'elsewhere'), join(dir, 'records'));
 
   const r = defCarry(dir, ['--phase', '4']);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'carry-dest-unusable');
   assert.match(r.detail, /renameSync would follow out of the planning root/);
-  assert.deepEqual(readdirSync(join(dir, 'elsewhere')), []);
+  assert.deepEqual(readdirSync(join(dir, 'elsewhere')).sort(), ['.gitignore', 'state.json']);
   assert.equal(existsSync(join(recordsOf(dir, '4'), 'DEFERRED-diff-plan-1.json')), true,
     'the member left its phase directory');
 });

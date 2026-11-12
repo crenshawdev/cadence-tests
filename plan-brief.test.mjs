@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { run } from './planning.test.mjs';
+import { ensureRoadmap, run } from './planning.test.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 
@@ -60,6 +60,7 @@ function project({ plans = { 'PLAN-3.md': planText() }, projectMd = PROJECT, con
   const dir = join(root, '.planning');
   const pdir = join(dir, 'phases', phase);
   mkdirSync(pdir, { recursive: true });
+  ensureRoadmap(dir);
   if (projectMd !== null) writeFileSync(join(dir, 'PROJECT.md'), projectMd);
   if (context !== null) writeFileSync(join(pdir, 'CONTEXT.md'), context);
   for (const [name, text] of Object.entries(plans)) writeFileSync(join(pdir, name), text);

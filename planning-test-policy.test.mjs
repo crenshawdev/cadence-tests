@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PLANNING } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap } from './planning.test.mjs';
 import { stub } from './issue-check.test.mjs';
 
 const POLICY = join('.github', 'cadence', 'coverage-policy.json');
@@ -229,6 +229,7 @@ function ciProject(body) {
   const root = project({ scope: 'focused', required_jobs: ['node-test', 'self-verify'] },
     { forge_provider: 'github', forge_repo: 'o/r' });
   mkdirSync(join(root, '.planning', 'phases', '1'), { recursive: true });
+  ensureRoadmap(join(root, '.planning'));
   writeFileSync(join(root, '.planning', 'phases', '1', 'UAT.md'),
     '---\nstatus: testing\nphase: 1\nupdated: 2026-11-03\n---\n\n## Items\n\n'
     + '### 1. Gate\nexpected: green\nstatus: pending_ci\njob: node-test\ncommit: ace48e6\n\n## Summary\n\ntotal: 1\n');

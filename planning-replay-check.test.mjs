@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { PLANNING, isEntryFile } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap, isEntryFile } from './planning.test.mjs';
 
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 
@@ -27,6 +27,7 @@ function tree({ phase = 2, plans = ['PLAN.md'], reports = {}, headings = {} } = 
   const dir = join(mkdtempSync(join(tmpdir(), 'cad-replay-')), '.planning');
   const pdir = join(dir, 'phases', String(phase));
   mkdirSync(pdir, { recursive: true });
+  ensureRoadmap(dir);
   for (const p of plans) {
     writeFileSync(join(pdir, p), `---\nphase: ${phase}\nfiles: []\n---\n${headings[p] ?? '# plan'}\n`);
   }
