@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { PLANNING, run, isEntryFile } from './planning.test.mjs';
 import { GIT_FIXTURE_ENV } from './planning-audit.test.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -252,7 +253,7 @@ test('task-record: a --base that does not resolve is ok:false with nothing writt
   assert.equal(existsSync(join(dir, 'tasks')), false);
   // The attempt is still ON THE RECORD - `cmdRiskCheckRun`'s rule, so a refusal
   // does not read like a run that never happened.
-  const events = readFileSync(join(dir, 'trace.jsonl'), 'utf8').trim().split('\n')
+  const events = readFileSync(join(recordsDir(dir), 'trace.jsonl'), 'utf8').trim().split('\n')
     .map((l) => JSON.parse(l));
   assert.equal(events.length, 1);
   assert.equal(events[0].event, 'task_record');

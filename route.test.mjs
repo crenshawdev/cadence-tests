@@ -10,6 +10,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rungFile, RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
 import { renderCursor } from '../cadence-core/bin/lib/planning-files.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const ROUTE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'route.mjs');
 const dir = mkdtempSync(join(tmpdir(), 'cad-route-'));
@@ -1338,7 +1339,7 @@ function traceRoot(name, breakTrace) {
   // trace.jsonl as a DIRECTORY is the unwritable case: appendFileSync fails
   // EISDIR for ANY uid, where a chmod is silently a no-op under a root test
   // runner and would make this pass without proving anything.
-  if (breakTrace) mkdirSync(join(planning, 'trace.jsonl'));
+  if (breakTrace) mkdirSync(join(recordsDir(planning), 'trace.jsonl'), { recursive: true });
   return planning;
 }
 
@@ -1353,7 +1354,7 @@ function resolveRaw(file, extra = []) {
   }
 }
 
-const traceLines = (planning) => readFileSync(join(planning, 'trace.jsonl'), 'utf8')
+const traceLines = (planning) => readFileSync(join(recordsDir(planning), 'trace.jsonl'), 'utf8')
   .split('\n').filter(Boolean).map((l) => JSON.parse(l));
 
 test('a resolve records ONE routing event carrying the decision, not the text', () => {
@@ -1410,7 +1411,7 @@ test('a planning root that is not a directory resolves clean and records nothing
   writeFileSync(planning, 'not a directory');
   const r = resolve('cad-executor', join(planning, 'config.json'), ['--phase', '4']);
   assert.equal(r.ok, true);
-  assert.equal(existsSync(join(planning, 'trace.jsonl')), false);
+  assert.equal(existsSync(join(recordsDir(planning), 'trace.jsonl')), false);
   assert.equal(r.warnings.length, 1, JSON.stringify(r.warnings));
   assert.match(r.warnings[0], /failed to parse and was skipped/);
 });
@@ -1419,7 +1420,7 @@ test('no phase and no cursor records nothing rather than an unjoinable line', ()
   const planning = traceRoot('trace-nophase', false);
   const r = resolve('cad-executor', join(planning, 'config.json'));
   assert.equal(r.ok, true);
-  assert.equal(existsSync(join(planning, 'trace.jsonl')), false);
+  assert.equal(existsSync(join(recordsDir(planning), 'trace.jsonl')), false);
 });
 
 test('the cursor supplies the phase when --phase is absent', () => {
@@ -1454,7 +1455,7 @@ test('CER-01: a malformed --phase is REFUSED and routes nothing, reversing the w
   }
   // Routes NOTHING: four refusals, and not one line in the trace. A refusal at
   // argument shape happens before any phase is in hand to key an event to.
-  assert.equal(existsSync(join(planning, 'trace.jsonl')), false);
+  assert.equal(existsSync(join(recordsDir(planning), 'trace.jsonl')), false);
 
   // The control on both sides: a well-formed --phase resolves clean and silent...
   const good = resolve('cad-executor', cfgPath, ['--phase', '3']);
@@ -1531,7 +1532,7 @@ test('a valueless --bracket-read is refused, not recorded as an empty read-set',
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'usage');
   assert.match(r.detail, /--bracket-read/);
-  assert.equal(existsSync(join(planning, 'trace.jsonl')), false);
+  assert.equal(existsSync(join(recordsDir(planning), 'trace.jsonl')), false);
 });
 
 // --- the preview's two flags: --no-record and --planning-root -----------------
@@ -1541,13 +1542,13 @@ test('--no-record leaves trace.jsonl alone with --phase and --bracket-read, and 
   const flags = ['--phase', '3', '--bracket-read', 'PLAN.md'];
   const quiet = resolve('cad-executor', join(planning, 'config.json'), [...flags, '--no-record']);
   assert.equal(quiet.ok, true);
-  assert.equal(existsSync(join(planning, 'trace.jsonl')), false);
+  assert.equal(existsSync(join(recordsDir(planning), 'trace.jsonl')), false);
   // the negative control: the identical call minus the flag writes its two rows
   resolve('cad-executor', join(planning, 'config.json'), flags);
   assert.equal(traceLines(planning).length, 2);
-  const before = readFileSync(join(planning, 'trace.jsonl'), 'utf8');
+  const before = readFileSync(join(recordsDir(planning), 'trace.jsonl'), 'utf8');
   resolve('cad-executor', join(planning, 'config.json'), [...flags, '--no-record']);
-  assert.equal(readFileSync(join(planning, 'trace.jsonl'), 'utf8'), before);
+  assert.equal(readFileSync(join(recordsDir(planning), 'trace.jsonl'), 'utf8'), before);
 });
 
 test('--planning-root reads the floor off the real tree while --file names a scratch config', () => {
@@ -2506,5 +2507,5 @@ test('agent-type: writes no routing record, even run beside a planning root', ()
   const planning = traceRoot('agent-type-cmd', false);
   const r = routeWith(['agent-type', '--stem', 'cad-reviewer'], { cwd: dirname(planning) });
   assert.equal(r.ok, true);
-  assert.equal(existsSync(join(planning, 'trace.jsonl')), false);
+  assert.equal(existsSync(join(recordsDir(planning), 'trace.jsonl')), false);
 });

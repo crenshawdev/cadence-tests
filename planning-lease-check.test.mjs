@@ -15,6 +15,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, renameSync, existsSync, readFile
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { PLANNING, seamSource, run, isEntryFile } from './planning.test.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -515,7 +516,7 @@ test('lease-check: a staged census FILE is refused by a reason of its own, and l
   assert.equal(r.trace.written, true, JSON.stringify(r.trace));
   assert.equal(r._exit, 1);
 
-  const lines = readFileSync(join(dir, 'trace.jsonl'), 'utf8').trim().split('\n');
+  const lines = readFileSync(join(recordsDir(dir), 'trace.jsonl'), 'utf8').trim().split('\n');
   assert.equal(lines.length, 1, lines.join(' | '));
   const ev = JSON.parse(lines[0]);
   assert.equal(ev.family, 'outcome');
@@ -539,7 +540,7 @@ test('lease-check: an undeclared path holding no count keeps the old reason, and
   assert.deepEqual(r.undeclared, ['src/other.js']);
   assert.equal(r.census_files, undefined);
   assert.equal(r.trace, undefined);
-  assert.equal(existsSync(join(dir, 'trace.jsonl')), false);
+  assert.equal(existsSync(join(recordsDir(dir), 'trace.jsonl')), false);
   assert.equal(r._exit, 1);
 });
 
@@ -556,7 +557,7 @@ test('lease-check: outside Cadence\'s own repository a holder-named path is only
   assert.deepEqual(r.undeclared, ['tests/trace.test.mjs']);
   assert.equal(r.census_files, undefined);
   assert.equal(r.trace, undefined);
-  assert.equal(existsSync(join(dir, 'trace.jsonl')), false);
+  assert.equal(existsSync(join(recordsDir(dir), 'trace.jsonl')), false);
   assert.equal(r._exit, 1);
 });
 

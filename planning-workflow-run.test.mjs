@@ -11,6 +11,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, exist
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PLANNING = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
@@ -338,7 +339,7 @@ test('workflow-run: flags it needs are refused at the door', () => {
   assert.equal(cli(t, ['workflow-run', ...all, '--out-dir', join(t.repo, 'missing')]).reason, 'bad-args');
   assert.equal(cli(t, ['workflow-run', ...all, '--notice-tokens', '-5']).reason, 'bad-args');
   assert.equal(cli(t, ['workflow-run', ...all, '--notice-turns', '1.5']).reason, 'bad-args');
-  assert.equal(existsSync(join(t.dir, 'trace.jsonl')), false, 'a refused call wrote no bracket');
+  assert.equal(existsSync(join(recordsDir(t.dir), 'trace.jsonl')), false, 'a refused call wrote no bracket');
 });
 
 // --- the brackets: one per workflow agent, billed from the run file ---------------------------------
@@ -602,7 +603,7 @@ test('workflow-run: a retry after a dispatch landed and its terminal did not wri
   const t = tree();
   assert.equal(seam(t, FIXTURE).brackets.written, 3);
   // lose one worker's terminal, the way a crash between the two appends would
-  const file = join(t.dir, 'trace.jsonl');
+  const file = join(recordsDir(t.dir), 'trace.jsonl');
   const lines = readFileSync(file, 'utf8').split('\n').filter(Boolean);
   const victim = lines.map((l) => JSON.parse(l)).filter((e) => e.family === 'lifecycle' && e.event === 'return').pop();
   writeFileSync(file, `${lines.filter((l) => { const e = JSON.parse(l); return !(e.family === 'lifecycle' && e.event === 'return' && e.plan === victim.plan); }).join('\n')}\n`);

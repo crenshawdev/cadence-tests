@@ -22,6 +22,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { scanDiff, scanDeclared } from '../cadence-core/bin/lib/risk-diff.mjs';
 import { CATEGORIES } from '../cadence-core/bin/lib/surface-scan.mjs';
 import { REVIEWER_TEXT_PATHSPECS } from '../cadence-core/bin/planning/risk-check.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const PLANNING = join(HERE, 'planning.mjs');
@@ -262,7 +263,7 @@ function riskCheck(repo, dir, args) {
 /** Every parsed line of the fixture's trace file, or [] when it was never written. */
 function traceLines(dir) {
   let text;
-  try { text = readFileSync(join(dir, 'trace.jsonl'), 'utf8'); } catch { return []; }
+  try { text = readFileSync(join(recordsDir(dir), 'trace.jsonl'), 'utf8'); } catch { return []; }
   return text.split('\n').filter((l) => l.trim()).map((l) => parseJson(l));
 }
 
@@ -855,7 +856,8 @@ const FROZEN_PHASE_1 = [
 function traceFixture(lines) {
   const dir = join(mkdtempSync(join(tmpdir(), 'cad-risk-status-')), '.planning');
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'trace.jsonl'), `${lines.join('\n')}\n`);
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${lines.join('\n')}\n`);
   return dir;
 }
 
@@ -912,7 +914,8 @@ function riskStatus(dir, args, cwd) {
  * exercise the phase-wide arm. */
 function repoFixture(lines) {
   const { repo, dir } = riskRepo();
-  writeFileSync(join(dir, 'trace.jsonl'), `${lines.join('\n')}\n`);
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${lines.join('\n')}\n`);
   return { repo, dir };
 }
 
@@ -1012,7 +1015,8 @@ test('risk-check status: a record from an earlier, narrower range is STALE, not 
   const a = commitFile(repo, 'README.md', 'start\n');
   const b = commitFile(repo, 'docs/one.md', 'one\n');
   const c = commitFile(repo, 'docs/two.md', 'two\n');
-  writeFileSync(join(dir, 'trace.jsonl'),
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'),
     `${[...FROZEN_PHASE_1, recordLine('1', a, b, { base_id: a, head_id: b })].join('\n')}\n`);
 
   const stale = riskStatus(dir, ['--phase', '1', '--plan', '1', '--base', a, '--head', c], repo);
@@ -1129,7 +1133,8 @@ test('risk-check status: a staged record carrying NO index id is never a match',
     if (e.family === 'outcome' && e.event === 'risk_check') delete e.index_id;
     return JSON.stringify(e);
   });
-  writeFileSync(join(dir, 'trace.jsonl'), `${stripped.join('\n')}\n`);
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${stripped.join('\n')}\n`);
   const r = riskStatus(dir, ['--phase', '1', '--plan', '1', '--base', 'HEAD', '--staged'], repo);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'risk-record-missing', JSON.stringify(r));
@@ -1210,7 +1215,8 @@ test('risk-check status: a NAMED range whose only record is unchecked is refused
   const { repo, dir } = repoFixture(FROZEN_PHASE_1);
   const a = commitFile(repo, 'README.md', 'start\n');
   const b = commitFile(repo, 'docs/one.md', 'one\n');
-  writeFileSync(join(dir, 'trace.jsonl'), `${[...FROZEN_PHASE_1,
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${[...FROZEN_PHASE_1,
     recordLine('1', a, b, { base_id: a, head_id: b, checked: false, inconclusive: true })].join('\n')}\n`);
   const r = riskStatus(dir, ['--phase', '1', '--plan', '1', '--base', a, '--head', b], repo);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -1574,20 +1580,23 @@ test('risk-check status: a NAMED range that matched is refused until its fire is
   const a = commitFile(repo, 'README.md', 'start\n');
   const b = commitFile(repo, 'docs/one.md', 'one\n');
   const matched = recordLine('1', a, b, { base_id: a, head_id: b, matches: ['secrets'] });
-  writeFileSync(join(dir, 'trace.jsonl'), `${[...FROZEN_PHASE_1, matched].join('\n')}\n`);
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${[...FROZEN_PHASE_1, matched].join('\n')}\n`);
   const before = riskStatus(dir, ['--phase', '1', '--plan', '1', '--base', a, '--head', b], repo);
   assert.equal(before.ok, false, JSON.stringify(before));
   assert.equal(before.plans[0].state, 'unfired');
 
   // A receipt that does not name the range settles nothing: the record carries a
   // resolved `head_id`, so there IS a range identity to bind to.
-  writeFileSync(join(dir, 'trace.jsonl'),
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'),
     `${[...FROZEN_PHASE_1, matched, receiptLine('gate_pass', '1')].join('\n')}\n`);
   const unbound = riskStatus(dir, ['--phase', '1', '--plan', '1', '--base', a, '--head', b], repo);
   assert.equal(unbound.ok, false, JSON.stringify(unbound));
   assert.equal(unbound.plans[0].state, 'unfired');
 
-  writeFileSync(join(dir, 'trace.jsonl'),
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'),
     `${[...FROZEN_PHASE_1, matched, receiptLine('gate_pass', '1', { sha: b, base: a })].join('\n')}\n`);
   const after = riskStatus(dir, ['--phase', '1', '--plan', '1', '--base', a, '--head', b], repo);
   assert.equal(after.ok, true, JSON.stringify(after));
@@ -1644,19 +1653,22 @@ test('risk-check status: an earlier fire\'s receipt does not clear a LATER match
   const fired = receiptLine('gate_pass', '1', { sha: b, base: a });
 
   // The first range is settled by its own receipt.
-  writeFileSync(join(dir, 'trace.jsonl'), `${[...FROZEN_PHASE_1, first, fired].join('\n')}\n`);
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${[...FROZEN_PHASE_1, first, fired].join('\n')}\n`);
   const one = riskStatus(dir, ['--phase', '1', '--plan', '1', '--base', a, '--head', b], repo);
   assert.equal(one.ok, true, JSON.stringify(one));
 
   // The widened one is NOT, on the strength of that same receipt.
-  writeFileSync(join(dir, 'trace.jsonl'),
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'),
     `${[...FROZEN_PHASE_1, first, fired, widened].join('\n')}\n`);
   const two = riskStatus(dir, ['--phase', '1', '--plan', '1', '--base', a, '--head', c], repo);
   assert.equal(two.ok, false, JSON.stringify(two));
   assert.equal(two.plans[0].state, 'unfired');
 
   // ...until its own fire is recorded against it.
-  writeFileSync(join(dir, 'trace.jsonl'),
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'),
     `${[...FROZEN_PHASE_1, first, fired, widened, receiptLine('gate_pass', '1', { sha: c, base: a })].join('\n')}\n`);
   const three = riskStatus(dir, ['--phase', '1', '--plan', '1', '--base', a, '--head', c], repo);
   assert.equal(three.ok, true, JSON.stringify(three));
@@ -1704,13 +1716,15 @@ test('risk-check status: the PHASE-WIDE arm needs a receipt per fired range too'
   const widened = recordLine('1', a, c, { base_id: a, head_id: c, matches: ['secrets'] });
   const fired = receiptLine('gate_pass', '1', { sha: b, base: a });
 
-  writeFileSync(join(dir, 'trace.jsonl'),
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'),
     `${[...FROZEN_PHASE_1, first, fired, widened].join('\n')}\n`);
   const r = riskStatus(dir, ['--phase', '1'], repo);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.plans[0].state, 'unfired');
 
-  writeFileSync(join(dir, 'trace.jsonl'),
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'),
     `${[...FROZEN_PHASE_1, first, fired, widened,
       receiptLine('gate_pass', '1', { sha: c, base: a })].join('\n')}\n`);
   assert.equal(riskStatus(dir, ['--phase', '1'], repo).ok, true);
@@ -1726,7 +1740,8 @@ test('risk-check status: a receipt for another BASE over the same head settles n
   const wide = recordLine('1', a, c, { base_id: a, head_id: c, matches: ['secrets'] });
   // The fire judged the NARROW range b..c only.
   const narrowFire = receiptLine('gate_pass', '1', { sha: c, base: b });
-  writeFileSync(join(dir, 'trace.jsonl'), `${[...FROZEN_PHASE_1, wide, narrowFire].join('\n')}\n`);
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${[...FROZEN_PHASE_1, wide, narrowFire].join('\n')}\n`);
   const r = riskStatus(dir, ['--phase', '1', '--plan', '1', '--base', a, '--head', c], repo);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.plans[0].state, 'unfired');
@@ -1741,7 +1756,8 @@ test('risk-check status: a receipt with no --base settles nothing when the recor
   const c = commitFile(repo, 'docs/two.md', 'two\n');
   assert.ok(b);
   const wide = recordLine('1', a, c, { base_id: a, head_id: c, matches: ['secrets'] });
-  writeFileSync(join(dir, 'trace.jsonl'),
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'),
     `${[...FROZEN_PHASE_1, wide, receiptLine('gate_pass', '1', { sha: c })].join('\n')}\n`);
   const r = riskStatus(dir, ['--phase', '1', '--plan', '1', '--base', a, '--head', c], repo);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -2231,7 +2247,8 @@ test('risk-check status: a skipped EARLIER plan does not refuse a LATER plan\'s 
   // pre-plan HEAD, plan 2 committed and checked.
   const { repo, dir } = repoFixture(FROZEN_PHASE_1);
   const a = commitFile(repo, 'README.md', 'start\n');
-  writeFileSync(join(dir, 'trace.jsonl'),
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'),
     `${[...FROZEN_PHASE_1, skipLine('1', a), ...PLAN_2_RETURN].join('\n')}\n`);
   const b = commitFile(repo, 'docs/one.md', 'one\n');
   const run = riskCheck(repo, dir,
@@ -2274,7 +2291,8 @@ test('risk-check status: a skip answers only for the self-comparing range it des
   // staged ask over `a` names an index with bytes in it.
   const { repo, dir } = repoFixture([FROZEN_PHASE_1[0]]);
   const a = commitFile(repo, 'README.md', 'start\n');
-  writeFileSync(join(dir, 'trace.jsonl'), `${[...FROZEN_PHASE_1, skipLine('1', a)].join('\n')}\n`);
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${[...FROZEN_PHASE_1, skipLine('1', a)].join('\n')}\n`);
   const same = riskStatus(dir, ['--phase', '1', '--plan', '1', '--base', a, '--head', a], repo);
   assert.equal(same.ok, true, JSON.stringify(same));
   assert.equal(same.plans.find((/** @type {any} */ p) => p.plan === '1').state, 'skipped');

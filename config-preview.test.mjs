@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderCursor } from '../cadence-core/bin/lib/planning-files.mjs';
 import { appliesFlips, diffDecision, rolesFor, targetLayer } from '../cadence-core/bin/lib/config-preview.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG = join(ROOT, 'cadence-core', 'bin', 'config.mjs');
@@ -89,7 +90,8 @@ test('pure: an applies flip names why a stop stopped and why a start had not sta
 
 test('a preview leaves every file, trace.jsonl included, byte-identical', () => {
   const f = fixture({ repo: { ...AUTH, ...THREE }, global: { review: { reviewers: ['openai'] } } });
-  writeFileSync(join(f.root, '.planning', 'trace.jsonl'), '{"keep":1}\n');
+  mkdirSync(recordsDir(join(f.root, '.planning')), { recursive: true });
+  writeFileSync(join(recordsDir(join(f.root, '.planning')), 'trace.jsonl'), '{"keep":1}\n');
   const before = hashes(f);
   const r = preview(f, 'review.triggers.diff.gate=adjudicated', 'workflow.test_command=x', 'roles.cad-planner.effort=low');
   assert.equal(r.ok, true, JSON.stringify(r));

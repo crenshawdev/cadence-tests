@@ -25,6 +25,7 @@ import {
   MIN_RESIDUE_MS_FOR_COORDINATOR_INFO,
 } from '../cadence-core/bin/lib/trace-suggest.mjs';
 import { READS_ROTATION, ROTATED_READS_FILE } from '../cadence-core/bin/lib/read-trace.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'planning.mjs');
 
@@ -675,7 +676,7 @@ test('seam: a real trace written through appendEvent reads back through `trace s
     // The record the suggestions were argued off, which this envelope did not
     // name at all until TRC-08 - and no rotation key, because this record never
     // rotated.
-    assert.equal(out.file, join('.planning', 'trace.jsonl'));
+    assert.equal(out.file, join('.planning', 'records', 'trace.jsonl'));
     assert.equal('rotated' in out, false);
     assert.equal(out.scope, 'all');
     assert.equal(out.events_read, 3);
@@ -728,7 +729,7 @@ test('fixture: the committed verbatim trace suggests exactly what it did before 
   const dir = mkdtempSync(join(tmpdir(), 'cad-suggest-fx-'));
   try {
     const planning = join(dir, '.planning');
-    mkdirSync(planning, { recursive: true });
+    mkdirSync(recordsDir(planning), { recursive: true });
     copyFileSync(FIXTURE, tracePath(planning));
     assert.deepEqual(suggestFromRender(renderTrace(planning, '1')), [
       {
@@ -956,7 +957,7 @@ test('R7: cad-executor at 3.64 emits one entry carrying the worst file, the dire
     `the direction is missing - SC1 asks which way the figure should move: ${e.evidence}`);
   assert.ok(e.evidence.includes('63%'),
     `the coverage share is missing - the figure reads as a total: ${e.evidence}`);
-  assert.ok(e.evidence.includes('nothing prunes `.planning/reads.jsonl` at a milestone close'),
+  assert.ok(e.evidence.includes('nothing prunes `.planning/records/reads.jsonl` at a milestone close'),
     `the scope is missing - a reader cannot tell which milestones it spans: ${e.evidence}`);
   // TRC-10: the close still prunes nothing, but the record IS cut at its size
   // bound now, so the scope clause carries both halves and points at the
@@ -1096,8 +1097,8 @@ const REREAD = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
  */
 function rereadRoot({ stripFiles = false, noReads = false, rotated = false } = {}) {
   const dir = join(mkdtempSync(join(tmpdir(), 'cad-reread-')), '.planning');
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'trace.jsonl'), readFileSync(join(REREAD, 'reread.trace.jsonl'), 'utf8'));
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), readFileSync(join(REREAD, 'reread.trace.jsonl'), 'utf8'));
   if (noReads) return dir;
   let reads = readFileSync(join(REREAD, 'reread.reads.jsonl'), 'utf8');
   if (stripFiles) {
@@ -1106,7 +1107,7 @@ function rereadRoot({ stripFiles = false, noReads = false, rotated = false } = {
       .join('\n') + '\n';
   }
   if (rotated) reads = `${JSON.stringify(ROTATION_MARKER)}\n${reads}`;
-  writeFileSync(join(dir, 'reads.jsonl'), reads);
+  writeFileSync(join(recordsDir(dir), 'reads.jsonl'), reads);
   return dir;
 }
 
@@ -1167,7 +1168,7 @@ test('seam: an UNREADABLE reads.jsonl fails `reads --join` and WARNS on `trace s
   // diverge: a permissions error loud on one face and invisible on the other.
   // Neither face had a test before this one.
   const dir = rereadRoot();
-  const file = join(dir, 'reads.jsonl');
+  const file = join(recordsDir(dir), 'reads.jsonl');
   chmodSync(file, 0o000);
   try {
     // Running as root defeats the mode bits, so the row would assert nothing.
@@ -1221,7 +1222,7 @@ test('seam: BOTH faces name the reads record and report its cut, on a key that i
   // The trace here never rotated, so a top-level `rotated` on `trace suggest`
   // could only be the READS record's cut leaking onto the trace's key.
   const dir = rereadRoot({ rotated: true });
-  const readsFile = join(dir, 'reads.jsonl');
+  const readsFile = join(recordsDir(dir), 'reads.jsonl');
 
   const reads = rereadSeam(dir, ['reads', '--join']);
   assert.equal(reads.ok, true, JSON.stringify(reads));
@@ -1241,7 +1242,7 @@ test('seam: BOTH faces name the reads record and report its cut, on a key that i
   assert.deepEqual(suggest.reads, reads.reads);
   // `file` still names the TRACE, and the trace's own cut key is ABSENT - the
   // two records' rotations are not the same field.
-  assert.equal(suggest.file, join(dir, 'trace.jsonl'));
+  assert.equal(suggest.file, join(recordsDir(dir), 'trace.jsonl'));
   assert.equal('rotated' in suggest, false, JSON.stringify(suggest));
 });
 
@@ -1252,7 +1253,7 @@ test('seam: a project with no reads record still names the path it looked for', 
   assert.equal(out.note, 'no reads recorded yet');
   // Named, with NO rotation on it: the command was asked which record it read,
   // and a record that is not there yet is still a named path.
-  assert.deepEqual(out.reads, { file: join(dir, 'reads.jsonl') });
+  assert.deepEqual(out.reads, { file: join(recordsDir(dir), 'reads.jsonl') });
   // The `trace suggest` face agrees about the same absent record.
   assert.deepEqual(rereadSeam(dir, ['trace', 'suggest']).reads, out.reads);
 });

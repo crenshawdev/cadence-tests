@@ -4,12 +4,13 @@
 // what is here is one case per added primitive, and the builtins-only rule that keeps the hook path cheap.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync, symlinkSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   appendFile, makeDir, movePath, copyFile, unlinkFile, removeTree, writeFile, writeFileNew, linkFile,
+  recordsDir, recordsPath, ensureRecordsDir,
 } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const STORE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'lib', 'planning-store.mjs');
@@ -80,6 +81,28 @@ test('linkFile hard-links, and throws EEXIST when the path is taken', () => {
   linkFile(join(root, 'live'), join(root, 'sibling'));
   assert.equal(readFileSync(join(root, 'sibling'), 'utf8'), 'body');
   assert.throws(() => linkFile(join(root, 'live'), join(root, 'sibling')), { code: 'EEXIST' });
+});
+
+test('recordsDir and recordsPath resolve inside one folder under the planning root', () => {
+  const root = tmp();
+  assert.equal(dirname(recordsDir(root)), root);
+  assert.equal(relative(recordsDir(root), recordsPath(root, 'trace.jsonl')), 'trace.jsonl');
+  assert.equal(relative(recordsDir(root), recordsPath(root, 'deferred', '3')), join('deferred', '3'));
+});
+
+test('ensureRecordsDir creates the folder once, refuses a link, and never creates the planning root', () => {
+  const root = tmp();
+  assert.deepEqual(ensureRecordsDir(root), { ok: true });
+  assert.equal(lstatSync(recordsDir(root)).isDirectory(), true);
+  assert.deepEqual(ensureRecordsDir(root), { ok: true });
+
+  const linked = tmp();
+  symlinkSync(tmp(), recordsDir(linked));
+  assert.deepEqual(ensureRecordsDir(linked), { ok: false, reason: 'symlinked-records' });
+
+  const missing = join(tmp(), 'no-such-planning-root');
+  assert.deepEqual(ensureRecordsDir(missing), { ok: false, reason: 'ENOENT' });
+  assert.equal(existsSync(missing), false);
 });
 
 test('the module imports node: builtins and the one text-util leaf only', () => {

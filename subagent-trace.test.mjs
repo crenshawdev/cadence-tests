@@ -28,6 +28,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { closeForStop } from '../cadence-core/bin/lib/subagent-trace.mjs';
 import { appendEvent, renderTrace } from '../cadence-core/bin/lib/trace.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 /** One `unpaired[]` row, the shape `renderTrace(...)` returns. */
 const open = (role, plan, ts, extra) => ({ corr: '2-abc1234', phase: '2', plan, ts, role, ...extra });
@@ -819,7 +820,7 @@ function fixtureProject() {
   const planning = join(project, '.planning');
   mkdirSync(planning, { recursive: true });
   appendEvent(planning, { phase: 1, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor' });
-  return { project, trace: join(planning, 'trace.jsonl') };
+  return { project, trace: join(recordsDir(planning), 'trace.jsonl') };
 }
 
 /** @param {string} trace @returns {any[]} */

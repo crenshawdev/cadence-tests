@@ -15,6 +15,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, exist
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PLANNING, run, isEntryFile } from './planning.test.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -913,7 +914,7 @@ test('RSK-08: both refusals land where they are stated, over a mixed-ruling fixt
  *  written nothing rather than merely to have answered `ok:false`. */
 function traceLines(dir) {
   let text = '';
-  try { text = readFileSync(join(dir, 'trace.jsonl'), 'utf8'); } catch { return []; }
+  try { text = readFileSync(join(recordsDir(dir), 'trace.jsonl'), 'utf8'); } catch { return []; }
   return text.split('\n').filter((l) => l.trim() !== '').map((l) => JSON.parse(l));
 }
 

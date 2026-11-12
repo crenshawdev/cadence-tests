@@ -23,6 +23,7 @@ import {
   ANCHOR, DISPATCH, TERMINAL, COORDINATOR, WORKER_CACHE, ROTATION,
 } from '../cadence-core/bin/lib/trace.mjs';
 import { STEP_WINDOW } from '../cadence-core/bin/lib/trace.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const TESTS = dirname(fileURLToPath(import.meta.url));
@@ -32,7 +33,7 @@ const REPO = join(HERE, '..', '..');
 /** A fresh, empty planning root. */
 function root() {
   const dir = join(mkdtempSync(join(tmpdir(), 'cad-trace-')), '.planning');
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(recordsDir(dir), { recursive: true });
   return dir;
 }
 
@@ -132,7 +133,7 @@ test('appendEvent: an interleaved write sequence keeps every event, in order', (
  * rather than being filtered out of them, and the six-writer race row below is
  * what proves the release still holds under contention.
  */
-const siblings = (dir) => readdirSync(dir).filter((e) => e.startsWith('trace.')).sort();
+const siblings = (dir) => readdirSync(recordsDir(dir)).filter((e) => e.startsWith('trace.')).sort();
 
 /** What a COMPLETED rotation leaves on disk: the pair, plus the inert sidecar. */
 const ROTATED_SET = [ROTATED_TRACE_FILE, ROTATION_CLAIM_FILE, 'trace.jsonl'];
@@ -3701,6 +3702,27 @@ test('appendEvent: a symlinked trace path is refused and nothing is appended', (
   assert.equal(readFileSync(outside, 'utf8'), 'ORIGINAL\n');
   // Nothing replaced the link either - the refusal writes nowhere at all.
   assert.equal(lstatSync(tracePath(dir)).isSymbolicLink(), true);
+});
+
+test('appendEvent: a symlinked records folder is refused and nothing is written through it', () => {
+  const outside = mkdtempSync(join(tmpdir(), 'cad-outside-'));
+  const dir = join(mkdtempSync(join(tmpdir(), 'cad-trace-')), '.planning');
+  mkdirSync(dir, { recursive: true });
+  symlinkSync(outside, recordsDir(dir));
+
+  const res = appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
+  assert.deepEqual(res, { written: false, reason: 'symlinked-records' });
+  assert.deepEqual(readdirSync(outside), []);
+});
+
+test('appendEvent: the first write creates the records folder and lands the record inside it', () => {
+  const dir = join(mkdtempSync(join(tmpdir(), 'cad-trace-')), '.planning');
+  mkdirSync(dir, { recursive: true });
+  assert.equal(existsSync(recordsDir(dir)), false);
+  const res = appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
+  assert.equal(res.written, true);
+  assert.equal(existsSync(join(recordsDir(dir), 'trace.jsonl')), true);
+  assert.equal(existsSync(join(dir, 'trace.jsonl')), false);
 });
 
 test('appendEvent: an ordinary trace file still appends and reports written', () => {

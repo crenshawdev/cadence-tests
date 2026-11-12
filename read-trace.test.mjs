@@ -22,9 +22,14 @@ import {
   rotatedReadsPath, readsClaimPath, isReadsRotationMarker, rotateReads,
   READS_MARKER_BYTES, MAX_ERROR_TEXT, errorFlagOf, errorTextOf, redactCause,
 } from '../cadence-core/bin/lib/read-trace.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const TS = '2026-08-14T00:00:00.000Z';
-const tmp = () => mkdtempSync(join(tmpdir(), 'cad-reads-'));
+const tmp = () => {
+  const d = mkdtempSync(join(tmpdir(), 'cad-reads-'));
+  mkdirSync(recordsDir(d), { recursive: true });
+  return d;
+};
 
 test('a tool outside the recorded set is not a read', () => {
   for (const t of ['Edit', 'Write', 'Task', 'WebFetch', undefined]) {
@@ -198,6 +203,21 @@ test('a symlinked reads file is refused, appending nothing', () => {
   assert.equal(readFileSync(decoy, 'utf8'), '', 'the link target was written through');
 });
 
+test('a symlinked records folder is refused, and the first write creates the folder when it is absent', () => {
+  const d = mkdtempSync(join(tmpdir(), 'cad-reads-'));
+  const outside = mkdtempSync(join(tmpdir(), 'cad-outside-'));
+  symlinkSync(outside, recordsDir(d));
+  const res = appendRead(d, { ts: TS, tool: 'Read', target: '/a' });
+  assert.deepEqual(res, { written: false, reason: 'symlinked-records' });
+  assert.deepEqual(readdirSync(outside), []);
+
+  const fresh = mkdtempSync(join(tmpdir(), 'cad-reads-'));
+  assert.equal(existsSync(recordsDir(fresh)), false);
+  assert.equal(appendRead(fresh, { ts: TS, tool: 'Read', target: '/a' }).written, true);
+  assert.equal(existsSync(readsPath(fresh)), true);
+  assert.equal(existsSync(join(fresh, 'reads.jsonl')), false);
+});
+
 /**
  * Pad the reads record to ONE BYTE UNDER `MAX_READS_BYTES`, so the next append
  * is what carries it to the bound and the trigger under test is "this line
@@ -239,7 +259,7 @@ test('a record at the bound ROTATES and the append lands, rather than reporting 
 });
 
 /** Every file in the planning root named after the reads record. @param {string} d */
-const readsSiblings = (d) => readdirSync(d).filter((f) => f.startsWith('reads')).sort();
+const readsSiblings = (d) => readdirSync(recordsDir(d)).filter((f) => f.startsWith('reads')).sort();
 
 test('the marker SEALS the generation it carried away, in bytes', () => {
   // `carried_bytes` is how much of the generation this cut accounted for. The
@@ -966,12 +986,12 @@ const HOOK = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core',
 const REAL_PLUGIN = resolve(dirname(HOOK), '..', '..');
 
 function hookRecords(file_path) {
-  const project = tmp();
+  const project = mkdtempSync(join(tmpdir(), 'cad-reads-'));
   mkdirSync(join(project, '.planning'), { recursive: true });
   execFileSync(process.execPath, [HOOK], {
     input: JSON.stringify({ tool_name: 'Read', tool_input: { file_path }, cwd: project }),
   });
-  return readFileSync(join(project, '.planning', 'reads.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  return readFileSync(join(recordsDir(join(project, '.planning')), 'reads.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 }
 
 test('the hook records `outside` for a path outside both roots', () => {
@@ -1209,9 +1229,9 @@ const PLANNING = join(HERE, 'planning.mjs');
 /** A planning root holding both committed fixtures under their real names. */
 function joinRoot() {
   const dir = join(tmp(), '.planning');
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'trace.jsonl'), readFileSync(join(FIXTURES, 'join.trace.jsonl'), 'utf8'));
-  writeFileSync(join(dir, 'reads.jsonl'), readFileSync(join(FIXTURES, 'join.reads.jsonl'), 'utf8'));
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), readFileSync(join(FIXTURES, 'join.trace.jsonl'), 'utf8'));
+  writeFileSync(join(recordsDir(dir), 'reads.jsonl'), readFileSync(join(FIXTURES, 'join.reads.jsonl'), 'utf8'));
   return dir;
 }
 
@@ -1382,9 +1402,9 @@ test('in-dispatch: a read joined to no bracket contributes to nothing at all', (
 /** A planning root holding the committed reread pair under their real names. */
 function rereadRoot() {
   const dir = join(tmp(), '.planning');
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'trace.jsonl'), readFileSync(join(FIXTURES, 'reread.trace.jsonl'), 'utf8'));
-  writeFileSync(join(dir, 'reads.jsonl'), readFileSync(join(FIXTURES, 'reread.reads.jsonl'), 'utf8'));
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), readFileSync(join(FIXTURES, 'reread.trace.jsonl'), 'utf8'));
+  writeFileSync(join(recordsDir(dir), 'reads.jsonl'), readFileSync(join(FIXTURES, 'reread.reads.jsonl'), 'utf8'));
   return dir;
 }
 
@@ -1445,7 +1465,7 @@ test('seam: two rotations later, `reads` still reports the cut and bills no mark
   // with the generation it destroys, so both halves of the marker's contract
   // are re-proved: it is REPORTED as a rotation, and it is COUNTED as nothing.
   const dir = join(tmp(), '.planning');
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(recordsDir(dir), { recursive: true });
   appendRead(dir, { ts: TS, tool: 'Read', agent: 'coordinator', target: '/gen-one' });
   padToReadsBound(dir);
   assert.equal(appendRead(dir, { ts: TS, tool: 'Read', agent: 'coordinator', target: '/gen-two' }).written, true);

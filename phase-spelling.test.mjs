@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url';
 // drift apart. Importing registers nothing - the sibling's own `test` binding
 // is a no-op unless it IS the entry file.
 import { leaseRepo, leaseCheck, stage } from './planning-lease-check.test.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const PLANNING = join(BIN, 'planning.mjs');
@@ -345,7 +346,7 @@ test('trace append: --phase 1.10 refuses against a tree holding phases/1.1/, app
   const r = seam([...APPEND, '--phase', '1.10'], dir);
   assertRefused(r, '1.10', '1.1');
   assert.ok(r.detail.startsWith('trace append --phase'), r.detail);
-  assert.equal(existsSync(join(dir, 'trace.jsonl')), false);
+  assert.equal(existsSync(join(recordsDir(dir), 'trace.jsonl')), false);
 });
 
 test('trace close: the same body, so it refuses on the same tree', () => {
