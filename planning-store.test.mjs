@@ -1,6 +1,6 @@
 // Zero-dep tests for lib/planning-store.mjs - the one module script writes under .planning go through.
 // Run: node --test tests/planning-store.test.mjs
-// atomicWrite and the lock are pinned by planning-files.test.mjs and capture-file.test.mjs through their re-exports;
+// atomicWrite is pinned by planning-files.test.mjs and the lock by capture-file.test.mjs, both through the module;
 // what is here is one case per added primitive, and the builtins-only rule that keeps the hook path cheap.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

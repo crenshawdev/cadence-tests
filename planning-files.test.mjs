@@ -20,15 +20,16 @@ import {
   parseRequirements, setReqStatus,
   classifyPhaseList, cutPhaseDetail, parseRoadmapPhases, setPhaseBox,
   classifyActiveSection, isRequirementId, classifyAcceptanceCriteria,
-  atomicWrite, parseCaptureSnippets, captureSections, phaseCriteria,
+  parseCaptureSnippets, captureSections, phaseCriteria,
   parseArchiveRows, appendArchiveRows, parseFiledRows, appendFiledRow,
   parseDeclinedRows, appendDeclinedRow,
   parsePlanFiles, parseTaskRecordSnippets, parseSummarySnippets, CURSOR_STATUSES,
   parseUat, renderUat, planTaskTitles,
 } from '../cadence-core/bin/lib/planning-files.mjs';
+import { atomicWrite } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
-const LIB = join(HERE, 'lib', 'planning-files.mjs');
+const STORE = join(HERE, 'lib', 'planning-store.mjs');
 
 /** A fresh scratch directory - atomicWrite does real I/O, so it needs one. */
 const scratch = () => mkdtempSync(join(tmpdir(), 'cad-atomic-'));
@@ -1981,7 +1982,7 @@ test('atomicWrite: two concurrent writers of one target land one payload whole',
   const file = join(dir, 'STATE.md');
   const child = join(dir, 'write.mjs');
   writeFileSync(child,
-    `import { atomicWrite } from ${JSON.stringify(LIB)};\n`
+    `import { atomicWrite } from ${JSON.stringify(STORE)};\n`
     + 'atomicWrite(process.argv[2], process.argv[3].repeat(Number(process.argv[4])));\n');
 
   const run = (ch) => new Promise((resolve, reject) => {
