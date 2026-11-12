@@ -905,7 +905,7 @@ test('EXP-03: only the plans without a completed report reach a dispatch', () =>
   // 4. And the set does NOT reach `summary`: SUMMARY.md is the phase's record,
   //    so a skipped plan's report is still read there.
   const summary = stepBody(execute, 'summary', 'execute.md');
-  assert.match(summary, /each plan's `<plandir>\/reports\/plan-<k>\.md`/,
+  assert.match(summary, /each plan's `<plandir>\/records\/reports\/plan-<k>\.md`/,
     "execute.md's summary step no longer reads every plan's report, so a plan skipped at "
     + 'dispatch drops out of the phase record its work is part of');
 });
@@ -1150,8 +1150,8 @@ test('LND-02: milestone.md carries the rulings BEFORE the prune, and stops on ok
   assert.match(region, /ok:false[^.]{0,80}stop/i,
     'milestone.md no longer says an `ok:false` from the risk_surface carry STOPS the close. '
     + 'Continuing past one prunes exactly the rulings the carry could not copy');
-  assert.match(region, /\.planning\/risk-carry\//,
-    'the carry paragraph no longer names `.planning/risk-carry/`, which is the root '
+  assert.match(region, /\.planning\/records\/risk-carry\//,
+    'the carry paragraph no longer names `.planning/records/risk-carry/`, which is the root '
     + '/cad-land globs for the records the phase dirs no longer hold');
 
   // And step 7 does NOT delete it, on either arm. Step 3 already pruned the
@@ -1163,7 +1163,7 @@ test('LND-02: milestone.md carries the rulings BEFORE the prune, and stops on ok
   const eight = lines.findIndex((l, i) => i > seven && l.startsWith('## 8.'));
   assert.ok(seven > -1 && eight > seven, 'milestone.md no longer spells step 7');
   const step7 = lines.slice(seven, eight).join(' ').replace(/\s+/g, ' ');
-  assert.match(step7, /Do NOT delete `\.planning\/risk-carry\/` here, on either arm/,
+  assert.match(step7, /Do NOT delete `\.planning\/records\/risk-carry\/` here, on either arm/,
     'step 7 deletes `.planning/risk-carry/` again. Step 3 pruned the phase dirs, so that is '
     + 'the last copy of the rulings the halt rests on, and the next /cad-land merges over it');
   assert.match(step7, /`\/cad-land` step 4/,
@@ -1414,7 +1414,7 @@ test('execute.md state: a deferring run points the cursor at its queue and commi
   assert.match(state, /Keep `--status executed` exactly as it\s+is/,
     'the state step no longer pins --status executed on the deferring branch');
 
-  assert.match(state, /\.planning\/phases\/<N>\/DEFERRED-\*\.json/,
+  assert.match(state, /\.planning\/phases\/<N>\/records\/DEFERRED-\*\.json/,
     'the commit list no longer stages the queue member, so it is untracked on a fresh clone');
 });
 
@@ -1579,7 +1579,7 @@ test('ENFORCEMENT, execute.md: the blocking FAIL arm dispatches a continuation c
     'the FAIL arm no longer names the worker key `<k>` the fix is dispatched under, so the '
     + 'fix leaves no second bracket on the run record under the plan it belongs to and '
     + 'nothing can show a worker rather than the coordinator authored it');
-  assert.match(arm, /\.planning\/phases\/<N>\/REVIEW-risk_surface-plan-<k>\.md/,
+  assert.match(arm, /\.planning\/phases\/<N>\/records\/REVIEW-risk_surface-plan-<k>\.md/,
     'the FAIL arm no longer carries the PERSISTED findings path, so the coordinator is back '
     + 'to distilling the findings into the prompt itself - the reading step this dispatch '
     + 'exists to take off it');
@@ -2297,7 +2297,7 @@ test('AC6: report.md renders its Gates line from the record, states the unrecord
   // 1. THE RECORD IS AN ARTIFACT THE STEP OPENS. The `REVIEW-*.md` glob beside
   //    it cannot match a `.json` sibling, so without this entry the Gates line
   //    below asks for a file the step never opened.
-  assert.match(text, /\.planning\/phases\/<N>\/ADJUDICATION-\*\.json/,
+  assert.match(text, /\.planning\/phases\/<N>\/records\/ADJUDICATION-\*\.json/,
     `${where}: read_record's scoped-artifact list no longer opens the adjudication record`);
 
   // 2. THE GATES LINE COUNTS, and compares against the event's own figures.
@@ -2698,7 +2698,7 @@ test('RDX-01: report.md prints the in-dispatch figure with its coverage, its exc
   // 1. The shape block's Reading LINE - the point at which the figure is
   //    PRINTED. A rule further down is a rule a reader can compose the line
   //    without.
-  const lineStart = text.indexOf('Reading (whole `.planning/reads.jsonl`');
+  const lineStart = text.indexOf('Reading (whole `.planning/records/reads.jsonl`');
   assert.ok(lineStart >= 0, 'report.md has no Reading line');
   const readingLine = text.slice(lineStart, text.indexOf('\n', lineStart));
   for (const token of ['inDispatch.roles', 'inDispatch.coverage', 'inDispatch.coordinatorFiles']) {
@@ -2710,7 +2710,7 @@ test('RDX-01: report.md prints the in-dispatch figure with its coverage, its exc
   // 2. The rule block, read from its named anchor to the next TOP-LEVEL bullet,
   //    so the sub-bullets under it are inside the slice and the next rule is
   //    not.
-  const ruleStart = text.indexOf('- The reading line prices `.planning/reads.jsonl`');
+  const ruleStart = text.indexOf('- The reading line prices `.planning/records/reads.jsonl`');
   assert.ok(ruleStart >= 0, 'report.md has no reading-line rule');
   const next = text.indexOf('\n- ', ruleStart + 1);
   // Whitespace-FLATTENED before matching, so a rewrap that changed no fact
