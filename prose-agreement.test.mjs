@@ -3722,7 +3722,7 @@ test('triage-gate.md: the ask face makes one visibility read and the question na
   assert.doesNotMatch(flat, /it spawns no forge child/,
     'triage-gate.md still says the ask face spawns no forge child; `unfixed` now makes one '
     + 'read-only visibility call (D-05)');
-  assert.match(flat, /THE ASK FACE reads `\.planning\/DECLINED\.md` and makes one read-only visibility read of the configured repository - no list, no create, no page/,
+  assert.match(flat, /THE ASK FACE reads `\.planning\/records\/DECLINED\.md` and makes one read-only visibility read of the configured repository - no list, no create, no page/,
     'triage-gate.md does not state the ask face\'s one read-only visibility read');
   assert.match(flat, /the question names the target repository \(the envelope\'s `repo`\) and its visibility \(`visibility`\)/,
     'triage-gate.md does not say the question names the repository and its visibility');
