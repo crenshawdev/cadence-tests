@@ -10,7 +10,7 @@ import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   appendFile, makeDir, movePath, copyFile, unlinkFile, removeTree, writeFile, writeFileNew, linkFile,
-  recordsDir, recordsPath, ensureRecordsDir, ensureRecordsIgnore,
+  recordsDir, recordsPath, ensureRecordsDir, ensureRecordsIgnore, statePath,
   phaseRecordsDir, phaseReportsDir, phaseReviewsDir, phaseReturnsDir, phaseReviewPath, phaseReturnPath,
 } from '../cadence-core/bin/lib/planning-store.mjs';
 
@@ -82,6 +82,11 @@ test('linkFile hard-links, and throws EEXIST when the path is taken', () => {
   linkFile(join(root, 'live'), join(root, 'sibling'));
   assert.equal(readFileSync(join(root, 'sibling'), 'utf8'), 'body');
   assert.throws(() => linkFile(join(root, 'live'), join(root, 'sibling')), { code: 'EEXIST' });
+});
+
+test('statePath names state.json inside the records folder, never the planning root', () => {
+  const root = tmp();
+  assert.equal(statePath(root), join(recordsDir(root), 'state.json'));
 });
 
 test('recordsDir and recordsPath resolve inside one folder under the planning root', () => {
