@@ -4,10 +4,11 @@
 // importer and the derivation from drifting.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeTree, run } from './planning.test.mjs';
 import { importState } from '../cadence-core/bin/planning/state-import.mjs';
+import { writeState } from '../cadence-core/bin/lib/project-state.mjs';
 import { phaseReportsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const report = (dir, phase, k, first) => {
@@ -190,4 +191,28 @@ test('the importer writes nothing and never opens .planning/state.json', () => {
   imported(dir);
   assert.deepEqual(readdirSync(dir).sort(), before);
   assert.equal(readFileSync(join(dir, 'state.json'), 'utf8'), rust);
+});
+
+test('a `Plan: 0 of 2` line is dropped from the cursor, and what is imported is a state the writer accepts', () => {
+  const dir = makeTree({
+    roadmap: [{ n: 1, name: 'Base' }], phases: { 1: { plan: ['PLAN-0.md', 'PLAN-1.md'] } },
+    cursor: cursor(1, 1, 'Base', 'planned', '/cad-execute 1'),
+  });
+  appendFileSync(join(dir, 'STATE.md'), 'Plan: 0 of 2\n');
+  assert.equal(run(['status'], dir).ok, true);
+  const state = imported(dir);
+  assert.equal(state.cursor.status, 'planned');
+  assert.equal('plan' in state.cursor, false);
+  assert.equal(writeState(dir, state).ok, true);
+  // the first seam stamps it, and the next one still answers
+  assert.equal(run(['cursor', 'get'], dir).ok, true);
+});
+
+test('a phase whose name parses blank is named by its number, and the state is one the writer accepts', () => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: ' ' }], phases: { 1: { plan: true } } });
+  const state = imported(dir);
+  assert.equal(state.phases[0].name, 'Phase 1');
+  assert.equal(writeState(dir, state).ok, true);
+  assert.equal(run(['status'], dir).ok, true);
+  assert.equal(run(['status'], dir).ok, true);
 });
