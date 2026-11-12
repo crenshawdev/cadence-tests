@@ -373,3 +373,33 @@ test('no hook script reaches the conversion', () => {
   }
 });
 
+// --- the answer of the call that converted -----------------------------------
+
+test('the converting call says a commit is due, or not, and no other call carries the field', () => {
+  // due: commit_docs on, .planning tracked
+  const due = layoutFixture().dir;
+  const root = track(due);
+  const first = runIn(root, ['status'], due);
+  assert.equal(first.migration.converted, true);
+  assert.equal(first.migration.commit_due, true);
+  assert.match(first.migration.hint, /commit/);
+  const second = runIn(root, ['status'], due);
+  assert.equal('migration' in second, false);
+  const { migration, ...rest } = first;
+  assert.deepEqual(rest, second);
+
+  // not due: commit_docs off
+  const off = v40();
+  writeFileSync(join(off, 'config.json'), JSON.stringify({ planning: { commit_docs: false } }));
+  const offRoot = track(off);
+  const offRun = runIn(offRoot, ['status'], off);
+  assert.deepEqual([offRun.migration.converted, offRun.migration.commit_due, 'hint' in offRun.migration], [true, false, false]);
+
+  // not due: git ignores the planning directory
+  const ignored = v40();
+  const ignRoot = track(ignored, { '.gitignore': '.planning/\n' });
+  assert.equal(runIn(ignRoot, ['status'], ignored).migration.commit_due, false);
+
+  // not due outside a repository
+  assert.equal(run(['status'], v40()).migration.commit_due, false);
+});
