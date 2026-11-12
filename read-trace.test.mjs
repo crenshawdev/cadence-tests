@@ -23,11 +23,14 @@ import {
   READS_MARKER_BYTES, MAX_ERROR_TEXT, errorFlagOf, errorTextOf, redactCause,
 } from '../cadence-core/bin/lib/read-trace.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { statePath } from '../cadence-core/bin/lib/project-state.mjs';
+import { stampState, treeOf, v40Project } from './planning.test.mjs';
 
 const TS = '2026-08-14T00:00:00.000Z';
+// stamped, since appendRead writes nothing into a project with no valid state
 const tmp = () => {
   const d = mkdtempSync(join(tmpdir(), 'cad-reads-'));
-  mkdirSync(recordsDir(d), { recursive: true });
+  stampState(d);
   return d;
 };
 
@@ -203,7 +206,7 @@ test('a symlinked reads file is refused, appending nothing', () => {
   assert.equal(readFileSync(decoy, 'utf8'), '', 'the link target was written through');
 });
 
-test('a symlinked records folder is refused, and the first write creates the folder when it is absent', () => {
+test('a symlinked records folder is refused, and the first write lands inside the records folder', () => {
   const d = mkdtempSync(join(tmpdir(), 'cad-reads-'));
   const outside = mkdtempSync(join(tmpdir(), 'cad-outside-'));
   symlinkSync(outside, recordsDir(d));
@@ -211,11 +214,24 @@ test('a symlinked records folder is refused, and the first write creates the fol
   assert.deepEqual(res, { written: false, reason: 'symlinked-records' });
   assert.deepEqual(readdirSync(outside), []);
 
-  const fresh = mkdtempSync(join(tmpdir(), 'cad-reads-'));
-  assert.equal(existsSync(recordsDir(fresh)), false);
+  // the stamp made the folder; an unstamped one is never created, see the no-valid-state tests
+  const fresh = tmp();
   assert.equal(appendRead(fresh, { ts: TS, tool: 'Read', target: '/a' }).written, true);
   assert.equal(existsSync(readsPath(fresh)), true);
   assert.equal(existsSync(join(fresh, 'reads.jsonl')), false);
+});
+
+// --- no valid state, nothing written (D-10) ---
+
+test('appendRead: an unstamped v4.0 project and a state file that does not parse each get no-valid-state and stay byte-identical', () => {
+  const unstamped = v40Project();
+  const torn = tmp();
+  writeFileSync(statePath(torn), '{torn');
+  for (const d of [unstamped, torn]) {
+    const before = treeOf(d);
+    assert.deepEqual(appendRead(d, { ts: TS, tool: 'Read', target: '/a' }), { written: false, reason: 'no-valid-state' });
+    assert.deepEqual(treeOf(d), before);
+  }
 });
 
 /**
@@ -988,11 +1004,23 @@ const REAL_PLUGIN = resolve(dirname(HOOK), '..', '..');
 function hookRecords(file_path) {
   const project = mkdtempSync(join(tmpdir(), 'cad-reads-'));
   mkdirSync(join(project, '.planning'), { recursive: true });
+  stampState(join(project, '.planning'));
   execFileSync(process.execPath, [HOOK], {
     input: JSON.stringify({ tool_name: 'Read', tool_input: { file_path }, cwd: project }),
   });
   return readFileSync(join(recordsDir(join(project, '.planning')), 'reads.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 }
+
+test('the hook run against an unstamped v4.0 project leaves .planning byte-identical and exits 0', () => {
+  const dir = v40Project();
+  const before = treeOf(dir);
+  const r = spawnSync(process.execPath, [HOOK], {
+    input: JSON.stringify({ tool_name: 'Read', tool_input: { file_path: join(dir, 'ROADMAP.md') }, cwd: dirname(dir) }),
+    encoding: 'utf8',
+  });
+  assert.deepEqual([r.status, r.stdout, r.stderr], [0, '', '']);
+  assert.deepEqual(treeOf(dir), before);
+});
 
 test('the hook records `outside` for a path outside both roots', () => {
   const [rec] = hookRecords('/etc/hosts');
@@ -1217,7 +1245,7 @@ test('join: no bracket rows at all is every subagent read unjoined, never an err
 // the overlapping pair, and reads that land inside one, inside both, outside
 // all, under the two HOST agent types and on the coordinator.
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -1465,7 +1493,8 @@ test('seam: two rotations later, `reads` still reports the cut and bills no mark
   // with the generation it destroys, so both halves of the marker's contract
   // are re-proved: it is REPORTED as a rotation, and it is COUNTED as nothing.
   const dir = join(tmp(), '.planning');
-  mkdirSync(recordsDir(dir), { recursive: true });
+  mkdirSync(dir, { recursive: true });
+  stampState(dir);
   appendRead(dir, { ts: TS, tool: 'Read', agent: 'coordinator', target: '/gen-one' });
   padToReadsBound(dir);
   assert.equal(appendRead(dir, { ts: TS, tool: 'Read', agent: 'coordinator', target: '/gen-two' }).written, true);

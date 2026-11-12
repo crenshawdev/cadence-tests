@@ -26,6 +26,7 @@ import {
 } from '../cadence-core/bin/lib/trace-suggest.mjs';
 import { READS_ROTATION, ROTATED_READS_FILE } from '../cadence-core/bin/lib/read-trace.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { stampState } from './planning.test.mjs';
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'planning.mjs');
 
@@ -847,6 +848,8 @@ test('SGT-01: `trace suggest` returns a direction, a current, and a proposed whe
       review: { triggers: { plan: { gate: 'blocking' } } },
       roles: { 'cad-planner': { effort: 'high' } },
     }));
+    // stamped, or appendEvent writes nothing into it
+    stampState(planning);
     for (let i = 0; i < MIN_FIRES_FOR_GATE_SUGGESTION; i++) {
       appendEvent(planning, {
         phase: '1', family: 'outcome', event: 'adjudication',

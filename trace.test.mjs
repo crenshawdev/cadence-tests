@@ -24,17 +24,19 @@ import {
 } from '../cadence-core/bin/lib/trace.mjs';
 import { STEP_WINDOW } from '../cadence-core/bin/lib/trace.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
-import { ensureRoadmap } from './planning.test.mjs';
+import { ensureRoadmap, stampState, treeOf, v40Project } from './planning.test.mjs';
+import { statePath } from '../cadence-core/bin/lib/project-state.mjs';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const TESTS = dirname(fileURLToPath(import.meta.url));
 const PLANNING = join(HERE, 'planning.mjs');
 const REPO = join(HERE, '..', '..');
 
-/** A fresh, empty planning root. */
+/** A fresh, empty planning root, stamped: the appender writes nothing into a project with no valid state. */
 function root() {
   const dir = join(mkdtempSync(join(tmpdir(), 'cad-trace-')), '.planning');
-  mkdirSync(recordsDir(dir), { recursive: true });
+  mkdirSync(dir, { recursive: true });
+  stampState(dir);
   return dir;
 }
 
@@ -3717,10 +3719,34 @@ test('appendEvent: a symlinked records folder is refused and nothing is written 
   assert.deepEqual(readdirSync(outside), []);
 });
 
-test('appendEvent: the first write creates the records folder and lands the record inside it', () => {
-  const dir = join(mkdtempSync(join(tmpdir(), 'cad-trace-')), '.planning');
-  mkdirSync(dir, { recursive: true });
-  assert.equal(existsSync(recordsDir(dir)), false);
+// --- appendEvent: no valid state, nothing written (D-10) ---
+
+test('appendEvent: an unstamped v4.0 project gets no-valid-state and stays byte-identical; once converted the append lands in records/', () => {
+  const dir = v40Project();
+  const before = treeOf(dir);
+  const event = { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' };
+  assert.deepEqual(appendEvent(dir, event), { written: false, reason: 'no-valid-state' });
+  assert.deepEqual(treeOf(dir), before);
+  // the main session's first seam call converts it, and the old log moves in with it
+  assert.equal(run(dir, ['status']).ok, true);
+  assert.equal(appendEvent(dir, event).written, true);
+  const got = readFileSync(tracePath(dir), 'utf8').trim().split('\n');
+  assert.deepEqual([got.length, got[0], JSON.parse(got[1]).event], [2, '{"old":"trace"}', 'phase_start']);
+  assert.equal(existsSync(join(dir, 'trace.jsonl')), false);
+});
+
+test('appendEvent: a state file that does not parse gets no-valid-state and stays byte-identical', () => {
+  const dir = root();
+  writeFileSync(statePath(dir), '{torn');
+  const before = treeOf(dir);
+  assert.deepEqual(appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' }),
+    { written: false, reason: 'no-valid-state' });
+  assert.deepEqual(treeOf(dir), before);
+});
+
+// the stamp made the records folder, so the appender never creates one; the unstamped case is the no-valid-state tests
+test('appendEvent: the first write lands the record inside the records folder', () => {
+  const dir = root();
   const res = appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   assert.equal(res.written, true);
   assert.equal(existsSync(join(recordsDir(dir), 'trace.jsonl')), true);

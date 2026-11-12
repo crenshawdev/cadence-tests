@@ -16,7 +16,7 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, realpathSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -80,6 +80,24 @@ export function ensureRoadmap(dir) {
 export function stampState(dir) {
   const r = writeState(dir, { cycleOpen: false, cursor: null, phases: [], requirements: [] });
   if (r.ok !== true) throw new Error(`stampState: ${r.reason} ${r.detail}`);
+}
+
+/** Every path under `dir`, folders included, as path -> bytes ('dir' for a folder): both sides of a byte-identical check. */
+export function treeOf(dir) {
+  return Object.fromEntries(readdirSync(dir, { recursive: true }).map(String).sort()
+    .map((p) => [p, statSync(join(dir, p)).isDirectory() ? 'dir' : readFileSync(join(dir, p), 'utf8')]));
+}
+
+/** An unstamped v4.0 project, its logs still at the top: what a hook meets before the main session converts it. */
+export function v40Project() {
+  const dir = makeTree({
+    roadmap: [{ n: 1, name: 'Base', checked: true }, { n: 2, name: 'Auth' }],
+    phases: { 1: { plan: true, summary: true }, 2: { plan: ['PLAN-1.md'] } },
+    cursor: { phase: 2, total: 2, name: 'Auth', status: 'planned', next: '/cad-execute 2', updated: '2026-02-03' },
+  });
+  writeFileSync(join(dir, 'trace.jsonl'), '{"old":"trace"}\n');
+  writeFileSync(join(dir, 'reads.jsonl'), '{"old":"reads"}\n');
+  return dir;
 }
 
 /**

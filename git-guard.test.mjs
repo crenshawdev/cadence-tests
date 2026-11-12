@@ -7,11 +7,12 @@
 // proven only at the reader level is not proven to reach a decision.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { treeOf, v40Project } from './planning.test.mjs';
 
 const GUARD = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'git-guard.mjs');
 
@@ -56,6 +57,22 @@ function project(branch, config) {
 }
 
 // --- Scope. -----------------------------------------------------------------
+
+test('run against an unstamped v4.0 project it leaves .planning byte-identical and exits 0', () => {
+  const dir = v40Project();
+  const root = dirname(dir);
+  git(['-C', root, 'init', '-q', '-b', 'main']);
+  const before = treeOf(dir);
+  for (const command of ['git commit -m x', 'git push origin main', 'ls']) {
+    const r = spawnSync('node', [GUARD], {
+      encoding: 'utf8',
+      input: JSON.stringify({ tool_input: { command }, cwd: root }),
+      env: { ...process.env, CADENCE_GLOBAL_CONFIG: NO_GLOBAL },
+    });
+    assert.equal(r.status, 0, command);
+  }
+  assert.deepEqual(treeOf(dir), before);
+});
 
 test('silent outside a Cadence project', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cad-guard-plain-'));

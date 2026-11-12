@@ -1336,6 +1336,9 @@ function traceRoot(name, breakTrace) {
   const planning = join(mkdtempSync(join(tmpdir(), `cad-route-${name}-`)), '.planning');
   mkdirSync(planning, { recursive: true });
   writeFileSync(join(planning, 'config.json'), JSON.stringify({}));
+  // stamped, since route.mjs's appends write nothing into a project with no valid state
+  const stamped = writeState(planning, { cycleOpen: false, cursor: null, phases: [], requirements: [] });
+  if (!stamped.ok) throw new Error(`traceRoot: ${stamped.reason} ${stamped.detail}`);
   // trace.jsonl as a DIRECTORY is the unwritable case: appendFileSync fails
   // EISDIR for ANY uid, where a chmod is silently a no-op under a root test
   // runner and would make this pass without proving anything.
@@ -2171,6 +2174,8 @@ test('--plan: it is NOT --bracket-plan, which still keys the trace alone', () =>
   // non-executor dispatch, so reading it as a floor key would make a
   // phase-scoped role indistinguishable from a plan key naming no file.
   const fx = mixedPhase();
+  // stamped so the bracket can land; the floor reads the plan files either way
+  assert.equal(writeState(fx.planning, { cycleOpen: false, cursor: null, phases: [], requirements: [] }).ok, true);
   const r = resolve('cad-executor', fx.file,
     ['--phase', '3', '--bracket-read', 'PLAN-1.md', '--bracket-plan', '1']);
   // The floor still took the phase UNION, so the risky sibling raised it.
