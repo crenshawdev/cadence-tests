@@ -225,10 +225,15 @@ test('a held workflow claim and a live plan worktree each refuse the conversion,
   const held = runIn(root, ['status'], dir);
   assert.deepEqual([held.ok, held.reason], [false, 'workflow-claim-held']);
   assert.match(held.detail, /review-1/);
-  assert.ok(held.hint);
+  assert.ok(held.detail.includes(taken.id));
   assert.equal(existsSync(statePath(dir)), false);
   assert.deepEqual(deep(dir), before);
-  runIn(root, ['workflow-claim', 'release', '--fire', 'review-1', '--id', taken.id], other);
+  // the hint's own command, run against the refused project itself, frees the claim and still converts nothing
+  const hinted = held.hint.match(/`planning\.mjs (workflow-claim release [^`]+)`/);
+  assert.deepEqual(hinted[1].split(' '), ['workflow-claim', 'release', '--fire', 'review-1', '--id', taken.id]);
+  assert.equal(runIn(root, hinted[1].split(' '), dir).released, true);
+  assert.equal(existsSync(statePath(dir)), false);
+  assert.deepEqual(deep(dir), before);
 
   const wt = join(root, '..', `${root.split('/').pop()}-wt`);
   git(root, 'worktree', 'add', '-q', '-b', 'cadence/phase-1-plan-2', wt);
@@ -241,6 +246,20 @@ test('a held workflow claim and a live plan worktree each refuse the conversion,
   git(root, 'worktree', 'remove', '--force', wt);
   assert.equal(runIn(root, ['status'], dir).ok, true);
   assert.equal(readState(dir).kind, 'valid');
+});
+
+test('a held claim with no id is refused with a --stale release that works on the unstamped project', () => {
+  const dir = v40();
+  const root = track(dir);
+  const claimFile = join(root, '.git', 'cadence-workflow-claim');
+  writeFileSync(claimFile, 'not json');
+  const held = runIn(root, ['status'], dir);
+  assert.equal(held.reason, 'workflow-claim-held');
+  const hinted = held.hint.match(/`planning\.mjs (workflow-claim release [^`]+)`/);
+  assert.deepEqual(hinted[1].split(' ').slice(-1), ['--stale']);
+  assert.equal(runIn(root, hinted[1].split(' '), dir).released, true);
+  assert.equal(existsSync(claimFile), false);
+  assert.equal(runIn(root, ['status'], dir).ok, true);
 });
 
 /** A v4.0 project built file by file: what scripts keep sits at the old places, plus things Cadence does not own. */
