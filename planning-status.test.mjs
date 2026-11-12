@@ -14,6 +14,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makeTree, run, isEntryFile } from './planning.test.mjs';
+import { phaseReviewPath, phaseReturnPath } from '../cadence-core/bin/lib/planning-store.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -146,6 +147,23 @@ for (const row of CLOSED_AGREEMENT) {
     }
   });
 }
+
+test('status: a file at the reviews-area and returns-area paths leaves status ok with the same phases', () => {
+  const dir = makeTree({
+    roadmap: [{ n: 1, name: 'One' }],
+    phases: { 1: { plan: true, summary: true } },
+  });
+  const before = run(['status'], dir);
+  assert.equal(before.ok, true, JSON.stringify(before));
+  const phaseDir = join(dir, 'phases', '1');
+  for (const p of [phaseReviewPath(phaseDir, 'a-review.md'), phaseReturnPath(phaseDir, 'a-return.json')]) {
+    mkdirSync(join(p, '..'), { recursive: true });
+    writeFileSync(p, 'x\n');
+  }
+  const after = run(['status'], dir);
+  assert.equal(after.ok, true, JSON.stringify(after));
+  assert.deepEqual(after.phases, before.phases);
+});
 
 // --- status: derivation ------------------------------------------------------
 

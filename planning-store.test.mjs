@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import {
   appendFile, makeDir, movePath, copyFile, unlinkFile, removeTree, writeFile, writeFileNew, linkFile,
   recordsDir, recordsPath, ensureRecordsDir, ensureRecordsIgnore,
+  phaseRecordsDir, phaseReportsDir, phaseReviewsDir, phaseReturnsDir, phaseReviewPath, phaseReturnPath,
 } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const STORE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'lib', 'planning-store.mjs');
@@ -88,6 +89,28 @@ test('recordsDir and recordsPath resolve inside one folder under the planning ro
   assert.equal(dirname(recordsDir(root)), root);
   assert.equal(relative(recordsDir(root), recordsPath(root, 'trace.jsonl')), 'trace.jsonl');
   assert.equal(relative(recordsDir(root), recordsPath(root, 'deferred', '3')), join('deferred', '3'));
+});
+
+test('a phase\'s review and return paths sit in their own area of its records folder, live or archived', () => {
+  const root = tmp();
+  for (const phaseDir of [join(root, 'phases', '3'), join(root, 'phases', '_archive-v1', '3')]) {
+    assert.equal(phaseRecordsDir(phaseDir), join(phaseDir, 'records'));
+    assert.equal(phaseReportsDir(phaseDir), join(phaseDir, 'records', 'reports'));
+    assert.equal(phaseReviewPath(phaseDir, 'r.md'), join(phaseDir, 'records', 'reviews', 'r.md'));
+    assert.equal(phaseReturnPath(phaseDir, 'r.json'), join(phaseDir, 'records', 'returns', 'r.json'));
+    assert.equal(phaseReviewsDir(phaseDir), join(phaseDir, 'records', 'reviews'));
+    assert.equal(phaseReturnsDir(phaseDir), join(phaseDir, 'records', 'returns'));
+  }
+  // resolving creates nothing
+  assert.equal(existsSync(join(root, 'phases')), false);
+});
+
+test('a review or return name that would leave its area is refused with a throw', () => {
+  const phaseDir = join(tmp(), 'phases', '1');
+  for (const bad of ['', '.', '..', 'a/b', '../x', 'a\\b', '/abs', 'a\0b']) {
+    assert.throws(() => phaseReviewPath(phaseDir, bad), /not a file name/, JSON.stringify(bad));
+    assert.throws(() => phaseReturnPath(phaseDir, bad), /not a file name/, JSON.stringify(bad));
+  }
 });
 
 test('ensureRecordsDir creates the folder once, refuses a link, and never creates the planning root', () => {
