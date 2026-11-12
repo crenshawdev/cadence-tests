@@ -560,8 +560,7 @@ const recordBody = (rel) => (rel.endsWith('.json')
 for (const name of ['ADJUDICATION-risk_surface-plan-1.json', 'REVIEW-risk_surface-plan-1.md',
   'FINDINGS.json', 'verifier-findings.json']) {
   test(`risk-check run: \`${name}\` is withheld from the range the gate reads`, () => {
-    const home = /^(ADJUDICATION|REVIEW)-/.test(name) ? 'records/' : '';
-    const { r } = clearRange(`.planning/phases/1/${home}${name}`, recordBody(name));
+    const { r } = clearRange(`.planning/phases/1/records/${name}`, recordBody(name));
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.equal(r.checked, true, JSON.stringify(r));
     assert.deepEqual(r.matches, [], JSON.stringify(r));

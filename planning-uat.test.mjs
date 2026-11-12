@@ -575,7 +575,7 @@ test('uat merge: a finding conflicting with a recorded result is skipped and cou
 // (D-09) or it is gone. A NEW file, not a UAT.md section: a `## ` block is cut
 // by the next `uat record` and a `### ` extra is promised user-owned (D-05).
 
-const findingsFile = (dir) => join(dir, 'phases', '1', 'FINDINGS.json');
+const findingsFile = (dir) => join(dir, 'phases', '1', 'records', 'FINDINGS.json');
 const readFindings = (dir) => JSON.parse(readFileSync(findingsFile(dir), 'utf8'));
 
 test('uat merge: FINDINGS.json holds the five counters plus every discarded entry', () => {
@@ -587,7 +587,8 @@ test('uat merge: FINDINGS.json holds the five counters plus every discarded entr
     human_checks: [{ expected: 'nameless' }],   // the identical phantom
   }));
   assert.equal(r.ok, true);
-  assert.equal(r.findings, 'phases/1/FINDINGS.json'); // observable in the transcript
+  assert.equal(r.findings, 'phases/1/records/FINDINGS.json'); // observable in the transcript
+  assert.equal(existsSync(join(dir, 'phases', '1', 'FINDINGS.json')), false, 'nothing at the phase top');
   const found = readFindings(dir);
   assert.deepEqual(Object.keys(found), ['auto_passed', 'gaps', 'added', 'skipped',
     'rejected', 'rejected_entries', 'skipped_entries']);
