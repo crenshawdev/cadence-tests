@@ -261,10 +261,13 @@ test('readAdjudications finds records by the one filename rule and skips everyth
     head_id: 'b'.repeat(40),
     entries: [{ ruling: 'survived', claim: 'kept', failure_scenario: 'why', severity: 'high', file: 'x.mjs', line: 1 }],
   };
-  writeFileSync(join(dir.path, 'ADJUDICATION-risk_surface-plan-1.json'), JSON.stringify(record));
-  writeFileSync(join(dir.path, 'ADJUDICATION-risk_surface-plan-1-r2.json'), JSON.stringify(record));
-  writeFileSync(join(dir.path, 'REVIEW-risk_surface-plan-1.md'), 'not a record');
-  writeFileSync(join(dir.path, 'notes.json'), '{"also":"not a record"}');
+  mkdirSync(join(dir.path, 'records'));
+  writeFileSync(join(dir.path, 'records', 'ADJUDICATION-risk_surface-plan-1.json'), JSON.stringify(record));
+  writeFileSync(join(dir.path, 'records', 'ADJUDICATION-risk_surface-plan-1-r2.json'), JSON.stringify(record));
+  writeFileSync(join(dir.path, 'records', 'REVIEW-risk_surface-plan-1.md'), 'not a record');
+  writeFileSync(join(dir.path, 'records', 'notes.json'), '{"also":"not a record"}');
+  // a record at the phase top is the old layout, which a disk phase is not read in
+  writeFileSync(join(dir.path, 'ADJUDICATION-risk_surface-plan-9.json'), JSON.stringify(record));
 
   const { records, warnings } = readAdjudications(dir);
   assert.deepEqual(warnings, []);
@@ -277,10 +280,11 @@ test('readAdjudications finds records by the one filename rule and skips everyth
 test('an unparseable record warns by name and code, and the other records still read', () => {
   const root = planningRoot({ 'phases/1': commitsTable([['1', '1', 'aaaaaaa', 'a phase']]) });
   const dir = { label: 'phases/1', path: join(root, 'phases', '1') };
-  writeFileSync(join(dir.path, 'ADJUDICATION-plan-good.json'), JSON.stringify({
+  mkdirSync(join(dir.path, 'records'));
+  writeFileSync(join(dir.path, 'records', 'ADJUDICATION-plan-good.json'), JSON.stringify({
     base_id: 'a'.repeat(40), head_id: 'b'.repeat(40), entries: [],
   }));
-  writeFileSync(join(dir.path, 'ADJUDICATION-plan-bad.json'), '{ truncated');
+  writeFileSync(join(dir.path, 'records', 'ADJUDICATION-plan-bad.json'), '{ truncated');
 
   const { records, warnings } = readAdjudications(dir);
   assert.equal(records.length, 2);
@@ -393,6 +397,7 @@ function repoWithCloses(labels, summaryFor = (label, phase) => `# ${label} phase
     mkdirSync(pdir, { recursive: true });
     writeFileSync(join(pdir, 'SUMMARY.md'), summaryFor(label, phase));
     for (const [name, body] of Object.entries(extraFiles(label, phase))) {
+      mkdirSync(dirname(join(pdir, name)), { recursive: true });
       writeFileSync(join(pdir, name), body);
     }
     gitIn(dir, ['add', '-A']);
@@ -606,6 +611,30 @@ test('a recovered adjudication record is found by listing the tree, not by guess
     '| 1 | 1 | aaaaaaa | the only task |', '',
   ].join('\n');
   const extras = () => ({
+    'records/ADJUDICATION-risk_surface-plan-e7c1f09.json': JSON.stringify({
+      base_id: 'a'.repeat(40),
+      head_id: 'b'.repeat(40),
+      entries: [{ ruling: 'survived', claim: 'kept out of a tree', failure_scenario: 'why', severity: 'high' }],
+    }),
+    'records/REVIEW-risk_surface-plan-e7c1f09.md': 'not a record',
+  });
+  const dir = repoWithCloses(['v9.3.0'], summary, extras);
+  const recovered = buildRecoveredIndex(dir).dirs[0];
+  const { records, warnings } = readAdjudications(recovered, dir);
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(records.map((r) => r.name), ['ADJUDICATION-risk_surface-plan-e7c1f09.json']);
+  assert.equal(records[0].survivors[0].claim, 'kept out of a tree');
+});
+
+test('a recovered tree that predates the records folder is read at its top, since a made commit cannot be converted', () => {
+  // The discriminator in `ADJUDICATION-<trigger>-<discriminator>.json` is not
+  // predictable, so the read has to ask the tree what is there.
+  const summary = (label, phase) => [
+    `# ${label} phase ${phase}`, '', '## Commits', '',
+    '| Plan | Task | Commit | Description |', '|---|---|---|---|',
+    '| 1 | 1 | aaaaaaa | the only task |', '',
+  ].join('\n');
+  const extras = () => ({
     'ADJUDICATION-risk_surface-plan-e7c1f09.json': JSON.stringify({
       base_id: 'a'.repeat(40),
       head_id: 'b'.repeat(40),
@@ -613,7 +642,7 @@ test('a recovered adjudication record is found by listing the tree, not by guess
     }),
     'REVIEW-risk_surface-plan-e7c1f09.md': 'not a record',
   });
-  const dir = repoWithCloses(['v9.3.0'], summary, extras);
+  const dir = repoWithCloses(['v9.4.0'], summary, extras);
   const recovered = buildRecoveredIndex(dir).dirs[0];
   const { records, warnings } = readAdjudications(recovered, dir);
   assert.deepEqual(warnings, []);

@@ -466,7 +466,7 @@ test('risk-check run: a record quoting a destructive command is a completed CLEA
   // so the hunk never reaches scanDiff and no signal leaves the table.
   const { repo, dir } = riskRepo();
   const base = commitFile(repo, 'README.md', 'start\n');
-  commitFile(repo, '.planning/phases/1/ADJUDICATION-risk_surface-plan-1.json',
+  commitFile(repo, '.planning/phases/1/records/ADJUDICATION-risk_surface-plan-1.json',
     adjudicationBody(DESTRUCTIVE_LINE));
   // The second file is load-bearing and not scenery: it is what leaves the
   // SCANNED range non-empty, so the `empty:false` below reads as a completed
@@ -505,7 +505,7 @@ test('risk-check run: withholding the record does not withhold detection from th
   // that up.
   const { repo, dir } = riskRepo();
   const base = commitFile(repo, 'README.md', 'start\n');
-  commitFile(repo, '.planning/phases/1/ADJUDICATION-risk_surface-plan-1.json',
+  commitFile(repo, '.planning/phases/1/records/ADJUDICATION-risk_surface-plan-1.json',
     adjudicationBody(DESTRUCTIVE_LINE));
   const head = commitFile(repo, 'src/deploy.mjs',
     `export const wipe = () => sh('${DESTRUCTIVE_GIT}');\n`);
@@ -560,7 +560,8 @@ const recordBody = (rel) => (rel.endsWith('.json')
 for (const name of ['ADJUDICATION-risk_surface-plan-1.json', 'REVIEW-risk_surface-plan-1.md',
   'FINDINGS.json', 'verifier-findings.json']) {
   test(`risk-check run: \`${name}\` is withheld from the range the gate reads`, () => {
-    const { r } = clearRange(`.planning/phases/1/${name}`, recordBody(name));
+    const home = /^(ADJUDICATION|REVIEW)-/.test(name) ? 'records/' : '';
+    const { r } = clearRange(`.planning/phases/1/${home}${name}`, recordBody(name));
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.equal(r.checked, true, JSON.stringify(r));
     assert.deepEqual(r.matches, [], JSON.stringify(r));

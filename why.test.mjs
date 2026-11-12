@@ -385,7 +385,8 @@ function repoWithFinding() {
     `| 1 | 2 | ${b.slice(0, 8)} | the commit it does not |`,
     '', '## Deviations', '', '- [deviation] none of consequence', '',
   ].join('\n'));
-  writeFileSync(join(phase, 'ADJUDICATION-risk_surface-plan-1.json'), JSON.stringify({
+  mkdirSync(join(phase, 'records'), { recursive: true });
+  writeFileSync(join(phase, 'records', 'ADJUDICATION-risk_surface-plan-1.json'), JSON.stringify({
     phase: '1', trigger: 'risk_surface', discriminator: 'plan-1', round: 1,
     base_id: base, head_id: a,
     entries: [
@@ -431,7 +432,7 @@ test("a survived finding reaches the rendered chain on the commit its range cove
 
 test('a finding whose range does not resolve in this clone is stated unknown, never dropped or applied', () => {
   const { dir, a } = repoWithFinding();
-  const record = join(dir, '.planning', 'phases', '1', 'ADJUDICATION-risk_surface-plan-1.json');
+  const record = join(dir, '.planning', 'phases', '1', 'records', 'ADJUDICATION-risk_surface-plan-1.json');
   const parsed = JSON.parse(readFileSync(record, 'utf8'));
   parsed.head_id = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
   writeFileSync(record, JSON.stringify(parsed));

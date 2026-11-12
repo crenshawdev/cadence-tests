@@ -264,7 +264,8 @@ test('lease-check: --phase 08 refuses against a tree holding phases/8/', () => {
 /** A queue member straight into `phases/<phase>/`, no repository needed - the
  * same shape planning-deferred.test.mjs's `putMember` writes. */
 function putMember(dir, phase) {
-  writeFileSync(join(dir, 'phases', String(phase), 'DEFERRED-diff-plan-1.json'),
+  mkdirSync(join(dir, 'phases', String(phase), 'records'), { recursive: true });
+  writeFileSync(join(dir, 'phases', String(phase), 'records', 'DEFERRED-diff-plan-1.json'),
     `${JSON.stringify({
       phase: String(phase),
       trigger: 'diff',
@@ -286,7 +287,7 @@ test('deferred carry: --phase 1.10 carries out of phases/1.10/ when no phases/1.
   const r = seam(['deferred', 'carry', '--phase', '1.10'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.carried, 1, JSON.stringify(r));
-  assert.equal(r.moved[0].from, 'phases/1.10/DEFERRED-diff-plan-1.json', JSON.stringify(r));
+  assert.equal(r.moved[0].from, 'phases/1.10/records/DEFERRED-diff-plan-1.json', JSON.stringify(r));
   assert.equal(r.moved[0].to, 'records/deferred/1.10/DEFERRED-diff-plan-1.json', JSON.stringify(r));
 });
 
@@ -298,7 +299,7 @@ test('deferred carry: --phase 1.10 refuses against a tree holding phases/1.1/, m
   assert.ok(r.detail.startsWith('deferred carry --phase'), r.detail);
   // The refusal is ahead of every rename, which is the whole reason it sits
   // where it does: this face MOVES committed artifacts.
-  assert.equal(existsSync(join(dir, 'phases', '1.10', 'DEFERRED-diff-plan-1.json')), true);
+  assert.equal(existsSync(join(dir, 'phases', '1.10', 'records', 'DEFERRED-diff-plan-1.json')), true);
   assert.equal(existsSync(join(dir, 'records', 'deferred')), false);
 });
 
@@ -314,7 +315,7 @@ test('deferred list: --phase 1.10 lists phases/1.10/ when no phases/1.1 exists',
   const r = seam(['deferred', 'list', '--phase', '1.10'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(r.members.map((m) => m.path),
-    ['phases/1.10/DEFERRED-diff-plan-1.json'], JSON.stringify(r));
+    ['phases/1.10/records/DEFERRED-diff-plan-1.json'], JSON.stringify(r));
 });
 
 test('deferred list: --phase 1.10 refuses against a tree holding phases/1.1/', () => {

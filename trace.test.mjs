@@ -1754,7 +1754,7 @@ test('recount: the ROUND decides which record is read, so a re-arm cannot pass o
   fireRecord(repo, dir, { rulings: ['survived', 'refuted', 'refuted'] });
   fireRecord(repo, dir, { round: 2, rulings: ['downgraded', 'refuted'] });
   assert.deepEqual(
-    readdirSync(join(dir, 'phases', '2')).filter((f) => f.startsWith('ADJUDICATION')).sort(),
+    readdirSync(join(dir, 'phases', '2', 'records')).filter((f) => f.startsWith('ADJUDICATION')).sort(),
     ['ADJUDICATION-plan-plan-1-r2.json', 'ADJUDICATION-plan-plan-1.json']);
 
   const two = ['--survivors', '0', '--downgraded', '1', '--refuted', '1'];

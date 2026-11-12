@@ -56,7 +56,7 @@ test('review-file: all six headings appear in order for every survivor, in the i
   const { dir } = tree();
   const r = reviewFile(dir, { raised: 3, survivors: [survivor(), survivor({ file: 'src/b.js', line: 3, severity: 'low' })] });
   assert.equal(r.ok, true, JSON.stringify(r));
-  assert.equal(r.review, join('phases', '1', 'REVIEW-plan-abc1234.md'));
+  assert.equal(r.review, join('phases', '1', 'records', 'REVIEW-plan-abc1234.md'));
   const text = readOut(dir, r.review);
   const sections = text.split(/^## /m).slice(1);
   assert.equal(sections.length, 2);
@@ -77,7 +77,7 @@ test('review-file: a blank or missing heading is refused naming survivor and hea
     assert.equal(r.ok, false, label);
     assert.equal(r.reason, 'bad-payload');
     assert.match(r.detail, /survivor 2 .*"What proves it"/, label);
-    assert.deepEqual(readdirSync(join(dir, 'phases', '1')), [], label);
+    assert.deepEqual(readdirSync(join(dir, 'phases', '1')), [], label); // not even the records folder
   }
 });
 
@@ -130,9 +130,9 @@ test('review-file: --round 2 lands at -r2.md beside round one', () => {
   assert.equal(reviewFile(dir, { raised: 0, survivors: [] }).ok, true);
   const r = reviewFile(dir, { raised: 1, survivors: [survivor()] }, ['--round', '2']);
   assert.equal(r.ok, true, JSON.stringify(r));
-  assert.equal(r.review, join('phases', '1', 'REVIEW-plan-abc1234-r2.md'));
+  assert.equal(r.review, join('phases', '1', 'records', 'REVIEW-plan-abc1234-r2.md'));
   assert.match(readOut(dir, r.review), /\(round 2\)/);
-  assert.deepEqual(readdirSync(join(dir, 'phases', '1')).sort(),
+  assert.deepEqual(readdirSync(join(dir, 'phases', '1', 'records')).sort(),
     ['REVIEW-plan-abc1234-r2.md', 'REVIEW-plan-abc1234.md']);
 });
 
