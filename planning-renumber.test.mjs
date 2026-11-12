@@ -42,7 +42,10 @@ test('renumber insert --dry-run: full op plan, nothing touched', () => {
   // dirs 3 then 2 move up, high-to-low (collision-safe)
   assert.deepEqual(r.ops[0], { git_mv: ['phases/3', 'phases/4'] });
   assert.deepEqual(r.ops[1], { git_mv: ['phases/2', 'phases/3'] });
-  assert.match(r.slot, /Phase 2/);
+  // the slot names the seam that fills it, never a list line to type by hand
+  assert.match(r.slot, /phase-entry add --phase 2 /);
+  assert.match(r.slot, /"### Phase 2:" detail section/);
+  assert.doesNotMatch(r.slot, /- \[ \]/);
   assert.equal(readFileSync(join(dir, 'ROADMAP.md'), 'utf8'), before);
   assert.ok(readdirSync(join(dir, 'phases')).includes('2'));
 });
