@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, accessSync, constants, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeTree, run, stampState, today, isEntryFile } from './planning.test.mjs';
-import { readState } from '../cadence-core/bin/lib/project-state.mjs';
+import { readState, writeState } from '../cadence-core/bin/lib/project-state.mjs';
 import { renderStateMd } from '../cadence-core/bin/lib/state-views.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
@@ -181,23 +181,17 @@ test('cursor set: the closed arm beats the prior cursor, so a stale total is not
   assert.equal(r.cursor.name, 'no active cycle');
 });
 
-test('cursor set: --status paused preserves a non-zero prior total, so a pause cannot erase the interrupted-close evidence', () => {
+test('cursor set: --status paused on a closed cycle derives of 0 like any other status', () => {
   const dir = makeTree({
     roadmap: [1, 2, 3, 4, 5].map((n) => ({ n, name: n === 3 ? 'Billing' : `P${n}` })),
   });
   assert.equal(run(['cursor', 'set', '--phase', '3', '--status', 'executed', '--next', '/cad-verify 3'], dir).ok, true);
-  // the milestone was pruned from the roadmap and the close never reached the cursor
-  writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap: Fixture\n\n## Phases\n\n');
-  const r = run(['cursor', 'set', '--phase', '3', '--status', 'paused',
-    '--next', 'mid-close, resume at /cad-milestone'], dir);
+  // the close empties the state's phase list, so no total survives to be preserved
+  const state = readState(dir);
+  writeState(dir, { ...state.state, phases: [], cycleOpen: false });
+  const r = run(['cursor', 'set', '--phase', '3', '--status', 'paused', '--next', 'mid-close, resume at /cad-milestone'], dir);
   assert.equal(r.ok, true);
-  assert.equal(r.cursor.total, 5);
-  assert.equal(r.cursor.name, 'Billing');
-  // The stale `of 5` is what cmdStatus reads as the only surviving evidence.
-  const s = run(['status'], dir);
-  assert.equal(s.cycle, 'none');
-  assert.ok(s.drift.some((d) => d.kind === 'cursor' && /did not finish/.test(d.detail)),
-    'the stale-total cursor drift survives the pause');
+  assert.deepEqual([r.cursor.total, r.cursor.name], [0, 'no active cycle']);
 });
 
 test('cursor set: paused preserves nothing when the prior cursor names a different phase', () => {
@@ -224,13 +218,23 @@ test('cursor set: every non-paused status still derives of 0 against a stale pri
   }
 });
 
-test('cursor set: an out-of-grammar roadmap is broken, not closed - still cannot-derive', () => {
-  const dir = makeTree({});
-  // stamped first: on an unstamped project the migration refuses this roadmap before the handler is reached
-  stampState(dir);
-  writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap\n\n## Phases\n\n- Phase 1: Ship auth\n');
-  const r = run(['cursor', 'set', '--phase', '1', '--status', 'ready to plan',
-    '--next', '/cad-phase add'], dir);
+test('cursor set: hand edits to the phase list change nothing it derives, and the next write puts the list back', () => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
+  const args = ['cursor', 'set', '--phase', '2', '--status', 'planned', '--next', '/cad-execute 2'];
+  const before = run(args, dir);
+  const listed = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
+  // a malformed line, a phase added by hand and a phase taken out: none of them is a phase change
+  writeFileSync(join(dir, 'ROADMAP.md'), listed.replace('- [ ] **Phase 1: One** - desc\n',
+    '- Phase 1: One\n- [ ] **Phase 9: Invented** - desc\n'));
+  const after = run(args, dir);
+  assert.equal(after.ok, true);
+  assert.deepEqual(after.cursor, before.cursor);
+  assert.equal(readFileSync(join(dir, 'ROADMAP.md'), 'utf8'), listed);
+});
+
+test('cursor set: a phase the state does not hold cannot derive its name', () => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+  const r = run(['cursor', 'set', '--phase', '4', '--status', 'planned', '--next', 'x'], dir);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'cannot-derive');
   assert.equal(readdirSync(dir).includes('STATE.md'), false); // nothing written
@@ -295,11 +299,11 @@ test('cursor set: a decimal phase insertion (2.1) is still accepted', () => {
   assert.equal(run(['cursor', 'get'], dir).phase, 2.1);
 });
 
-test('cursor set: no ROADMAP and no flags cannot derive', () => {
+test('cursor set: an empty project has no phase list, so it derives the closed cycle, not a failure', () => {
   const dir = makeTree({});
   const r = run(['cursor', 'set', '--phase', '1', '--status', 'planned', '--next', 'x'], dir);
-  assert.equal(r.ok, false);
-  assert.equal(r.reason, 'cannot-derive');
+  assert.equal(r.ok, true);
+  assert.deepEqual([r.cursor.total, r.cursor.name], [0, 'no active cycle']);
 });
 
 // --- cursor set --next-file: the path transport for a COMPOSED resume pointer

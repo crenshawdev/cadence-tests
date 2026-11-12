@@ -9,7 +9,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pruneRoadmap, archiveRequirements, completedPhases } from '../cadence-core/bin/lib/milestone-prune.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
-import { stampState } from './planning.test.mjs';
+import { stampState, verifyChecked } from './planning.test.mjs';
 import { mkdirSync as plantMkdir, writeFileSync as plantWrite } from 'node:fs';
 import { dirname as plantDirname } from 'node:path';
 const plantFile = (file, data) => { plantMkdir(plantDirname(file), { recursive: true }); plantWrite(file, data); };
@@ -67,8 +67,10 @@ const REQUIREMENTS = `# Requirements: Fixture
 
 // --- the pure transforms -----------------------------------------------------
 
-test('completedPhases reads only the checked boxes', () => {
-  assert.deepEqual(completedPhases(ROADMAP), [1, 2.1]);
+test('completedPhases reads only the phases the state holds complete, in phase order', () => {
+  const phase = (n, status) => ({ n, name: `P${n}`, description: '', status, plans: [] });
+  assert.deepEqual(completedPhases({ phases: [phase(3, 'executed'), phase(2.1, 'complete'), phase(1, 'complete')] }), [1, 2.1]);
+  assert.deepEqual(completedPhases({ phases: [] }), []);
 });
 
 test('pruneRoadmap removes checked lines and their detail sections, nothing else', () => {
@@ -559,6 +561,7 @@ function scaffold() {
   writeFileSync(join(dir, 'phases', '3', 'CONTEXT.md'), 'open');
   writeFileSync(join(dir, 'ROADMAP.md'), ROADMAP);
   writeFileSync(join(dir, 'REQUIREMENTS.md'), REQUIREMENTS);
+  verifyChecked(dir);
   return dir;
 }
 
@@ -1221,7 +1224,7 @@ test('seam: a symlinked records folder refuses the close before any directory mo
   const outside = mkdtempSync(join(tmpdir(), 'cad-prune-outside-'));
   // a link where the records folder belongs is refused at the state-file door, so the project is stamped first and its
   // records folder then moved behind the link, state file and all
-  stampState(dir);
+  verifyChecked(dir);
   rmSync(outside, { recursive: true });
   renameSync(recordsDir(dir), outside);
   symlinkSync(outside, recordsDir(dir));

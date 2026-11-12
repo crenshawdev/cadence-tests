@@ -25,6 +25,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // drive them span several subcommands, which is why they stayed.
 import { renumberTree } from './planning-renumber.test.mjs';
 import { writeState } from '../cadence-core/bin/lib/project-state.mjs';
+import { parseRoadmapPhases } from '../cadence-core/bin/lib/planning-files.mjs';
+import { importState } from '../cadence-core/bin/planning/state-import.mjs';
 import { leaseRepo, leaseCheck, stage } from './planning-lease-check.test.mjs';
 
 /** True iff the module at `url` is what node was told to run; realpath on both
@@ -78,6 +80,20 @@ export function ensureRoadmap(dir) {
 export function stampState(dir) {
   const r = writeState(dir, { cycleOpen: false, cursor: null, phases: [], requirements: [] });
   if (r.ok !== true) throw new Error(`stampState: ${r.reason} ${r.detail}`);
+}
+
+/**
+ * Stamp a planning directory the way a first seam call would, then record every phase whose roadmap box is checked as
+ * complete. The importer derives a phase's status from its artifacts and never reads a box, but the state is where
+ * "verified" lives now, so a fixture that checks a box to mean "this phase is done" says so here.
+ */
+export function verifyChecked(dir) {
+  const imported = importState(dir);
+  if (imported.ok !== true) throw new Error(`verifyChecked: ${imported.reason} ${imported.detail}`);
+  const checked = new Set(parseRoadmapPhases(readFileSync(join(dir, 'ROADMAP.md'), 'utf8')).filter((p) => p.checked).map((p) => p.n));
+  const wrote = writeState(dir, { ...imported.state,
+    phases: imported.state.phases.map((p) => (checked.has(p.n) ? { ...p, status: 'complete' } : p)) });
+  if (wrote.ok !== true) throw new Error(`verifyChecked: ${wrote.reason} ${wrote.detail}`);
 }
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync, chmodSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { classifyAcceptanceCriteria } from '../cadence-core/bin/lib/planning-files.mjs';
+import { readState } from '../cadence-core/bin/lib/project-state.mjs';
 import { PLANNING_DIR, makeTree, run, isEntryFile } from './planning.test.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
@@ -78,6 +79,29 @@ test('renumber remove: cuts line + detail, orphans reqs, shifts down, reports pr
   const cursor = run(['cursor', 'get'], dir);
   assert.equal(cursor.total, 2);
   assert.ok(r.warn && /removed phase 2/.test(r.warn)); // cursor pointed at the removed phase
+});
+
+test('renumber insert and remove keep the state, the list and the detail sections in step, and a hand-added list line is not a phase', () => {
+  const dir = renumberTree();
+  assert.equal(run(['status'], dir).ok, true);
+  const file = join(dir, 'ROADMAP.md');
+  writeFileSync(file, readFileSync(file, 'utf8')
+    .replace('- [ ] **Phase 3: Three**', '- [ ] **Phase 3: Three**\n- [ ] **Phase 7: Invented** - desc'));
+  const ins = run(['renumber', 'insert', '--at', '2'], dir);
+  assert.equal(ins.ok, true);
+  assert.deepEqual(readState(dir).state.phases.map((p) => [p.n, p.name]), [[1, 'One'], [3, 'Two'], [4, 'Three']]);
+  const afterInsert = readFileSync(file, 'utf8');
+  assert.deepEqual(afterInsert.match(/^- \[ \] \*\*Phase \d+: \w+\*\*/gm),
+    ['- [ ] **Phase 1: One**', '- [ ] **Phase 3: Two**', '- [ ] **Phase 4: Three**']);
+  assert.match(afterInsert, /^### Phase 3: Two$/m);
+
+  const rem = run(['renumber', 'remove', '--n', '3'], dir);
+  assert.equal(rem.ok, true);
+  assert.deepEqual(readState(dir).state.phases.map((p) => [p.n, p.name]), [[1, 'One'], [3, 'Three']]);
+  const afterRemove = readFileSync(file, 'utf8');
+  assert.deepEqual(afterRemove.match(/^- \[ \] \*\*Phase \d+: \w+\*\*/gm), ['- [ ] **Phase 1: One**', '- [ ] **Phase 3: Three**']);
+  assert.doesNotMatch(afterRemove, /^### Phase \d+: Two$/m);
+  assert.equal(rem.total, 2);
 });
 
 test('renumber insert at total+1 appends: nothing shifts, only the slot opens', () => {
@@ -472,8 +496,10 @@ test('renumber remove: a partial apply reports which ops completed (#49.2)', {
   // hint text to be pinned by a test that reddens on a PARAPHRASE, and every
   // keyword assertion here survives one. This is the only copy of the sentence
   // outside planning.mjs.
-  assert.equal(r.hint, "the tree is partly renumbered and no longer matches ROADMAP"
-    + " - reconcile the completed ops by hand before any further renumber;"
+  assert.deepEqual(readState(dir).state.phases.map((p) => p.n), [1, 2, 3], 'the state still holds the old numbering');
+  assert.equal(r.hint, "the tree is partly renumbered - reverse the completed directory moves and text edits by hand"
+    + " before any further renumber, and never the phase list, the traceability table or STATE.md, which are"
+    + " rendered from the state file; it still holds the old numbering unless the detail says it was written;"
     + " re-running this command against the half-applied tree can destroy a phase directory");
 });
 

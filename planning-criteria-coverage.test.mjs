@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { PLANNING, makeTree, run, isEntryFile } from './planning.test.mjs';
+import { PLANNING, makeTree, run, isEntryFile, verifyChecked } from './planning.test.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -58,6 +58,7 @@ function coverageTree(spec) {
         `## Items\n\n${blocks.join('\n')}\n## Summary\n\ntotal: ${ph.items.length}\n`);
     }
   }
+  verifyChecked(dir);
   return dir;
 }
 

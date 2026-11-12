@@ -12,8 +12,9 @@ import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { makeTree, run, isEntryFile } from './planning.test.mjs';
+import { makeTree, run, isEntryFile, verifyChecked } from './planning.test.mjs';
 import { archive } from './planning-recall.test.mjs';
+import { readState } from '../cadence-core/bin/lib/project-state.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -26,11 +27,13 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 // out of the planning root and answered {"ok":true,"action":"pruned"}.
 
 function pruneTree() {
-  return makeTree({
+  const dir = makeTree({
     roadmap: [{ n: 1, name: 'One', checked: true }, { n: 2, name: 'Two' }],
     phases: { 1: { plan: true }, 2: { plan: true } },
     reqs: [['REQ-1', 1, 'Complete']],
   });
+  verifyChecked(dir);
+  return dir;
 }
 
 for (const mode of ['archive', 'delete']) {
@@ -75,4 +78,21 @@ test('milestone-prune: a spaced milestone-name label still prunes normally', () 
   assert.equal(existsSync(join(dir, `_archive-${label}`, '1', 'PLAN.md')), true);
   assert.deepEqual(readdirSync(join(dir, 'phases')).sort(), ['2']);
   assert.match(readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8'), new RegExp(label));
+});
+
+// The phases a close removes are the state's: it drops them, and the list is rendered from what is left.
+test('milestone-prune: the pruned phases leave the state and the regenerated list, and an all-complete close empties both', () => {
+  const dir = pruneTree();
+  const r = run(['milestone-prune', '--label', 'v1', '--mode', 'delete'], dir);
+  assert.equal(r.ok, true);
+  assert.deepEqual(readState(dir).state.phases.map((p) => p.n), [2]);
+  assert.deepEqual(readFileSync(join(dir, 'ROADMAP.md'), 'utf8').match(/^- \[.\] \*\*Phase \d+/gm), ['- [ ] **Phase 2']);
+
+  const closing = makeTree({ roadmap: [{ n: 1, name: 'One', checked: true }], phases: { 1: { plan: true } } });
+  verifyChecked(closing);
+  assert.equal(run(['milestone-prune', '--label', 'v2', '--mode', 'delete'], closing).ok, true);
+  const state = readState(closing).state;
+  assert.deepEqual([state.phases, state.cycleOpen], [[], false]);
+  assert.equal(readFileSync(join(closing, 'ROADMAP.md'), 'utf8').match(/^- \[.\] \*\*Phase/gm), null);
+  assert.match(readFileSync(join(closing, 'STATE.md'), 'utf8'), /^No cycle is open/m);
 });

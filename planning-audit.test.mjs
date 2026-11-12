@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { makeTree, run, isEntryFile } from './planning.test.mjs';
+import { makeTree, run, isEntryFile, verifyChecked } from './planning.test.mjs';
 import { blockPlanTree } from './planning-plans.test.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
@@ -42,6 +42,7 @@ test('audit: traces every break kind, orphans, and deferred', () => {
       ['REQ-9', 2, 'Deferred'],   // deferred: listed, never counted broken
     ],
   });
+  verifyChecked(dir);
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   const byId = Object.fromEntries(r.requirements.map((q) => [q.id, q]));
@@ -212,6 +213,7 @@ test('audit: a tree with rows and no ## Active heading gains no unpicked break',
     phases: { 1: { plan: true, planReqs: ['REQ-1'] } },
     reqs: [['REQ-1', 1, 'Complete']],
   });
+  verifyChecked(dir);
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.unseeded, undefined);
@@ -224,6 +226,7 @@ test('audit: the partially-planned state - a row for AUD-01, none for AUD-02, so
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'] } },
   });
+  verifyChecked(dir);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **AUD-01**: planned\n- **AUD-02**: not picked up\n\n' +
     '## Traceability\n\n| Requirement | Phase | Status |\n|---|---|---|\n' +
@@ -244,6 +247,7 @@ test('audit: a ## Deferred id is excluded by SECTION PLACEMENT, and a Deferred-s
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'] } },
   });
+  verifyChecked(dir);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **AUD-01**: planned\n- **AUD-02**: deferred by status\n\n' +
     '## Traceability\n\n| Requirement | Phase | Status |\n|---|---|---|\n' +
@@ -321,6 +325,7 @@ test('audit: a v1.3.1-shaped ## Active table is reported in active_issues - and 
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['A'] } },
   });
+  verifyChecked(dir);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n| Requirement | Milestone |\n|---|---|\n' +
     '| TRI-01 (triage every open bug) | v1.3.1 |\n\n' +
@@ -349,6 +354,7 @@ test('audit: a prose bold bullet in ## Active is REPORTED, never a break - the p
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'] } },
   });
+  verifyChecked(dir);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **AUD-01**: the audit gate\n' +
     '- **Note**: scope frozen 2026-07-01\n\n' +
@@ -369,6 +375,7 @@ test('audit: a colon INSIDE the bold span reports, and is never normalized into 
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'] } },
   });
+  verifyChecked(dir);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **AUD-01:** the colon belongs outside the span\n\n' +
     '## Traceability\n\n| Requirement | Phase | Status |\n|---|---|---|\n' +
@@ -728,4 +735,18 @@ test('audit: missing REQUIREMENTS or ROADMAP degrades with named reasons', () =>
   assert.equal(run(['audit'], noReqs).reason, 'no-requirements');
   const noRoadmap = makeTree({ reqs: [['REQ-1', 1, 'Pending']] });
   assert.equal(run(['audit'], noRoadmap).reason, 'no-roadmap');
+});
+
+test('audit: the phases are the state\'s, so a phase line added to the list by hand does not make a row\'s phase exist', () => {
+  const dir = makeTree({
+    roadmap: [{ n: 1, name: 'One' }],
+    phases: { 1: { plan: true, planReqs: ['REQ-1'] } },
+    reqs: [['REQ-1', 1, 'Pending'], ['REQ-7', 7, 'Pending']],
+  });
+  assert.equal(run(['status'], dir).ok, true);
+  writeFileSync(join(dir, 'ROADMAP.md'), readFileSync(join(dir, 'ROADMAP.md'), 'utf8')
+    .replace('- [ ] **Phase 1: One** - desc', '- [ ] **Phase 1: One** - desc\n- [ ] **Phase 7: Invented** - desc'));
+  const r = run(['audit'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.requirements.find((q) => q.id === 'REQ-7').break, 'phase-missing');
 });

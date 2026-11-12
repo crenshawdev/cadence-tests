@@ -130,3 +130,9 @@ test('a state imported from files already in step renders each of the three back
   writeFileSync(join(dir, 'ROADMAP.md'), at('ROADMAP.md').replace('- [x] **Phase 1', '- [ ] **Phase 1'));
   assert.match(renderPhasesList(imported.state, at('ROADMAP.md')).text, /- \[x\] \*\*Phase 1: Base/);
 });
+
+test('a malformed entry inside the list is replaced with the rest of it, while a bullet merely citing a phase stays', () => {
+  const text = '# R\n\n## Phases\n\n- [ ] **Phase 1: Base** - lay it\n- Phase 3: X\n| Phase 4 | table |\n- depends on Phase 2 landing\n\n## Phase Details\n';
+  const r = renderPhasesList(state({ phases: [phase(1, 'Base', 'lay it', 'complete')] }), text);
+  assert.equal(r.text, '# R\n\n## Phases\n\n- [x] **Phase 1: Base** - lay it\n- depends on Phase 2 landing\n\n## Phase Details\n');
+});
