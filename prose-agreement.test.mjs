@@ -1180,7 +1180,7 @@ test('LND-02: milestone.md carries the rulings BEFORE the prune, and stops on ok
   const land = doc('skills', 'cad-land', 'SKILL.md');
   const step4 = (land.split('4. **Terminal cleanup')[1] || '').split('</process>')[0]
     .replace(/\s+/g, ' ');
-  assert.match(step4, /Delete `\.planning\/risk-carry\/`/,
+  assert.match(step4, /Delete `\.planning\/records\/risk-carry\/`/,
     "cad-land's terminal cleanup no longer deletes `.planning/risk-carry/`, so nothing clears "
     + 'the carry milestone.md step 7 now deliberately leaves behind');
   assert.match(step4, /ONLY actor that clears them/,
@@ -1214,8 +1214,8 @@ test('LND-02: cad-land 3(b) unions the RULINGS from both roots, not the review f
 
   for (const [needle, why] of [
     ['ADJUDICATION-risk_surface*.json', 'the record it reads'],
-    ['.planning/phases/*/', 'the live record root'],
-    ['.planning/risk-carry/*/', 'the carried record root, the only one left after a prune'],
+    ['.planning/phases/*/records/', 'the live record root'],
+    ['.planning/records/risk-carry/*/', 'the carried record root, the only one left after a prune'],
     ['entries[]', 'the array the union is taken from'],
     ['unruled', 'the payload key that halts on a fire nothing ruled'],
     ['overridden', 'the envelope key carrying a halt a person already cleared'],
@@ -3210,7 +3210,7 @@ function assertOneSuiteSite(text) {
     + 'prose that binds only when it is set changes nothing');
 
   // Order: the site sits after the last numbered item and before the digest.
-  const lastStep = text.indexOf('5. Rewrite `<plandir>/reports/plan-<k>.md`');
+  const lastStep = text.indexOf('5. Rewrite `<plandir>/records/reports/plan-<k>.md`');
   assert.ok(lastStep > -1, 'the per-task loop no longer ends at the report write');
   assert.ok(lastStep < text.indexOf("After the last task's commit"),
     'the suite site sits ABOVE the last per-task step, so it would run between tasks');

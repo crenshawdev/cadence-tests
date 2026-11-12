@@ -589,11 +589,11 @@ const CONTRACT_SURFACE_DIGESTS = {
   'cadence-core/references/reviewer-brief.md': '5c4998a37a4e89a95c2b9cd09d7408e7d79a73e0c76a499ffbfb400a8f937585',
   'cadence-core/templates/PLAN.md': '4a7fb5784ae799357e33a30b0ddd4d0754b0eed69f56e64f07fb255d06fc963d',
   'skills/cad-assumptions-analyzer-contract/SKILL.md': 'ee690d7178a35d274d8c895367f6476df2160baf1e65889b92d55af3e94233bc',
-  'skills/cad-executor-contract/SKILL.md': '3c5482540f0d3193001fabebe08bb51b25afa8a059741612e4cdd11971d7004f',
+  'skills/cad-executor-contract/SKILL.md': '5a6a028310da97a3e70ea2f7a200f50536f7ac173fa24146ccffe358435164b6',
   'skills/cad-plan-checker-contract/SKILL.md': 'f84ccdfd51ff4389c0f54d70b11479b3673e8bdbe021ce0d8b33bfa62d9dcff5',
   'skills/cad-planner-contract/SKILL.md': 'b6aca8bc79bae4bd07bd422a6bb371c46c504aa51088325211b4e127d5c8ec7f',
   'skills/cad-reviewer-contract/SKILL.md': '4a400deacee7dd963bf0eab8d5f5dae638dda8b2250ef43e06e5394046a392e2',
-  'skills/cad-verifier-contract/SKILL.md': 'e77c56ac0d8e0306bcf5b295f2138bbc21fd307f9701f9d9fb1efcc6b18187cc',
+  'skills/cad-verifier-contract/SKILL.md': '6dc5b10b867151cbee1ae22a915aafaf7dbba41e61af02f593e2dfe2485842e9',
 };
 
 test('a switch\'s text written into a contract surface changes its 3.8.6 digest', () => {
