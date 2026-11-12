@@ -67,7 +67,7 @@ const GROUPS = Object.freeze({
     'planning-debt-harvest', 'planning-deferred', 'planning-detect',
     'planning-files', 'planning-lease-check', 'planning-migrate', 'planning-milestone-prune',
     'planning-phase-done', 'planning-phase-entry', 'planning-plans', 'planning-recall', 'planning-recall-fold', 'planning-records-dir',
-    'planning-replay-check', 'planning-risk-carry',
+    'planning-replay-check', 'planning-req-row', 'planning-risk-carry',
     'planning-renumber', 'planning-review-file', 'planning-seed-reqs', 'planning-status', 'planning-store',
     'planning-task-record', 'planning-test-policy', 'planning-trace-ignore',
     'planning-uat', 'planning-workflow-claim', 'planning-workflow-run', 'planning-writers',
