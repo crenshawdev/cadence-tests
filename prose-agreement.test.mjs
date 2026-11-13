@@ -3986,3 +3986,13 @@ test('phase.md: the add arm states the paused-cursor exception beside the cursor
   assert.match(arm, /points the cursor at the new phase itself, in the same write, unless the cursor is paused, which stays as the user left it; never run `cursor set` after it/,
     'the add arm\'s cursor sentence does not carry the paused exception');
 });
+
+// a close-only milestone writes "no cycle open" in three places, and the add that reopens has to reach all three
+test('phase.md: the add arm sends opened_cycle to PROJECT.md ### Active and REQUIREMENTS.md ## Active too', () => {
+  const wf = doc('cadence-core', 'workflows', 'phase.md');
+  const start = wf.indexOf('### add');
+  const arm = flat(wf.slice(start, wf.indexOf('\n### ', start + 1)));
+  const instruction = arm.slice(arm.indexOf('When the answer carries `opened_cycle: true`'));
+  assert.match(instruction, /PROJECT\.md `### Active`/, 'the opened_cycle instruction does not name PROJECT.md ### Active');
+  assert.match(instruction, /REQUIREMENTS\.md `## Active`/, 'the opened_cycle instruction does not name REQUIREMENTS.md ## Active');
+});
