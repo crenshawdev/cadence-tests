@@ -454,12 +454,13 @@ test('code-map: a module named by whitespace alone is a directory name and start
   assert.equal(typeof await runScript(MAP, none, { ...MAP_ARGS, items: [mod('')] }), 'string', 'an empty name still is no module');
 });
 
-test('code-map: three modules start three readers with Bash denied, the given rung and a label naming the module, and a null model sends none', async () => {
+test('code-map: three modules start three readers with Bash and LSP denied, the given rung and a label naming the module, and a null model sends none', async () => {
   const h = host((label) => entryFor(label.slice('map '.length)));
   const out = await runScript(MAP, h, MAP_ARGS);
   assert.deepEqual(h.calls.map((c) => c.opts.label), ['map m1', 'map m2', 'map m3']);
   for (const c of h.calls) {
     assert.ok(c.opts.disallowedTools.includes('Bash'));
+    assert.ok(c.opts.disallowedTools.includes('LSP'));
     assert.equal(c.opts.agentType, 'cadence:cad-mapper-xhigh');
     assert.equal('model' in c.opts, false);
     assert.equal(c.opts.bashCommandClamp, undefined);
