@@ -538,15 +538,16 @@ test('renumber remove: a partial apply reports which ops completed (#49.2)', {
   // The hint must never PRESCRIBE a re-run: the half-applied tree no longer
   // matches ROADMAP, so a re-run rm's phases/1 - which now holds the ORIGINAL
   // phase 2's work - and exits ok:true having destroyed it. It may mention
-  // re-running, but only to warn against it.
-  assert.doesNotMatch(r.hint, /by hand,\s*then re-run/);
+  // re-running, but only to warn against it. No "by hand" either: the hint
+  // names what to reverse, and how is the reader's call.
+  assert.doesNotMatch(r.hint, /by hand/);
   assert.match(r.hint, /destroy/);
   // Byte-exact, not just the keywords above: ROADMAP phase 1 SC2 asks for the
   // hint text to be pinned by a test that reddens on a PARAPHRASE, and every
   // keyword assertion here survives one. This is the only copy of the sentence
   // outside planning.mjs.
   assert.deepEqual(readState(dir).state.phases.map((p) => p.n), [1, 2, 3], 'the state still holds the old numbering');
-  assert.equal(r.hint, "the tree is partly renumbered - reverse the completed directory moves and text edits by hand"
+  assert.equal(r.hint, "the tree is partly renumbered - reverse the completed directory moves and text edits"
     + " before any further renumber, and never the phase list, the traceability table or STATE.md, which are"
     + " rendered from the state file; it still holds the old numbering unless the detail says it was written;"
     + " re-running this command against the half-applied tree can destroy a phase directory");
