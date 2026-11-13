@@ -489,11 +489,13 @@ test('redactOutbound: ordinary code and look-alikes cross byte-identical', () =>
   }
 });
 
+/** A diff header naming `path` on both sides, so the fence picks its rules by that path. @param {string} path */
+const header = (path) => `diff --git a/${path} b/${path}\n`;
+
 // The five inputs the plan-1 risk review found crossing whole. Each was watched failing before the fix.
-test('redactOutbound: a quoted env value that spans lines goes whole', () => {
+test('redactOutbound: under a .env path, a quoted env value that spans lines goes whole', () => {
   const body = '+PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n+MIIEowIBAAKCAQEAfake0123\n+-----END RSA PRIVATE KEY-----"\n+NEXT=1';
-  const out = redactOutbound(body);
-  assert.equal(out, `+PRIVATE_KEY=${REDACTION_MARK}\n+NEXT=1`);
+  assert.equal(redactOutbound(header('.env') + body), `${header('.env')}+${REDACTION_MARK}\n+NEXT=1`);
 });
 
 test("redactOutbound: a userinfo password holding ' ( or ) still goes", () => {
@@ -529,13 +531,13 @@ test('redactOutbound: a value starting with $ that is not a variable still goes'
   }
 });
 
-test('redactOutbound: a YAML env-map entry with a credential name and a literal value goes', () => {
+test('redactOutbound: under a .yml path, a YAML env-map entry with a credential name and a literal value goes', () => {
   for (const [body, value] of [
     ['  environment:\n    POSTGRES_PASSWORD: s3cr3t-literal\n', 's3cr3t-literal'],
     ['+    env:\n+      OPENAI_API_KEY: "sk-fake-0123456789"\n', 'sk-fake-0123456789'],
     ['      - AWS_SECRET_ACCESS_KEY: fakeAWS/0123456789\n', 'fakeAWS/0123456789'],
   ]) {
-    const out = redactOutbound(body);
+    const out = redactOutbound(header('docker-compose.yml') + body);
     assert.equal(out.includes(value), false, `the value survived: ${out}`);
     assert.ok(out.includes(REDACTION_MARK), `nothing was redacted in ${out}`);
   }
@@ -582,6 +584,9 @@ test('redactOutbound: positional and special parameters and Makefile $$NAME are 
     'DB_PASSWORD=$?',
     'API_TOKEN=$$API_TOKEN',
     '    DB_PASSWORD: $1',
+    // a positional parameter followed by `:` or `/` is still the parameter
+    'AUTH_TOKEN="$1:$2"',
+    'API_TOKEN=$1/x',
   ]) {
     assert.equal(redactOutbound(body), body);
   }
@@ -610,12 +615,78 @@ test('redactOutbound: a ${NAME} or ${{ ... }} user does not carry a literal pass
   assert.equal(redactOutbound(variable), variable);
 });
 
-test('redactOutbound: a YAML block scalar under a credential name loses the block and keeps the key', () => {
+test('redactOutbound: under a .yml path, a YAML block scalar under a credential name loses the block', () => {
+  const yml = header('.github/workflows/ci.yml');
+  // the wide rules take the key line's `|`, so the key goes with it; the PEM under it is the block rule's
   const body = '+  env:\n+    PRIVATE_KEY: |\n+      -----BEGIN RSA PRIVATE KEY-----\n+      MIIEowIBAAKCAQEAfake0123\n'
     + '+      -----END RSA PRIVATE KEY-----\n+    NEXT: 1';
-  assert.equal(redactOutbound(body), `+  env:\n+    PRIVATE_KEY: |\n+      ${REDACTION_MARK}\n+    NEXT: 1`);
+  assert.equal(redactOutbound(yml + body), `${yml}+  env:\n+    ${REDACTION_MARK}\n+      ${REDACTION_MARK}\n+    NEXT: 1`);
+  // CRLF: each line keeps its own `\r\n`
+  const crlf = '  env:\r\n    PRIVATE_KEY: |\r\n      -----BEGIN RSA PRIVATE KEY-----\r\n      MIIEowIBAAKCAQEAfake0123\r\n'
+    + '    NEXT: 1\r\n';
+  assert.equal(redactOutbound(yml + crlf),
+    `${yml}  env:\r\n    ${REDACTION_MARK}\r\n      ${REDACTION_MARK}\r\n    NEXT: 1\r\n`);
   const script = '  steps:\n    - run: |\n        echo "$GITHUB_TOKEN" | gh auth login --with-token\n        gh pr list\n';
-  assert.equal(redactOutbound(script), script);
+  assert.equal(redactOutbound(yml + script), yml + script);
+});
+
+// Round 3: the fence picks its rules by the file's path. Config files get the wide rules, source files the narrow ones.
+test('redactOutbound: every risk-review input under the path its spelling belongs to loses each literal', () => {
+  const pem = '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAfake0123\n-----END RSA PRIVATE KEY-----';
+  for (const [path, body, values] of [
+    ['.env', 'DATABASE_URL=postgres://admin:Pa(ss)w0rd@db.internal:5432/app\nREDIS=redis://:p4ss(w0rd)@cache:6379\n',
+      ['Pa(ss)w0rd', 'p4ss(w0rd)']],
+    ['src/client.mjs', 'headers: { Authorization: `Bearer sk-live-0123456789abcdef` },', ['sk-live-0123456789abcdef']],
+    ['deploy.sh', "export DB_PASSWORD='$9xK!q2zz'\ngit clone https://$GITHUB_ACTOR:ghp_literal123456@github.com/o/r.git\n",
+      ['$9xK!q2zz', 'ghp_literal123456']],
+    ['src/client.mjs', "+const header = 'GITHUB_TOKEN=' + token;\n+const body = { 'api_key': 'sk-live-0123456789abcdef' };",
+      ['sk-live-0123456789abcdef']],
+    ['deploy.sh', 'git clone https://${GITHUB_ACTOR}:ghp_literal123456@github.com/o/r.git\n', ['ghp_literal123456']],
+    ['.github/workflows/ci.yml', '        run: git push https://${{ github.actor }}:ghp_literal@github.com\n', ['ghp_literal']],
+    ['.env', `PRIVATE_KEY="\n${pem}\n"\nNEXT=1`, ['MIIEowIBAAKCAQEAfake0123']],
+    ['deploy.sh', `export PRIVATE_KEY='\n${pem}\n'\nNEXT=1`, ['MIIEowIBAAKCAQEAfake0123']],
+    ['.env', `PRIVATE_KEY="${pem}" # deploy key\nNEXT=1`, ['MIIEowIBAAKCAQEAfake0123']],
+    ['deploy.sh', `PRIVATE_KEY="${pem}" ./deploy.sh\nNEXT=1`, ['MIIEowIBAAKCAQEAfake0123']],
+    ['deploy.sh', `export PRIVATE_KEY="${pem}";\nNEXT=1`, ['MIIEowIBAAKCAQEAfake0123']],
+    ['.env', 'DB_PASSWORD=" hunter2-literal"\nNEXT=1', ['hunter2-literal']],
+    ['docker-compose.yml', '  environment:\n    POSTGRES_PASSWORD: example\n    MYSQL_ROOT_PASSWORD: supersecretpassword\n'
+      + '    JWT_SECRET: myJwtSecretForProduction\n    API_TOKEN: correct.horse.battery.staple\n',
+    ['example', 'supersecretpassword', 'myJwtSecretForProduction', 'correct.horse.battery.staple']],
+    ['docker-compose.yml', '  environment:\n    POSTGRES_PASSWORD: $$ecretP4ss\n', ['ecretP4ss']],
+  ]) {
+    const out = redactOutbound(header(path) + body);
+    for (const value of values) assert.equal(out.includes(value), false, `${path}: ${value} survived: ${out}`);
+    assert.ok(out.includes(REDACTION_MARK), `${path}: nothing was redacted in ${out}`);
+    // a line nobody quoted across stays a line of its own
+    if (body.includes('NEXT=1')) assert.ok(out.endsWith('\nNEXT=1'), `${path}: the next line was joined: ${out}`);
+  }
+});
+
+test('redactOutbound: on a config path, whatever the wide or the narrow rules take goes', () => {
+  for (const path of ['notify.sh', '.github/workflows/ci.yml']) {
+    for (const [body, expected] of [
+      // the wide rules pair the quote closing the echo with the next line's opening one; the narrow fence takes the value
+      ["+  echo 'SLACK_TOKEN='\n+  SLACK_TOKEN='xoxb-literal-0123'", `+  echo ${REDACTION_MARK}`],
+      // run in turn, one set's mark shifts the quotes the other pairs and a value crosses; run on the original, none does
+      ["echo 'SLACK_TOKEN='\nA_TOKEN='abc'\npassword='hunter2'", `echo ${REDACTION_MARK}\n${REDACTION_MARK}`],
+    ]) {
+      assert.equal(redactOutbound(header(path) + body), header(path) + expected, `${path}: ${body}`);
+    }
+  }
+});
+
+test('redactOutbound: under a source path, code reading like a credential pair crosses as written', () => {
+  for (const [path, body] of [
+    ['src/env.mjs', 'const env = {\n  GITHUB_TOKEN: getToken()\n}'],
+    ['src/env.mjs', "{\n  GITHUB_TOKEN: core.getInput('token')\n}"],
+    ['src/env.mjs', "{\n  GITHUB_TOKEN: process.env['GITHUB_TOKEN']\n}"],
+    ['src/env.ts', '{\n  GITHUB_TOKEN: process.env.GITHUB_TOKEN!\n}'],
+    ['src/keys.ts', 'interface Keys {\n  PRIVATE_KEY: Uint8Array\n}'],
+    ['app/settings.py', 'class Settings(BaseSettings):\n    OPENAI_API_KEY: str\n    GITHUB_TOKEN: Optional[str]'],
+    ['src/token.mjs', 'const token = getToken();'],
+  ]) {
+    assert.equal(redactOutbound(header(path) + body), header(path) + body);
+  }
 });
 
 test('cost: redactOutbound on a 480,000-character input stays linear', () => {
@@ -630,5 +701,16 @@ test('cost: redactOutbound on a 480,000-character input stays linear', () => {
     const ms = Date.now() - started;
     assert.ok(ms < 2000, `${name}: took ${ms}ms on ${body.length} characters`);
     assert.equal(out, body, `${name}: nothing here is a credential`);
+  }
+  // a config path runs both rule sets and unions their marks, so a mark on every line is the case to time
+  for (const [name, body] of Object.entries({
+    'one long upper-case run under .env': 'A'.repeat(480000) + '=',
+    'a credential on every line under .env': 'X_TOKEN=abc\n'.repeat(40000),
+    'a PEM block under a credential name under .env': 'PRIVATE_KEY: |\n' + '  MIIEowIBAAKCAQEAfake0123\n'.repeat(18000),
+  })) {
+    const started = Date.now();
+    redactOutbound(header('.env') + body);
+    const ms = Date.now() - started;
+    assert.ok(ms < 2000, `${name}: took ${ms}ms on ${body.length} characters`);
   }
 });

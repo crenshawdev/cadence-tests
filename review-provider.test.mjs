@@ -1402,19 +1402,38 @@ test('fence: the four outbound shapes never reach the wire, and each is counted'
   assert.ok(r.envelope.redactions >= 4, `reported ${r.envelope.redactions} redactions`);
 });
 
-test('fence: the tracked source corpus crosses byte for byte (D-18)', async () => {
-  // the narrow rule exists because the wide one rewrote 64 of these files; fence() calls redactOutbound, so this is it
-  const { redactOutbound } = await import('../cadence-core/bin/lib/redact-url.mjs');
+/** D-18's corpus, each tracked file's path and text. @returns {Array<[string, string]>} */
+function sourceCorpus() {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
   const files = execFileSync('git', ['ls-files', '--', 'cadence-core/**/*.mjs', 'workflows/*.js', 'hooks/*',
     'cadence-core/references/*.md', 'skills/**/*.md', 'agents/*.md'], { cwd: root, encoding: 'utf8' })
     .split('\n').filter(Boolean);
   // 285 on 2026-11-13; the floor stops an empty listing passing as a clean one
   assert.ok(files.length >= 200, `only ${files.length} tracked files listed`);
-  for (const f of files) {
-    const text = readFileSync(join(root, f), 'utf8');
+  return files.map((f) => [f, readFileSync(join(root, f), 'utf8')]);
+}
+
+test('fence: the tracked source corpus crosses byte for byte (D-18)', async () => {
+  // the narrow rule exists because the wide one rewrote 64 of these files; fence() calls redactOutbound, so this is it
+  const { redactOutbound } = await import('../cadence-core/bin/lib/redact-url.mjs');
+  for (const [f, text] of sourceCorpus()) {
     assert.ok(redactOutbound(text) === text, `${f} changed crossing the fence`);
   }
+});
+
+test('fence: under a config path the corpus loses exactly what the wide rules take', async () => {
+  // the config side re-runs redactUrl's and redactCredentials's rules to track each mark; a rule added to one of them
+  // and not there fails here instead of crossing. The narrow fence takes nothing in this corpus (D-18), so this is all.
+  const { redactOutbound, redactUrl, redactCredentials } = await import('../cadence-core/bin/lib/redact-url.mjs');
+  const head = 'diff --git a/config.yml b/config.yml\n';
+  let changed = 0;
+  for (const [f, text] of sourceCorpus()) {
+    const wide = redactCredentials(redactUrl(head + text));
+    if (wide !== head + text) changed += 1;
+    assert.ok(redactOutbound(head + text) === wide, `${f} under a config path differs from the wide rules`);
+  }
+  // the wide rules rewrote 64 of these files when the narrow rule was written; none rewritten would prove nothing
+  assert.ok(changed >= 20, `the wide rules changed only ${changed} files`);
 });
 
 test('fault mode 1/6 - request timeout: the caller sees transport, and the trace names it', async () => {
