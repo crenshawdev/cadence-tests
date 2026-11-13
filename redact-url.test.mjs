@@ -552,6 +552,64 @@ test('redactOutbound: variables in the newly covered spellings still cross', () 
   }
 });
 
+// The four inputs the round 2 risk review found. Each was watched failing before the fix.
+test('redactOutbound: a quote that closes a string literal never opens a value across lines', () => {
+  for (const [body, expected] of [
+    ["+const header = 'GITHUB_TOKEN=' + token;\n+const body = { 'api_key': 'sk-live-0123456789abcdef' };",
+      `+const header = 'GITHUB_TOKEN=' + token;\n+const body = { 'api_key': '${REDACTION_MARK}' };`],
+    ['+const header = "GITHUB_TOKEN=" + token;\n+const body = { "api_key": "sk-live-0123456789abcdef" };',
+      `+const header = "GITHUB_TOKEN=" + token;\n+const body = { "api_key": "${REDACTION_MARK}" };`],
+    ["+  echo 'SLACK_TOKEN='\n+  SLACK_TOKEN='xoxb-literal-0123'",
+      `+  echo 'SLACK_TOKEN='\n+  SLACK_TOKEN=${REDACTION_MARK}`],
+  ]) {
+    assert.equal(redactOutbound(body), expected);
+  }
+  for (const body of [
+    // tests/review-provider.test.mjs's own fence fixture, as the source reads
+    "    '+OPENAI_API_KEY=' + SECRET,\n    'the surrounding prose a reviewer needs to act on the diff',",
+    'if (line.startsWith(\'API_TOKEN="\')) {\n  console.log("done");\n}',
+  ]) {
+    assert.equal(redactOutbound(body), body);
+  }
+});
+
+test('redactOutbound: positional and special parameters and Makefile $$NAME are variables', () => {
+  for (const body of [
+    'GITHUB_TOKEN="$1"',
+    'GITHUB_TOKEN=$1',
+    'export API_TOKEN="$2"',
+    'API_TOKEN="$@"',
+    'DB_PASSWORD=$?',
+    'API_TOKEN=$$API_TOKEN',
+    '    DB_PASSWORD: $1',
+  ]) {
+    assert.equal(redactOutbound(body), body);
+  }
+});
+
+test('redactOutbound: a type annotation or an expression under a credential name is not a YAML literal', () => {
+  for (const body of [
+    'class Settings(BaseSettings):\n    OPENAI_API_KEY: str\n    GITHUB_TOKEN: Optional[str]',
+    'interface ProcessEnv {\n  GITHUB_TOKEN: string\n}',
+    'const env = {\n  GITHUB_TOKEN: process.env.GITHUB_TOKEN\n}',
+  ]) {
+    assert.equal(redactOutbound(body), body);
+  }
+});
+
+test('redactOutbound: a ${NAME} or ${{ ... }} user does not carry a literal password across', () => {
+  for (const [body, value] of [
+    ['git clone https://${GITHUB_ACTOR}:ghp_literal123456@github.com/o/r.git', 'ghp_literal123456'],
+    ['https://${{ github.actor }}:ghp_literal@github.com', 'ghp_literal'],
+  ]) {
+    const out = redactOutbound(body);
+    assert.equal(out.includes(value), false, `the password survived: ${out}`);
+    assert.ok(out.includes(`://${REDACTION_MARK}@`), `nothing was redacted in ${out}`);
+  }
+  const variable = 'https://${GITHUB_ACTOR}:${{ secrets.GITHUB_TOKEN }}@github.com/o/r.git';
+  assert.equal(redactOutbound(variable), variable);
+});
+
 test('cost: redactOutbound on a 480,000-character input stays linear', () => {
   // same loose bound as the #167 cost arm: it fails on a quadratic walk, not a slow machine
   for (const [name, body] of Object.entries({
