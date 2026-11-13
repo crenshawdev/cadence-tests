@@ -3964,3 +3964,17 @@ test('new-project.md and adopt.md: "Change phases" runs the renumber seam before
       `${file}'s "Change phases" loop does not say the seam runs before the hand edit`);
   }
 });
+
+// Phase 2 plan 4 (#395, D-06, D-07): `phase-entry add` writes the cursor itself
+// when nothing else is unfinished, and a cycle-opening add leaves the Overview's
+// no-cycle sentence stale unless the session rewrites the prose it wrote.
+
+test('phase.md: the add arm rewrites the Overview on opened_cycle and drops the cursor-not-written line (#395)', () => {
+  const wf = doc('cadence-core', 'workflows', 'phase.md');
+  const start = wf.indexOf('### add');
+  assert.ok(start > -1, 'phase.md has no ### add arm');
+  const arm = flat(wf.slice(start, wf.indexOf('\n### ', start + 1)));
+  assert.match(arm, /opened_cycle/, 'the add arm does not name opened_cycle');
+  assert.match(arm, /Overview/, 'the add arm does not send the session to the Overview');
+  assert.doesNotMatch(arm, /cursor is not re-written/, 'the add arm still says the cursor is not re-written');
+});
