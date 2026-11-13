@@ -1626,7 +1626,7 @@ test('check 12: *.test.mjs is off the walk - a test may write any shape', () => 
   assert.deepEqual(mergeProblems(binFixture({ 'seam.test.mjs': BARE_CALL })), []);
 });
 
-// CADENCE-CENSUS: self-verify-merge-layers | asserts: twenty mergeLayers callsites over fourteen files, each in one of the two warning-surfacing arms
+// CADENCE-CENSUS: self-verify-merge-layers | asserts: twenty-one mergeLayers callsites over fifteen files, each in one of the two warning-surfacing arms
 test('check 12: the live tree is TWENTY callsites over FOURTEEN files, each in an arm', () => {
   // The count is taken here INDEPENDENTLY of the rule (a plain line scan), so a
   // miscount in either direction fails rather than passing quietly, and a
@@ -1642,7 +1642,9 @@ test('check 12: the live tree is TWENTY callsites over FOURTEEN files, each in a
   // eighteen reads over fourteen files. Then FRG-06 gave forge.mjs `create` a
   // read of its own - the persisted instance whose port a `--remote-url` must
   // name - so that file now holds two: nineteen reads over the same fourteen
-  // files.
+  // files. Then planning/phase-entry.mjs read workflow.skip_discuss for the
+  // cursor an add writes: twenty-one reads over fifteen files. The title keeps
+  // its old words because census-registry.mjs quotes it verbatim.
   const binDir = join(REPO, 'cadence-core', 'bin');
   const skip = join(binDir, 'lib', 'config-merge.mjs');
   /** @param {string} dir @returns {string[]} */
@@ -1675,8 +1677,8 @@ test('check 12: the live tree is TWENTY callsites over FOURTEEN files, each in a
       }
     }
   }
-  assert.equal(total, 20, `callsites: ${files.join(', ')}`);
-  assert.equal(files.length, 14, files.join(', '));
+  assert.equal(total, 21, `callsites: ${files.join(', ')}`);
+  assert.equal(files.length, 15, files.join(', '));
   // Arm (b) is the exception, not the habit: exactly one file states the reason
   // in its header, and it is the one whose two other reads are memoized scalars.
   assert.deepEqual(armB, [join('cadence-core', 'bin', 'review-provider.mjs')]);
