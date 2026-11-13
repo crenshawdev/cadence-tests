@@ -119,6 +119,19 @@ const WRAPPED_SEARCHES = [
   ['xargs grep', 'find . -name "*.mjs" | xargs grep -l parseCursor'],
 ];
 
+// D-17: a substitution inside double quotes runs; single quotes and plain double-quoted prose run nothing
+const QUOTED_SUBSTITUTIONS = [
+  ['a grep inside $(...) inside double quotes', 'echo "found $(grep -c "parseCursor" a.mjs) hits"', true],
+  ['an rg inside backticks inside double quotes', 'echo "files: `rg -l parseCursor cadence-core`"', true],
+  ['a grep inside $(...) inside single quotes', 'echo \'found $(grep -c parseCursor a.mjs) hits\'', false],
+  ['an rg inside backticks inside single quotes', 'echo \'files: `rg -l parseCursor cadence-core`\'', false],
+  ['a double-quoted sentence naming grep', 'git commit -q -m "fix: grep the trace before the summary"', false],
+];
+
+for (const [name, command, runs] of QUOTED_SUBSTITUTIONS) {
+  test(`quoted substitution: ${name}`, () => assert.equal(runsSearch(command), runs));
+}
+
 for (const [name, command] of NOT_SEARCHES) {
   test(`not a grep: ${name}`, () => assert.equal(runsSearch(command), false));
 }
