@@ -1592,7 +1592,7 @@ test('ENFORCEMENT, execute.md: the blocking FAIL arm dispatches a continuation c
     'the FAIL arm no longer names the worker key `<k>` the fix is dispatched under, so the '
     + 'fix leaves no second bracket on the run record under the plan it belongs to and '
     + 'nothing can show a worker rather than the coordinator authored it');
-  assert.match(arm, /\.planning\/phases\/<N>\/records\/REVIEW-risk_surface-plan-<k>\.md/,
+  assert.match(arm, /\.planning\/phases\/<N>\/records\/REVIEW-risk_surface-<discriminator>\.md/,
     'the FAIL arm no longer carries the PERSISTED findings path, so the coordinator is back '
     + 'to distilling the findings into the prompt itself - the reading step this dispatch '
     + 'exists to take off it');

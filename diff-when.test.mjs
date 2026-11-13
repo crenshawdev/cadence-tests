@@ -73,7 +73,7 @@ test('execute_sequential skips the per-plan fire under phase_end and fires once 
   // finding 2: the fix has its own worker key and discriminator, so a plan's record, receipts and re-arm count are untouched
   assert.match(body, /under worker key `phase`, never a plan's/);
   assert.match(body, /\(`--plan phase`\)/);
-  assert.match(body, /\(discriminator `plan-phase`, a re-arm counted on its own\)/);
+  assert.match(body, /\(named by its own range, review-triggers\.md step 5, a re-arm counted on its own\)/);
   assert.match(body, /that fix's range gets its own `risk-check run` and `risk-check status`/);
 });
 
@@ -85,7 +85,7 @@ test('execute-parallel.md: step 5 skips the per-plan diff fires and step 6 state
   assert.match(six, /oldest `phase_start`\s+anchor as `execute_sequential` states it: `phase_diff` when its gate is not `off`, else `diff` with the same refs, never both/);
   // finding 3: the same worker key and the same risk-check run and status the sequential arm states
   assert.match(six, /fixed in the main tree by the continuation `cad-executor` under worker key `phase`, never a plan's/);
-  assert.match(six, /gets its own `risk-check run`, any `risk_surface` fire \(discriminator `plan-phase`\) and `risk-check status --plan phase`, before `goal_check`/);
+  assert.match(six, /gets its own `risk-check run`, any `risk_surface` fire \(named by its own range, step 5 of `references\/review-triggers\.md`\) and `risk-check status --plan phase`, before `goal_check`/);
 });
 
 test('review-triggers.md: the diff row names the phase_end fire and the phase_diff row says it stands in', () => {
