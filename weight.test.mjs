@@ -202,7 +202,7 @@ test('AC1: --command eagerBytes is the sum of the files that same envelope lists
 
 test('AC1: --role returns EVERY agent under that role, each summed on its own', () => {
   const j = resident(REPO, '--role', 'cad-executor');
-  // Every rung file preloads the one contract skill, so the role has one
+  // Every rung file preloads its contract and the shared rules, so the role has one
   // dispatch weight per rung and no single role-wide figure exists to assert.
   assert.deepEqual(j.roles.map((r) => r.agent).sort(),
     ['agents/cad-executor-low.md', 'agents/cad-executor-max.md',
@@ -212,7 +212,7 @@ test('AC1: --role returns EVERY agent under that role, each summed on its own', 
     assert.equal(r.role, 'cad-executor');
     assert.equal(r.dispatchBytes, r.agentBytes + sumBytes(r.contracts));
     assert.deepEqual(r.contracts.map((c) => c.surface),
-      ['skills/cad-executor-contract/SKILL.md']);
+      ['skills/cad-executor-contract/SKILL.md', 'skills/cad-shared-rules/SKILL.md']);
   }
 });
 
@@ -263,6 +263,23 @@ test('resident: a *-contract skill is a role, never a command (D-05)', () => {
   assert.equal(j.roles[0].agentBytes, Buffer.byteLength(agent, 'utf8'));
   assert.equal(j.roles[0].dispatchBytes,
     Buffer.byteLength(agent, 'utf8') + Buffer.byteLength(contract, 'utf8'));
+});
+
+test('resident: a shared skill listed after the contract leaves the role alone and still bills its bytes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cad-resident-shared-'));
+  mkdirSync(join(root, 'agents'), { recursive: true });
+  const contract = '---\nname: cad-x-contract\nuser-invocable: false\n---\n\ncontract prose\n';
+  const shared = '---\nname: cad-shared-rules\nuser-invocable: false\n---\n\nshared prose\n';
+  for (const [name, text] of [['cad-x-contract', contract], ['cad-shared-rules', shared]]) {
+    mkdirSync(join(root, 'skills', name), { recursive: true });
+    writeFileSync(join(root, 'skills', name, 'SKILL.md'), text);
+  }
+  const agent = '---\nname: cad-x-low\nskills:\n  - cad-x-contract\n  - cad-shared-rules\n---\n\npointer\n';
+  writeFileSync(join(root, 'agents', 'cad-x-low.md'), agent);
+  const j = resident(root);
+  assert.deepEqual(j.roles.map((r) => r.role), ['cad-x']);
+  assert.equal(j.roles[0].dispatchBytes,
+    Buffer.byteLength(agent, 'utf8') + Buffer.byteLength(contract, 'utf8') + Buffer.byteLength(shared, 'utf8'));
 });
 
 test('resident: an agent preloading no contract is its own role', () => {

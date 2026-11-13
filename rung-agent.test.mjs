@@ -591,7 +591,7 @@ for (const [role, grant] of Object.entries(GRANTS)) {
       assert.equal(fields.maxTurns, '200');
       assert.equal(fields.description,
         `The \`${rung}\` rung of \`${role}\` (${grant.gloss}); \`bin/route.mjs\` picks it, not the user.`);
-      assert.equal(fields.skills, `\n  - ${role}-contract`, `${stem} preloads its contract alone`);
+      assert.equal(fields.skills, `\n  - ${role}-contract\n  - cad-shared-rules`, `${stem} preloads its contract, then the shared rules`);
       assert.equal(body, `\n${rungBody(`${role}-contract`)}`, `${stem} body`);
     }
   });
@@ -650,38 +650,40 @@ test('agentFileText: a stem the table does not name renders nothing', () => {
 // (D-06) - a deliberate change, approved with the phase.
 // The 25 pinned agent files that lacked LSP were re-pinned when Plan 3 of that phase added it to every role's tools
 // (D-03, D-12) - a deliberate change, approved with the phase.
+// All 30 were re-pinned again when the same plan listed cad-shared-rules after each role contract (D-02, D-08) -
+// a deliberate change, approved with the phase.
 
 const CONTRACT_SURFACE_DIGESTS = {
-  'agents/cad-assumptions-analyzer-high.md': '1843162c11129799bb8654bcde65bb0119cff9c0f233639b7902b3c699c2692f',
-  'agents/cad-assumptions-analyzer-low.md': 'be4833444b698cce55fcbe5d1f00037f2361d919a9fb10c8f047f7526e724027',
-  'agents/cad-assumptions-analyzer-max.md': 'd4ccfca4b3f32fe6b25924d51354d249c2b7d2d73bb7ba88177be553aac58eca',
-  'agents/cad-assumptions-analyzer-medium.md': '3d27971f51ef4ab882b5b879254c40853254c402c41b555c82b1cb861cc7e497',
-  'agents/cad-assumptions-analyzer.md': '6ca66f0c2507861989d63f7ae1d5c6df45fa7763aa082e71ffbfd41c07c1b8f0',
-  'agents/cad-executor-low.md': '680d82f87125297dce4187e2c6ee29b796f03d5969d71bd4e25bc2f5c9d56794',
-  'agents/cad-executor-max.md': '3cad2bac28e787f169cfdf8c5c69dde25bd796ed907fc9b78a69ec52e0b4330b',
-  'agents/cad-executor-medium.md': '366c599ecadce9a0848843b955655ad6383060ff6d807778aa4c5c262945f319',
-  'agents/cad-executor-xhigh.md': '3054ae3d26a572268e8f6d6b420cb81619c81ff39f44af33c7cefd151d9d9702',
-  'agents/cad-executor.md': 'f325ac4c93a3053a88cfe5494cb8082864e69c9e50aef4258725fce8f6910af8',
-  'agents/cad-plan-checker-high.md': 'a2944fd04a4c82ad1e55016967512793d5357f9811d3e7a685bba9ca0d860865',
-  'agents/cad-plan-checker-max.md': '1b741b55e157aa8cf9f6c95ba03ec32df705c0d301b08ca34b0e53e1802d3ef1',
-  'agents/cad-plan-checker-medium.md': '61b24972cb23c079700f81bfc4725a837a969f0f77e5cc54e8135c937dbce73d',
-  'agents/cad-plan-checker-xhigh.md': '7ca820c3aee2302d3619a09390908c2be9066c5dddbf72136a506af3d7ac4e53',
-  'agents/cad-plan-checker.md': 'f0be1c391ece0cd2f34696df1572c705124d104ab6b7655127c0f7c020faf220',
-  'agents/cad-planner-low.md': '20d1b2ad119ec50b5889c351f6051fdab0149fd8a48d5920e60a8ca433d55122',
-  'agents/cad-planner-max.md': '5f3f0dab2d115520af41ef79c00ba5895ca82e2c014dfc37d6b6bc087ba9b5a2',
-  'agents/cad-planner-medium.md': '1062f4370d584600fb37ff296564581c6bd2ed480a3cb79ffef56f06733a5edd',
-  'agents/cad-planner-xhigh.md': '9f8bf6eee8cfe5fecabf3f6edf1e53f7978d04c5caadf9a6a845f0a9c6cd478b',
-  'agents/cad-planner.md': '18fe842e5773e174af84e53d3568a9976a21e981b886dbe6ede52382f20446af',
-  'agents/cad-reviewer-low.md': '78f0b8a3614dbba03be1681fb0c794e33de64d66cb2d1974691e3d89c5d0f85d',
-  'agents/cad-reviewer-max.md': '20437584554da5c940a3ae56efcda03fd89b9ce5ec29e0c42df2a01f8e0d615f',
-  'agents/cad-reviewer-medium.md': '48b8e08a956420b2d1860383442839667577fbeae85bd71ed974ef6137dafe08',
-  'agents/cad-reviewer-xhigh.md': 'f7c135829b6ac434e07faa87930465c784419ca1e017f58fb1b5d97d403ed299',
-  'agents/cad-reviewer.md': 'f2f2a4f6ed56d4f3c0ab545dd6b9774a1e81baad08729b49c5edde229edc8b61',
-  'agents/cad-verifier-low.md': '4de3ff5a37979bdd93db749d7453d9370320f643c54d704f16f04b372e52855e',
-  'agents/cad-verifier-max.md': '8ca22a9afc1e5d74f51eb27665e5b71a6f740820fc9d69f2d70673a94b864f04',
-  'agents/cad-verifier-medium.md': 'df5165357f1e070f70f3e5749ad9e6bc8f6d2df9c64e424426a612c43f3fc1b8',
-  'agents/cad-verifier-xhigh.md': '30c6891311395ce1119d6be8524da2243f4d5c84c15a58b5f382af20c10cb9fa',
-  'agents/cad-verifier.md': 'bbd4184f1b5be0e72c151843ae0d4e422ec9dba1df0f69a38457c25b687065b4',
+  'agents/cad-assumptions-analyzer-high.md': '28de11d2f99891fda6a35f57e8cf9b60e28493fa29d05b51fc76791c4ead6c8d',
+  'agents/cad-assumptions-analyzer-low.md': 'a7bb9094dc05737160119e0d0ab0532661f718c441848c9745cc8c26eb2059ec',
+  'agents/cad-assumptions-analyzer-max.md': '6bf9828322519245d6228748e4e753b176b2d0d21725664935da2ac6a649dea0',
+  'agents/cad-assumptions-analyzer-medium.md': '3e49f63190f79c413527c76bb737be0343f6ead419ffda0fb698f2284e2e5cea',
+  'agents/cad-assumptions-analyzer.md': '062c082bc3a7665b999b1fc691bf35a73fc8ad852d65ea259c075dd7e7f1ccae',
+  'agents/cad-executor-low.md': 'b9a70fdecb4e48ed97a3088b36ce5961363c54e5f4961c4cabc0b09d9ea70366',
+  'agents/cad-executor-max.md': '4ad9d9629063208244409585784e754f53b0f4c4e6085480b3fcb0a4aac5c456',
+  'agents/cad-executor-medium.md': 'de7bd697d596c66bf79edd8d2f0427e0b0bcff96d1e30a601e345bee8cd2dd1b',
+  'agents/cad-executor-xhigh.md': '08973f5048520defefbd56c27f0a3a946eeec2726c208d2a3920e762ca4adba6',
+  'agents/cad-executor.md': 'd0e81693a0259fa85ac5cda2685f83f49c683c20c5ff9d68e9c71b9b89dc6ea8',
+  'agents/cad-plan-checker-high.md': 'ec630d9efad523fab2dbbef77d8362c1ba5a559f44157c9b6579eb07f513c402',
+  'agents/cad-plan-checker-max.md': '979bfa96d651dfc64b38c800b12fe45562ab38296a442bc2d13d4551d7e5ecac',
+  'agents/cad-plan-checker-medium.md': 'a8c1529355dff3906cf5baf80aac5107d343ea4ed5900f96db9886db07c7fef8',
+  'agents/cad-plan-checker-xhigh.md': '479c3d679f87f5aa0c3ff7aa74a9ff5eed98839b05d5fdf7e3a1341f7c16ca2b',
+  'agents/cad-plan-checker.md': 'd1dd9aee6a84608a0f185e77cfc4dc316cdda003f55f6821cae5acff6b37863f',
+  'agents/cad-planner-low.md': 'ea10e363d64c27f559b2c234fa914d42b3b0db97a33ad201315201477f854ca8',
+  'agents/cad-planner-max.md': '11137099046f68de71d171a6b41a98ee04f24cea85a02cbbaffd345fcc973fad',
+  'agents/cad-planner-medium.md': 'f16056bcd58b29f637de71de968cbf9c4c0a711136014279ec36c00affc0612f',
+  'agents/cad-planner-xhigh.md': 'b829a4f3182291aa27b5797fb15ce85754e963f46fe3aade3f80f0c2964b4dc9',
+  'agents/cad-planner.md': '2f7639fd09c06720b4d44c3f6c018e5eb3f580540576415253936dd5c8811862',
+  'agents/cad-reviewer-low.md': 'a06f9a8395a4990eab81f652b37c1596c3e1b08cc0024957766d8b1d1ee71083',
+  'agents/cad-reviewer-max.md': 'ae10c559fad9e2f1557364896eba1b1f3c89acd3905e11416aa0fb0324083db7',
+  'agents/cad-reviewer-medium.md': '2dfd90a0ab94ae6ec9c439291cc114e77f967889c63470291c9a75ed8e411e70',
+  'agents/cad-reviewer-xhigh.md': '819237cee854053103912b0cd6e35412e10199be0bc304c9f6bbdf0ac796c7fe',
+  'agents/cad-reviewer.md': '4384c82b4994f615767421c62f1ddf778127404244246976c064f2e4bed4c8be',
+  'agents/cad-verifier-low.md': 'c48c2847b1d0bf3140f6dfb05fd0f036a1ce9715b49ab668ac83e8bf25527bf2',
+  'agents/cad-verifier-max.md': '4005ed688770e7376f4a8d9848b2a1cf3ef31ba54090c98eab53ab066a067e81',
+  'agents/cad-verifier-medium.md': 'a4bb138ab2c9b6e0bb90a9f15022a6e045cb9bee8303cb5c95b4af63aa836bd0',
+  'agents/cad-verifier-xhigh.md': 'd5020ea3f037c0aedaa468b3d5d9682ba4f085deee1a9aad2f06743472bef883',
+  'agents/cad-verifier.md': '8db2621ba6f5a811ac11f50a1d5a94b6ea43e2b3a56a266b4c298329c98179b8',
   'cadence-core/references/reviewer-brief.md': '5c4998a37a4e89a95c2b9cd09d7408e7d79a73e0c76a499ffbfb400a8f937585',
   'cadence-core/templates/PLAN.md': '4a7fb5784ae799357e33a30b0ddd4d0754b0eed69f56e64f07fb255d06fc963d',
   'skills/cad-assumptions-analyzer-contract/SKILL.md': 'ee690d7178a35d274d8c895367f6476df2160baf1e65889b92d55af3e94233bc',
