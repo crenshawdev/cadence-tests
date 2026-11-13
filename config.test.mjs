@@ -1091,7 +1091,7 @@ test('every roles effort enum is exactly that role\'s rung set from RUNG_FILES',
   // holds the same invariant for CI - this row holds it for the write face.
   const schema = JSON.parse(readFileSync(
     join(dirname(CONFIG), '..', 'config.schema.json'), 'utf8')).keys;
-  for (const [role, map] of Object.entries(RUNG_FILES)) {
+  for (const [role, { rungs: map }] of Object.entries(RUNG_FILES)) {
     const spec = schema[`roles.${role}.effort`];
     assert.ok(spec, `no roles.${role}.effort key`);
     assert.deepEqual(spec.values, [...Object.keys(map), null]);

@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  rungBody, rungBodyIssue, rungEffortIssue, rungPrefixIssues, RUNG_FILES, rungFile,
+  agentFileText, rungBody, rungBodyIssue, rungEffortIssue, rungPrefixIssues, RUNG_FILES, rungFile,
   effortEnumIssues, ROLES_PREFIX, ROLES_EFFORT_SUFFIX,
   RUNG_ORDER, roleOfAgent, rungOfAgent,
 } from '../cadence-core/bin/lib/rung-agent.mjs';
@@ -78,7 +78,7 @@ test('rungFile never inherits a prototype property as a rung', () => {
  * @returns {string[]}
  */
 function rungFiles(role) {
-  const map = typeof role === 'string' ? RUNG_FILES[role] : undefined;
+  const map = typeof role === 'string' && Object.hasOwn(RUNG_FILES, role) ? RUNG_FILES[role].rungs : undefined;
   return map ? Object.values(map) : [];
 }
 
@@ -100,9 +100,13 @@ test('RUNG_FILES names 35 files across the seven roles, and is frozen', () => {
   assert.equal(new Set(stems).size, 35); // no file serves two rungs
   assert.equal(Object.isFrozen(RUNG_FILES), true);
   assert.equal(Object.isFrozen(RUNG_FILES['cad-planner']), true);
+  assert.equal(Object.isFrozen(RUNG_FILES['cad-planner'].rungs), true);
 });
 
 // --- RUNG_ORDER and the guard that holds it to the map ------------------------
+
+/** Each role's rung map alone, off the table's rows: the shape rungOrderIssues holds against the ladder. */
+const RUNGS = Object.fromEntries(Object.entries(RUNG_FILES).map(([role, row]) => [role, row.rungs]));
 
 /**
  * Whether the map and the ladder still say the same thing: every role's rung keys are exactly RUNG_ORDER, in order.
@@ -114,7 +118,7 @@ test('RUNG_FILES names 35 files across the seven roles, and is frozen', () => {
  * @returns {{code: string, role: string, detail: string}[]}
  */
 function rungOrderIssues(files, order) {
-  const map = files !== undefined && files !== null ? files : RUNG_FILES;
+  const map = files !== undefined && files !== null ? files : RUNGS;
   const ladder = Array.isArray(order) ? order : RUNG_ORDER;
   /** @type {{code: string, role: string, detail: string}[]} */
   const out = [];
@@ -139,14 +143,14 @@ test('RUNG_ORDER is exactly the five rungs, weakest first, and is frozen', () =>
 
 test('the SHIPPED map and RUNG_ORDER agree - no issue at all', () => {
   assert.deepEqual(rungOrderIssues(), []);
-  assert.deepEqual(rungOrderIssues(RUNG_FILES, RUNG_ORDER), []);
+  assert.deepEqual(rungOrderIssues(RUNGS, RUNG_ORDER), []);
 });
 
 test('rung-order-drift: a role whose map DROPS a rung', () => {
   // `rungFile` would answer null for the dropped rung and route.mjs fails open,
   // so nothing downstream ever says the rung is missing.
-  const { xhigh: _gone, ...rest } = RUNG_FILES['cad-executor'];
-  const issues = rungOrderIssues({ ...RUNG_FILES, 'cad-executor': rest });
+  const { xhigh: _gone, ...rest } = RUNGS['cad-executor'];
+  const issues = rungOrderIssues({ ...RUNGS, 'cad-executor': rest });
   assert.equal(issues.length, 1, JSON.stringify(issues));
   assert.equal(issues[0].code, 'rung-order-drift');
   assert.equal(issues[0].role, 'cad-executor');
@@ -156,11 +160,11 @@ test('rung-order-drift: a role whose map DROPS a rung', () => {
 test('rung-order-drift: a role whose map REORDERS its rungs', () => {
   // The order is what `rungFiles` returns and what `rungPrefixIssues` breaks
   // ties on, so a reordered map is wrong while holding every rung.
-  const exec = RUNG_FILES['cad-executor'];
+  const exec = RUNGS['cad-executor'];
   const swapped = {
     low: exec.low, medium: exec.medium, high: exec.high, max: exec.max, xhigh: exec.xhigh,
   };
-  const issues = rungOrderIssues({ ...RUNG_FILES, 'cad-executor': swapped });
+  const issues = rungOrderIssues({ ...RUNGS, 'cad-executor': swapped });
   assert.equal(issues.length, 1, JSON.stringify(issues));
   assert.equal(issues[0].code, 'rung-order-drift');
   assert.equal(issues[0].role, 'cad-executor');
@@ -168,7 +172,7 @@ test('rung-order-drift: a role whose map REORDERS its rungs', () => {
 
 test('rung-order-drift: a role carrying an EXTRA rung the ladder does not name', () => {
   const issues = rungOrderIssues(
-    { ...RUNG_FILES, 'cad-executor': { ...RUNG_FILES['cad-executor'], ultra: 'cad-executor-ultra' } });
+    { ...RUNGS, 'cad-executor': { ...RUNGS['cad-executor'], ultra: 'cad-executor-ultra' } });
   assert.equal(issues.length, 1, JSON.stringify(issues));
   assert.equal(issues[0].code, 'rung-order-drift');
 });
@@ -234,7 +238,7 @@ test('rungBodyIssue accepts a body pointing at ANY ONE declared skill', () => {
 // prefixes. cad-executor is used throughout, and every fixture below hands in
 // exactly TWO of its stems - the smallest input that can disagree at all, and
 // the one the rule's tie-break and majority arms are readable over.
-const EXEC = RUNG_FILES['cad-executor'];
+const EXEC = RUNG_FILES['cad-executor'].rungs;
 const EXEC_BODY = '\n\n' + rungBody('cad-executor-contract');
 /** EXEC_BODY with its ONE internal line break turned into a space. */
 const EXEC_REWRAPPED = EXEC_BODY.replace('full\ncontract', 'full contract');
@@ -266,7 +270,7 @@ test('rungPrefixIssues: rungBodyIssue FORGIVES the same edit - not a duplicate r
 });
 
 test('rungPrefixIssues: the MINORITY is what broke rank, not the majority', () => {
-  const v = RUNG_FILES['cad-verifier'];
+  const v = RUNG_FILES['cad-verifier'].rungs;
   const body = '\n\n' + rungBody('cad-verifier-contract');
   const issues = rungPrefixIssues({ [v.medium]: body, [v.high]: body,
     [v.xhigh]: body + 'and one more thing.\n', [v.max]: body });
@@ -512,7 +516,7 @@ test('roles.<role>.model is not held to the effort rules - it has no enum', () =
 
 test('roleOfAgent and rungOfAgent answer every stem', () => {
   for (const role of Object.keys(RUNG_FILES)) {
-    for (const [rung, stem] of Object.entries(RUNG_FILES[role])) {
+    for (const [rung, stem] of Object.entries(RUNG_FILES[role].rungs)) {
       for (const spelling of [stem, `cadence:${stem}`]) {
         assert.equal(roleOfAgent(spelling), role, spelling);
         assert.equal(rungOfAgent(spelling), rung, spelling);
@@ -522,6 +526,93 @@ test('roleOfAgent and rungOfAgent answer every stem', () => {
   for (const other of ['fork', 'general-purpose', 'coordinator', '', 42]) {
     assert.equal(roleOfAgent(other), null, String(other));
     assert.equal(rungOfAgent(other), null, String(other));
+  }
+});
+
+// --- agentFileText: the one render of a table-named agent file ---------------
+// The expected grant is typed here, not read back off RUNG_FILES, so a table
+// edit that widens or narrows a role fails this row instead of agreeing with itself.
+
+const READ_ONLY_TOOLS = ['Read', 'Bash', 'Grep', 'Glob'];
+const NO_WRITES = ['Write', 'Edit', 'MultiEdit'];
+const GRANTS = {
+  'cad-executor': { tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'LSP'], denied: [],
+    color: 'yellow', gloss: 'plan task execution' },
+  'cad-planner': { tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'], denied: [],
+    color: 'green', gloss: 'phase plan authoring' },
+  'cad-verifier': { tools: ['Read', 'Write', 'Bash', 'Grep', 'Glob'], denied: ['Edit', 'MultiEdit'],
+    color: 'green', gloss: 'goal-backward phase verification' },
+  'cad-reviewer': { tools: READ_ONLY_TOOLS, denied: NO_WRITES, color: 'red', gloss: 'adversarial artifact review' },
+  'cad-plan-checker': { tools: READ_ONLY_TOOLS, denied: NO_WRITES, color: 'green', gloss: 'goal-backward plan gate' },
+  'cad-assumptions-analyzer': { tools: READ_ONLY_TOOLS, denied: NO_WRITES, color: 'cyan',
+    gloss: 'codebase assumption gathering' },
+  'cad-mapper': { tools: READ_ONLY_TOOLS, denied: NO_WRITES, color: 'cyan', gloss: 'code map reader' },
+};
+
+/**
+ * A rendered agent file split into its frontmatter keys, in order, and its body.
+ * @param {string} text
+ */
+function splitAgent(text) {
+  const m = text.match(/^---\n([\s\S]*?)\n---\n/);
+  assert.ok(m, 'render opens with a frontmatter block');
+  /** @type {Record<string, string>} */
+  const fields = {};
+  const order = [];
+  for (const line of m[1].split('\n')) {
+    const kv = line.match(/^(\w+):[ ]?(.*)$/);
+    if (kv) {
+      order.push(kv[1]);
+      fields[kv[1]] = kv[2];
+    } else {
+      fields[order[order.length - 1]] += `\n${line}`;
+    }
+  }
+  return { fields, order, body: text.slice(m[0].length) };
+}
+
+test('GRANTS types a grant for exactly the roles the table holds', () => {
+  assert.deepEqual(Object.keys(GRANTS).sort(), Object.keys(RUNG_FILES).sort());
+});
+
+for (const [role, grant] of Object.entries(GRANTS)) {
+  test(`agentFileText renders every rung of ${role} with its grant, color, gloss and contract`, () => {
+    for (const rung of RUNG_ORDER) {
+      const stem = rungFile(role, rung);
+      const text = agentFileText(stem);
+      assert.equal(typeof text, 'string', stem);
+      const { fields, body } = splitAgent(text);
+      assert.equal(fields.name, stem);
+      assert.equal(fields.effort, rung, `${stem} effort`);
+      assert.equal(fields.tools, grant.tools.join(', '), `${stem} tools`);
+      if (grant.denied.length) assert.equal(fields.disallowedTools, grant.denied.join(', '), `${stem} denied`);
+      else assert.equal(fields.disallowedTools, undefined, `${stem} denies nothing`);
+      assert.equal(fields.color, grant.color, `${stem} color`);
+      assert.equal(fields.maxTurns, '200');
+      assert.equal(fields.description,
+        `The \`${rung}\` rung of \`${role}\` (${grant.gloss}); \`bin/route.mjs\` picks it, not the user.`);
+      assert.equal(fields.skills, `\n  - ${role}-contract`, `${stem} preloads its contract alone`);
+      assert.equal(body, `\n${rungBody(`${role}-contract`)}`, `${stem} body`);
+    }
+  });
+}
+
+test('agentFileText: all 35 renders share one frontmatter key order', () => {
+  const want = ['name', 'description', 'tools', 'disallowedTools', 'color', 'effort', 'maxTurns', 'skills'];
+  let seen = 0;
+  for (const { rungs } of Object.values(RUNG_FILES)) {
+    for (const stem of Object.values(rungs)) {
+      const { order } = splitAgent(/** @type {string} */ (agentFileText(stem)));
+      assert.deepEqual(order, want.filter((k) => order.includes(k)), `${stem} key order`);
+      seen += 1;
+    }
+  }
+  assert.equal(seen, 35);
+});
+
+test('agentFileText: a stem the table does not name renders nothing', () => {
+  for (const stem of ['cad-executor-ultra', 'cad-nope', 'constructor', '']) {
+    assert.equal(agentFileText(stem), null, stem);
   }
 });
 

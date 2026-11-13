@@ -150,7 +150,7 @@ function rungAgentText(stem, rung) {
 function ladderAgents(omit = []) {
   /** @type {Record<string, string>} */
   const out = {};
-  for (const [, rungs] of Object.entries(RUNG_FILES)) {
+  for (const { rungs } of Object.values(RUNG_FILES)) {
     for (const [rung, stem] of Object.entries(rungs)) {
       if (omit.includes(stem)) continue;
       out[`${stem}.md`] = rungAgentText(stem, rung);

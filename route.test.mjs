@@ -1002,7 +1002,7 @@ test('every rung the MAP names has an agent file carrying exactly that effort', 
   // of them is now a rung a dispatch can land on.
   /** @type {Map<string,string>} agent-file stem -> the rung that produced it */
   const byName = new Map();
-  for (const [role, rungs] of Object.entries(RUNG_FILES)) {
+  for (const [role, { rungs }] of Object.entries(RUNG_FILES)) {
     for (const rung of Object.keys(rungs)) {
       const stem = rungFile(role, rung);
       assert.ok(stem, `${role} rung ${rung} has no file in RUNG_FILES`);

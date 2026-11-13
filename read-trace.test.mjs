@@ -1185,7 +1185,7 @@ test('the rung mapping and RUNG_FILES cannot drift apart', () => {
   // what says so out loud.
   let checked = 0;
   for (const role of Object.keys(RUNG_FILES)) {
-    for (const [rung, stem] of Object.entries(RUNG_FILES[role])) {
+    for (const [rung, stem] of Object.entries(RUNG_FILES[role].rungs)) {
       assert.equal(rungOfAgent(`cadence:${stem}`), rung, `${stem} is ${role}'s ${rung}`);
       assert.equal(roleOfAgent(`cadence:${stem}`), role, `${stem} is a ${role} file`);
       checked += 1;
