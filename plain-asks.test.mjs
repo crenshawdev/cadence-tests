@@ -137,7 +137,10 @@ const ASK_FILES = [
   ['cadence-core/workflows/execute.md', 5],
   ['cadence-core/workflows/verify.md', 3],
   ['skills/cad-land/SKILL.md', 6],
-  ['cadence-core/references/triage-gate.md', 6],
+  // the six triage-gate asks, spread over the router and the two arm files that ask
+  ['cadence-core/references/triage-gate.md', 1],
+  ['cadence-core/references/triage-gate-adjudicated.md', 3],
+  ['cadence-core/references/triage-gate-unfixed.md', 2],
   ['cadence-core/references/git-guard.md', 1],
 ];
 
@@ -146,7 +149,7 @@ const ASK_FILES = [
 const DOC_ROWS = [
   { doc: 'docs/WORKFLOW.md', cells: ['`/cad-context`', 'How big is this phase?'], file: 'cadence-core/workflows/context.md', header: 'Size', notOptions: [] },
   { doc: 'docs/WORKFLOW.md', cells: ['`/cad-land`', 'How to publish'], file: 'skills/cad-land/SKILL.md', header: 'Publish', notOptions: ['no option preselected'] },
-  { doc: 'docs/WORKFLOW.md', cells: ['`/cad-plan`', 'The `plan` review trigger'], file: 'cadence-core/references/triage-gate.md', header: 'Findings', notOptions: ['advisory', 'blocking', 'adjudicated'] },
+  { doc: 'docs/WORKFLOW.md', cells: ['`/cad-plan`', 'The `plan` review trigger'], file: 'cadence-core/references/triage-gate-adjudicated.md', header: 'Findings', notOptions: ['advisory', 'blocking', 'adjudicated'] },
   { doc: 'docs/WORKFLOW.md', cells: ['`/cad-verify`', 'What to do with a failure'], file: 'cadence-core/workflows/verify.md', header: 'Fix', notOptions: [] },
 ];
 

@@ -1721,7 +1721,11 @@ test('PAR-01: both parallel risk-check calls name that plan\'s OWN merge range',
 
 test('GAT-04: every fenced outcome receipt names its trigger, plan and both range ends', () => {
   const files = [
+    // triage-gate.md became a router: `gate_pass` and `override` stayed in it,
+    // `deferral` and `rearm` moved with their arms
     ['cadence-core', 'references', 'triage-gate.md'],
+    ['cadence-core', 'references', 'triage-gate-deferred.md'],
+    ['cadence-core', 'references', 'triage-gate-blocking.md'],
     // The `adjudication` receipt cold-split out of `review-triggers.md` step 5
     // in LOD-06 and the row travels with the command, the way BRACKETING's
     // rows in trace.test.mjs do.
@@ -1750,7 +1754,7 @@ test('GAT-04: every fenced outcome receipt names its trigger, plan and both rang
   }
   // All five settle points, so a receipt block DELETED fails here too rather
   // than passing vacuously: adjudication (review-record.md) plus the four
-  // in triage-gate.md - `gate_pass`, `override`, `rearm` and the `deferred`
+  // in the triage-gate files - `gate_pass`, `override`, `rearm` and the `deferred`
   // arm's `deferral`, which settles by QUEUING rather than by ruling and needs
   // the same joinable receipt to keep `risk-check status` from reading its
   // range as unfired forever.
@@ -1791,7 +1795,7 @@ test('GAT-04: every fenced outcome receipt names its trigger, plan and both rang
 const SURVIVED_SURFACES = [
   ['cadence-core', 'bin', 'lib', 'adjudication-record.mjs'],
   ['cadence-core', 'bin', 'lib', 'filing-decision.mjs'],
-  ['cadence-core', 'references', 'triage-gate.md'],
+  ['cadence-core', 'references', 'triage-gate-blocking.md'],
   ['cadence-core', 'references', 'review-record.md'],
 ];
 const SURVIVED_MEANING = 'confirmed and not fixed';
@@ -2042,7 +2046,7 @@ test('TRN-02: the bulk-output rule is stated once, and every converted site perf
   //    censuses find one - a line that also names `planning.mjs` - so a
   //    sentence ABOUT what the render reports is never mistaken for a call.
   for (const surface of [
-    ['cadence-core', 'references', 'triage-gate.md'],
+    ['cadence-core', 'references', 'triage-gate-blocking.md'],
     ['cadence-core', 'workflows', 'progress.md'],
     ['cadence-core', 'workflows', 'report.md'],
   ]) {
@@ -2536,7 +2540,7 @@ test('IVW-01: both risk-surface interview sites carry the ask-user rules, and th
 
 // --- Two caps, two different reads, and neither one unified away ------------
 //
-// `references/triage-gate.md` now states the one-round re-arm cap TWICE, on
+// the triage-gate arm files state the one-round re-arm cap TWICE, on
 // purpose (CONTEXT D-02): the blocking arm counts `rearm` outcome events under
 // the current run's `corr`, and the deferred arm reads the highest round on
 // disk for the fire. They look like duplication, and the obvious tidy - one
@@ -2552,7 +2556,9 @@ test('IVW-01: both risk-surface interview sites carry the ask-user rules, and th
 // the one place that fails.
 
 test('triage-gate.md: the corr-keyed re-arm read-back survives the deferred arm beside it', () => {
-  const text = doc('cadence-core', 'references', 'triage-gate.md');
+  // the two caps now sit in two arm files, so each half reads its own
+  const text = doc('cadence-core', 'references', 'triage-gate-blocking.md');
+  const deferred = doc('cadence-core', 'references', 'triage-gate-deferred.md');
 
   // 1. The blocking cap, at the bytes that MAKE it corr-keyed AND plan-keyed:
   //    the filter is quoted whole rather than matched loosely, because every
@@ -2580,17 +2586,15 @@ test('triage-gate.md: the corr-keyed re-arm read-back survives the deferred arm 
     'the blocking read-back no longer chains the render to that directory');
 
   // 2. The deferred cap, read off its own named anchor so a rewrap that
-  //    changed no fact stays green. It runs to the `adjudicated` bullet.
+  //    changed no fact stays green. It runs to the end of its arm file.
   const anchor = '**The DEFERRED queue is triaged later, and its cap rides the QUEUE.**';
-  const start = text.indexOf(anchor);
-  assert.ok(start > -1, 'triage-gate.md states no deferred triage arm - a queue nothing '
+  const start = deferred.indexOf(anchor);
+  assert.ok(start > -1, 'triage-gate-deferred.md states no deferred triage arm - a queue nothing '
     + 'says how to clear is a land that never unblocks');
-  assert.ok(start > text.indexOf(corrFilter),
-    'the deferred arm is stated ABOVE the blocking re-arm it defers to; it says "the '
-    + 'blocking re-arm above already states", which is then false');
-  const end = text.indexOf('- **adjudicated**', start);
-  assert.ok(end > start, 'the deferred triage arm runs past the adjudicated bullet');
-  const block = text.slice(start, end).replace(/\s+/g, ' ');
+  const block = deferred.slice(start).replace(/\s+/g, ' ');
+  assert.match(block, /STOP-and-ask the blocking re-arm in `references\/triage-gate\.md` already states/,
+    'the deferred arm no longer names the router as where the narrowed round and its '
+    + 'STOP-and-ask it defers to are stated');
 
   assert.match(block, /highest round on disk for THAT fire/,
     'the deferred cap no longer says the round count is read off the queue');
@@ -2628,7 +2632,7 @@ test('triage-gate.md: the corr-keyed re-arm read-back survives the deferred arm 
 // a machine-readable fact, and the copied line here is executable.
 
 test('triage-gate.md: the re-arm read-back, RUN, answers per PLAN and not per corr alone', () => {
-  const text = doc('cadence-core', 'references', 'triage-gate.md');
+  const text = doc('cadence-core', 'references', 'triage-gate-blocking.md');
   const corrFilter = 'o.event==="rearm"&&o.trigger===process.argv[2]&&o.corr===r.corr'
     + '&&(o.plan??"")===(process.argv[3]??"")';
   const block = text.split('```').find((b) => b.includes(corrFilter));
@@ -2670,6 +2674,55 @@ test('triage-gate.md: the re-arm read-back, RUN, answers per PLAN and not per co
     + 'then goes straight to the terminal STOP-and-ask without ever being reviewed, which is '
     + 'this phase\'s own goal clause failing (D-04)');
 });
+
+// --- the triage-gate split: a rule more than one gate needs stays in the router
+//
+// triage-gate.md routes each gate to its own arm file, so a passage in the
+// wrong file is a rule some gate never reads. The sorted-lines comparison the
+// split was checked with cannot see placement; these rows can.
+
+const TRIAGE_ARMS = ['deferred', 'blocking', 'adjudicated', 'unfixed'].map((a) => `triage-gate-${a}.md`);
+const triage = (name) => flat(doc('cadence-core', 'references', name));
+
+test('triage-gate.md: cad-verify\'s fire is sent to the adjudicated rule from the router, not from the unfixed file', () => {
+  // a /cad-verify fire with nothing unfixed never opens the unfixed file
+  const sentence = 'its list is always triaged through the `adjudicated` rule';
+  assert.ok(triage('triage-gate.md').includes(sentence),
+    'the router no longer says /cad-verify\'s fire is triaged through the adjudicated rule');
+  assert.ok(!triage('triage-gate-unfixed.md').includes(sentence),
+    'the /cad-verify rule sits in the unfixed file, which a fire with nothing unfixed never reads');
+});
+
+test('triage-gate.md: the --trigger rule and the fenced override receipt are in the router, not the blocking file', () => {
+  // an adjudicated fire writes `override` and never reads the blocking file
+  const rule = 'carries `--trigger <trigger>` in that structured flag';
+  const override = 'trace append --phase <N> --family outcome --event override';
+  for (const want of [rule, override]) {
+    assert.ok(triage('triage-gate.md').includes(want), `the router no longer holds: ${want}`);
+    assert.ok(!triage('triage-gate-blocking.md').includes(want),
+      `the blocking file holds a rule the adjudicated arm needs: ${want}`);
+  }
+});
+
+for (const [name, markers] of [
+  ['the "Two caps, two different numbers" paragraph',
+    ['**Two caps, two different numbers.**', 'N survivors become `ceil(N/3)` questions']],
+  ['the narrowed round and the blocking re-arm\'s terminal STOP-and-ask',
+    ['the artifact is the fix\'s own diff plus the blocker list it is confirming',
+      're-armed once on its own fix and still reports N blocker/high findings']],
+  ['the "A contradictory answer re-asks, once" block and its "Pick again" ask',
+    ['**A contradictory answer re-asks, once.**', '- header: "Pick again"']],
+]) {
+  test(`triage-gate.md: ${name} is in the router and in no arm file`, () => {
+    for (const marker of markers) {
+      assert.ok(triage('triage-gate.md').includes(marker), `the router no longer holds: ${marker}`);
+      for (const arm of TRIAGE_ARMS) {
+        assert.ok(!triage(arm).includes(marker),
+          `${arm} holds a passage more than one gate needs, so the other gates never read it: ${marker}`);
+      }
+    }
+  });
+}
 
 
 // --- RDX-01: the in-dispatch figure, its coverage and its exclusions, in prose
@@ -3717,7 +3770,7 @@ test('RSK-10: a plan that landed no commits records the skip rather than a clean
 // green.
 
 test('triage-gate.md: the ask face makes one visibility read and the question names the repository', () => {
-  const flat = doc('cadence-core', 'references', 'triage-gate.md').replace(/\s+/g, ' ');
+  const flat = doc('cadence-core', 'references', 'triage-gate-unfixed.md').replace(/\s+/g, ' ');
 
   assert.doesNotMatch(flat, /it spawns no forge child/,
     'triage-gate.md still says the ask face spawns no forge child; `unfixed` now makes one '
@@ -3740,7 +3793,7 @@ test('triage-gate.md: the ask face makes one visibility read and the question na
 // dispositions, so it is a decline. Flattened so a rewrap stays green.
 
 test('triage-gate.md: a risk_surface finding bound for a public repository is asked a second time', () => {
-  const flat = doc('cadence-core', 'references', 'triage-gate.md').replace(/\s+/g, ' ');
+  const flat = doc('cadence-core', 'references', 'triage-gate-unfixed.md').replace(/\s+/g, ' ');
 
   assert.match(flat, /[Ww]hen the fire is a `risk_surface` review and the `unfixed` envelope reports a public visibility or a `visibility_read` of false, every finding the user accepted at the first ask is asked a second time/,
     'triage-gate.md does not state the second ask for a risk_surface finding on a public or unreadable repository');
@@ -3762,7 +3815,7 @@ test('the eight relay sites carry the data-not-instructions sentence', async () 
   const { DATA_RULE } = await import('../cadence-core/bin/lib/data-rule.mjs');
   const sites = [
     ['cadence-core', 'references', 'review-triggers.md'],
-    ['cadence-core', 'references', 'triage-gate.md'],
+    ['cadence-core', 'references', 'triage-gate-unfixed.md'],
     ['cadence-core', 'references', 'review-cross-model.md'],
     ['cadence-core', 'references', 'consult.md'],
     ['cadence-core', 'references', 'risk-surface.md'],
@@ -3828,7 +3881,7 @@ test('cad-undo sets disable-model-invocation: true in its frontmatter', () => {
 // what the tracker gets.
 
 test('triage-gate.md does not say a finding reaches the tracker unchanged', () => {
-  const text = flat(doc('cadence-core', 'references', 'triage-gate.md'));
+  const text = flat(doc('cadence-core', 'references', 'triage-gate-unfixed.md'));
   assert.ok(!/reaches the user and the tracker unchanged/.test(text),
     'triage-gate.md still says a finding\'s text reaches the tracker unchanged');
   assert.match(text, /A finding's text reaches the user as raised, and the tracker with any credential replaced by `<redacted>`:/,

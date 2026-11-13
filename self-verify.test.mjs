@@ -2425,12 +2425,12 @@ test('check 20: a registered site back on the transcript reports the inline kind
   // proves the register the CLI reads is the register the module ships - not a
   // fixture's own copy of it.
   const root = fixture('nothing to see\n');
-  writeFileSync(join(root, 'cadence-core', 'references', 'triage-gate.md'),
+  writeFileSync(join(root, 'cadence-core', 'references', 'triage-gate-blocking.md'),
     'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" trace render --phase <N>\n');
   const hits = run(['--root', root]).problems
     .filter((p) => p.kind === 'bulk-output-inline');
   assert.equal(hits.length, 1, JSON.stringify(hits));
-  assert.equal(hits[0].file, 'cadence-core/references/triage-gate.md');
+  assert.equal(hits[0].file, 'cadence-core/references/triage-gate-blocking.md');
   assert.match(hits[0].detail, /conventions\.md/);
 });
 
@@ -2476,13 +2476,13 @@ test('check 21: a fixed shared scratch path reaches problems, naming the surface
   // the line carries the redirect that check demands and shares the fixed name
   // this one refuses, which is exactly the pair the two checks split.
   const root = fixture('nothing to see\n');
-  writeFileSync(join(root, 'cadence-core', 'references', 'triage-gate.md'),
+  writeFileSync(join(root, 'cadence-core', 'references', 'triage-gate-blocking.md'),
     'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" trace render --phase <N> > "${TMPDIR:-/tmp}/cad-rearm.json"\n');
   const j = run(['--root', root]);
   assert.match(j.checked, /scratch-path/);
   const hits = j.problems.filter((p) => p.kind === 'scratch-shared-path');
   assert.equal(hits.length, 1, JSON.stringify(j.problems));
-  assert.equal(hits[0].file, 'cadence-core/references/triage-gate.md');
+  assert.equal(hits[0].file, 'cadence-core/references/triage-gate-blocking.md');
   assert.match(hits[0].detail, /mktemp/);
   assert.deepEqual(j.problems.filter((p) => p.kind === 'bulk-output-inline'), []);
 });

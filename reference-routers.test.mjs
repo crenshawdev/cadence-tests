@@ -14,7 +14,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { referenceRouterIssues, ROUTERS, CODES } from '../cadence-core/bin/lib/reference-routers.mjs';
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** A temp root carrying `cadence-core/references/`, so the rule engages. */
 function fixtureRoot() {
@@ -43,14 +46,23 @@ const kinds = (issues) => issues.map((i) => i.kind).sort();
 
 // --- the register itself ------------------------------------------------------
 
-// CADENCE-CENSUS: reference-router-branches | asserts: the register is 8 rows over 2 routers
+// CADENCE-CENSUS: reference-router-branches | asserts: the register is 12 rows over 3 routers
 test('the register pins its row count and its router count', () => {
   // Two numbers, not one. The row count alone passes a register whose four rows
   // all landed on one router, which is the shape a copy-paste produces; the
-  // router count is what says these are two independent cold splits. Both move
+  // router count is what says these are independent cold splits. Both move
   // in the commit that makes the cut and never on their own.
-  assert.equal(ROUTERS.length, 8);
-  assert.equal(new Set(ROUTERS.map((r) => r.router)).size, 2);
+  assert.equal(ROUTERS.length, 12);
+  assert.equal(new Set(ROUTERS.map((r) => r.router)).size, 3);
+});
+
+test('the live tree registers each triage-gate arm file and files no router problem', () => {
+  // the four files triage-gate.md routes to, each with its own row, so a deleted Read line fails self-verify
+  const TRIAGE = 'cadence-core/references/triage-gate.md';
+  const routed = ROUTERS.filter((r) => r.router === TRIAGE).map((r) => r.cold).sort();
+  assert.deepEqual(routed, ['adjudicated', 'blocking', 'deferred', 'unfixed']
+    .map((arm) => `cadence-core/references/triage-gate-${arm}.md`));
+  assert.deepEqual(referenceRouterIssues(REPO), []);
 });
 
 test('the register is frozen, rows and all', () => {
