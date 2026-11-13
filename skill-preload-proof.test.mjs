@@ -5,7 +5,7 @@
 // agent file) and prints the canned stream-json run for that call: the first run's, then the second's. The records below are cut down from a real Claude Code 2.1.323 stream
 // captured on 2026-11-13 with --verbose and --forward-subagent-text: same types, keys and nesting, usage noise dropped.
 // No test runs the real host; the script always writes to a temp --out here, never to the stored file.
-// The last test reads the stored file the real host wrote, judged by the script's own judge() and markers.
+// The last test reads the stored file the real host wrote, both runs judged by the script's own judge() and judgeSecond().
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from 'node:fs';
@@ -15,7 +15,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { MARKERS, AGENT_TYPE, SKILLS, STORED_RESULT, SECOND_AGENT, SECOND_AGENT_TYPE, SECOND_PROMPT, judge,
-  writeFixture } from '../cadence-core/bin/skill-preload-proof.mjs';
+  judgeSecond, writeFixture } from '../cadence-core/bin/skill-preload-proof.mjs';
 import { FRONTMATTER_RE, parseSkillsField } from '../cadence-core/bin/lib/frontmatter.mjs';
 import { SHARED_RULE, carriesSharedRule } from '../cadence-core/bin/lib/shared-rule.mjs';
 import { RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
@@ -162,10 +162,10 @@ test('a Read inside the second run\'s agent fails naming the count, though the r
   assert.match(r.stdout, /second run: subagent_tool_calls is 1/);
 });
 
-test('the second run: a table-named agent, no rule text in the prompt, and a parent not held by --tools Agent', () => {
+test('the second run: the executor\'s unsuffixed file, no rule text in the prompt, and a parent not held by --tools Agent', () => {
   const { capture } = run(stream({ returned: BOTH }));
-  const stems = Object.values(RUNG_FILES).flatMap((row) => Object.values(row.rungs));
-  assert.ok(stems.includes(SECOND_AGENT), SECOND_AGENT);
+  assert.equal(SECOND_AGENT, 'cad-executor');
+  assert.equal(SECOND_AGENT, RUNG_FILES['cad-executor'].rungs.high);
   const { argv } = capture[1];
   const prompt = argv[argv.indexOf('-p') + 1];
   assert.equal(prompt, SECOND_PROMPT);
@@ -245,17 +245,27 @@ test('a host that exits non-zero, and no host on PATH, fail and write no result'
   }
 });
 
-/** What the stored result fails on, through the script's own judge, so a mutated copy meets the same assertions. */
-const storedFailures = (stored) => judge({ returned: stored.returned,
-  subagentToolCalls: stored.subagent_tool_calls, parentOtherCalls: stored.parent_other_calls }).map((f) => f.reason);
+/** What the stored result fails on, run by run, through the script's own judges, so a mutated copy meets the same assertions. */
+const storedFailures = (stored) => [
+  ...judge({ returned: stored.first.returned, subagentToolCalls: stored.first.subagent_tool_calls,
+    parentOtherCalls: stored.first.parent_other_calls }).map((f) => `first:${f.reason}`),
+  ...judgeSecond({ returned: stored.second.returned, subagentToolCalls: stored.second.subagent_tool_calls })
+    .map((f) => `second:${f.reason}`),
+];
 
-test('the stored result holds the second marker, both counts at 0, and the host version it ran on', () => {
+test('the stored result holds both runs\' markers, every count at 0, the agents dispatched and the host version', () => {
   const stored = JSON.parse(readFileSync(STORED_RESULT, 'utf8'));
   assert.deepEqual(storedFailures(stored), []);
-  assert.match(String(stored.host_version), /^\d+\.\d+\.\d+/);
-  // the same assertions refuse a copy with the marker line gone, and one with either count at 1
-  const noLine = stored.returned.split('\n').filter((l) => !l.includes(MARKERS.second)).join('\n');
-  assert.deepEqual(storedFailures({ ...stored, returned: noLine }), ['second-marker-missing']);
-  assert.deepEqual(storedFailures({ ...stored, subagent_tool_calls: 1 }), ['subagent-tool-calls']);
-  assert.deepEqual(storedFailures({ ...stored, parent_other_calls: 1 }), ['parent-other-calls']);
+  assert.equal(stored.first.agent, AGENT_TYPE);
+  assert.equal(stored.second.agent, SECOND_AGENT_TYPE);
+  for (const run of [stored.first, stored.second]) assert.match(String(run.host_version), /^\d+\.\d+\.\d+/);
+  // the same assertions refuse a copy with either marker line gone, and one with any count at 1
+  const without = (run, keep) => ({ ...stored, [run]: { ...stored[run],
+    returned: stored[run].returned.split('\n').filter(keep).join('\n') } });
+  assert.deepEqual(storedFailures(without('first', (l) => !l.includes(MARKERS.second))), ['first:second-marker-missing']);
+  assert.deepEqual(storedFailures(without('second', (l) => !carriesSharedRule(l))), ['second:shared-rule-missing']);
+  const withCount = (run, key) => ({ ...stored, [run]: { ...stored[run], [key]: 1 } });
+  assert.deepEqual(storedFailures(withCount('first', 'subagent_tool_calls')), ['first:subagent-tool-calls']);
+  assert.deepEqual(storedFailures(withCount('first', 'parent_other_calls')), ['first:parent-other-calls']);
+  assert.deepEqual(storedFailures(withCount('second', 'subagent_tool_calls')), ['second:subagent-tool-calls']);
 });
