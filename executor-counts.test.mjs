@@ -1,6 +1,7 @@
 // Tests for executor-counts.mjs - one executor's LSP calls, grep calls, turns and tokens (D-13).
 // Run: node --test tests/executor-counts.test.mjs
-// Every row runs the real script on a transcript and trace built in a temp dir, in the host's and trace.jsonl's shapes.
+// The count rows run the real script on a transcript and trace built in a temp dir, in the host's and trace.jsonl's
+// shapes; the command-word rows ask runsSearch directly, on shell lines shaped after real executor transcripts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -8,6 +9,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runsSearch } from '../cadence-core/bin/executor-counts.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = join(REPO, 'cadence-core', 'bin', 'executor-counts.mjs');
@@ -95,6 +97,35 @@ test('the stored before record holds plan 6\'s four figures as the script counte
   assert.equal(before.turns, 126);
   assert.equal(before.tokens, 263959);
 });
+
+// text an executor writes, not runs: each mentions grep where the old split read it as a command word
+const NOT_SEARCHES = [
+  ['an inline node -e whose source mentions grep',
+    'cd /code/cadence; T=agent-x.jsonl; node -e \'\nconst fs=require("fs");\nlet n=0;\n'
+    + 'for(const l of lines){ if(/grep|\\brg\\b/.test(cmd)) n++ }\nconsole.log(n)\' "$T"'],
+  ['a python heredoc whose text holds "| grep of ..."',
+    'cd /code/cadence && python3 - <<\'EOF\'\np=\'.planning/phases/2/reports/plan-7.md\'\ns=open(p).read()\n'
+    + 's=s.replace("x","| grep of .planning/trace.jsonl, PHASE_START as fallback)",1)\nopen(p,\'w\').write(s)\nEOF'],
+  ['a cat > file heredoc whose body has a table cell "| grep for ..."',
+    'cd /code/cadence; cat > .planning/phases/2/reports/plan-1.md <<\'EOF\'\nPLAN PARTIAL\n| Task | Commit | Note |\n'
+    + '|---|---|---|\n| 1 - guard | 30681a58 | grep for the two direct calls over the nine files empty |\nEOF'],
+  ['a commit message heredoc that mentions grep',
+    'git add a.mjs && git commit -q -m "$(cat <<\'EOF\'\nfeat: count calls that run `grep` or `rg`\n\n| grep | rg |\nEOF\n)"'],
+];
+
+const WRAPPED_SEARCHES = [
+  ['command grep', 'cd /code/cadence/tests && command grep -rn "parseCursor" --include=\'*.mjs\' . | head -50'],
+  ['timeout 60 rg', 'timeout 60 rg -n "parseCursor" cadence-core'],
+  ['xargs grep', 'find . -name "*.mjs" | xargs grep -l parseCursor'],
+];
+
+for (const [name, command] of NOT_SEARCHES) {
+  test(`not a grep: ${name}`, () => assert.equal(runsSearch(command), false));
+}
+
+for (const [name, command] of WRAPPED_SEARCHES) {
+  test(`a grep behind a wrapper: ${name}`, () => assert.equal(runsSearch(command), true));
+}
 
 test('an unreadable transcript path exits non-zero', () => {
   const { trace } = fixture([RETURN]);
