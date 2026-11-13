@@ -10,7 +10,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseRoadmapPhases } from '../cadence-core/bin/lib/planning-files.mjs';
-import { readState, statePath } from '../cadence-core/bin/lib/project-state.mjs';
+import { readState, statePath, writeState } from '../cadence-core/bin/lib/project-state.mjs';
 import { renderStateMd } from '../cadence-core/bin/lib/state-views.mjs';
 import { makeTree, run, isEntryFile } from './planning.test.mjs';
 import { renumberTree } from './planning-renumber.test.mjs';
@@ -61,6 +61,25 @@ test('phase-entry add: a held number, a newline, an unreadable line and a bad ph
     assert.equal(stateBytes(dir), state, `state untouched: ${JSON.stringify(args)}`);
     assert.equal(roadmapOf(dir), roadmap, `roadmap untouched: ${JSON.stringify(args)}`);
   }
+});
+
+test('phase-entry add refuses 0, 0.5 and 1.05, which no phase directory carries, while edit still reaches a held phase 0', () => {
+  const dir = threePhases();
+  const state = stateBytes(dir);
+  const roadmap = roadmapOf(dir);
+  for (const n of ['0', '0.5', '1.05']) {
+    const r = run(['phase-entry', 'add', '--phase', n, '--name', 'Odd', '--description', 'd'], dir);
+    assert.deepEqual([r.ok, r.reason, typeof r.hint], [false, 'bad-args', 'string'], n);
+    assert.match(r.hint, /nothing was written/, n);
+    assert.equal(stateBytes(dir), state, `state untouched: ${n}`);
+    assert.equal(roadmapOf(dir), roadmap, `roadmap untouched: ${n}`);
+  }
+  // a project may already hold a 0 from before the gate, and edit is how it gets renamed
+  const held = readState(dir).state;
+  const zero = { n: 0, name: 'Zero', description: 'd', status: 'unplanned', plans: [] };
+  assert.equal(writeState(dir, { ...held, phases: [zero, ...held.phases] }).ok, true);
+  const edit = run(['phase-entry', 'edit', '--phase', '0', '--name', 'Groundwork'], dir);
+  assert.deepEqual([edit.ok, edit.phase, edit.name], [true, 0, 'Groundwork']);
 });
 
 test('phase-entry add fills the slot renumber insert freed, and the list reads 1 to 4 in order', () => {
