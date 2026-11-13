@@ -302,6 +302,21 @@ test('adjudication: a second fire that forgot --round is REFUSED, not merged and
     'the existing record is untouched byte for byte');
 });
 
+test('adjudication: a second fire on a range-named discriminator is refused with no --round to pass', () => {
+  // the range is the identity, so --round 2 here would mint a `-r2` name no receipt resolves
+  const { repo, dir, base, headFull } = adjRepo();
+  const payload = adjPayloadFile(repo, adjPayload());
+  const args = ['--phase', '2', '--trigger', 'risk_surface',
+    '--discriminator', `${base}-${headFull.slice(0, 7)}`,
+    '--base', base, '--head', 'HEAD', '--payload', payload];
+  assert.equal(adjRun(repo, dir, args).ok, true);
+
+  const again = adjRun(repo, dir, args);
+  assert.equal(again.reason, 'record-exists', JSON.stringify(again));
+  assert.match(again.hint, /do not pass --round/);
+  assert.doesNotMatch(again.hint, /--round \d/);
+});
+
 test('adjudication: a phase directory that does not exist is refused rather than minted', () => {
   const { repo, dir, base } = adjRepo();
   const payload = adjPayloadFile(repo, adjPayload());
