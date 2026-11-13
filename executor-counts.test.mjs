@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -139,6 +139,55 @@ for (const [name, command] of NOT_SEARCHES) {
 for (const [name, command] of WRAPPED_SEARCHES) {
   test(`a grep behind a wrapper: ${name}`, () => assert.equal(runsSearch(command), true));
 }
+
+// D-16: the after record the /cad-execute session writes, one row per cad-executor dispatch and one totals row
+const AFTER = join(REPO, 'cadence-core', 'bin', 'executor-counts.after.json');
+const COUNT_KEYS = ['tool_calls', 'lsp', 'grep', 'turns', 'tokens'];
+const ROW_KEYS = ['agent_id', 'plan', 'language'];
+
+/** Every way `record` falls short of the after record's shape; empty when it holds. @returns {string[]} */
+function afterProblems(record) {
+  const rows = record && Array.isArray(record.rows) ? record.rows : [];
+  // no rows would read as a measurement of nothing
+  if (!rows.length) return ['rows is missing or empty'];
+  const problems = [];
+  rows.forEach((row, n) => {
+    for (const key of ROW_KEYS) if (typeof row[key] !== 'string' || !row[key]) problems.push(`row ${n} lacks ${key}`);
+    for (const key of COUNT_KEYS) if (!Number.isSafeInteger(row[key])) problems.push(`row ${n} lacks ${key}`);
+  });
+  const totals = record.totals || {};
+  for (const key of COUNT_KEYS) {
+    const sum = rows.reduce((s, row) => s + (Number.isSafeInteger(row[key]) ? row[key] : 0), 0);
+    if (totals[key] !== sum) problems.push(`totals.${key} is ${totals[key]}, the rows sum to ${sum}`);
+  }
+  return problems;
+}
+
+const GOOD_AFTER = {
+  rows: [
+    { agent_id: 'a1', plan: '1', language: 'mjs', tool_calls: 40, lsp: 6, grep: 9, turns: 41, tokens: 90000 },
+    { agent_id: 'a2', plan: '2', language: 'md', tool_calls: 30, lsp: 0, grep: 12, turns: 31, tokens: 70000 },
+  ],
+  totals: { tool_calls: 70, lsp: 6, grep: 21, turns: 72, tokens: 160000 },
+};
+
+test('the after-record judge passes a record of two rows and their totals', () => {
+  assert.deepEqual(afterProblems(GOOD_AFTER), []);
+});
+
+test('the after-record judge refuses a row missing a key, naming it', () => {
+  const { language, ...short } = GOOD_AFTER.rows[1];
+  assert.deepEqual(afterProblems({ ...GOOD_AFTER, rows: [GOOD_AFTER.rows[0], short] }), ['row 1 lacks language']);
+});
+
+test('the after-record judge refuses a total off by one, naming it', () => {
+  const totals = { ...GOOD_AFTER.totals, grep: 22 };
+  assert.deepEqual(afterProblems({ ...GOOD_AFTER, totals }), ['totals.grep is 22, the rows sum to 21']);
+});
+
+test('the stored after record holds its rows and totals', { skip: !existsSync(AFTER) && 'not written yet' }, () => {
+  assert.deepEqual(afterProblems(JSON.parse(readFileSync(AFTER, 'utf8'))), []);
+});
 
 test('an unreadable transcript path exits non-zero', () => {
   const { trace } = fixture([RETURN]);
