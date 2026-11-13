@@ -1516,8 +1516,23 @@ function carryFlow({ writeH2 = readmeOnly, settle, between = () => {} }) {
 const carries = (dir) => traceLines(dir).filter((e) => e.event === 'gate_carry');
 const fullStatus = ({ repo, dir, B, H2 }) => plRun(repo, dir, ['risk-check', 'status',
   '--phase', '1', '--plan', '1', '--base', B, '--head', H2]);
-const gatePass = ({ repo, dir, B, H1 }) =>
+
+/** The record a fire writes through the real seam, answering its envelope. */
+const fireRecord = (repo, dir, B, H1, name, payload) => {
+  mkdirSync(join(dir, 'phases', '1'), { recursive: true });
+  const rec = plRun(repo, dir, ['adjudication', '--phase', '1', '--trigger', 'risk_surface',
+    '--discriminator', 'plan-1', '--base', B, '--head', H1,
+    '--payload', survivedPayloadFile(repo, name, payload)]);
+  assert.equal(rec.ok, true, JSON.stringify(rec));
+  return rec;
+};
+
+/** A clean fire over B..H1: the record a real clean fire writes, then its gate_pass. */
+const gatePass = ({ repo, dir, B, H1 }) => {
+  fireRecord(repo, dir, B, H1, 'carry-clean.json',
+    { voices: [{ voice: 'openai', model: 'gpt-5', returned: { findings: [] }, rulings: [] }] });
   assert.equal(plRun(repo, dir, passReceipt(B, H1)).ok, true);
+};
 
 test('D-04: a no-match follow-up carries the B..H1 pass as one receipt, and status reads it without writing', () => {
   const fx = carryFlow({ settle: gatePass });
@@ -1596,4 +1611,33 @@ test('D-04: an adjudication over a blocker a fix closed is not a pass, so nothin
   const s = fullStatus(fx);
   assert.equal(s.ok, false, JSON.stringify(s));
   assert.equal(s.plans.find((p) => 'wanted' in p).state, 'unfired');
+});
+
+test('D-04: a fixed blocker settled as gate_pass after its fix commit is not a pass, so nothing carries', () => {
+  const fx = carryFlow({
+    settle: ({ repo, dir, B, H1, H2 }) => {
+      const rec = fireRecord(repo, dir, B, H1, 'carry-fixed.json',
+        survivedPayload('blocker', { fix_commit: H2.slice(0, 7) }));
+      assert.equal(rec.counts.survived, 1);
+      const receipt = plRun(repo, dir, ['trace', 'append', '--phase', '1',
+        '--family', 'outcome', '--event', 'gate_pass', '--trigger', 'risk_surface',
+        '--plan', '1', '--base', B, '--sha', H1,
+        '--survivors', '1', '--downgraded', '0', '--refuted', '0']);
+      assert.equal(receipt.ok, true, JSON.stringify(receipt));
+    },
+  });
+  assert.equal('carry' in fx.follow, false, JSON.stringify(fx.follow));
+  assert.equal(carries(fx.dir).length, 0);
+  const s = fullStatus(fx);
+  assert.equal(s.ok, false, JSON.stringify(s));
+  assert.equal(s.plans.find((p) => 'wanted' in p).state, 'unfired');
+});
+
+test('D-04: a gate_pass with no record on disk carries nothing', () => {
+  const fx = carryFlow({
+    settle: ({ repo, dir, B, H1 }) => assert.equal(plRun(repo, dir, passReceipt(B, H1)).ok, true),
+  });
+  assert.equal('carry' in fx.follow, false, JSON.stringify(fx.follow));
+  assert.equal(carries(fx.dir).length, 0);
+  assert.equal(fullStatus(fx).plans.find((p) => 'wanted' in p).state, 'unfired');
 });
