@@ -47,7 +47,7 @@ const toolUse = (id, name, input) => ({ type: 'tool_use', id, name, input, calle
 /**
  * One run's stream, shaped as the captured one.
  * @param {{returned: string, finalText?: string, subagentReads?: number, parentReads?: number,
- *   dispatchPrompt?: string, nested?: boolean, agentType?: string}} o
+ *   dispatchPrompt?: string, nested?: boolean, agentType?: string, notice?: boolean, input?: object}} o
  */
 function stream(o) {
   const agentType = o.agentType || AGENT_TYPE;
@@ -58,7 +58,7 @@ function stream(o) {
       claude_code_version: '2.1.323', agents: ['general-purpose', agentType] },
     assistant([{ type: 'text', text: 'Dispatching the preload-proof agent.' }]),
     assistant([toolUse(ID, 'Agent', { description: 'Report preloaded skill lines', subagent_type: agentType,
-      prompt, run_in_background: false })]),
+      prompt, run_in_background: false, ...o.input })]),
   ];
   for (let i = 0; i < (o.parentReads || 0); i++) {
     recs.push(assistant([toolUse(`toolu_parent_read_${i}`, 'Read', { file_path: '/tmp/x/SKILL.md' })]));
@@ -73,8 +73,10 @@ function stream(o) {
     }
     recs.push(assistant([{ type: 'text', text: o.returned }], ID));
   }
-  recs.push({ type: 'system', subtype: 'task_notification', task_id: 'a5ec3c505042bba18', tool_use_id: ID,
-    status: 'completed', summary: o.returned, usage: { total_tokens: 1251, tool_uses: reads, duration_ms: 1448 } });
+  if (o.notice !== false) {
+    recs.push({ type: 'system', subtype: 'task_notification', task_id: 'a5ec3c505042bba18', tool_use_id: ID,
+      status: 'completed', summary: o.returned, usage: { total_tokens: 1251, tool_uses: reads, duration_ms: 1448 } });
+  }
   recs.push({
     type: 'user',
     message: { role: 'user', content: [{ tool_use_id: ID, type: 'tool_result', content: [{ type: 'text',
@@ -235,6 +237,25 @@ test('a stream with no record from inside the subagent fails naming that cause',
   assert.notEqual(r.status, 0);
   assert.match(r.stdout, /no-subagent-record/);
   assert.equal(existsSync(r.out), false, 'an unchecked 0 must never be stored');
+});
+
+test('a second run with no task notification fails naming the missing tally, though a text record came back', () => {
+  const r = run(stream({ returned: BOTH }), stream({ returned: SHARED_RULE, agentType: SECOND_AGENT_TYPE, notice: false }));
+  assert.notEqual(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.run, 'second');
+  assert.equal(out.reason, 'subagent-count-missing');
+  assert.equal(existsSync(r.out), false, 'an unobserved 0 must never be stored');
+});
+
+test('the rule rewrapped inside a nested dispatch input field fails naming the dispatch input', () => {
+  const rewrapped = SHARED_RULE.replace(/ (?=definitions)/, '\n  ');
+  const r = run(stream({ returned: BOTH }), stream({ returned: SHARED_RULE, agentType: SECOND_AGENT_TYPE,
+    input: { context: { notes: [`Quote this back: ${rewrapped}`] } } }));
+  assert.notEqual(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).run, 'second');
+  assert.match(r.stdout, /dispatch-input-carries-marker/);
+  assert.equal(existsSync(r.out), false);
 });
 
 test('a host that exits non-zero, and no host on PATH, fail and write no result', () => {

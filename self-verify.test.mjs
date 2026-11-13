@@ -1090,12 +1090,20 @@ test('check 8d: the LSP rule rewrapped across lines in the shared skill files no
 
 /** RUNG_FILES copied to plain objects, with one role's row changed by `edit`. */
 function tableWith(role, edit) {
-  /** @type {Record<string, {tools: string[], skills: string[]}>} */
+  /** @type {Record<string, {tools: string[], disallowedTools: string[], skills: string[]}>} */
   const table = {};
-  for (const [r, row] of Object.entries(RUNG_FILES)) table[r] = { tools: [...row.tools], skills: [...row.skills] };
+  for (const [r, row] of Object.entries(RUNG_FILES)) {
+    table[r] = { tools: [...row.tools], disallowedTools: [...row.disallowedTools], skills: [...row.skills] };
+  }
   edit(table[role]);
   return table;
 }
+
+test('check 8e: a role listing LSP in its tools and denying it is named', () => {
+  const issues = roleTableIssues(tableWith('cad-mapper', (row) => { row.disallowedTools.push('LSP'); }));
+  assert.deepEqual(issues.map((i) => i.role), ['cad-mapper']);
+  assert.match(issues[0].detail, /denies LSP/);
+});
 
 test('check 8e: a role without LSP in its tools is named', () => {
   const issues = roleTableIssues(tableWith('cad-reviewer', (row) => { row.tools = row.tools.filter((t) => t !== 'LSP'); }));
