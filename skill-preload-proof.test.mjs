@@ -1,8 +1,8 @@
 // Zero-dep tests for skill-preload-proof.mjs, the stored proof that the host preloads an agent's second skill (D-02).
 // Run: node --test tests/skill-preload-proof.test.mjs
 //
-// Harness: a stand-in `claude` alone on the child's PATH. It records what it was handed (argv, the fixture's agent
-// file) and prints a canned stream-json run. The records below are cut down from a real Claude Code 2.1.323 stream
+// Harness: a stand-in `claude` alone on the child's PATH. Each call records what it was handed (argv, the fixture's
+// agent file) and prints the canned stream-json run for that call: the first run's, then the second's. The records below are cut down from a real Claude Code 2.1.323 stream
 // captured on 2026-11-13 with --verbose and --forward-subagent-text: same types, keys and nesting, usage noise dropped.
 // No test runs the real host; the script always writes to a temp --out here, never to the stored file.
 // The last test reads the stored file the real host wrote, judged by the script's own judge() and markers.
@@ -14,8 +14,11 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { MARKERS, AGENT_TYPE, SKILLS, STORED_RESULT, judge } from '../cadence-core/bin/skill-preload-proof.mjs';
+import { MARKERS, AGENT_TYPE, SKILLS, STORED_RESULT, SECOND_AGENT, SECOND_AGENT_TYPE, SECOND_PROMPT, judge,
+  writeFixture } from '../cadence-core/bin/skill-preload-proof.mjs';
 import { FRONTMATTER_RE, parseSkillsField } from '../cadence-core/bin/lib/frontmatter.mjs';
+import { SHARED_RULE, carriesSharedRule } from '../cadence-core/bin/lib/shared-rule.mjs';
+import { RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'skill-preload-proof.mjs');
 const ID = 'toolu_01TiUZwgm1n35yihEuMCB8mh';
@@ -27,10 +30,11 @@ const FIRST_ONLY = `- proof-first: ${MARKERS.first}`;
 const STUB = `#!${process.execPath}
 const fs = require('fs'), path = require('path');
 const argv = process.argv.slice(2);
-const agents = path.join(argv[argv.indexOf('--plugin-dir') + 1], 'agents');
-const agent = fs.readFileSync(path.join(agents, fs.readdirSync(agents)[0]), 'utf8');
-fs.writeFileSync(process.env.STUB_CAPTURE, JSON.stringify({ argv, agent }));
-process.stdout.write(fs.readFileSync(process.env.STUB_STREAM, 'utf8'));
+const proof = path.join(argv[argv.indexOf('--plugin-dir') + 1], 'agents', 'preload-proof.md');
+const calls = fs.existsSync(process.env.STUB_CAPTURE) ? JSON.parse(fs.readFileSync(process.env.STUB_CAPTURE, 'utf8')) : [];
+calls.push({ argv, agent: fs.existsSync(proof) ? fs.readFileSync(proof, 'utf8') : null });
+fs.writeFileSync(process.env.STUB_CAPTURE, JSON.stringify(calls));
+process.stdout.write(fs.readFileSync(process.env.STUB_STREAM + '.' + (calls.length - 1), 'utf8'));
 process.exitCode = Number(process.env.STUB_EXIT || 0);
 `;
 
@@ -43,23 +47,24 @@ const toolUse = (id, name, input) => ({ type: 'tool_use', id, name, input, calle
 /**
  * One run's stream, shaped as the captured one.
  * @param {{returned: string, finalText?: string, subagentReads?: number, parentReads?: number,
- *   dispatchPrompt?: string, nested?: boolean}} o
+ *   dispatchPrompt?: string, nested?: boolean, agentType?: string}} o
  */
 function stream(o) {
+  const agentType = o.agentType || AGENT_TYPE;
   const reads = o.subagentReads || 0;
   const prompt = o.dispatchPrompt || 'Reply with the line each of your preloaded skills holds, verbatim.';
   const recs = [
     { type: 'system', subtype: 'init', cwd: '/tmp/x', session_id: SESSION, tools: ['Task'],
-      claude_code_version: '2.1.323', agents: ['general-purpose', AGENT_TYPE] },
+      claude_code_version: '2.1.323', agents: ['general-purpose', agentType] },
     assistant([{ type: 'text', text: 'Dispatching the preload-proof agent.' }]),
-    assistant([toolUse(ID, 'Agent', { description: 'Report preloaded skill lines', subagent_type: AGENT_TYPE,
+    assistant([toolUse(ID, 'Agent', { description: 'Report preloaded skill lines', subagent_type: agentType,
       prompt, run_in_background: false })]),
   ];
   for (let i = 0; i < (o.parentReads || 0); i++) {
     recs.push(assistant([toolUse(`toolu_parent_read_${i}`, 'Read', { file_path: '/tmp/x/SKILL.md' })]));
   }
   recs.push({ type: 'system', subtype: 'task_started', task_id: 'a5ec3c505042bba18', tool_use_id: ID,
-    subagent_type: AGENT_TYPE, prompt, session_id: SESSION });
+    subagent_type: agentType, prompt, session_id: SESSION });
   recs.push({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: prompt }] },
     parent_tool_use_id: ID, agent_id: 'a5ec3c505042bba18', session_id: SESSION });
   if (o.nested !== false) {
@@ -75,7 +80,7 @@ function stream(o) {
     message: { role: 'user', content: [{ tool_use_id: ID, type: 'tool_result', content: [{ type: 'text',
       text: `[Subagent hand-back] The report follows:\n  ${o.returned.split('\n').join('\n  ')}\nagentId: a5ec3c505042bba18` }] }] },
     parent_tool_use_id: null, session_id: SESSION,
-    tool_use_result: { status: 'completed', agentId: 'a5ec3c505042bba18', agentType: AGENT_TYPE,
+    tool_use_result: { status: 'completed', agentId: 'a5ec3c505042bba18', agentType,
       content: [{ type: 'text', text: o.returned }] },
   });
   const finalText = o.finalText || `The preload-proof agent returned:\n\n${o.returned}`;
@@ -84,20 +89,26 @@ function stream(o) {
   return recs.map((r) => JSON.stringify(r)).join('\n') + '\n';
 }
 
+/** A second run whose agent returned `returned`, read `subagentReads` files, and was dispatched as the script asks. */
+const second = (returned, subagentReads = 0) => stream({ returned, subagentReads, agentType: SECOND_AGENT_TYPE,
+  dispatchPrompt: 'Answer from your context, use no tool, and reply with your shared rule about the LSP tool, verbatim.' });
+const SECOND_OK = second(SHARED_RULE);
+
 /**
- * Run the script against a stand-in, or against no `claude` at all when `streamText` is null.
- * @param {string|null} streamText @param {number} [exitCode]
+ * Run the script against a stand-in, or against no `claude` at all when `firstText` is null.
+ * @param {string|null} firstText @param {string} [secondText] @param {number} [exitCode]
  */
-function run(streamText, exitCode = 0) {
+function run(firstText, secondText = SECOND_OK, exitCode = 0) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-spp-'));
   const bin = join(dir, 'bin');
   const env = { ...process.env, PATH: bin, STUB_CAPTURE: join(dir, 'capture.json'),
     STUB_STREAM: join(dir, 'stream.jsonl'), STUB_EXIT: String(exitCode) };
   mkdirSync(bin);
-  if (streamText !== null) {
+  if (firstText !== null) {
     writeFileSync(join(bin, 'claude'), STUB);
     chmodSync(join(bin, 'claude'), 0o755);
-    writeFileSync(env.STUB_STREAM, streamText);
+    writeFileSync(`${env.STUB_STREAM}.0`, firstText);
+    writeFileSync(`${env.STUB_STREAM}.1`, secondText);
   }
   const out = join(dir, 'result.json');
   const r = spawnSync(process.execPath, [SCRIPT, '--out', out], { env, encoding: 'utf8' });
@@ -107,19 +118,76 @@ function run(streamText, exitCode = 0) {
   };
 }
 
-test('the second marker back with both counts 0 passes and stores the marker and the counts', () => {
+test('both markers back with the counts at 0 passes and stores both runs', () => {
   const r = run(stream({ returned: BOTH }));
   assert.equal(r.status, 0, r.stdout);
-  const stored = JSON.parse(readFileSync(r.out, 'utf8'));
-  assert.ok(stored.returned.includes(MARKERS.second));
-  assert.equal(stored.came_back.second, true);
-  assert.equal(stored.subagent_tool_calls, 0);
-  assert.equal(stored.parent_other_calls, 0);
-  assert.equal(stored.host_version, '2.1.323');
+  const { first, second: two } = JSON.parse(readFileSync(r.out, 'utf8'));
+  assert.ok(first.returned.includes(MARKERS.second));
+  assert.equal(first.came_back.second, true);
+  assert.equal(first.subagent_tool_calls, 0);
+  assert.equal(first.parent_other_calls, 0);
+  assert.equal(first.host_version, '2.1.323');
+  assert.equal(first.agent, AGENT_TYPE);
+  assert.equal(two.agent, SECOND_AGENT_TYPE);
+  assert.equal(two.marker, SHARED_RULE);
+  assert.equal(two.came_back, true);
+  assert.equal(two.subagent_tool_calls, 0);
+  assert.equal(two.host_version, '2.1.323');
+});
+
+test('the first marker back and the rule missing from the second fails naming the second run', () => {
+  const r = run(stream({ returned: BOTH }), second('I have no such rule.'));
+  assert.notEqual(r.status, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.run, 'second');
+  assert.equal(out.reason, 'shared-rule-missing');
+  assert.equal(existsSync(r.out), false);
+});
+
+test('the rule back with its line breaks and spacing changed passes', () => {
+  const rewrapped = SHARED_RULE.replace(/ (?=definitions)/, '\n').replace(/ (?=If it errors)/, '\n\n  ');
+  const r = run(stream({ returned: BOTH }), second(`Here it is:\n${rewrapped}`));
+  assert.equal(r.status, 0, r.stdout);
+});
+
+test('the rule back with one word changed fails', () => {
+  const r = run(stream({ returned: BOTH }), second(SHARED_RULE.replace('references', 'usages')));
+  assert.notEqual(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).run, 'second');
+});
+
+test('a Read inside the second run\'s agent fails naming the count, though the rule came back', () => {
+  const r = run(stream({ returned: BOTH }), second(SHARED_RULE, 1));
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout, /second run: subagent_tool_calls is 1/);
+});
+
+test('the second run: a table-named agent, no rule text in the prompt, and a parent not held by --tools Agent', () => {
+  const { capture } = run(stream({ returned: BOTH }));
+  const stems = Object.values(RUNG_FILES).flatMap((row) => Object.values(row.rungs));
+  assert.ok(stems.includes(SECOND_AGENT), SECOND_AGENT);
+  const { argv } = capture[1];
+  const prompt = argv[argv.indexOf('-p') + 1];
+  assert.equal(prompt, SECOND_PROMPT);
+  assert.ok(prompt.includes(SECOND_AGENT_TYPE), prompt);
+  assert.equal(carriesSharedRule(prompt), false, 'an echo would pass');
+  assert.ok(!argv.includes('--tools'), argv.join(' '));
+});
+
+test('writeFixture puts each marker only in its own skill\'s body, and neither in frontmatter', () => {
+  const plugin = writeFixture(mkdtempSync(join(tmpdir(), 'cad-spp-fixture-')));
+  const [one, two] = SKILLS.map((s) => readFileSync(join(plugin, 'skills', s, 'SKILL.md'), 'utf8'));
+  const parts = (t) => { const fm = t.match(FRONTMATTER_RE); return { fm: fm[0], body: t.slice(fm[0].length) }; };
+  assert.ok(parts(one).body.includes(MARKERS.first) && !parts(one).body.includes(MARKERS.second));
+  assert.ok(parts(two).body.includes(MARKERS.second) && !parts(two).body.includes(MARKERS.first));
+  const agent = readFileSync(join(plugin, 'agents', 'preload-proof.md'), 'utf8');
+  for (const text of [parts(one).fm, parts(two).fm, agent]) {
+    assert.ok(!text.includes(MARKERS.first) && !text.includes(MARKERS.second), text);
+  }
 });
 
 test('what the stand-in was handed: a tool-less agent with both skills in order, a dispatch-only parent, no marker', () => {
-  const { capture } = run(stream({ returned: BOTH }));
+  const { capture: [capture] } = run(stream({ returned: BOTH }));
   const fm = capture.agent.match(FRONTMATTER_RE)[1];
   assert.match(fm, /^tools:[ \t]*\[\][ \t]*$/m, 'the key present and empty - left out it grants every tool');
   assert.deepEqual(parseSkillsField(fm), [...SKILLS]);
@@ -170,7 +238,7 @@ test('a stream with no record from inside the subagent fails naming that cause',
 });
 
 test('a host that exits non-zero, and no host on PATH, fail and write no result', () => {
-  for (const r of [run(stream({ returned: BOTH }), 1), run(null)]) {
+  for (const r of [run(stream({ returned: BOTH }), SECOND_OK, 1), run(null)]) {
     assert.notEqual(r.status, 0);
     assert.match(r.stdout, /host-did-not-run/);
     assert.equal(existsSync(r.out), false, 'a check that did not run records nothing');
