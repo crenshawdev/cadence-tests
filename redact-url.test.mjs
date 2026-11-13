@@ -626,6 +626,9 @@ test('redactOutbound: under a .yml path, a YAML block scalar under a credential 
     + '    NEXT: 1\r\n';
   assert.equal(redactOutbound(yml + crlf),
     `${yml}  env:\r\n    ${REDACTION_MARK}\r\n      ${REDACTION_MARK}\r\n    NEXT: 1\r\n`);
+  // a lower-case credential name is still a credential in a config file
+  const lower = '+  env:\n+    private_key: |\n+      MIIEowIBAAKCAQEAfake0123\n+    next: 1';
+  assert.ok(!redactOutbound(yml + lower).includes('MIIEowIBAAKCAQEAfake0123'));
   const script = '  steps:\n    - run: |\n        echo "$GITHUB_TOKEN" | gh auth login --with-token\n        gh pr list\n';
   assert.equal(redactOutbound(yml + script), yml + script);
 });
