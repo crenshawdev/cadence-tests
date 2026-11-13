@@ -9,10 +9,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parseReachTable } from '../cadence-core/bin/lib/config-reach.mjs';
 import { parseRoadmapPhases } from '../cadence-core/bin/lib/planning-files.mjs';
 import { readState, statePath, writeState } from '../cadence-core/bin/lib/project-state.mjs';
 import { renderStateMd } from '../cadence-core/bin/lib/state-views.mjs';
-import { makeTree, run, isEntryFile } from './planning.test.mjs';
+import { makeTree, run, isEntryFile, today, verifyChecked } from './planning.test.mjs';
 import { renumberTree } from './planning-renumber.test.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported. */
@@ -109,6 +110,64 @@ test('phase-entry add on an open cycle renders STATE.md from the state, so its t
   const stateMd = readFileSync(join(dir, 'STATE.md'), 'utf8');
   assert.equal(stateMd, renderStateMd(readState(dir).state));
   assert.match(stateMd, /^Phase: 2 of 4 \(Two\)$/m);
+});
+
+// --- the cursor an add writes ----------------------------------------------------
+// the global layer is pointed at nothing, so a skip_discuss set on this machine can't steer the next step
+const NO_GLOBAL = { CADENCE_GLOBAL_CONFIG: join(tmpdir(), 'cad-no-such-global.json') };
+const add = (dir, n) => run(['phase-entry', 'add', '--phase', String(n), '--name', `P${n}`, '--description', 'd'], dir, undefined, NO_GLOBAL);
+// status leaves `drift` off when there is none
+const cursorDrift = (dir) => {
+  const status = run(['status'], dir, undefined, NO_GLOBAL);
+  assert.equal(status.ok, true);
+  return (status.drift ?? []).filter((d) => d.kind === 'cursor');
+};
+
+/** An open cycle whose two phases are both complete, the cursor at `status`. */
+function allComplete(status) {
+  const dir = makeTree({
+    roadmap: [{ n: 1, name: 'One', checked: true }, { n: 2, name: 'Two', checked: true }],
+    phases: { 1: { plan: true, summary: true }, 2: { plan: true, summary: true } },
+    cursor: { phase: 2, total: 2, name: 'Two', status, next: '/cad-milestone', updated: '2026-01-01' },
+  });
+  verifyChecked(dir);
+  return dir;
+}
+
+test('phase-entry add with no cycle open points the cursor at the new phase, ready to plan, and status finds no cursor drift', () => {
+  const dir = makeTree({ roadmap: [] });
+  assert.equal(add(dir, 1).ok, true);
+  assert.deepEqual(readState(dir).state.cursor, { phase: 1, status: 'ready to plan', next: '/cad-context 1', updated: today() });
+  assert.deepEqual(cursorDrift(dir), []);
+});
+
+test('phase-entry add with workflow.skip_discuss true names /cad-plan N as the next step', () => {
+  const dir = makeTree({ roadmap: [], config: { workflow: { skip_discuss: true } } });
+  assert.equal(add(dir, 1).ok, true);
+  assert.deepEqual(readState(dir).state.cursor, { phase: 1, status: 'ready to plan', next: '/cad-plan 1', updated: today() });
+});
+
+test('phase-entry add into an open cycle whose phases are all complete moves the cursor to the new phase, no drift', () => {
+  const dir = allComplete('phase complete');
+  assert.equal(add(dir, 3).ok, true);
+  assert.deepEqual(readState(dir).state.cursor, { phase: 3, status: 'ready to plan', next: '/cad-context 3', updated: today() });
+  assert.deepEqual(cursorDrift(dir), []);
+});
+
+test('phase-entry add leaves the cursor as it was beside an unfinished phase, and on a paused cursor', () => {
+  for (const dir of [threePhases(), allComplete('paused')]) {
+    const before = readState(dir).state.cursor;
+    assert.ok(before, 'the fixture has a cursor to keep');
+    assert.equal(add(dir, 4).ok, true);
+    assert.deepEqual(readState(dir).state.cursor, before);
+  }
+});
+
+test('the reach table names phase-entry.mjs as a reader of workflow.skip_discuss, since the add\'s cursor reads it', () => {
+  const { rows } = parseReachTable(readFileSync(new URL('../cadence-core/references/config-reach.md', import.meta.url), 'utf8'));
+  const row = rows?.find((r) => r.key === 'workflow.skip_discuss');
+  assert.ok(row, 'the key has a reach row');
+  assert.match(row.honouredBy, /bin\/planning\/phase-entry\.mjs/);
 });
 
 test('phase-entry edit changes the phase\'s line and nothing else in ROADMAP.md', () => {
