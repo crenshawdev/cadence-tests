@@ -9,7 +9,7 @@
 // alone, and it would make `detail` useless for the thing it exists for.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { redactUrl, redactCredentials, REDACTION_MARK } from '../cadence-core/bin/lib/redact-url.mjs';
+import { redactUrl, redactCredentials, redactOutbound, REDACTION_MARK } from '../cadence-core/bin/lib/redact-url.mjs';
 
 /** The credential halves every arm below asserts are absent. */
 const USER = 'cad';
@@ -453,5 +453,53 @@ test('redactUrl: a long colon run before a slash returns in bounded time', () =>
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
     assert.ok(ms < 1000, `redactUrl took ${ms} ms on a 256k colon run ending ${tail}`);
     assert.equal(out, hostile, 'no userinfo can cross the slash, so the text is unchanged');
+  }
+});
+
+// redactOutbound: the outbound fence's narrow rule. Four shapes go, ordinary code crosses byte for byte.
+test('redactOutbound: each of the four shapes with a literal value loses the value', () => {
+  for (const [body, value] of [
+    ['export OPENAI_API_KEY=sk-fake-0123456789', 'sk-fake-0123456789'],
+    ['remote = git://cad:s3cr3t-tok@host.invalid/r.git', 's3cr3t-tok'],
+    ['Authorization: Bearer fake.bearer-0123456789', 'fake.bearer-0123456789'],
+    ['{"api_key": "fake-key-AAAA1111"}', 'fake-key-AAAA1111'],
+    // a password-less userinfo is the whole credential
+    ['https://ghp_abc123@github.com/o/r.git', 'ghp_abc123'],
+  ]) {
+    const out = redactOutbound(body);
+    assert.equal(out.includes(value), false, `the value survived: ${out}`);
+    assert.ok(out.includes(REDACTION_MARK), `nothing was redacted in ${out}`);
+  }
+});
+
+test('redactOutbound: ordinary code and look-alikes cross byte-identical', () => {
+  for (const body of [
+    'const token = getToken();',
+    'const apiKey = process.env.OPENAI_API_KEY;',
+    "if (key === 'files') return;",
+    'FOO=bar',
+    'KEY=VALUE',
+    'CADENCE_TEST_SEAM=1',
+    'ssh://git@github.com/o/r.git',
+    'Authorization: Bearer $OPENAI_API_KEY',
+    // the wide rules' cut rule eats this host; the fence never windows, so it's a host
+    'see https://docs.example.com',
+  ]) {
+    assert.equal(redactOutbound(body), body);
+  }
+});
+
+test('cost: redactOutbound on a 480,000-character input stays linear', () => {
+  // same loose bound as the #167 cost arm: it fails on a quadratic walk, not a slow machine
+  for (const [name, body] of Object.entries({
+    'one long upper-case run, an env name with no end': 'A'.repeat(480000) + '=',
+    'alternating letters and digits, a scheme, and no userinfo': '1a'.repeat(240000) + ':///@',
+    'a quote every forty characters and an api key name': ('"' + 'x'.repeat(39)).repeat(12000) + 'apikey',
+  })) {
+    const started = Date.now();
+    const out = redactOutbound(body);
+    const ms = Date.now() - started;
+    assert.ok(ms < 2000, `${name}: took ${ms}ms on ${body.length} characters`);
+    assert.equal(out, body, `${name}: nothing here is a credential`);
   }
 });
