@@ -14,6 +14,7 @@ import { referenceRouterIssues } from '../cadence-core/bin/lib/reference-routers
 import { WAIVED } from '../cadence-core/bin/lib/include-consumers.mjs';
 import { GLOBAL_ONLY_KEYS, globalOnlyMarkerIssues } from '../cadence-core/bin/lib/global-only-keys.mjs';
 import { CONTRACTS, flagNames } from '../cadence-core/bin/lib/arg-contract.mjs';
+import { SHARED_RULE, SHARED_SKILL, roleTableIssues } from '../cadence-core/bin/lib/shared-rule.mjs';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const VERIFY = join(HERE, 'self-verify.mjs');
@@ -163,7 +164,8 @@ function ladderAgents(omit = []) {
 /**
  * Every skill the table's renders preload, as `skills/<name>/SKILL.md` fixture
  * entries carrying only the data-rule sentence: check 6 needs each to resolve
- * and check 27 needs the sentence, and nothing more would be read.
+ * and check 27 needs the sentence, and nothing more would be read. The shared
+ * skill is the real one, since check 8d reads the LSP rule out of it.
  */
 function ladderSkills() {
   /** @type {Record<string, string>} */
@@ -171,6 +173,7 @@ function ladderSkills() {
   for (const { skills } of Object.values(RUNG_FILES)) {
     for (const skill of skills) out[skill] = `---\nname: ${skill}\n---\n${DATA_RULE}\n`;
   }
+  out[SHARED_SKILL] = readFileSync(join(REPO, 'skills', SHARED_SKILL, 'SKILL.md'), 'utf8');
   return out;
 }
 
@@ -1038,6 +1041,86 @@ test('check 8c: a one-off agent file the table does not name, with prose of its 
     '---\nname: cad-oneoff\ntools: Read\n---\nRead the file you are handed and say what it does.\n');
   const p = run(['--root', root]).problems;
   assert.deepEqual(p.filter((x) => x.kind === 'agent-file-render'), [], JSON.stringify(p));
+});
+
+/** Rewrite one file of a full-tree fixture through `edit`, asserting the edit changed it. */
+function editFixture(root, rel, edit) {
+  const file = join(root, rel);
+  const before = readFileSync(file, 'utf8');
+  const after = edit(before);
+  assert.notEqual(after, before, `${rel} unchanged`);
+  writeFileSync(file, after);
+}
+
+test('check 8c: an agent file with LSP taken out of its tools files a problem naming it', () => {
+  const root = fullFixture();
+  editFixture(root, 'agents/cad-mapper.md', (t) => t.replace(/^(tools:.*), LSP$/m, '$1'));
+  const r = run(['--root', root]);
+  assert.equal(r.ok, false);
+  assert.ok(r.problems.some((x) => x.kind === 'agent-file-render' && x.file === 'agents/cad-mapper.md'),
+    JSON.stringify(r.problems));
+});
+
+test('check 8c: an agent file with the shared skill taken out of its skills files a problem naming it', () => {
+  const root = fullFixture();
+  editFixture(root, 'agents/cad-planner.md', (t) => t.replace('  - cad-shared-rules\n', ''));
+  const r = run(['--root', root]);
+  assert.equal(r.ok, false);
+  assert.ok(r.problems.some((x) => x.kind === 'agent-file-render' && x.file === 'agents/cad-planner.md'),
+    JSON.stringify(r.problems));
+});
+
+test('check 8d: the LSP rule deleted from the shared skill files a problem naming the skill', () => {
+  const root = fullFixture();
+  editFixture(root, `skills/${SHARED_SKILL}/SKILL.md`, (t) => t.replace(SHARED_RULE, ''));
+  const r = run(['--root', root]);
+  assert.equal(r.ok, false);
+  const hits = r.problems.filter((x) => x.kind === 'shared-skill-lacks-rule');
+  assert.equal(hits.length, 1, JSON.stringify(r.problems));
+  assert.equal(hits[0].file, `skills/${SHARED_SKILL}/SKILL.md`);
+});
+
+test('check 8d: the LSP rule rewrapped across lines in the shared skill files none', () => {
+  const root = fullFixture();
+  editFixture(root, `skills/${SHARED_SKILL}/SKILL.md`,
+    (t) => t.replace(SHARED_RULE, SHARED_RULE.replace(/ (?=before grep)/, '\n').replace(/ (?=If it errors)/, '\n  ')));
+  const p = run(['--root', root]).problems;
+  assert.ok(!p.some((x) => x.kind === 'shared-skill-lacks-rule'), JSON.stringify(p));
+});
+
+/** RUNG_FILES copied to plain objects, with one role's row changed by `edit`. */
+function tableWith(role, edit) {
+  /** @type {Record<string, {tools: string[], skills: string[]}>} */
+  const table = {};
+  for (const [r, row] of Object.entries(RUNG_FILES)) table[r] = { tools: [...row.tools], skills: [...row.skills] };
+  edit(table[role]);
+  return table;
+}
+
+test('check 8e: a role without LSP in its tools is named', () => {
+  const issues = roleTableIssues(tableWith('cad-reviewer', (row) => { row.tools = row.tools.filter((t) => t !== 'LSP'); }));
+  assert.deepEqual(issues.map((i) => i.role), ['cad-reviewer']);
+  assert.match(issues[0].detail, /LSP/);
+});
+
+test('check 8e: a role without the shared skill is named', () => {
+  const issues = roleTableIssues(tableWith('cad-executor', (row) => { row.skills = row.skills.filter((s) => s !== SHARED_SKILL); }));
+  assert.deepEqual(issues.map((i) => i.role), ['cad-executor']);
+  assert.match(issues[0].detail, /cad-shared-rules/);
+});
+
+test('check 8e: a role listing the shared skill before its contract is named', () => {
+  const issues = roleTableIssues(tableWith('cad-verifier', (row) => { row.skills.reverse(); }));
+  assert.deepEqual(issues.map((i) => i.role), ['cad-verifier']);
+  assert.match(issues[0].detail, /after cad-verifier-contract/);
+});
+
+test('check 8e: the live table files none, and the CLI names both new checks in `checked`', () => {
+  assert.deepEqual(roleTableIssues(RUNG_FILES), []);
+  const r = run();
+  assert.equal(r.ok, true);
+  const checked = r.checked.split(', ');
+  assert.ok(checked.includes('shared-rule') && checked.includes('role-table'), r.checked);
 });
 
 test('a minimal (non-full-tree) fixture omitting optional inputs stays free of missing-input problems', () => {
