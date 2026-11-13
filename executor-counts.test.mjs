@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -85,6 +85,15 @@ test('a trace with no return for the agent exits non-zero naming the missing ret
   assert.equal(out.reason, 'no-return');
   assert.match(out.detail, new RegExp(`cad-executor return .*${AGENT}`));
   assert.equal(out.lsp, undefined, 'no partial set of counts');
+});
+
+test('the stored before record holds plan 6\'s four figures as the script counted them on 2026-11-13', () => {
+  const before = JSON.parse(readFileSync(join(REPO, 'cadence-core', 'bin', 'executor-counts.before.json'), 'utf8'));
+  // the script's count matched the hand count of 0 and 74, so the record carries no second figure
+  assert.equal(before.lsp, 0);
+  assert.equal(before.grep, 74);
+  assert.equal(before.turns, 126);
+  assert.equal(before.tokens, 263959);
 });
 
 test('an unreadable transcript path exits non-zero', () => {
