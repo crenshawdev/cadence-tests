@@ -20,7 +20,7 @@ import {
   appendEvent, correlationId, renderTrace, tracePath, rotatedTracePath,
   rotationClaimPath,
   MAX_TRACE_BYTES, ROTATED_TRACE_FILE, ROTATION_CLAIM_FILE, FAMILIES,
-  ANCHOR, DISPATCH, TERMINAL, COORDINATOR, WORKER_CACHE, ROTATION,
+  ANCHOR, DISPATCH, TERMINAL, COORDINATOR, WORKER_CACHE, ROTATION, CYCLE,
 } from '../cadence-core/bin/lib/trace.mjs';
 import { STEP_WINDOW } from '../cadence-core/bin/lib/trace.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
@@ -4734,4 +4734,75 @@ test('trace seam: a step-window fact prices a figureless close end to end', () =
   assert.equal(r.brackets[0].agent_id, 'a1');
   assert.equal(r.brackets[0].tokens, 123);
   assert.equal(r.roles['cad-reviewer'].unrecorded, 1);
+});
+
+// --- the cycle boundary (D-02, D-03) -------------------------------------------
+//
+// Two cycles each run a phase 1. A phase-scoped read starts after the newest
+// cycle marker, so the second cycle's phase 1 isn't summed with the first's;
+// an unscoped read, and any read of a record with no marker, is unchanged.
+
+const cyc = (m) => new Date(Date.UTC(2026, 7, 12, 10, m)).toISOString();
+const cycEv = (corr, m, event, extra = {}) => ({ corr, phase: 1, ts: cyc(m), family: 'lifecycle', event, ...extra });
+const FIRST = [
+  cycEv('1-aaa1111', 0, ANCHOR, { sha: 'aaa1111' }),
+  cycEv('1-aaa1111', 1, DISPATCH, { plan: '1', role: 'cad-executor' }),
+  cycEv('1-aaa1111', 5, 'return', { plan: '1', tokens: 900000 }),
+];
+const MARKER = { corr: '', ts: cyc(10), family: 'lifecycle', event: CYCLE };
+const SECOND = [
+  cycEv('1-bbb2222', 11, ANCHOR, { sha: 'bbb2222' }),
+  cycEv('1-bbb2222', 12, DISPATCH, { plan: '1', role: 'cad-planner' }),
+  cycEv('1-bbb2222', 15, 'return', { plan: '1', tokens: 200 }),
+];
+
+/** A stamped root whose trace is exactly these events, one line each. */
+function traced(events) {
+  const dir = root();
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(tracePath(dir), events.map((e) => `${JSON.stringify(e)}\n`).join(''));
+  return dir;
+}
+
+/** A render or a CLI answer with its root's paths taken out, so two roots' answers compare. */
+const unrooted = (dir, v) => JSON.parse(JSON.stringify(v).replaceAll(dir, '<root>'));
+
+test('cycle boundary: a phase-scoped render holds only the events after the newest marker, an unscoped one holds all', () => {
+  const dir = traced([...FIRST, MARKER, ...SECOND]);
+  const only = traced(SECOND);
+  const r = renderTrace(dir, 1);
+  assert.deepEqual(r.events.map((e) => e.corr), ['1-bbb2222', '1-bbb2222', '1-bbb2222']);
+  assert.deepEqual(r.counts, { routing: 0, provider: 0, lifecycle: 3, outcome: 0 });
+  assert.equal(r.corr, '1-bbb2222', 'the anchor taken is the one after the marker');
+  assert.deepEqual(unrooted(dir, r), unrooted(only, renderTrace(only, 1)));
+  const all = renderTrace(dir);
+  assert.equal(all.events.length, FIRST.length + 1 + SECOND.length);
+  assert.deepEqual(all.counts, { routing: 0, provider: 0, lifecycle: 7, outcome: 0 });
+});
+
+test('cycle boundary: an anchor only before the marker leaves a phase-scoped read on the bare id', () => {
+  const dir = traced([...FIRST, MARKER, ...SECOND.slice(1)]);
+  const r = renderTrace(dir, 1);
+  assert.equal(r.corr, '1');
+  assert.equal(r.events.length, 2);
+});
+
+test('cycle boundary: trace render, suggest and window --phase 1 answer as on a record of the later cycle alone', () => {
+  const dir = traced([...FIRST, MARKER, ...SECOND]);
+  const only = traced(SECOND);
+  for (const sub of ['render', 'suggest', 'window']) {
+    const marked = run(dir, ['trace', sub, '--phase', '1']);
+    assert.equal(marked.ok, true, sub);
+    assert.deepEqual(unrooted(dir, marked), unrooted(only, run(only, ['trace', sub, '--phase', '1'])), sub);
+  }
+});
+
+test('cycle boundary: with the marker line removed the three calls still read both cycles\' phase 1', () => {
+  const dir = traced([...FIRST, ...SECOND]);
+  const rendered = run(dir, ['trace', 'render', '--phase', '1']);
+  assert.equal(rendered.corr, '1-bbb2222');
+  assert.deepEqual(rendered.brackets.map((b) => b.role), ['cad-executor', 'cad-planner']);
+  assert.deepEqual(rendered.roles, { 'cad-executor': { dispatches: 1, tokens: 900000 }, 'cad-planner': { dispatches: 1, tokens: 200 } });
+  assert.equal(run(dir, ['trace', 'suggest', '--phase', '1']).events_read, 6);
+  assert.equal(run(dir, ['trace', 'window', '--phase', '1']).compared, 2);
 });
