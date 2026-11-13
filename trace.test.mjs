@@ -4806,3 +4806,27 @@ test('cycle boundary: with the marker line removed the three calls still read bo
   assert.equal(run(dir, ['trace', 'suggest', '--phase', '1']).events_read, 6);
   assert.equal(run(dir, ['trace', 'window', '--phase', '1']).compared, 2);
 });
+
+// D-22: the writer's `correlationId` stops at the same marker the reader does. Between a new cycle's marker and
+// that phase's own `phase_start`, the writer stamped the old cycle's `1-aaa1111` while the reader answered `1`.
+
+test('cycle boundary: a rearm written before the new cycle\'s anchor is counted by the re-arm cap\'s read', () => {
+  const dir = traced([...FIRST, MARKER]);
+  const wrote = run(dir, ['trace', 'append', '--phase', '1', '--family', 'outcome', '--event', 'rearm',
+    '--trigger', 'plan', '--plan', '1', '--base', 'aaa1111', '--sha', 'ccc3333', '--detail', 'plan']);
+  assert.equal(wrote.ok, true, JSON.stringify(wrote));
+  const r = run(dir, ['trace', 'render', '--phase', '1']);
+  // the filter references/triage-gate-blocking.md's cap runs on this payload
+  const rearms = r.outcomes.filter((o) => o.event === 'rearm' && o.trigger === 'plan' && o.corr === r.corr && (o.plan ?? '') === '1');
+  assert.equal(rearms.length, 1, `render corr ${r.corr}, outcomes ${JSON.stringify(r.outcomes)}`);
+});
+
+test('cycle boundary: an event written and a phase-scoped render in the same window carry the same corr', () => {
+  const dir = traced([...FIRST, MARKER]);
+  const wrote = appendEvent(dir, { phase: 1, family: 'lifecycle', event: DISPATCH, plan: '1', role: 'cad-planner', ts: cyc(12) });
+  assert.equal(wrote.written, true, JSON.stringify(wrote));
+  const r = renderTrace(dir, 1);
+  assert.equal(r.events.length, 1);
+  assert.equal(r.events[0].corr, r.corr);
+  assert.equal(r.corr, '1');
+});
