@@ -3977,3 +3977,12 @@ test('phase.md: the add arm rewrites the Overview on opened_cycle and drops the 
   assert.match(arm, /Overview/, 'the add arm does not send the session to the Overview');
   assert.doesNotMatch(arm, /cursor is not re-written/, 'the add arm still says the cursor is not re-written');
 });
+
+// the seam leaves a paused cursor alone, so the arm's cursor sentence says so too
+test('phase.md: the add arm states the paused-cursor exception beside the cursor sentence', () => {
+  const wf = doc('cadence-core', 'workflows', 'phase.md');
+  const start = wf.indexOf('### add');
+  const arm = flat(wf.slice(start, wf.indexOf('\n### ', start + 1)));
+  assert.match(arm, /points the cursor at the new phase itself, in the same write, unless the cursor is paused, which stays as the user left it; never run `cursor set` after it/,
+    'the add arm\'s cursor sentence does not carry the paused exception');
+});
