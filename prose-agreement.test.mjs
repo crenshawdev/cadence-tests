@@ -1391,6 +1391,19 @@ test('progress.md: an executed phase with outstanding dispatches routes to /cad-
     'the reconcile step gained an outstanding status mapping; the derived status stays `executed`');
 });
 
+test('progress.md: roadmap-box drift folds a lagging state below complete and sends complete to /cad-verify (#393)', () => {
+  const wf = doc('cadence-core', 'workflows', 'progress.md');
+  const start = wf.indexOf('- Drift kind `roadmap-box`');
+  assert.ok(start > -1, 'progress.md has no roadmap-box arm of its own');
+  const arm = wf.slice(start, wf.indexOf('\n- ', start + 1)).replace(/\s+/g, ' ');
+  const lagging = arm.slice(arm.indexOf('lags'), arm.indexOf('`complete` on either side'));
+  assert.ok(arm.includes('lags') && lagging.length > 0, 'the arm does not split by direction');
+  assert.match(lagging, /neither is `complete`/);
+  assert.match(lagging, /replay-check --phase <N>/,
+    'a state lagging below complete is routed past the fold that repairs it');
+  assert.match(arm.slice(arm.indexOf('`complete` on either side')), /\/cad-verify N/);
+});
+
 test('execute.md state: a deferring run points the cursor at its queue and commits it', () => {
   // Both halves of what makes a deferred finding survive the session that
   // deferred it: a resume pointer that says the queue is there, and the member
