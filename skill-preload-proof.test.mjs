@@ -5,6 +5,7 @@
 // file) and prints a canned stream-json run. The records below are cut down from a real Claude Code 2.1.323 stream
 // captured on 2026-11-13 with --verbose and --forward-subagent-text: same types, keys and nesting, usage noise dropped.
 // No test runs the real host; the script always writes to a temp --out here, never to the stored file.
+// The last test reads the stored file the real host wrote, judged by the script's own judge() and markers.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from 'node:fs';
@@ -13,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { MARKERS, AGENT_TYPE, SKILLS } from '../cadence-core/bin/skill-preload-proof.mjs';
+import { MARKERS, AGENT_TYPE, SKILLS, STORED_RESULT, judge } from '../cadence-core/bin/skill-preload-proof.mjs';
 import { FRONTMATTER_RE, parseSkillsField } from '../cadence-core/bin/lib/frontmatter.mjs';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'skill-preload-proof.mjs');
@@ -172,4 +173,19 @@ test('a host that exits non-zero, and no host on PATH, fail and write no result'
     assert.match(r.stdout, /host-did-not-run/);
     assert.equal(existsSync(r.out), false, 'a check that did not run records nothing');
   }
+});
+
+/** What the stored result fails on, through the script's own judge, so a mutated copy meets the same assertions. */
+const storedFailures = (stored) => judge({ returned: stored.returned,
+  subagentToolCalls: stored.subagent_tool_calls, parentOtherCalls: stored.parent_other_calls }).map((f) => f.reason);
+
+test('the stored result holds the second marker, both counts at 0, and the host version it ran on', () => {
+  const stored = JSON.parse(readFileSync(STORED_RESULT, 'utf8'));
+  assert.deepEqual(storedFailures(stored), []);
+  assert.match(String(stored.host_version), /^\d+\.\d+\.\d+/);
+  // the same assertions refuse a copy with the marker line gone, and one with either count at 1
+  const noLine = stored.returned.split('\n').filter((l) => !l.includes(MARKERS.second)).join('\n');
+  assert.deepEqual(storedFailures({ ...stored, returned: noLine }), ['second-marker-missing']);
+  assert.deepEqual(storedFailures({ ...stored, subagent_tool_calls: 1 }), ['subagent-tool-calls']);
+  assert.deepEqual(storedFailures({ ...stored, parent_other_calls: 1 }), ['parent-other-calls']);
 });
