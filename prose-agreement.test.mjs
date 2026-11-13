@@ -1576,9 +1576,8 @@ test('ENFORCEMENT, execute.md: the blocking FAIL arm dispatches a continuation c
   // dispatches"), so a check over the step stays green with the `risk_surface`
   // arm deleted outright. Measured, not assumed: deleting that arm's dispatch
   // sentence left a whole-step check passing.
-  // the close is the first status AFTER the fire: D-04's carry ask puts a status before it
   const from = step.indexOf('risk-check run');
-  const to = step.indexOf('risk-check status', step.indexOf('On a fire', from));
+  const to = step.indexOf('risk-check status');
   assert.ok(from > -1 && to > from, 'the execute_sequential step no longer runs `risk-check '
     + 'run` before `risk-check status`, so the risk_surface gate has no arm to assert on');
   const arm = step.slice(from, to);

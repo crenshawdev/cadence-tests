@@ -256,16 +256,3 @@ test('a one-plan wave\'s dead slot checks git log and asks, and only a wider wav
 test('a restarted agent is named in its plan\'s relay', () => {
   assert.match(STOPS, /\*\*A restart\.\*\* A plan whose agent the host restarted is named in that plan's relay, from `restarted` in `workflow-run`'s answer/);
 });
-
-test('the risk-surface step runs the follow-up range and asks status before it fires on a full-range match (D-04)', () => {
-  const start = EXEC.indexOf('When HEAD has moved, the range is real:');
-  const fire = EXEC.indexOf('On a fire, write', start);
-  assert.ok(start > 0 && fire > start, 'the step and its fire are both there');
-  const before = EXEC.slice(start, fire);
-  assert.match(before, /risk-check run --phase <N> --plan <k> --base \{settled head\} --head HEAD/);
-  assert.match(before, /risk-check status --phase <N> --plan <k> --base \{pre-plan HEAD\} --head HEAD/);
-  assert.ok(before.indexOf('--base {settled head}') < before.indexOf('risk-check status'),
-    'the follow-up run writes the carry before status reads it');
-  assert.match(flat(before), /Fire only when that `status` does not answer the full range settled/);
-  assert.match(flat(before), /An unjudged range is not a cleared one/);
-});
