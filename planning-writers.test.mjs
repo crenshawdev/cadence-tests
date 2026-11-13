@@ -62,6 +62,19 @@ test('the write module and a registered path are silent', () => {
   assert.deepEqual(issues(ROW.path, src, [ROW]), []);
 });
 
+test('a line of a few hundred thousand characters shaped to backtrack reads in linear time', () => {
+  // each run below cost the old regexes quadratic time: a `{` with no `}`, a space run before a stray word, `import` with no quote
+  const src = "import { writeFileSync } from 'node:fs'; writeFileSync(p);"
+    + ` import {${'{'.repeat(100000)} from 'node:fs';`
+    + ` import a${' '.repeat(100000)}b from 'node:fs';`
+    + ` ${'import '.repeat(20000)}`;
+  assert.ok(src.length > 300000);
+  const began = performance.now();
+  assert.deepEqual(fsWriteCalls(src), [{ name: 'writeFileSync', line: 1 }]);
+  const took = performance.now() - began;
+  assert.ok(took < 5000, `took ${Math.round(took)} ms`);
+});
+
 test('a row whose file no longer calls a write is stale', () => {
   const got = issues(ROW.path, "import { readFileSync } from 'node:fs';\nreadFileSync('a');\n", [ROW]);
   assert.equal(got.length, 1);
