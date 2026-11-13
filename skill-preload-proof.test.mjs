@@ -8,7 +8,8 @@
 // The last test reads the stored file the real host wrote, both runs judged by the script's own judge() and judgeSecond().
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync, copyFileSync, symlinkSync }
+  from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -98,9 +99,11 @@ const SECOND_OK = second(SHARED_RULE);
 
 /**
  * Run the script against a stand-in, or against no `claude` at all when `firstText` is null.
+ * `script` swaps in a copy of the script and `outArgs` replaces the temp `--out`.
  * @param {string|null} firstText @param {string} [secondText] @param {number} [exitCode]
+ * @param {{script?: string, outArgs?: string[]}} [opts]
  */
-function run(firstText, secondText = SECOND_OK, exitCode = 0) {
+function run(firstText, secondText = SECOND_OK, exitCode = 0, opts = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-spp-'));
   const bin = join(dir, 'bin');
   const env = { ...process.env, PATH: bin, STUB_CAPTURE: join(dir, 'capture.json'),
@@ -113,7 +116,8 @@ function run(firstText, secondText = SECOND_OK, exitCode = 0) {
     writeFileSync(`${env.STUB_STREAM}.1`, secondText);
   }
   const out = join(dir, 'result.json');
-  const r = spawnSync(process.execPath, [SCRIPT, '--out', out], { env, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [opts.script || SCRIPT, ...(opts.outArgs || ['--out', out])],
+    { env, encoding: 'utf8' });
   return {
     status: r.status, stdout: r.stdout, out,
     capture: existsSync(env.STUB_CAPTURE) ? JSON.parse(readFileSync(env.STUB_CAPTURE, 'utf8')) : null,
@@ -264,6 +268,29 @@ test('a host that exits non-zero, and no host on PATH, fail and write no result'
     assert.match(r.stdout, /host-did-not-run/);
     assert.equal(existsSync(r.out), false, 'a check that did not run records nothing');
   }
+});
+
+test('a passing run with no --out writes nothing, and --out naming the stored file refreshes it (D-14)', () => {
+  // a copy of the script with its own stored file beside it, so the real one is never in reach
+  const dir = mkdtempSync(join(tmpdir(), 'cad-spp-copy-'));
+  const script = join(dir, 'skill-preload-proof.mjs');
+  const stored = join(dir, 'skill-preload-proof.result.json');
+  copyFileSync(SCRIPT, script);
+  symlinkSync(join(dirname(SCRIPT), 'lib'), join(dir, 'lib'));
+  copyFileSync(STORED_RESULT, stored);
+  const before = readFileSync(stored);
+
+  const bare = run(stream({ returned: BOTH }), SECOND_OK, 0, { script, outArgs: [] });
+  assert.equal(bare.status, 0, bare.stdout);
+  assert.equal(JSON.parse(bare.stdout).result, undefined, 'no file written, so none named');
+  assert.deepEqual(readFileSync(stored), before);
+
+  const refresh = run(stream({ returned: BOTH }), SECOND_OK, 0, { script, outArgs: ['--out', stored] });
+  assert.equal(refresh.status, 0, refresh.stdout);
+  const { first, second: two } = JSON.parse(readFileSync(stored, 'utf8'));
+  assert.equal(first.agent, AGENT_TYPE);
+  assert.equal(two.agent, SECOND_AGENT_TYPE);
+  assert.notDeepEqual(readFileSync(stored), before, 'the stand-in\'s run replaced the stored one');
 });
 
 /** What the stored result fails on, run by run, through the script's own judges, so a mutated copy meets the same assertions. */
