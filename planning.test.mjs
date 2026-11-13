@@ -313,10 +313,17 @@ test('renumber: refuses to operate ON a decimal phase', () => {
 
 // The decimal answer and the missing-value answer are different repairs, so
 // the decimal one keeps its own wording rather than collapsing into requireInt's.
+// Insert names the seam a decimal goes in through; remove has none to name (#394).
 test('renumber: the decimal refusal names decimals, not a missing flag', () => {
   const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
-  assert.match(run(['renumber', 'remove', '--n', '2.1'], dir).detail, /re-place decimal phases by hand/);
-  assert.match(run(['renumber', 'insert', '--at', '2.1'], dir).detail, /re-place decimal phases by hand/);
+  const ins = run(['renumber', 'insert', '--at', '2.1'], dir).detail;
+  const rem = run(['renumber', 'remove', '--n', '2.1'], dir).detail;
+  assert.match(ins, /integer phases/);
+  assert.match(ins, /phase-entry add --phase/);
+  assert.match(rem, /integer phases/);
+  assert.match(rem, /nothing was written/);
+  assert.doesNotMatch(ins, /by hand/);
+  assert.doesNotMatch(rem, /by hand/);
 });
 
 // `renumber remove --n` with no value used to pass the NaN screen as 1 and

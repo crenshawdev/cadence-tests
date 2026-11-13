@@ -912,6 +912,9 @@ test('renumber insert: a Complete row citing a moved phase stays put and is name
   assert.equal(r.ok, true);
   assert.equal(readFileSync(reqFile, 'utf8').split('\n')[CMP_03], before[CMP_03]);
   assert.match(r.warn, /CMP-03/);
+  // the re-point names its seam, never a hand edit (#394)
+  assert.match(r.warn, /req-row --id <id> --phase <N>/);
+  assert.doesNotMatch(r.warn, /by hand/);
   assert.doesNotMatch(r.warn, /DEF-04/);
   assert.doesNotMatch(r.warn, /LOW-03/);
   assert.doesNotMatch(r.warn, /SHP-01/);
@@ -1124,6 +1127,9 @@ test('renumber remove: a Complete row citing the removed phase stays put and is 
   assert.equal(r.ok, true);
   assert.equal(readFileSync(reqFile, 'utf8').split('\n')[CMP_03], before[CMP_03]);
   assert.match(r.warn, /CMP-03/);
+  // the re-point names its seam, never a hand edit (#394)
+  assert.match(r.warn, /req-row --id <id> --phase <N>/);
+  assert.doesNotMatch(r.warn, /by hand/);
   assert.doesNotMatch(r.warn, /DEF-04/);
   assert.doesNotMatch(r.warn, /LOW-03/);
   assert.doesNotMatch(r.warn, /SHP-01/);
