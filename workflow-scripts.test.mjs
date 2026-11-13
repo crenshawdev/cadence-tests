@@ -132,7 +132,7 @@ const PROV_ARGS = {
 };
 const envelope = (more = {}) => ({ ok: true, findings: [find('p.js', 'provider one'), find('q.js', 'provider two')], ...more });
 
-test('review-panel: a provider voice starts one wrapper holding the exact line and timeout, with three tools denied, and its findings are checked', async () => {
+test('review-panel: a provider voice starts one wrapper holding the exact line and timeout, with four tools denied, and its findings are checked', async () => {
   const h = host((label) => (label.startsWith('provider') ? envelope({ redactions: 2, warnings: ['key file is group-readable'] }) : verdict('proved')));
   const out = await runScript(PANEL, h, PROV_ARGS);
   const wrappers = h.calls.filter((c) => c.opts.label.startsWith('provider '));
@@ -140,7 +140,7 @@ test('review-panel: a provider voice starts one wrapper holding the exact line a
   const w = wrappers[0];
   assert.ok(w.prompt.includes(LINE) && w.prompt.includes('560000') && w.prompt.includes('/tmp/cad-x/openai.envelope.json'));
   assert.ok(!w.prompt.includes('${CLAUDE_PLUGIN_ROOT}') && !w.prompt.includes('CLAUDE_PLUGIN_ROOT'));
-  assert.deepEqual(w.opts.disallowedTools, ['Read', 'Glob', 'Grep']);
+  assert.deepEqual(w.opts.disallowedTools, ['Read', 'Glob', 'Grep', 'LSP']);
   assert.equal(w.opts.agentType, 'cadence:cad-reviewer-low');
   assert.equal(w.opts.model, 'haiku');
   assert.equal(w.opts.label, 'provider openai');
