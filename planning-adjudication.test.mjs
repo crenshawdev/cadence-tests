@@ -14,7 +14,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PLANNING, run, isEntryFile } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap, run, isEntryFile } from './planning.test.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -41,6 +42,7 @@ export function adjRepo({ phase = 2 } = {}) {
   git('config', 'user.name', 'T');
   const dir = join(repo, '.planning');
   mkdirSync(join(dir, 'phases', String(phase)), { recursive: true });
+  ensureRoadmap(dir);
   writeFileSync(join(repo, 'src.js'), 'let x = 1;\n');
   git('add', '-A');
   git('commit', '-q', '-m', 'base');
@@ -105,8 +107,12 @@ export function adjPayloadFile(repo, payload, name = 'payload.json') {
 }
 
 /** Every ADJUDICATION-* file under a phase directory, sorted. */
+// an absent records folder is no files: a refused fire creates nothing, the folder included
+const inRecords = (phaseDir) => {
+  try { return readdirSync(join(phaseDir, 'records')); } catch { return []; }
+};
 const adjFiles = (dir, phase = 2) =>
-  readdirSync(join(dir, 'phases', String(phase))).filter((f) => f.startsWith('ADJUDICATION')).sort();
+  inRecords(join(dir, 'phases', String(phase))).filter((f) => f.startsWith('ADJUDICATION')).sort();
 
 /** adjPayload with its one high settled by `fix_file` in place of the commit. */
 function fixFilePayload(fixFile) {
@@ -147,7 +153,7 @@ test('adjudication: the record lands beside the sibling REVIEW discriminator (AC
   const r = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan',
     '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]);
   assert.equal(r.ok, true, JSON.stringify(r));
-  assert.equal(r.record, 'phases/2/ADJUDICATION-plan-plan-1.json');
+  assert.equal(r.record, 'phases/2/records/ADJUDICATION-plan-plan-1.json');
   assert.equal(r.round, 1);
   assert.deepEqual(r.counts, { raised: 1, survived: 1, downgraded: 0, refuted: 0 });
   assert.deepEqual(adjFiles(dir), ['ADJUDICATION-plan-plan-1.json']);
@@ -248,7 +254,7 @@ test('adjudication: a re-arm passes --round 2 and round one survives byte for by
 
   const first = adjRun(repo, dir, args(['--round', '1']));
   assert.equal(first.ok, true, JSON.stringify(first));
-  assert.equal(first.record, 'phases/2/ADJUDICATION-plan-plan-1.json');
+  assert.equal(first.record, 'phases/2/records/ADJUDICATION-plan-plan-1.json');
   const roundOne = readFileSync(join(dir, first.record), 'utf8');
 
   // Round two rules the SAME findings differently - that is what a re-arm is -
@@ -266,7 +272,7 @@ test('adjudication: a re-arm passes --round 2 and round one survives byte for by
   const r2 = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan', '--discriminator', 'plan-1',
     '--base', base, '--head', 'HEAD', '--payload', payload2, '--round', '2']);
   assert.equal(r2.ok, true, JSON.stringify(r2));
-  assert.equal(r2.record, 'phases/2/ADJUDICATION-plan-plan-1-r2.json');
+  assert.equal(r2.record, 'phases/2/records/ADJUDICATION-plan-plan-1-r2.json');
   assert.deepEqual(r2.counts, { raised: 1, survived: 0, downgraded: 0, refuted: 1 });
 
   assert.deepEqual(adjFiles(dir),
@@ -288,7 +294,7 @@ test('adjudication: a second fire that forgot --round is REFUSED, not merged and
   const again = adjRun(repo, dir, args);
   assert.equal(again.ok, false, JSON.stringify(again));
   assert.equal(again.reason, 'record-exists');
-  assert.match(again.detail, /phases\/2\/ADJUDICATION-plan-plan-1\.json/);
+  assert.match(again.detail, /phases\/2\/records\/ADJUDICATION-plan-plan-1\.json/);
   assert.match(again.hint, /--round 2/);
   assert.equal(again._exit, 1);
   assert.deepEqual(adjFiles(dir), ['ADJUDICATION-plan-plan-1.json']);
@@ -464,7 +470,7 @@ test('adjudication: both legitimate directions still pass on that same tree (D-0
   const phase = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan',
     '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]);
   assert.equal(phase.ok, true, JSON.stringify(phase));
-  assert.equal(phase.record, 'phases/2/ADJUDICATION-plan-plan-1.json');
+  assert.equal(phase.record, 'phases/2/records/ADJUDICATION-plan-plan-1.json');
 });
 
 test('adjudication: a SYMLINKED tasks/ is refused, not followed out of the tree', () => {
@@ -502,6 +508,19 @@ test('adjudication: a SYMLINKED phases/ is refused the same way', () => {
     'the record was written through the symlink');
 });
 
+test('adjudication: a SYMLINKED records folder in a phase is refused, and nothing lands through it', () => {
+  const { repo, dir, base } = adjRepo();
+  const outside = join(repo, 'elsewhere');
+  mkdirSync(outside, { recursive: true });
+  symlinkSync(outside, join(dir, 'phases', '2', 'records'));
+  const payload = adjPayloadFile(repo, adjPayload());
+  const r = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan',
+    '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.reason, 'records-unusable');
+  assert.deepEqual(readdirSync(outside), [], 'the record was written through the symlink');
+});
+
 test('adjudication: without --task the two phase homes resolve exactly as before', () => {
   // The regression pin. --task is optional, and a phase fire that passes none
   // has to reach phases/<N>/ on the same bytes it always did.
@@ -511,7 +530,7 @@ test('adjudication: without --task the two phase homes resolve exactly as before
   const r = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan',
     '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]);
   assert.equal(r.ok, true, JSON.stringify(r));
-  assert.equal(r.record, 'phases/2/ADJUDICATION-plan-plan-1.json');
+  assert.equal(r.record, 'phases/2/records/ADJUDICATION-plan-plan-1.json');
 });
 
 test('adjudication: an absent --payload is bad-args, never a read of stdin', () => {
@@ -849,7 +868,7 @@ test('RSK-08: both refusals land where they are stated, over a mixed-ruling fixt
   const adjudicate = (payloadFile) => plRun(repo, dir, ['adjudication', '--phase', '1',
     '--trigger', 'risk_surface', '--discriminator', 'plan-1',
     '--base', base, '--head', head, '--payload', payloadFile]);
-  const records = () => readdirSync(phaseDir).filter((n) => n.startsWith('ADJUDICATION-'));
+  const records = () => inRecords(phaseDir).filter((n) => n.startsWith('ADJUDICATION-'));
 
   assert.equal(plRun(repo, dir, ['risk-check', 'run', ...range]).ok, true);
 
@@ -913,7 +932,7 @@ test('RSK-08: both refusals land where they are stated, over a mixed-ruling fixt
  *  written nothing rather than merely to have answered `ok:false`. */
 function traceLines(dir) {
   let text = '';
-  try { text = readFileSync(join(dir, 'trace.jsonl'), 'utf8'); } catch { return []; }
+  try { text = readFileSync(join(recordsDir(dir), 'trace.jsonl'), 'utf8'); } catch { return []; }
   return text.split('\n').filter((l) => l.trim() !== '').map((l) => JSON.parse(l));
 }
 
@@ -1265,13 +1284,13 @@ test('D-04: the recount does NOT widen to deferred/<N>/, which keeps its stated 
   // may not be for. Asserted rather than assumed, so the half-reversal is a
   // choice on the record instead of an oversight nobody re-reads.
   const { repo, dir, base, headFull } = adjRepo();
-  mkdirSync(join(dir, 'deferred', '3'), { recursive: true });
+  mkdirSync(join(dir, 'records', 'deferred', '3'), { recursive: true });
   const payload = adjPayloadFile(repo, adjPayload());
   const rec = plRun(repo, dir, ['adjudication', '--phase', '3',
     '--trigger', 'risk_surface', '--discriminator', `cad-task-${headFull.slice(0, 7)}`,
     '--base', base, '--head', 'HEAD', '--payload', payload]);
   assert.equal(rec.ok, true, JSON.stringify(rec));
-  assert.equal(rec.record, `deferred/3/ADJUDICATION-risk_surface-cad-task-${headFull.slice(0, 7)}.json`);
+  assert.equal(rec.record, `records/deferred/3/ADJUDICATION-risk_surface-cad-task-${headFull.slice(0, 7)}.json`);
 
   const before = traceLines(dir).length;
   const r = plRun(repo, dir, ['trace', 'append', '--phase', '3',

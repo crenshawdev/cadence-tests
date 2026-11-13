@@ -10,10 +10,12 @@
 // so a sibling that imports a fixture from here registers nothing twice.
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { makeTree, run, isEntryFile } from './planning.test.mjs';
+import { makeTree, run, isEntryFile, verifyChecked } from './planning.test.mjs';
+import { phaseReviewPath, phaseReturnPath } from '../cadence-core/bin/lib/planning-store.mjs';
+import { readState, writeState } from '../cadence-core/bin/lib/project-state.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -91,18 +93,16 @@ test('status: an interrupted close reports the closed state AND a phase-dir drif
   }]);
 });
 
-test('status: a tagged close that never ran cursor set reports cursor drift on the stale total, while still agreeing', () => {
-  const dir = makeTree({
-    roadmap: [],
-    cursor: { phase: 5, total: 5, name: 'Old', status: 'phase complete', next: '/cad-milestone', updated: '2026-01-01' },
-  });
+test('status: a closed cycle is the state having no phases, and a cursor of that cycle agrees', () => {
+  const dir = makeTree({ roadmap: [1, 2].map((n) => ({ n, name: `P${n}` })) });
+  assert.equal(run(['cursor', 'set', '--phase', '2', '--status', 'phase complete', '--next', '/cad-milestone'], dir).ok, true);
+  const held = readState(dir).state;
+  assert.equal(writeState(dir, { ...held, phases: [], cycleOpen: false }).ok, true);
   const r = run(['status'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.cycle, 'none');
   assert.equal(r.cursor.agrees, true);
-  assert.equal(r.drift.length, 1);
-  assert.equal(r.drift[0].kind, 'cursor');
-  assert.match(r.drift[0].detail, /cursor totals 5 phases; ROADMAP has none/);
+  assert.equal(r.drift, undefined);
 });
 
 test('status: a finished close (cursor of 0) reports no drift at all', () => {
@@ -147,6 +147,23 @@ for (const row of CLOSED_AGREEMENT) {
   });
 }
 
+test('status: a file at the reviews-area and returns-area paths leaves status ok with the same phases', () => {
+  const dir = makeTree({
+    roadmap: [{ n: 1, name: 'One' }],
+    phases: { 1: { plan: true, summary: true } },
+  });
+  const before = run(['status'], dir);
+  assert.equal(before.ok, true, JSON.stringify(before));
+  const phaseDir = join(dir, 'phases', '1');
+  for (const p of [phaseReviewPath(phaseDir, 'a-review.md'), phaseReturnPath(phaseDir, 'a-return.json')]) {
+    mkdirSync(join(p, '..'), { recursive: true });
+    writeFileSync(p, 'x\n');
+  }
+  const after = run(['status'], dir);
+  assert.equal(after.ok, true, JSON.stringify(after));
+  assert.deepEqual(after.phases, before.phases);
+});
+
 // --- status: derivation ------------------------------------------------------
 
 test('status: derives unplanned/planned/executed/complete from artifacts', () => {
@@ -163,6 +180,7 @@ test('status: derives unplanned/planned/executed/complete from artifacts', () =>
       3: { plan: true },
     },
   });
+  verifyChecked(dir);
   const r = run(['status'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.phases.map((p) => p.status), ['complete', 'executed', 'planned', 'unplanned']);
@@ -187,6 +205,7 @@ test('status: all complete -> current null; multi-plan files listed', () => {
     roadmap: [{ n: 1, name: 'Only', checked: true }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'], summary: true, uat: [{ status: 'pass' }] } },
   });
+  verifyChecked(dir);
   const r = run(['status'], dir);
   assert.equal(r.current, null);
   assert.deepEqual(r.phases[0].plans, ['PLAN-1.md', 'PLAN-2.md']);
@@ -203,21 +222,50 @@ test('status: skipped without a reason blocks completeness', () => {
 
 // --- status: drift -----------------------------------------------------------
 
-test('status: roadmap-box drift both directions', () => {
+test('status: roadmap-box drift both directions, judged by the state against what the artifacts derive', () => {
   const dir = makeTree({
-    roadmap: [
-      { n: 1, name: 'DoneUnchecked' },                 // derived complete, box open
-      { n: 2, name: 'OpenChecked', checked: true },    // derived planned, box checked
-    ],
-    phases: {
-      1: { plan: true, summary: true, uat: [{ status: 'pass' }] },
-      2: { plan: true },
-    },
+    roadmap: [{ n: 1, name: 'DoneUnchecked' }, { n: 2, name: 'OpenChecked' }],
+    phases: { 1: { plan: true }, 2: { plan: true } },
   });
+  assert.equal(run(['status'], dir).drift, undefined, 'a freshly imported project agrees with its artifacts');
+  // phase 1's artifacts now derive complete while the state says planned; phase 2 is recorded complete with no summary
+  const p1 = join(dir, 'phases', '1');
+  writeFileSync(join(p1, 'SUMMARY.md'), '---\nphase: 1\nstatus: complete\n---\n');
+  writeFileSync(join(p1, 'UAT.md'), '---\nstatus: complete\nphase: 1\n---\n\n## Items\n\n### 1. x\nexpected: y\nstatus: pass\n\n## Summary\n\ntotal: 1\n');
+  const held = readState(dir).state;
+  assert.equal(writeState(dir, { ...held, phases: held.phases.map((p) => (p.n === 2 ? { ...p, status: 'complete' } : p)) }).ok, true);
   const r = run(['status'], dir);
   const kinds = r.drift.map((d) => `${d.kind}:${d.phase}`);
   assert.ok(kinds.includes('roadmap-box:1'));
   assert.ok(kinds.includes('roadmap-box:2'));
+  assert.equal(r.phases.find((p) => p.n === 2).status, 'complete', 'the state\'s status is the one reported');
+});
+
+test('status: hand-checking a box, adding a phase line or breaking a line in the list changes nothing it answers', () => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }], phases: { 1: { plan: true } } });
+  run(['status'], dir); // converts the project; the answers compared are the ones after it
+  const before = run(['status'], dir);
+  const file = join(dir, 'ROADMAP.md');
+  const text = readFileSync(file, 'utf8');
+  for (const edited of [
+    text.replace('- [ ] **Phase 1: One**', '- [x] **Phase 1: One**'),
+    text.replace('- [ ] **Phase 2: Two** - desc\n', '- [ ] **Phase 2: Two** - desc\n- [ ] **Phase 3: Invented** - desc\n'),
+    text.replace('- [ ] **Phase 2: Two** - desc\n', '- Phase 3: X\n'),
+  ]) {
+    writeFileSync(file, edited);
+    const r = run(['status'], dir);
+    assert.equal(r.ok, true);
+    assert.deepEqual(r, before);
+  }
+});
+
+test('status: a roadmap with no ## Phases heading is still refused', () => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+  assert.equal(run(['status'], dir).ok, true);
+  writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap\n\nnothing listed\n');
+  const r = run(['status'], dir);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'unparseable-roadmap');
 });
 
 test('status: req-status drift; Deferred and unmapped rows exempt', () => {
@@ -234,6 +282,7 @@ test('status: req-status drift; Deferred and unmapped rows exempt', () => {
       ['REQ-4', null, 'Pending'],// unmapped: audit's concern, not drift
     ],
   });
+  verifyChecked(dir);
   const r = run(['status'], dir);
   const reqDrift = r.drift.filter((d) => d.kind === 'req-status');
   assert.equal(reqDrift.length, 2);
@@ -267,6 +316,7 @@ test('status: decimal insertion phases sort and derive like integers', () => {
       '2.1': { plan: true },
     },
   });
+  verifyChecked(dir);
   const r = run(['status'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.phases.map((p) => p.n), [1, 2.1, 3]); // numeric sort, 2.1 between
@@ -442,9 +492,9 @@ test('status: distinct sub-phase numbers report no collision', () => {
 // dispatches on, off ONE definition (`readPlanReports`), and the third row
 // below is that one-definition claim made observable rather than asserted.
 
-/** Executor reports under `phases/<n>/reports/`, keyed by plan number. */
+/** Executor reports under `phases/<n>/records/reports/`, keyed by plan number. */
 function writeReports(dir, n, byPlan) {
-  const rdir = join(dir, 'phases', String(n), 'reports');
+  const rdir = join(dir, 'phases', String(n), 'records', 'reports');
   mkdirSync(rdir, { recursive: true });
   for (const [k, body] of Object.entries(byPlan)) {
     writeFileSync(join(rdir, `plan-${k}.md`), body);
@@ -466,6 +516,17 @@ test('status: an unexecuted gap plan beside a SUMMARY is executed AND outstandin
   // router, it does not mint a status or invert the row.
   assert.equal(r.phases[0].status, 'executed', JSON.stringify(r.phases));
   assert.deepEqual(r.outstanding, [{ phase: 1, plans: ['PLAN-2.md'] }], JSON.stringify(r.outstanding));
+});
+
+test('status: a PLAN COMPLETE report at the old reports/ path no longer counts', () => {
+  const dir = gapPlanTree();
+  run(['status'], dir); // a project not yet converted would have this folder moved to its new place
+  const old = join(dir, 'phases', '1', 'reports');
+  mkdirSync(old, { recursive: true });
+  for (const k of [1, 2]) writeFileSync(join(old, `plan-${k}.md`), 'PLAN COMPLETE\nTasks: 1 of 1\n');
+  const r = run(['status'], dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.outstanding, [{ phase: 1, plans: ['PLAN.md', 'PLAN-2.md'] }], JSON.stringify(r.outstanding));
 });
 
 test('status: every plan reporting complete lists the phase nowhere, and the key is still there', () => {
@@ -528,14 +589,14 @@ function positionTree(files, complete = [], stateExtra = '') {
   const dir = makeTree({ roadmap: [{ n: 1, name: 'One', checked: true }, { n: 2, name: 'Auth' }],
     phases: { 1: { plan: true, summary: true, uat: [{ status: 'pass' }] } } });
   const pdir = join(dir, 'phases', '2');
-  mkdirSync(join(pdir, 'reports'), { recursive: true });
-  mkdirSync(join(dir, 'phases', '1', 'reports'), { recursive: true });
-  writeFileSync(join(dir, 'phases', '1', 'reports', 'plan-1.md'), 'PLAN COMPLETE\n');
+  mkdirSync(join(pdir, 'records', 'reports'), { recursive: true });
+  mkdirSync(join(dir, 'phases', '1', 'records', 'reports'), { recursive: true });
+  writeFileSync(join(dir, 'phases', '1', 'records', 'reports', 'plan-1.md'), 'PLAN COMPLETE\n');
   for (const f of files) {
     const k = Number(/PLAN-(\d+)\.md/.exec(f)?.[1] ?? 1);
     writeFileSync(join(pdir, f), `# Phase 2: Auth - Plan ${k}: Name ${k}\n`);
   }
-  for (const k of complete) writeFileSync(join(pdir, 'reports', `plan-${k}.md`), 'PLAN COMPLETE\n');
+  for (const k of complete) writeFileSync(join(pdir, 'records', 'reports', `plan-${k}.md`), 'PLAN COMPLETE\n');
   writeFileSync(join(dir, 'STATE.md'),
     `# State\n\nPhase: 2 of 2 (Auth)\n${stateExtra}Status: planned\nNext: /cad-execute 2\nUpdated: 2026-01-01\n`);
   return dir;
@@ -568,4 +629,60 @@ test('status: the cursor block carries its Plan: line as written, and a mismatch
 test('status: a four-line cursor block has exactly its five keys', () => {
   const r = run(['status'], positionTree(['PLAN-1.md']));
   assert.deepEqual(Object.keys(r.cursor).sort(), ['agrees', 'next', 'phase', 'status', 'updated']);
+});
+
+// --- status: plan completion is the state's (plan 7, task 4) --------------------------------------------
+
+const planStates = (dir, n) => readState(dir).state.phases.find((p) => p.n === n).plans.map((p) => `${p.file}:${p.finished}`);
+const writeReport = (dir, n, k, first = 'PLAN COMPLETE') => {
+  mkdirSync(join(dir, 'phases', String(n), 'records', 'reports'), { recursive: true });
+  writeFileSync(join(dir, 'phases', String(n), 'records', 'reports', `plan-${k}.md`), `${first}\nPlan: x\n`);
+};
+
+test('status: a PLAN COMPLETE report is drift until a seam folds it, then the plan is finished in the state and the position moves', () => {
+  const dir = positionTree(['PLAN-1.md', 'PLAN-2.md']);
+  const before = run(['status'], dir);
+  assert.deepEqual(phase2(before).plan, { k: 1, j: 2, name: 'Name 1' });
+  assert.deepEqual(before.outstanding, [{ phase: 2, plans: ['PLAN-1.md', 'PLAN-2.md'] }]);
+  assert.equal(before.drift, undefined);
+
+  writeReport(dir, 2, 1);
+  const drifted = run(['status'], dir);
+  const entries = drifted.drift.filter((d) => d.kind === 'plan-report');
+  assert.equal(entries.length, 1);
+  assert.deepEqual([entries[0].phase, entries[0].plan], [2, 1]);
+  assert.equal(typeof entries[0].detail, 'string');
+  assert.deepEqual(phase2(drifted).plan, { k: 1, j: 2, name: 'Name 1' }, 'status answers from the state and writes nothing');
+  assert.deepEqual(planStates(dir, 2), ['PLAN-1.md:false', 'PLAN-2.md:false']);
+
+  const replay = run(['replay-check', '--phase', '2'], dir);
+  assert.equal(replay.ok, true);
+  assert.deepEqual(planStates(dir, 2), ['PLAN-1.md:true', 'PLAN-2.md:false']);
+  const after = run(['status'], dir);
+  assert.equal((after.drift || []).filter((d) => d.kind === 'plan-report').length, 0);
+  assert.deepEqual(after.outstanding, [{ phase: 2, plans: ['PLAN-2.md'] }]);
+  assert.deepEqual(phase2(after).plan, { k: 2, j: 2, name: 'Name 2' });
+});
+
+test('cursor set folds a PLAN COMPLETE report into the state, and a first line that only quotes it does not count', () => {
+  const dir = positionTree(['PLAN-1.md', 'PLAN-2.md']);
+  assert.equal(run(['status'], dir).ok, true);
+  writeReport(dir, 2, 1);
+  writeReport(dir, 2, 2, 'PLAN PARTIAL - was PLAN COMPLETE');
+  const set = run(['cursor', 'set', '--phase', '2', '--status', 'planned', '--next', '/cad-execute 2'], dir);
+  assert.deepEqual(set.cursor.plan, { k: 2, j: 2, name: 'Name 2' });
+  assert.deepEqual(planStates(dir, 2), ['PLAN-1.md:true', 'PLAN-2.md:false']);
+});
+
+test('status: a phase held complete reads every plan finished even with no report (D-23)', () => {
+  const dir = positionTree(['PLAN-1.md', 'PLAN-2.md']);
+  assert.equal(run(['status'], dir).ok, true);
+  assert.equal(run(['phase-done', '--n', '2'], dir).ok, true);
+  assert.deepEqual(planStates(dir, 2), ['PLAN-1.md:true', 'PLAN-2.md:true']);
+  const r = run(['status'], dir);
+  assert.deepEqual(r.outstanding, []);
+  assert.ok(!('plan' in phase2(r)));
+  const replay = run(['replay-check', '--phase', '2'], dir);
+  assert.equal(replay.replay, true);
+  assert.deepEqual(replay.dispatch_set, []);
 });

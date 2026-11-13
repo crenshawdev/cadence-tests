@@ -11,9 +11,12 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync, chmodSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync, chmodSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { classifyAcceptanceCriteria } from '../cadence-core/bin/lib/planning-files.mjs';
+import { readState } from '../cadence-core/bin/lib/project-state.mjs';
 import { PLANNING_DIR, makeTree, run, isEntryFile } from './planning.test.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
@@ -39,7 +42,10 @@ test('renumber insert --dry-run: full op plan, nothing touched', () => {
   // dirs 3 then 2 move up, high-to-low (collision-safe)
   assert.deepEqual(r.ops[0], { git_mv: ['phases/3', 'phases/4'] });
   assert.deepEqual(r.ops[1], { git_mv: ['phases/2', 'phases/3'] });
-  assert.match(r.slot, /Phase 2/);
+  // the slot names the seam that fills it, never a list line to type by hand
+  assert.match(r.slot, /phase-entry add --phase 2 /);
+  assert.match(r.slot, /"### Phase 2:" detail section/);
+  assert.doesNotMatch(r.slot, /- \[ \]/);
   assert.equal(readFileSync(join(dir, 'ROADMAP.md'), 'utf8'), before);
   assert.ok(readdirSync(join(dir, 'phases')).includes('2'));
 });
@@ -59,7 +65,8 @@ test('renumber insert: shifts dirs, tokens, traceability, and cursor', () => {
   assert.match(reqs, /REQ-1 \| Phase 1 \|/); // below the insertion point - untouched
   const cursor = run(['cursor', 'get'], dir);
   assert.equal(cursor.phase, 3); // was 2, shifted with its phase
-  assert.equal(cursor.total, 4);
+  // the total is the phase list's length and the new phase's line is added afterwards, so it has not grown yet
+  assert.equal(cursor.total, 3);
 });
 
 test('renumber remove: cuts line + detail, orphans reqs, shifts down, reports prose refs', () => {
@@ -79,6 +86,73 @@ test('renumber remove: cuts line + detail, orphans reqs, shifts down, reports pr
   assert.ok(r.warn && /removed phase 2/.test(r.warn)); // cursor pointed at the removed phase
 });
 
+test('renumber insert and remove keep the state, the list and the detail sections in step, and a hand-added list line is not a phase', () => {
+  const dir = renumberTree();
+  assert.equal(run(['status'], dir).ok, true);
+  const file = join(dir, 'ROADMAP.md');
+  writeFileSync(file, readFileSync(file, 'utf8')
+    .replace('- [ ] **Phase 3: Three**', '- [ ] **Phase 3: Three**\n- [ ] **Phase 7: Invented** - desc'));
+  const ins = run(['renumber', 'insert', '--at', '2'], dir);
+  assert.equal(ins.ok, true);
+  assert.deepEqual(readState(dir).state.phases.map((p) => [p.n, p.name]), [[1, 'One'], [3, 'Two'], [4, 'Three']]);
+  const afterInsert = readFileSync(file, 'utf8');
+  assert.deepEqual(afterInsert.match(/^- \[ \] \*\*Phase \d+: \w+\*\*/gm),
+    ['- [ ] **Phase 1: One**', '- [ ] **Phase 3: Two**', '- [ ] **Phase 4: Three**']);
+  assert.match(afterInsert, /^### Phase 3: Two$/m);
+
+  const rem = run(['renumber', 'remove', '--n', '3'], dir);
+  assert.equal(rem.ok, true);
+  assert.deepEqual(readState(dir).state.phases.map((p) => [p.n, p.name]), [[1, 'One'], [3, 'Three']]);
+  const afterRemove = readFileSync(file, 'utf8');
+  assert.deepEqual(afterRemove.match(/^- \[ \] \*\*Phase \d+: \w+\*\*/gm), ['- [ ] **Phase 1: One**', '- [ ] **Phase 3: Three**']);
+  assert.doesNotMatch(afterRemove, /^### Phase \d+: Two$/m);
+  assert.equal(rem.total, 2);
+});
+
+test('renumber insert: a fact another seam commits while the directories move is kept, and shifted like the rest', {
+  skip: process.platform === 'win32' ? 'a shell git stand-in' : false,
+}, () => {
+  const dir = renumberTree();
+  assert.equal(run(['status'], dir).ok, true);
+  // a git stand-in that lands a state write mid-apply, then fails so the move falls back to the filesystem
+  const bin = mkdtempSync(join(tmpdir(), 'cad-fakegit-'));
+  const writer = join(bin, 'write.mjs');
+  writeFileSync(writer, `import { updateState } from ${JSON.stringify(pathToFileURL(join(PLANNING_DIR, '..', 'lib', 'project-state.mjs')).href)};
+const r = updateState(process.argv[2], (s) => ({ ...s,
+  requirements: s.requirements.map((q) => (q.id === 'REQ-3' ? { ...q, status: 'Complete' } : q)),
+  cursor: { ...s.cursor, next: '/cad-execute 3' } }));
+if (!r.ok) process.exit(2);
+`);
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\nnode ${JSON.stringify(writer)} ${JSON.stringify(dir)} || exit 2\nexit 1\n`);
+  chmodSync(join(bin, 'git'), 0o755);
+  const r = run(['renumber', 'insert', '--at', '2'], dir, undefined, { PATH: `${bin}:${process.env.PATH}` });
+  assert.equal(r.ok, true);
+  const st = readState(dir).state;
+  assert.deepEqual(st.requirements.map((q) => [q.id, q.phase, q.status]),
+    [['REQ-1', 1, 'Pending'], ['REQ-2', 3, 'Pending'], ['REQ-3', 3, 'Complete']],
+    'REQ-3 stays Complete from the other seam; the Pending row still shifts');
+  assert.equal(st.cursor.next, '/cad-execute 4', 'the cursor the other seam wrote is shifted');
+  assert.equal(st.cursor.phase, 3);
+});
+
+test('renumber shifts only Pending rows in the state, leaves Complete and Deferred as they were, and the table agrees', () => {
+  const dir = makeTree({
+    roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }, { n: 3, name: 'Three' }],
+    phases: { 1: { plan: true }, 2: { plan: true }, 3: { plan: true } },
+    reqs: [['REQ-1', 2, 'Pending'], ['REQ-2', 2, 'Complete'], ['REQ-3', 3, 'Deferred'], ['REQ-4', 3, 'Pending']],
+  });
+  const r = run(['renumber', 'insert', '--at', '2'], dir);
+  assert.equal(r.ok, true);
+  assert.deepEqual(readState(dir).state.requirements, [
+    { id: 'REQ-1', phase: 3, status: 'Pending' }, { id: 'REQ-2', phase: 2, status: 'Complete' },
+    { id: 'REQ-3', phase: 3, status: 'Deferred' }, { id: 'REQ-4', phase: 4, status: 'Pending' }]);
+  const table = readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8');
+  assert.match(table, /REQ-1 \| Phase 3 \| Pending/);
+  assert.match(table, /REQ-2 \| Phase 2 \| Complete/);
+  assert.deepEqual(r.req_row_changes.map((c) => c.line).length, 2);
+  assert.ok(r.req_row_changes.every((c) => c.after === table.split('\n')[c.line - 1]), 'after is the regenerated file\'s row');
+});
+
 test('renumber insert at total+1 appends: nothing shifts, only the slot opens', () => {
   const dir = renumberTree();
   const r = run(['renumber', 'insert', '--at', '4'], dir);
@@ -89,7 +163,7 @@ test('renumber insert at total+1 appends: nothing shifts, only the slot opens', 
   assert.match(readFileSync(join(dir, 'ROADMAP.md'), 'utf8'), /- \[ \] \*\*Phase 3: Three\*\*/);
   const cursor = run(['cursor', 'get'], dir);
   assert.equal(cursor.phase, 2); // below the insertion point - untouched
-  assert.equal(cursor.total, 4); // but the denominator grew
+  assert.equal(cursor.total, 3); // the denominator is the phase list's length, which grows when the new line is added
 });
 
 // --- renumber vs CONTEXT acceptance-criteria ids: a NON-event ----------------
@@ -443,6 +517,8 @@ test('renumber remove: a partial apply reports which ops completed (#49.2)', {
   skip: typeof process.getuid === 'function' && process.getuid() === 0 ? 'root bypasses mode bits' : false,
 }, () => {
   const dir = renumberTree();
+  // the state file is written by the first seam call, which a read-only root would refuse, so it is already there
+  assert.equal(run(['status'], dir).ok, true);
   chmodSync(dir, 0o555); // .planning root read-only; phases/ stays writable
   let r;
   try {
@@ -462,15 +538,18 @@ test('renumber remove: a partial apply reports which ops completed (#49.2)', {
   // The hint must never PRESCRIBE a re-run: the half-applied tree no longer
   // matches ROADMAP, so a re-run rm's phases/1 - which now holds the ORIGINAL
   // phase 2's work - and exits ok:true having destroyed it. It may mention
-  // re-running, but only to warn against it.
-  assert.doesNotMatch(r.hint, /by hand,\s*then re-run/);
+  // re-running, but only to warn against it. No "by hand" either: the hint
+  // names what to reverse, and how is the reader's call.
+  assert.doesNotMatch(r.hint, /by hand/);
   assert.match(r.hint, /destroy/);
   // Byte-exact, not just the keywords above: ROADMAP phase 1 SC2 asks for the
   // hint text to be pinned by a test that reddens on a PARAPHRASE, and every
   // keyword assertion here survives one. This is the only copy of the sentence
   // outside planning.mjs.
-  assert.equal(r.hint, "the tree is partly renumbered and no longer matches ROADMAP"
-    + " - reconcile the completed ops by hand before any further renumber;"
+  assert.deepEqual(readState(dir).state.phases.map((p) => p.n), [1, 2, 3], 'the state still holds the old numbering');
+  assert.equal(r.hint, "the tree is partly renumbered - reverse the completed directory moves and text edits"
+    + " before any further renumber, and never the phase list, the traceability table or STATE.md, which are"
+    + " rendered from the state file; it still holds the old numbering unless the detail says it was written;"
     + " re-running this command against the half-applied tree can destroy a phase directory");
 });
 
@@ -630,11 +709,11 @@ test('source: the renumber rm fallback\'s recursive delete is gated by the .git 
   const end = src.indexOf('for (const [f, t] of dirMoves)', start);
   assert.ok(end > start, 'the rm step is no longer followed by the dir-move loop');
   const step = src.slice(start, end);
-  assert.match(step, /rmSync\([\s\S]*?recursive: true/, 'the recursive fallback this row guards is gone');
-  // Guarded, and guarded BEFORE the delete - a probe after the rmSync would
+  assert.match(step, /removeTree\(/, 'the recursive fallback this row guards is gone');
+  // Guarded, and guarded BEFORE the delete - a probe after the removeTree would
   // pass a substring check while deleting exactly as it did.
   const probe = step.indexOf('gitDirAbove(');
-  const del = step.search(/rmSync\(/);
+  const del = step.search(/removeTree\(/);
   assert.ok(probe > 0 && probe < del,
     'the recursive delete runs without the .git probe deciding first');
   // The probe looks UP from the planning root, so it cannot see a repository
@@ -644,7 +723,7 @@ test('source: the renumber rm fallback\'s recursive delete is gated by the .git 
   const under = step.indexOf('gitDirUnder(');
   assert.ok(under > 0 && under < del,
     'the recursive delete runs without the nested-repository probe deciding first');
-  assert.doesNotMatch(step, /catch \{ rmSync/, 'the unguarded one-line fallback is back');
+  assert.doesNotMatch(step, /catch \{ removeTree/, 'the unguarded one-line fallback is back');
 });
 
 // --- decimal phases under renumber (the desync fix) ----------------------------
@@ -732,8 +811,9 @@ test('renumber insert: only Pending Traceability rows move, every other line is 
   assert.equal(r.ok, true);
   const after = readFileSync(reqFile, 'utf8').split('\n');
   assert.equal(after.length, before.length);
-  assert.equal(after[PND_03], '| PND-03 | Phase 4 (phases/4/) | Pending |');
-  assert.equal(after[PND_04], '| PND-04 | Phase 5 (phases/5/) | Pending |');
+  // a row the shift changes is the row the renderer writes, so the annotation after the phase is gone with it
+  assert.equal(after[PND_03], '| PND-03 | Phase 4 | Pending |');
+  assert.equal(after[PND_04], '| PND-04 | Phase 5 | Pending |');
   for (let i = 0; i < before.length; i++) {
     if (i === PND_03 || i === PND_04) continue;
     assert.equal(after[i], before[i], `line ${i + 1} changed: ${before[i]}`);
@@ -750,18 +830,18 @@ test('renumber insert: a CRLF REQUIREMENTS.md stays CRLF and only its Pending ro
   assert.doesNotMatch(text, /(^|[^\r])\n/, 'an LF lost its CR');
   const after = text.split('\n');
   assert.equal(after.length, before.length);
-  assert.equal(after[PND_03], '| PND-03 | Phase 4 (phases/4/) | Pending |\r');
-  assert.equal(after[PND_04], '| PND-04 | Phase 5 (phases/5/) | Pending |\r');
+  assert.equal(after[PND_03], '| PND-03 | Phase 4 | Pending |\r');
+  assert.equal(after[PND_04], '| PND-04 | Phase 5 | Pending |\r');
   for (let i = 0; i < before.length; i++) {
     if (i === PND_03 || i === PND_04) continue;
     assert.equal(after[i], before[i], `line ${i + 1} changed: ${before[i]}`);
   }
 });
 
-// The rows the gate shows, 1-indexed like in_text_refs, terminator dropped.
+// The rows the gate shows, 1-indexed like in_text_refs, terminator dropped; `after` is the row the regenerated file carries.
 const HISTORY_ROW_CHANGES = [
-  { line: 7, before: '| PND-03 | Phase 3 (phases/3/) | Pending |', after: '| PND-03 | Phase 4 (phases/4/) | Pending |' },
-  { line: 8, before: '| PND-04 | Phase 4 (phases/4/) | Pending |', after: '| PND-04 | Phase 5 (phases/5/) | Pending |' },
+  { line: 7, before: '| PND-03 | Phase 3 (phases/3/) | Pending |', after: '| PND-03 | Phase 4 | Pending |' },
+  { line: 8, before: '| PND-04 | Phase 4 (phases/4/) | Pending |', after: '| PND-04 | Phase 5 | Pending |' },
 ];
 
 test('renumber insert --dry-run: req_row_changes lists each REQUIREMENTS line the insert changes', () => {
@@ -833,6 +913,9 @@ test('renumber insert: a Complete row citing a moved phase stays put and is name
   assert.equal(r.ok, true);
   assert.equal(readFileSync(reqFile, 'utf8').split('\n')[CMP_03], before[CMP_03]);
   assert.match(r.warn, /CMP-03/);
+  // the re-point names its seam, never a hand edit (#394)
+  assert.match(r.warn, /req-row --id <id> --phase <N>/);
+  assert.doesNotMatch(r.warn, /by hand/);
   assert.doesNotMatch(r.warn, /DEF-04/);
   assert.doesNotMatch(r.warn, /LOW-03/);
   assert.doesNotMatch(r.warn, /SHP-01/);
@@ -911,7 +994,7 @@ function v2HistoryRenumberTree() {
 }
 
 const REMOVED_PND_03 = '| PND-03 |  | Pending |';
-const REMOVED_PND_04 = '| PND-04 | Phase 3 (phases/3/) | Pending |';
+const REMOVED_PND_04 = '| PND-04 | Phase 3 | Pending |';
 
 test('renumber remove: only Pending Traceability rows change, every other line is byte-identical (GH-301)', () => {
   const dir = v2HistoryRenumberTree();
@@ -1045,6 +1128,9 @@ test('renumber remove: a Complete row citing the removed phase stays put and is 
   assert.equal(r.ok, true);
   assert.equal(readFileSync(reqFile, 'utf8').split('\n')[CMP_03], before[CMP_03]);
   assert.match(r.warn, /CMP-03/);
+  // the re-point names its seam, never a hand edit (#394)
+  assert.match(r.warn, /req-row --id <id> --phase <N>/);
+  assert.doesNotMatch(r.warn, /by hand/);
   assert.doesNotMatch(r.warn, /DEF-04/);
   assert.doesNotMatch(r.warn, /LOW-03/);
   assert.doesNotMatch(r.warn, /SHP-01/);
@@ -1138,7 +1224,7 @@ test('renumber: a present Plan: line stays byte-identical across insert and remo
   const insert = setup();
   assert.equal(run(['renumber', 'insert', '--at', '2'], insert).ok, true);
   const afterInsert = readFileSync(join(insert, 'STATE.md'), 'utf8');
-  assert.match(afterInsert, /^Phase: 3 of 4 \(Two\)\nPlan: 2 of 3 \(The cursor seams\)\nStatus:/m);
+  assert.match(afterInsert, /^Phase: 3 of 3 \(Two\)\nPlan: 2 of 3 \(The cursor seams\)\nStatus:/m);
   assert.ok(afterInsert.split('\n').includes(planLine));
 
   const remove = setup();

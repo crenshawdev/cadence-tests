@@ -16,7 +16,7 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, realpathSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -24,6 +24,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // were written for and imported by name here: the two regions below that
 // drive them span several subcommands, which is why they stayed.
 import { renumberTree } from './planning-renumber.test.mjs';
+import { writeState } from '../cadence-core/bin/lib/project-state.mjs';
+import { parseRoadmapPhases } from '../cadence-core/bin/lib/planning-files.mjs';
+import { importState } from '../cadence-core/bin/planning/state-import.mjs';
 import { leaseRepo, leaseCheck, stage } from './planning-lease-check.test.mjs';
 
 /** True iff the module at `url` is what node was told to run; realpath on both
@@ -54,6 +57,62 @@ export const PLANNING_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 
 export const seamSource = () => [PLANNING, ...readdirSync(PLANNING_DIR)
   .filter((f) => f.endsWith('.mjs')).sort().map((f) => join(PLANNING_DIR, f))]
   .map((f) => readFileSync(f, 'utf8')).join('\n');
+
+/**
+ * Give a hand-built planning directory the ROADMAP.md its `phases/` folders imply. Every seam now stamps a state file
+ * first, and a planning tree with phase folders and no roadmap is one it refuses, so a fixture that builds folders
+ * without a roadmap calls this. An existing ROADMAP.md is left alone; only legal phase folder names are listed.
+ */
+export function ensureRoadmap(dir) {
+  const file = join(dir, 'ROADMAP.md');
+  if (existsSync(file)) return;
+  let names = [];
+  try { names = readdirSync(join(dir, 'phases')); } catch { /* no folders, an empty list is a closed roadmap */ }
+  const legal = names.filter((n) => /^[1-9]\d*(?:\.[1-9]\d*)?$/.test(n)).sort((a, b) => Number(a) - Number(b));
+  const lines = legal.map((n) => `- [ ] **Phase ${n}: Phase ${n}** - fixture`);
+  writeFileSync(file, `# Roadmap: Fixture\n\n## Phases\n\n${lines.join('\n')}${lines.length ? '\n' : ''}`);
+}
+
+/**
+ * Stamp a planning directory with an empty, valid state file, as if an earlier seam call had met it. For a scenario
+ * that is only reachable on a project that already has its state: a roadmap that went missing or broke afterwards.
+ */
+export function stampState(dir) {
+  const r = writeState(dir, { cycleOpen: false, cursor: null, phases: [], requirements: [] });
+  if (r.ok !== true) throw new Error(`stampState: ${r.reason} ${r.detail}`);
+}
+
+/** Every path under `dir`, folders included, as path -> bytes ('dir' for a folder): both sides of a byte-identical check. */
+export function treeOf(dir) {
+  return Object.fromEntries(readdirSync(dir, { recursive: true }).map(String).sort()
+    .map((p) => [p, statSync(join(dir, p)).isDirectory() ? 'dir' : readFileSync(join(dir, p), 'utf8')]));
+}
+
+/** An unstamped v4.0 project, its logs still at the top: what a hook meets before the main session converts it. */
+export function v40Project() {
+  const dir = makeTree({
+    roadmap: [{ n: 1, name: 'Base', checked: true }, { n: 2, name: 'Auth' }],
+    phases: { 1: { plan: true, summary: true }, 2: { plan: ['PLAN-1.md'] } },
+    cursor: { phase: 2, total: 2, name: 'Auth', status: 'planned', next: '/cad-execute 2', updated: '2026-02-03' },
+  });
+  writeFileSync(join(dir, 'trace.jsonl'), '{"old":"trace"}\n');
+  writeFileSync(join(dir, 'reads.jsonl'), '{"old":"reads"}\n');
+  return dir;
+}
+
+/**
+ * Stamp a planning directory the way a first seam call would, then record every phase whose roadmap box is checked as
+ * complete. The importer derives a phase's status from its artifacts and never reads a box, but the state is where
+ * "verified" lives now, so a fixture that checks a box to mean "this phase is done" says so here.
+ */
+export function verifyChecked(dir) {
+  const imported = importState(dir);
+  if (imported.ok !== true) throw new Error(`verifyChecked: ${imported.reason} ${imported.detail}`);
+  const checked = new Set(parseRoadmapPhases(readFileSync(join(dir, 'ROADMAP.md'), 'utf8')).filter((p) => p.checked).map((p) => p.n));
+  const wrote = writeState(dir, { ...imported.state,
+    phases: imported.state.phases.map((p) => (checked.has(p.n) ? { ...p, status: 'complete' } : p)) });
+  if (wrote.ok !== true) throw new Error(`verifyChecked: ${wrote.reason} ${wrote.detail}`);
+}
 
 // ---------------------------------------------------------------------------
 // Fixture builder: fabricate a .planning tree from a compact spec.
@@ -156,6 +215,9 @@ export function makeTree(spec) {
   // memory.backend here).
   if (spec.config) writeFileSync(join(dir, 'config.json'), JSON.stringify(spec.config));
 
+  // folders without a roadmap would be refused by every seam; a fixture that wants none says `roadmap: false`
+  if (!spec.roadmap && spec.roadmap !== false && spec.phases) ensureRoadmap(dir);
+
   if (spec.reqs) {
     const rows = spec.reqs.map(([id, ph, st]) =>
       `| ${id} | ${ph === null ? '' : `Phase ${ph}`} | ${st} |`);
@@ -251,10 +313,17 @@ test('renumber: refuses to operate ON a decimal phase', () => {
 
 // The decimal answer and the missing-value answer are different repairs, so
 // the decimal one keeps its own wording rather than collapsing into requireInt's.
+// Insert names the seam a decimal goes in through; remove has none to name (#394).
 test('renumber: the decimal refusal names decimals, not a missing flag', () => {
   const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
-  assert.match(run(['renumber', 'remove', '--n', '2.1'], dir).detail, /re-place decimal phases by hand/);
-  assert.match(run(['renumber', 'insert', '--at', '2.1'], dir).detail, /re-place decimal phases by hand/);
+  const ins = run(['renumber', 'insert', '--at', '2.1'], dir).detail;
+  const rem = run(['renumber', 'remove', '--n', '2.1'], dir).detail;
+  assert.match(ins, /integer phases/);
+  assert.match(ins, /phase-entry add --phase/);
+  assert.match(rem, /integer phases/);
+  assert.match(rem, /nothing was written/);
+  assert.doesNotMatch(ins, /by hand/);
+  assert.doesNotMatch(rem, /by hand/);
 });
 
 // `renumber remove --n` with no value used to pass the NaN screen as 1 and
@@ -316,7 +385,7 @@ test('renumber: a decimal cursor is warned about, never shifted (#37)', () => {
   assert.equal(r2.ok, true);
   const cursor2 = run(['cursor', 'get'], dir2);
   assert.equal(cursor2.phase, 2.1);
-  assert.equal(cursor2.total, 5);
+  assert.equal(cursor2.total, 4); // the list's length: the inserted phase's line is added afterwards
   assert.ok(r2.warn);
 
   const dir3 = decimalCursorTree();

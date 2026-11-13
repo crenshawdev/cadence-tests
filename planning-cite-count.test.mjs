@@ -11,10 +11,11 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { writeFileSync, readFileSync, symlinkSync, mkdtempSync } from 'node:fs';
+import { writeFileSync, readFileSync, symlinkSync, mkdtempSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PLANNING, makeTree, run, isEntryFile } from './planning.test.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -150,6 +151,8 @@ test('cite-count: two runs over an unchanged plan and payload are byte-identical
     { score: 9, source: 'v3.5.3/phases/2/CONTEXT.md', snippet: 'D-03 (area): cited' },
     { score: 8, source: 'phases/1/CAPTURE.md', snippet: 'a capture row' },
   ]);
+  // the first call converts the project and its answer says so, so the compared calls are the ones after it
+  citeCount(['--phase', '2', '--payload', payload], dir);
   const a = citeCount(['--phase', '2', '--payload', payload], dir);
   const b = citeCount(['--phase', '2', '--payload', payload], dir);
   assert.equal(a.raw, b.raw);
@@ -162,7 +165,8 @@ test('cite-count: the run records no lifecycle/dispatch - it is a reader, not a 
     { score: 9, source: 'phases/1/CONTEXT.md', snippet: 'D-01 (area): uncited' },
   ]);
   // Seeded with an unrelated event so an EMPTY file cannot pass this vacuously.
-  const trace = join(dir, 'trace.jsonl');
+  mkdirSync(recordsDir(dir), { recursive: true });
+  const trace = join(recordsDir(dir), 'trace.jsonl');
   writeFileSync(trace,
     '{"corr":"2-abc","phase":2,"family":"lifecycle","event":"phase_start"}\n');
   const r = citeCount(['--phase', '2', '--payload', payload], dir);
@@ -209,7 +213,8 @@ test('cite-count: the count records itself, under the phase\'s own correlation i
   // from the newest lifecycle/phase_start for that phase, so without an anchor
   // the id would take the phase-only form and prove nothing about joining.
   const dir = citeTree();
-  const trace = join(dir, 'trace.jsonl');
+  mkdirSync(recordsDir(dir), { recursive: true });
+  const trace = join(recordsDir(dir), 'trace.jsonl');
   writeFileSync(trace,
     '{"corr":"2-deadbee","phase":2,"ts":"2026-08-23T00:00:00.000Z",'
     + '"family":"lifecycle","event":"phase_start","sha":"deadbee"}\n');
@@ -265,7 +270,8 @@ test('cite-count: a record that refuses the write moves no figure', () => {
   ];
   const outside = join(mkdtempSync(join(tmpdir(), 'cad-cite-outside-')), 'elsewhere.jsonl');
   writeFileSync(outside, '');
-  symlinkSync(outside, join(capped, 'trace.jsonl'));
+  mkdirSync(recordsDir(capped), { recursive: true });
+  symlinkSync(outside, join(recordsDir(capped), 'trace.jsonl'));
 
   const a = citeCount(['--phase', '2', '--payload', citePayload(capped, rows)], capped);
   const b = citeCount(['--phase', '2', '--payload', citePayload(clean, rows)], clean);
@@ -296,7 +302,7 @@ test('cite-count: three runs are told apart by their records alone', () => {
   // the record, and the separation has to hold for a reader who was not in the
   // session that produced it.
   const record = (dir) => {
-    const lines = readFileSync(join(dir, 'trace.jsonl'), 'utf8').split('\n').filter(Boolean);
+    const lines = readFileSync(join(recordsDir(dir), 'trace.jsonl'), 'utf8').split('\n').filter(Boolean);
     assert.equal(lines.length, 1, 'exactly one cite_count event was appended');
     // `corr` and `ts` are the two fields that differ between any two runs
     // whatever their state, so they are dropped: leaving them in would make

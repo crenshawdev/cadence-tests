@@ -12,10 +12,11 @@ import { createHash } from 'node:crypto';
 
 import {
   DECLINE_LABEL, FILING_TABLE, FINGERPRINT_CHARS, LOOKUP_CHUNK, fingerprint,
-  fingerprintInTitle, HALTING_SEVERITIES, issueBody, issueTitle, normalizeDeclines,
+  fingerprintInTitle, HALTING_SEVERITIES, issueBody, issueTitle,
   normalizeLookup,
   unfixedFindings, unfixedFromEntries, usableFixCommit,
 } from '../cadence-core/bin/lib/filing-decision.mjs';
+import { readJsonPage } from '../cadence-core/bin/lib/issue-decision.mjs';
 import { PROVIDER_TABLE } from '../cadence-core/bin/lib/forge-decision.mjs';
 import { REDACTION_MARK } from '../cadence-core/bin/lib/redact-url.mjs';
 
@@ -558,6 +559,27 @@ test('the decline label is one frozen literal with no separator a forge reads', 
 });
 
 // --- the lookup normalizer ---------------------------------------------------
+
+/**
+ * One decline-lookup response -> the fingerprint tokens it carries, plus whether the read is complete.
+ * Separate from `normalizeList` in issue-decision.mjs, which reads `state` where this reads `title`.
+ * A response that fills its page is incomplete: Forgejo clamps `tea issues list` at 50 rows whatever `--limit` asks,
+ * and a truncated decline set read as whole puts declined findings back in front of the user.
+ * A non-object row or a non-string `title` fails the whole read: the CLI's shape moved.
+ * `detail` is a fixed phrase, never a slice of the response: a CLI's bytes aren't ours to put on an envelope.
+ *
+ * @param {unknown} text the CLI's stdout
+ * @param {number} limit the page size the argv asked for
+ * @returns {{complete: boolean, fingerprints: string[], detail: string|null}}
+ */
+function normalizeDeclines(text, limit) {
+  const page = readJsonPage(text, limit, (row) => {
+    if (typeof row.title !== 'string') return { detail: 'a row carried no readable title' };
+    const token = fingerprintInTitle(row.title);
+    return token === null ? null : { record: token };
+  });
+  return { complete: page.complete, fingerprints: page.records, detail: page.detail };
+}
 
 /** `n` rows whose titles carry real fingerprints. */
 const page = (n) => JSON.stringify(

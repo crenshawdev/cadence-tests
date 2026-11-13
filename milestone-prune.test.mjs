@@ -3,11 +3,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { writeFileSync, mkdtempSync, mkdirSync, readFileSync, existsSync, symlinkSync, readdirSync, chmodSync, accessSync, constants } from 'node:fs';
+import { writeFileSync, mkdtempSync, mkdirSync, readFileSync, existsSync, symlinkSync, readdirSync, chmodSync, accessSync, constants, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pruneRoadmap, archiveRequirements, completedPhases } from '../cadence-core/bin/lib/milestone-prune.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { stampState, verifyChecked } from './planning.test.mjs';
+import { mkdirSync as plantMkdir, writeFileSync as plantWrite } from 'node:fs';
+import { dirname as plantDirname } from 'node:path';
+const plantFile = (file, data) => { plantMkdir(plantDirname(file), { recursive: true }); plantWrite(file, data); };
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const PLANNING = join(HERE, 'planning.mjs');
@@ -62,8 +67,10 @@ const REQUIREMENTS = `# Requirements: Fixture
 
 // --- the pure transforms -----------------------------------------------------
 
-test('completedPhases reads only the checked boxes', () => {
-  assert.deepEqual(completedPhases(ROADMAP), [1, 2.1]);
+test('completedPhases reads only the phases the state holds complete, in phase order', () => {
+  const phase = (n, status) => ({ n, name: `P${n}`, description: '', status, plans: [] });
+  assert.deepEqual(completedPhases({ phases: [phase(3, 'executed'), phase(2.1, 'complete'), phase(1, 'complete')] }), [1, 2.1]);
+  assert.deepEqual(completedPhases({ phases: [] }), []);
 });
 
 test('pruneRoadmap removes checked lines and their detail sections, nothing else', () => {
@@ -543,7 +550,8 @@ test('a fenced `## ` inside ## Shipped does not cut the append scan short', () =
 
 // --- the seam ---------------------------------------------------------------
 
-function scaffold() {
+/** `stamp: false` leaves the state to the caller, for a test that rewrites a document the state is built from. */
+function scaffold({ stamp = true } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'cad-prune-'));
   const dir = join(root, '.planning');
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
@@ -554,6 +562,7 @@ function scaffold() {
   writeFileSync(join(dir, 'phases', '3', 'CONTEXT.md'), 'open');
   writeFileSync(join(dir, 'ROADMAP.md'), ROADMAP);
   writeFileSync(join(dir, 'REQUIREMENTS.md'), REQUIREMENTS);
+  if (stamp) verifyChecked(dir);
   return dir;
 }
 
@@ -673,8 +682,9 @@ const TEMPLATE_PLUS_REAL = `${TEMPLATE_SHAPED}
 `;
 
 test('seam: a REQUIREMENTS.md whose sections are only fenced comes back byte-identical', () => {
-  const dir = scaffold();
+  const dir = scaffold({ stamp: false });
   writeFileSync(join(dir, 'REQUIREMENTS.md'), TEMPLATE_SHAPED);
+  verifyChecked(dir);
   const r = run(dir, ['--label', 'v1.2.0', '--mode', 'delete']);
   assert.equal(r.ok, true);
   assert.deepEqual(r.requirements.moved, [], 'no section outside a fence: nothing to move');
@@ -686,8 +696,9 @@ test('seam: a REQUIREMENTS.md whose sections are only fenced comes back byte-ide
 });
 
 test('seam: with real sections below the fence, the row lands under the REAL ## Shipped', () => {
-  const dir = scaffold();
+  const dir = scaffold({ stamp: false });
   writeFileSync(join(dir, 'REQUIREMENTS.md'), TEMPLATE_PLUS_REAL);
+  verifyChecked(dir);
   const r = run(dir, ['--label', 'v1.2.0', '--mode', 'delete']);
   assert.equal(r.ok, true);
   assert.deepEqual(r.requirements.moved, [{ id: 'STOR-01', phase: 1 }]);
@@ -968,7 +979,7 @@ test('seam: a delete-mode close writes its residue before the directories go', (
   const r = run(dir, ['--label', 'v3.5.2', '--mode', 'delete']);
   assert.equal(r.ok, true);
   assert.equal(r.residue_rows, 3, 'the envelope states the count, so a no-op is legible');
-  const text = readFileSync(join(dir, 'ARCHIVE.md'), 'utf8');
+  const text = readFileSync(join(recordsDir(dir), 'ARCHIVE.md'), 'utf8');
   assert.deepEqual(labelsIn(text), ['v3.5.2'], 'one heading for one milestone');
   assert.deepEqual(originsIn(text), RESIDUE_ORIGINS,
     'SUMMARY then UAT then CONTEXT, the order the live walk uses');
@@ -986,7 +997,7 @@ test('seam: the archive arm writes the same rows the delete arm does', () => {
   const r = run(dir, ['--label', 'v3.5.2', '--mode', 'archive']);
   assert.equal(r.ok, true);
   assert.equal(r.residue_rows, 3);
-  const text = readFileSync(join(dir, 'ARCHIVE.md'), 'utf8');
+  const text = readFileSync(join(recordsDir(dir), 'ARCHIVE.md'), 'utf8');
   assert.deepEqual(originsIn(text), RESIDUE_ORIGINS);
   assert.ok(existsSync(join(dir, '_archive-v3.5.2', '1', 'SUMMARY.md')));
 });
@@ -994,10 +1005,10 @@ test('seam: the archive arm writes the same rows the delete arm does', () => {
 test('seam: a second identical run adds no row and leaves ARCHIVE.md byte-identical', () => {
   const dir = scaffoldWithArtifacts();
   run(dir, ['--label', 'v3.5.2', '--mode', 'delete']);
-  const before = readFileSync(join(dir, 'ARCHIVE.md'), 'utf8');
+  const before = readFileSync(join(recordsDir(dir), 'ARCHIVE.md'), 'utf8');
   const again = run(dir, ['--label', 'v3.5.2', '--mode', 'delete']);
   assert.equal(again.action, 'skip');
-  assert.equal(readFileSync(join(dir, 'ARCHIVE.md'), 'utf8'), before);
+  assert.equal(readFileSync(join(recordsDir(dir), 'ARCHIVE.md'), 'utf8'), before);
 });
 
 test('seam: an interrupted close keeps its rows, and the re-run neither duplicates nor drops them', () => {
@@ -1011,7 +1022,7 @@ test('seam: an interrupted close keeps its rows, and the re-run neither duplicat
   assert.equal(first.reason, 'partial-prune');
   assert.deepEqual(first.failed, [1]);
   assert.equal(first.residue_rows, 3, 'the rows were written ahead of the removal that failed');
-  const after = readFileSync(join(dir, 'ARCHIVE.md'), 'utf8');
+  const after = readFileSync(join(recordsDir(dir), 'ARCHIVE.md'), 'utf8');
   assert.deepEqual(originsIn(after), RESIDUE_ORIGINS);
   assert.ok(existsSync(join(dir, 'phases', '1', 'SUMMARY.md')), 'the failed phase is still live');
 
@@ -1023,7 +1034,7 @@ test('seam: an interrupted close keeps its rows, and the re-run neither duplicat
   assert.equal(second.ok, true);
   assert.deepEqual(second.phases, [1]);
   assert.equal(second.residue_rows, 0, 'a phase already under this heading is skipped, not re-read');
-  assert.equal(readFileSync(join(dir, 'ARCHIVE.md'), 'utf8'), after, 'byte-identical after the re-run');
+  assert.equal(readFileSync(join(recordsDir(dir), 'ARCHIVE.md'), 'utf8'), after, 'byte-identical after the re-run');
   assert.deepEqual(originsIn(after), RESIDUE_ORIGINS, 'present exactly once');
   assert.ok(existsSync(join(dir, '_archive-v3.5.2', '1', 'SUMMARY.md')), 'and the phase finally moved');
 });
@@ -1035,7 +1046,7 @@ test('seam: phases holding no readable artifact write no ARCHIVE.md at all', () 
   const r = run(dir, ['--label', 'v3.5.2', '--mode', 'delete']);
   assert.equal(r.ok, true);
   assert.equal(r.residue_rows, 0);
-  assert.ok(!existsSync(join(dir, 'ARCHIVE.md')), 'no rows, no file');
+  assert.ok(!existsSync(join(recordsDir(dir), 'ARCHIVE.md')), 'no rows, no file');
 });
 
 // --- the falsifier: close a milestone, then recall out of it (RCL-07) -------
@@ -1169,12 +1180,12 @@ test('seam: a foreign heading that prefixes this label does not suppress the wri
   const dir = scaffoldWithArtifacts();
   // A section this close does not own, named so the old
   // `source.startsWith(label + "/")` test answers true for it.
-  writeFileSync(join(dir, 'ARCHIVE.md'),
+  plantFile(join(recordsDir(dir), 'ARCHIVE.md'),
     '## v3.5.2/forged\n\n- `phases/1/SUMMARY.md`: a row from somewhere else\n');
   const r = run(dir, ['--label', 'v3.5.2', '--mode', 'delete']);
   assert.equal(r.ok, true);
   assert.equal(r.residue_rows, 3, 'phase 1 is unarchived under THIS label, so all three land');
-  const text = readFileSync(join(dir, 'ARCHIVE.md'), 'utf8');
+  const text = readFileSync(join(recordsDir(dir), 'ARCHIVE.md'), 'utf8');
   assert.deepEqual(labelsIn(text), ['v3.5.2/forged', 'v3.5.2'], 'the foreign section is untouched');
   const own = text.slice(text.indexOf('## v3.5.2\n'));
   assert.deepEqual(originsIn(own), RESIDUE_ORIGINS);
@@ -1184,13 +1195,13 @@ test('seam: a partial section re-runs the artifacts it is missing, not the phase
   const dir = scaffoldWithArtifacts();
   // What a close that landed SUMMARY and CONTEXT but could not read UAT.md
   // leaves behind. Keyed on the phase number, the retry skips all three.
-  writeFileSync(join(dir, 'ARCHIVE.md'),
+  plantFile(join(recordsDir(dir), 'ARCHIVE.md'),
     '## v3.5.2\n\n- `phases/1/SUMMARY.md`: already landed\n'
     + '- `phases/1/CONTEXT.md`: already landed\n');
   const r = run(dir, ['--label', 'v3.5.2', '--mode', 'delete']);
   assert.equal(r.ok, true);
   assert.equal(r.residue_rows, 1, 'only the missing artifact is re-read');
-  const text = readFileSync(join(dir, 'ARCHIVE.md'), 'utf8');
+  const text = readFileSync(join(recordsDir(dir), 'ARCHIVE.md'), 'utf8');
   assert.deepEqual(originsIn(text),
     ['phases/1/SUMMARY.md', 'phases/1/CONTEXT.md', 'phases/1/UAT.md'],
     'the UAT row lands; neither pre-existing row is duplicated');
@@ -1202,13 +1213,29 @@ test('seam: a held ARCHIVE.md lock refuses the close before any directory moves'
   // other's rows and then remove the directories that were the only other copy.
   // A refused lock must therefore stop BEFORE the removal, not after it.
   const dir = scaffoldWithArtifacts();
-  writeFileSync(join(dir, 'ARCHIVE.md.lock'), ''); // a fresh mtime: a live writer holds it
+  plantFile(join(recordsDir(dir), 'ARCHIVE.md.lock'), ''); // a fresh mtime: a live writer holds it
   const r = run(dir, ['--label', 'v3.5.2', '--mode', 'delete']);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'archive-locked');
   assert.match(r.detail, /ARCHIVE\.md\.lock/, 'the reason must name the lock');
   assert.ok(existsSync(join(dir, 'phases', '1')), 'the phase directory must survive a refused close');
-  assert.ok(!existsSync(join(dir, 'ARCHIVE.md')), 'and nothing was written');
+  assert.ok(!existsSync(join(recordsDir(dir), 'ARCHIVE.md')), 'and nothing was written');
+});
+
+test('seam: a symlinked records folder refuses the close before any directory moves', () => {
+  const dir = scaffoldWithArtifacts();
+  const outside = mkdtempSync(join(tmpdir(), 'cad-prune-outside-'));
+  // a link where the records folder belongs is refused at the state-file door, so the project is stamped first and its
+  // records folder then moved behind the link, state file and all
+  verifyChecked(dir);
+  rmSync(outside, { recursive: true });
+  renameSync(recordsDir(dir), outside);
+  symlinkSync(outside, recordsDir(dir));
+  const r = run(dir, ['--label', 'v3.5.2', '--mode', 'delete']);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'records-unusable');
+  assert.ok(existsSync(join(dir, 'phases', '1')), 'the phase directory must survive a refused close');
+  assert.deepEqual(readdirSync(outside).sort(), ['.gitignore', 'state.json'], 'nothing was written through the link');
 });
 
 test('a bullet carrying its tracker suffix is removed WHOLE, and keeps the ref', () => {
@@ -1246,4 +1273,20 @@ test('a bullet carrying its tracker suffix is removed WHOLE, and keeps the ref',
   // The older form is untouched by the widening.
   assert.match(out,
     /\| BBB-01 \(a bullet in the older form, with no tracker suffix\.\) \| 1 \| Complete \| v9\.9\.9 \|/);
+});
+
+// --- the detail locator sees fences (P3-2-01) ---------------------------------
+
+test('pruneRoadmap: a fenced `## ` line inside a completed phase section leaves no orphaned line', () => {
+  const road = [
+    '# Roadmap', '', '## Phases', '', '- [x] **Phase 1: Store** - done', '- [ ] **Phase 2: Recall** - open', '',
+    '## Phase Details', '', '### Phase 1: Store', '', '**Goal:** Hold bytes.', '',
+    '```text', '## build output', '```', '', 'Closing prose of phase 1.', '',
+    '### Phase 2: Recall', '', '**Goal:** Find bytes.', '',
+  ].join('\n');
+  const r = pruneRoadmap(road, [1]);
+  assert.equal(r.removedSections, 1);
+  assert.deepEqual(r.missingSections, []);
+  for (const gone of ['Store', 'build output', 'Closing prose', '```']) assert.ok(!r.text.includes(gone), gone);
+  assert.ok(r.text.includes('### Phase 2: Recall') && r.text.includes('**Goal:** Find bytes.'));
 });

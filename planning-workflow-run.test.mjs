@@ -4,6 +4,9 @@
 // Driven through the CLI on a scratch git repo, because the outcomes are what the REAL `adjudication` and `review-file`
 // seams accept. The fixture is the spike's real run file trimmed (script, paths and previews removed, result replaced).
 // Its three agent rows keep that run's figures, with labels and agent types set as workflows/review-panel.js sets them.
+// Its findings and rulings sit in the journal fixture beside it, in the host's line shape (D-04). A test states a run with
+// each voice's returns on the voice, and `hostFiles` writes them where the host does: the skeleton to the run file and
+// each agent's return to the journal.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -11,13 +14,76 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, exist
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { ensureRoadmap } from './planning.test.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PLANNING = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
-const FIXTURE = JSON.parse(readFileSync(join(ROOT, 'tests', 'fixtures', 'workflow-run.completed.json'), 'utf8'));
+const SKELETON = JSON.parse(readFileSync(join(ROOT, 'tests', 'fixtures', 'workflow-run.completed.json'), 'utf8'));
+const JOURNAL = readFileSync(join(ROOT, 'tests', 'fixtures', 'workflow-run.completed.journal.jsonl'), 'utf8');
 const { unfixedFindings } = await import(pathToFileURL(join(ROOT, 'cadence-core', 'bin', 'lib', 'filing-decision.mjs')));
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
+/** The fixture as a test states a run: the skeleton with its reviewer's findings and its checkers' rulings put back on the voice. */
+const FIXTURE = (() => {
+  const label = new Map();
+  const got = new Map();
+  for (const e of JOURNAL.split('\n').filter(Boolean).map((l) => JSON.parse(l))) {
+    if (e.type === 'started') label.set(e.agentId, e.label);
+    if (e.type === 'result') got.set(label.get(e.agentId), e.result);
+  }
+  const run = clone(SKELETON);
+  const { findings } = got.get('reviewer claude-subagent');
+  run.result.voices[0].result = { findings };
+  run.result.voices[0].rulings = findings.map((f, index) => ({ index, finding: f, ruling: got.get(`checker claude-subagent ${index + 1}`) ?? null }));
+  return run;
+})();
+/** The host's paths for a run: `<session>/workflows/<run id>.json` and `<session>/subagents/workflows/<run id>/journal.jsonl`. */
+function hostPaths(t, name) {
+  const session = join(t.repo, 'session');
+  const journalDir = join(session, 'subagents', 'workflows', name);
+  mkdirSync(join(session, 'workflows'), { recursive: true });
+  mkdirSync(journalDir, { recursive: true });
+  return { runFile: join(session, 'workflows', `${name}.json`), journal: join(journalDir, 'journal.jsonl') };
+}
+/** The journal lines for a stated run's returns: a reviewer or provider per voice that ran, a checker per ruling, none for a null. */
+function journalOf(run) {
+  const lines = [{ type: 'launched' }];
+  const voices = run && run.result && Array.isArray(run.result.voices) ? run.result.voices : [];
+  const add = (label, result) => {
+    const agentId = `agent-${lines.length}`;
+    lines.push({ type: 'started', agentId, label });
+    if (result !== null) lines.push({ type: 'result', agentId, result });
+  };
+  for (const v of voices) {
+    if (!v || !v.ran || !v.result) continue;
+    if (v.envelope) add(`provider ${v.voice}`, { ok: true, ...v.result });
+    else add(`reviewer ${v.voice}`, v.result);
+    for (const r of v.rulings || []) add(`checker ${v.voice} ${r.index + 1}`, r.ruling);
+  }
+  return lines.map((l) => JSON.stringify(l)).join('\n');
+}
+/**
+ * Write a run where the host does. An object is split into the skeleton and its journal; text is written as it is, with
+ * `journal` (text) beside it when given, and none when null.
+ */
+function hostFiles(t, run, journal) {
+  const name = typeof run === 'object' && run && typeof run.runId === 'string' ? run.runId : 'run';
+  const paths = hostPaths(t, name);
+  let text = run;
+  let lines = journal;
+  if (typeof run !== 'string') {
+    const skeleton = clone(run);
+    if (skeleton.result && Array.isArray(skeleton.result.voices)) {
+      for (const v of skeleton.result.voices) if (v && typeof v === 'object') { delete v.result; delete v.rulings; }
+    }
+    text = JSON.stringify(skeleton);
+    if (lines === undefined) lines = journalOf(run);
+  }
+  writeFileSync(paths.runFile, text);
+  if (typeof lines === 'string') writeFileSync(paths.journal, lines);
+  return paths;
+}
 const SIX = ['what_breaks', 'why_care', 'what_triggers', 'what_proves', 'what_uncertain', 'recommendation'];
 const HEADINGS = ['What breaks', 'Why I should care', 'What triggers it', 'What proves it', 'What is still uncertain', 'Your recommendation'];
 // the keys a record entry may carry today, from lib/adjudication-record.mjs and the seam that stores it
@@ -31,6 +97,7 @@ function tree() {
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');
   const dir = join(repo, '.planning');
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
+  ensureRoadmap(dir);
   writeFileSync(join(repo, 'src.js'), 'let x = 1;\n'); git('add', '-A'); git('commit', '-q', '-m', 'base');
   const base = git('rev-parse', 'HEAD');
   writeFileSync(join(repo, 'src.js'), 'let x = 2;\n'); git('add', '-A'); git('commit', '-q', '-m', 'head');
@@ -45,10 +112,9 @@ function cli(t, args) {
   return { ...JSON.parse(stdout), _exit: code };
 }
 
-/** Write a run (object or raw text) and call the seam on it; `answers` is written to its own file when given. */
-function seam(t, run, answers) {
-  const runFile = join(t.repo, 'run.json');
-  writeFileSync(runFile, typeof run === 'string' ? run : JSON.stringify(run));
+/** Write a run (object or raw text) where the host does and call the seam on it; `answers` is written to its own file when given. */
+function seam(t, run, answers, journal) {
+  const { runFile } = hostFiles(t, run, journal);
   const args = ['workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', t.out, '--payload-ref', `${t.base}..${t.head}`];
   if (answers) {
     const af = join(t.repo, `answers-${readdirSync(t.repo).length}.json`);
@@ -79,8 +145,9 @@ const texts = (more = {}) => ({ what_breaks: 'It breaks.', why_care: 'A user los
 const emptyOut = (t) => readdirSync(t.out);
 
 test('workflow-run: proved, refuted, neither and a null checker map as stated and the null is listed apart', () => {
+  // the fixture files as they are: a run file holding only the skeleton, and a journal whose fourth checker wrote no result
   const t = tree();
-  const r = seam(t, FIXTURE);
+  const r = seam(t, JSON.stringify(SKELETON), undefined, JOURNAL);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(r.counts, { raised: 4, survived: 2, downgraded: 0, refuted: 1, unruled: 1 });
   assert.deepEqual(r.voices, ['claude-subagent']);
@@ -102,6 +169,67 @@ test('workflow-run: proved, refuted, neither and a null checker map as stated an
   assert.match(suspected.what_uncertain, /^Suspected, not proved\. The next check: Run it with a one-row input\./);
   assert.doesNotMatch(review.survivors[0].what_uncertain, /Suspected/);
   assert.equal(r.ready, false);
+  // the same returns written by the tests' own split give the same payload and review input
+  const t2 = tree();
+  const split = seam(t2, FIXTURE);
+  assert.deepEqual(readJson(split.payload), readJson(r.payload));
+  assert.deepEqual(readJson(split.review_input), review);
+});
+
+// --- the journal: the findings and rulings are read from it and nowhere else (D-04) ---------------------------------
+
+test('workflow-run: findings left in the run file\'s result are not used, the journal\'s are, and an empty journal refuses', () => {
+  const t = tree();
+  const r = seam(t, JSON.stringify(FIXTURE), undefined, journalOf(runWith([finding('from the journal')], [verdict('proved')])));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.counts, { raised: 1, survived: 1, downgraded: 0, refuted: 0, unruled: 0 });
+  assert.deepEqual(readJson(r.payload).voices[0].rulings.map((x) => x.claim), ['from the journal']);
+
+  const t2 = tree();
+  const empty = seam(t2, JSON.stringify(FIXTURE), undefined, '');
+  assert.deepEqual([empty.ok, empty.reason], [false, 'journal-unusable']);
+  assert.match(empty.detail, /journal\.jsonl holds no result for "reviewer claude-subagent"/);
+  assert.deepEqual(emptyOut(t2), []);
+});
+
+test('workflow-run: a missing journal, one over the cap and one with no result for a voice that ran each refuse, write no payload and still bill', () => {
+  const cases = [
+    ['missing', null, /journal\.jsonl cannot be read \(ENOENT\)/],
+    ['over the cap', `${JOURNAL}${' '.repeat(8 * 1024 * 1024)}`, /journal\.jsonl is \d+ bytes, over the 8388608 byte cap/],
+    ['no result', JOURNAL.split('\n').filter((l) => !l.includes('"reviewer claude-subagent"') && !l.includes('aa5c9b69246095aa9')).join('\n'), /holds no result for "reviewer claude-subagent"/],
+  ];
+  for (const [name, journal, detail] of cases) {
+    const t = tree();
+    const r = seam(t, JSON.stringify(SKELETON), undefined, journal);
+    assert.deepEqual([r.ok, r.reason], [false, 'journal-unusable'], name);
+    assert.match(r.detail, detail, name);
+    assert.deepEqual(emptyOut(t), [], `${name} wrote a file`);
+    assert.deepEqual([r.brackets.source, r.brackets.written], ['run-file', 3], `${name} billed its agents`);
+  }
+});
+
+test('workflow-run: with the local reviewer dead and the fallback run under its label, the findings are the fallback\'s', () => {
+  const t = tree();
+  const run = clone(SKELETON);
+  run.result.voices = [
+    { voice: 'claude-subagent', ran: false, reason: 'the reviewer returned nothing' },
+    { voice: 'claude-subagent', ran: true, fallback: true },
+  ];
+  const lines = [
+    { type: 'launched' },
+    { type: 'started', agentId: 'dead', label: 'reviewer claude-subagent' },
+    { type: 'result', agentId: 'dead', result: null },
+    { type: 'started', agentId: 'fb', label: 'reviewer claude-subagent' },
+    { type: 'result', agentId: 'fb', result: { findings: [finding('the fallback saw it', 'medium')] } },
+    { type: 'started', agentId: 'fb-check', label: 'checker claude-subagent 1' },
+    { type: 'result', agentId: 'fb-check', result: verdict('proved', { severity: 'medium' }) },
+  ];
+  const r = seam(t, JSON.stringify(run), undefined, lines.map((l) => JSON.stringify(l)).join('\n'));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.voices, ['claude-subagent']);
+  assert.deepEqual(r.dropped, [{ voice: 'claude-subagent', reason: 'the reviewer returned nothing' }]);
+  assert.deepEqual(r.counts, { raised: 1, survived: 1, downgraded: 0, refuted: 0, unruled: 0 });
+  assert.deepEqual(readJson(r.payload).voices[0].rulings.map((x) => x.claim), ['the fallback saw it']);
 });
 
 test('workflow-run: proved below the raised severity is downgraded and shown lower; proved above stands at the raised one', () => {
@@ -167,7 +295,7 @@ test('workflow-run: a blocker its checker proves high still needs an answer, and
   assert.deepEqual(over.needs_answer, []);
   const adj = adjudicate(t2, over.payload);
   assert.equal(adj.ok, true, JSON.stringify(adj));
-  const [entry] = readJson(join(t2.dir, 'phases', '1', 'ADJUDICATION-diff-abc1234.json')).entries;
+  const [entry] = readJson(join(t2.dir, 'phases', '1', 'records', 'ADJUDICATION-diff-abc1234.json')).entries;
   assert.deepEqual([entry.ruling, entry.overridden], ['survived', true]);
 
   // a blocker proved only medium leaves the halting severities and asks for nothing
@@ -190,7 +318,7 @@ test('workflow-run: a fix_commit, overridden: true and a refuted ruling with cou
   const adj = adjudicate(t, r.payload);
   assert.equal(adj.ok, true, JSON.stringify(adj));
   assert.equal(unfixedFindings(readJson(r.payload)).ok, true);
-  const record = readJson(join(t.dir, 'phases', '1', 'ADJUDICATION-diff-abc1234.json'));
+  const record = readJson(join(t.dir, 'phases', '1', 'records', 'ADJUDICATION-diff-abc1234.json'));
   for (const e of record.entries) for (const k of Object.keys(e)) assert.ok(ENTRY_KEYS.has(k), `a new record key: ${k}`);
   assert.deepEqual(record.entries.map((e) => e.ruling), ['survived', 'survived', 'refuted']);
   assert.equal(record.entries[1].overridden, true);
@@ -338,7 +466,7 @@ test('workflow-run: flags it needs are refused at the door', () => {
   assert.equal(cli(t, ['workflow-run', ...all, '--out-dir', join(t.repo, 'missing')]).reason, 'bad-args');
   assert.equal(cli(t, ['workflow-run', ...all, '--notice-tokens', '-5']).reason, 'bad-args');
   assert.equal(cli(t, ['workflow-run', ...all, '--notice-turns', '1.5']).reason, 'bad-args');
-  assert.equal(existsSync(join(t.dir, 'trace.jsonl')), false, 'a refused call wrote no bracket');
+  assert.equal(existsSync(join(recordsDir(t.dir), 'trace.jsonl')), false, 'a refused call wrote no bracket');
 });
 
 // --- the brackets: one per workflow agent, billed from the run file ---------------------------------
@@ -500,7 +628,7 @@ test('workflow-run: a retyped claim one character off loses to the envelope, lan
   const answered = seam(t, run, [{ voice: 'openai', index: 0, ruling: 'survived', ...texts() }]);
   assert.equal(answered.ready, true, answered.not_ready);
   assert.equal(adjudicate(t, answered.payload).ok, true);
-  const record = readJson(join(t.dir, 'phases', '1', 'ADJUDICATION-diff-abc1234.json'));
+  const record = readJson(join(t.dir, 'phases', '1', 'records', 'ADJUDICATION-diff-abc1234.json'));
   assert.equal(record.entries.find((e) => e.voice === 'openai' && e.claim.startsWith('the bound')).claim, 'the bound is off by one');
 });
 
@@ -602,7 +730,7 @@ test('workflow-run: a retry after a dispatch landed and its terminal did not wri
   const t = tree();
   assert.equal(seam(t, FIXTURE).brackets.written, 3);
   // lose one worker's terminal, the way a crash between the two appends would
-  const file = join(t.dir, 'trace.jsonl');
+  const file = join(recordsDir(t.dir), 'trace.jsonl');
   const lines = readFileSync(file, 'utf8').split('\n').filter(Boolean);
   const victim = lines.map((l) => JSON.parse(l)).filter((e) => e.family === 'lifecycle' && e.event === 'return').pop();
   writeFileSync(file, `${lines.filter((l) => { const e = JSON.parse(l); return !(e.family === 'lifecycle' && e.event === 'return' && e.plan === victim.plan); }).join('\n')}\n`);
@@ -618,12 +746,12 @@ test('workflow-run: a retry after a dispatch landed and its terminal did not wri
 
 test('workflow-run: once the notice\'s totals are on the record, a retry with a readable file bills no agents on top', () => {
   const t = tree();
-  const runFile = join(t.repo, 'wf_9d70aeab-5d0.json');
+  const { runFile } = hostPaths(t, 'wf_9d70aeab-5d0');
   const args = ['workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', t.out, '--payload-ref', REF, '--notice-tokens', '54242', '--notice-turns', '11', '--notice-duration-ms', '6072'];
   assert.equal(cli(t, args).reason, 'run-unreadable');
   assert.equal(render(t).brackets.length, 1);
 
-  writeFileSync(runFile, JSON.stringify(FIXTURE));
+  hostFiles(t, FIXTURE);
   const retry = cli(t, args);
   assert.equal(retry.ok, true, JSON.stringify(retry));
   assert.deepEqual([retry.brackets.source, retry.brackets.written, retry.brackets.already], ['run-file', 0, 3]);
@@ -680,8 +808,7 @@ test('workflow-run: two overlapping runs of one trigger keep scratch files, brac
     { name: 'plan-2', out: out2, run: mk('wf_second-run-0002', 'beta claim', 1000) },
   ];
   for (const r of runs) {
-    const file = join(t.repo, `${r.name}.run.json`);
-    writeFileSync(file, JSON.stringify(r.run));
+    const file = hostFiles(t, r.run).runFile;
     r.seam = cli(t, ['workflow-run', '--phase', '1', '--run-file', file, '--out-dir', r.out, '--payload-ref', `${t.base}..${t.head}`]);
     assert.equal(r.seam.ok, true, JSON.stringify(r.seam));
     assert.equal(r.seam.brackets.written, 3, 'the second run is not mistaken for the first\'s brackets');
@@ -694,7 +821,7 @@ test('workflow-run: two overlapping runs of one trigger keep scratch files, brac
   }
 
   // each fire has its own record and review file holding only its own finding
-  const phaseDir = join(t.dir, 'phases', '1');
+  const phaseDir = join(t.dir, 'phases', '1', 'records');
   const [a, b] = runs;
   for (const [mine, other] of [[a, b], [b, a]]) {
     const claim = mine === a ? 'alpha claim' : 'beta claim';

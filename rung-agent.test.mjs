@@ -9,13 +9,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  rungBody, rungBodyIssue, rungEffortIssue, rungPrefixIssues, RUNG_FILES, rungFile,
-  rungFiles, effortEnumIssues, ROLES_PREFIX, ROLES_EFFORT_SUFFIX,
-  RUNG_ORDER, rungOrderIssues, roleOfAgent, rungOfAgent,
+  agentFileText, rungBody, rungBodyIssue, rungEffortIssue, rungPrefixIssues, RUNG_FILES, rungFile,
+  effortEnumIssues, ROLES_PREFIX, ROLES_EFFORT_SUFFIX,
+  RUNG_ORDER, roleOfAgent, rungOfAgent,
 } from '../cadence-core/bin/lib/rung-agent.mjs';
+import { isPlainObject } from '../cadence-core/bin/lib/text-util.mjs';
 import { dataRuleIssues } from '../cadence-core/bin/lib/data-rule.mjs';
 import { FINDING_SCHEMA } from '../cadence-core/bin/review-provider.mjs';
-import * as readTrace from '../cadence-core/bin/lib/read-trace.mjs';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -71,6 +71,17 @@ test('rungFile never inherits a prototype property as a rung', () => {
   assert.equal(rungFile('cad-planner', 'toString'), null);
 });
 
+/**
+ * Every agent-file stem one role's map names, in rung order. An unknown role yields an empty array, never a throw.
+ * Test-only: the census counts the map's stems through it.
+ * @param {string} role
+ * @returns {string[]}
+ */
+function rungFiles(role) {
+  const map = typeof role === 'string' && Object.hasOwn(RUNG_FILES, role) ? RUNG_FILES[role].rungs : undefined;
+  return map ? Object.values(map) : [];
+}
+
 test('rungFiles lists every stem a role names, in rung order', () => {
   assert.deepEqual(rungFiles('cad-verifier'),
     ['cad-verifier-low', 'cad-verifier-medium', 'cad-verifier',
@@ -89,9 +100,41 @@ test('RUNG_FILES names 35 files across the seven roles, and is frozen', () => {
   assert.equal(new Set(stems).size, 35); // no file serves two rungs
   assert.equal(Object.isFrozen(RUNG_FILES), true);
   assert.equal(Object.isFrozen(RUNG_FILES['cad-planner']), true);
+  assert.equal(Object.isFrozen(RUNG_FILES['cad-planner'].rungs), true);
 });
 
 // --- RUNG_ORDER and the guard that holds it to the map ------------------------
+
+/** Each role's rung map alone, off the table's rows: the shape rungOrderIssues holds against the ladder. */
+const RUNGS = Object.fromEntries(Object.entries(RUNG_FILES).map(([role, row]) => [role, row.rungs]));
+
+/**
+ * Whether the map and the ladder still say the same thing: every role's rung keys are exactly RUNG_ORDER, in order.
+ * Nothing else compares them. A role missing `xhigh` resolves `rungFile` to null and route.mjs fails open, and
+ * reordered keys hand `rungFiles` and `rungPrefixIssues` a tie-break order that isn't the ladder's; both are silent.
+ * Takes the map so a caller can hold a drifted one against the ladder.
+ * @param {any} [files] the rung map to check, stem values unread
+ * @param {any} [order] the ladder to check it against, weakest first
+ * @returns {{code: string, role: string, detail: string}[]}
+ */
+function rungOrderIssues(files, order) {
+  const map = files !== undefined && files !== null ? files : RUNGS;
+  const ladder = Array.isArray(order) ? order : RUNG_ORDER;
+  /** @type {{code: string, role: string, detail: string}[]} */
+  const out = [];
+  const read = isPlainObject(map) ? map : {};
+  for (const role of Object.keys(read)) {
+    const rungs = read[role];
+    const got = isPlainObject(rungs)
+      ? Object.keys(rungs) : [];
+    if (got.length === ladder.length && ladder.every((r, i) => got[i] === r)) continue;
+    out.push({ code: 'rung-order-drift', role,
+      detail: `${role} files rungs ${JSON.stringify(got)}, but the rung ladder is ${
+        JSON.stringify([...ladder])} - the map and RUNG_ORDER are one statement `
+        + 'and nothing else holds them together' });
+  }
+  return out;
+}
 
 test('RUNG_ORDER is exactly the five rungs, weakest first, and is frozen', () => {
   assert.deepEqual([...RUNG_ORDER], ['low', 'medium', 'high', 'xhigh', 'max']);
@@ -100,14 +143,14 @@ test('RUNG_ORDER is exactly the five rungs, weakest first, and is frozen', () =>
 
 test('the SHIPPED map and RUNG_ORDER agree - no issue at all', () => {
   assert.deepEqual(rungOrderIssues(), []);
-  assert.deepEqual(rungOrderIssues(RUNG_FILES, RUNG_ORDER), []);
+  assert.deepEqual(rungOrderIssues(RUNGS, RUNG_ORDER), []);
 });
 
 test('rung-order-drift: a role whose map DROPS a rung', () => {
   // `rungFile` would answer null for the dropped rung and route.mjs fails open,
   // so nothing downstream ever says the rung is missing.
-  const { xhigh: _gone, ...rest } = RUNG_FILES['cad-executor'];
-  const issues = rungOrderIssues({ ...RUNG_FILES, 'cad-executor': rest });
+  const { xhigh: _gone, ...rest } = RUNGS['cad-executor'];
+  const issues = rungOrderIssues({ ...RUNGS, 'cad-executor': rest });
   assert.equal(issues.length, 1, JSON.stringify(issues));
   assert.equal(issues[0].code, 'rung-order-drift');
   assert.equal(issues[0].role, 'cad-executor');
@@ -117,11 +160,11 @@ test('rung-order-drift: a role whose map DROPS a rung', () => {
 test('rung-order-drift: a role whose map REORDERS its rungs', () => {
   // The order is what `rungFiles` returns and what `rungPrefixIssues` breaks
   // ties on, so a reordered map is wrong while holding every rung.
-  const exec = RUNG_FILES['cad-executor'];
+  const exec = RUNGS['cad-executor'];
   const swapped = {
     low: exec.low, medium: exec.medium, high: exec.high, max: exec.max, xhigh: exec.xhigh,
   };
-  const issues = rungOrderIssues({ ...RUNG_FILES, 'cad-executor': swapped });
+  const issues = rungOrderIssues({ ...RUNGS, 'cad-executor': swapped });
   assert.equal(issues.length, 1, JSON.stringify(issues));
   assert.equal(issues[0].code, 'rung-order-drift');
   assert.equal(issues[0].role, 'cad-executor');
@@ -129,7 +172,7 @@ test('rung-order-drift: a role whose map REORDERS its rungs', () => {
 
 test('rung-order-drift: a role carrying an EXTRA rung the ladder does not name', () => {
   const issues = rungOrderIssues(
-    { ...RUNG_FILES, 'cad-executor': { ...RUNG_FILES['cad-executor'], ultra: 'cad-executor-ultra' } });
+    { ...RUNGS, 'cad-executor': { ...RUNGS['cad-executor'], ultra: 'cad-executor-ultra' } });
   assert.equal(issues.length, 1, JSON.stringify(issues));
   assert.equal(issues[0].code, 'rung-order-drift');
 });
@@ -195,7 +238,7 @@ test('rungBodyIssue accepts a body pointing at ANY ONE declared skill', () => {
 // prefixes. cad-executor is used throughout, and every fixture below hands in
 // exactly TWO of its stems - the smallest input that can disagree at all, and
 // the one the rule's tie-break and majority arms are readable over.
-const EXEC = RUNG_FILES['cad-executor'];
+const EXEC = RUNG_FILES['cad-executor'].rungs;
 const EXEC_BODY = '\n\n' + rungBody('cad-executor-contract');
 /** EXEC_BODY with its ONE internal line break turned into a space. */
 const EXEC_REWRAPPED = EXEC_BODY.replace('full\ncontract', 'full contract');
@@ -227,7 +270,7 @@ test('rungPrefixIssues: rungBodyIssue FORGIVES the same edit - not a duplicate r
 });
 
 test('rungPrefixIssues: the MINORITY is what broke rank, not the majority', () => {
-  const v = RUNG_FILES['cad-verifier'];
+  const v = RUNG_FILES['cad-verifier'].rungs;
   const body = '\n\n' + rungBody('cad-verifier-contract');
   const issues = rungPrefixIssues({ [v.medium]: body, [v.high]: body,
     [v.xhigh]: body + 'and one more thing.\n', [v.max]: body });
@@ -471,11 +514,9 @@ test('roles.<role>.model is not held to the effort rules - it has no enum', () =
 
 // --- the reverse lookups: an agent type back to its role and rung -------------
 
-test('roleOfAgent and rungOfAgent live here, read-trace re-exports them, and they answer every stem', () => {
-  assert.equal(readTrace.roleOfAgent, roleOfAgent);
-  assert.equal(readTrace.rungOfAgent, rungOfAgent);
+test('roleOfAgent and rungOfAgent answer every stem', () => {
   for (const role of Object.keys(RUNG_FILES)) {
-    for (const [rung, stem] of Object.entries(RUNG_FILES[role])) {
+    for (const [rung, stem] of Object.entries(RUNG_FILES[role].rungs)) {
       for (const spelling of [stem, `cadence:${stem}`]) {
         assert.equal(roleOfAgent(spelling), role, spelling);
         assert.equal(rungOfAgent(spelling), rung, spelling);
@@ -485,6 +526,93 @@ test('roleOfAgent and rungOfAgent live here, read-trace re-exports them, and the
   for (const other of ['fork', 'general-purpose', 'coordinator', '', 42]) {
     assert.equal(roleOfAgent(other), null, String(other));
     assert.equal(rungOfAgent(other), null, String(other));
+  }
+});
+
+// --- agentFileText: the one render of a table-named agent file ---------------
+// The expected grant is typed here, not read back off RUNG_FILES, so a table
+// edit that widens or narrows a role fails this row instead of agreeing with itself.
+
+const READ_ONLY_TOOLS = ['Read', 'Bash', 'Grep', 'Glob', 'LSP'];
+const NO_WRITES = ['Write', 'Edit', 'MultiEdit'];
+const GRANTS = {
+  'cad-executor': { tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'LSP'], denied: [],
+    color: 'yellow', gloss: 'plan task execution' },
+  'cad-planner': { tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'LSP'], denied: [],
+    color: 'green', gloss: 'phase plan authoring' },
+  'cad-verifier': { tools: ['Read', 'Write', 'Bash', 'Grep', 'Glob', 'LSP'], denied: ['Edit', 'MultiEdit'],
+    color: 'green', gloss: 'goal-backward phase verification' },
+  'cad-reviewer': { tools: READ_ONLY_TOOLS, denied: NO_WRITES, color: 'red', gloss: 'adversarial artifact review' },
+  'cad-plan-checker': { tools: READ_ONLY_TOOLS, denied: NO_WRITES, color: 'green', gloss: 'goal-backward plan gate' },
+  'cad-assumptions-analyzer': { tools: READ_ONLY_TOOLS, denied: NO_WRITES, color: 'cyan',
+    gloss: 'codebase assumption gathering' },
+  'cad-mapper': { tools: READ_ONLY_TOOLS, denied: NO_WRITES, color: 'cyan', gloss: 'code map reader' },
+};
+
+/**
+ * A rendered agent file split into its frontmatter keys, in order, and its body.
+ * @param {string} text
+ */
+function splitAgent(text) {
+  const m = text.match(/^---\n([\s\S]*?)\n---\n/);
+  assert.ok(m, 'render opens with a frontmatter block');
+  /** @type {Record<string, string>} */
+  const fields = {};
+  const order = [];
+  for (const line of m[1].split('\n')) {
+    const kv = line.match(/^(\w+):[ ]?(.*)$/);
+    if (kv) {
+      order.push(kv[1]);
+      fields[kv[1]] = kv[2];
+    } else {
+      fields[order[order.length - 1]] += `\n${line}`;
+    }
+  }
+  return { fields, order, body: text.slice(m[0].length) };
+}
+
+test('GRANTS types a grant for exactly the roles the table holds', () => {
+  assert.deepEqual(Object.keys(GRANTS).sort(), Object.keys(RUNG_FILES).sort());
+});
+
+for (const [role, grant] of Object.entries(GRANTS)) {
+  test(`agentFileText renders every rung of ${role} with its grant, color, gloss and contract`, () => {
+    for (const rung of RUNG_ORDER) {
+      const stem = rungFile(role, rung);
+      const text = agentFileText(stem);
+      assert.equal(typeof text, 'string', stem);
+      const { fields, body } = splitAgent(text);
+      assert.equal(fields.name, stem);
+      assert.equal(fields.effort, rung, `${stem} effort`);
+      assert.equal(fields.tools, grant.tools.join(', '), `${stem} tools`);
+      if (grant.denied.length) assert.equal(fields.disallowedTools, grant.denied.join(', '), `${stem} denied`);
+      else assert.equal(fields.disallowedTools, undefined, `${stem} denies nothing`);
+      assert.equal(fields.color, grant.color, `${stem} color`);
+      assert.equal(fields.maxTurns, '200');
+      assert.equal(fields.description,
+        `The \`${rung}\` rung of \`${role}\` (${grant.gloss}); \`bin/route.mjs\` picks it, not the user.`);
+      assert.equal(fields.skills, `\n  - ${role}-contract\n  - cad-shared-rules`, `${stem} preloads its contract, then the shared rules`);
+      assert.equal(body, `\n${rungBody(`${role}-contract`)}`, `${stem} body`);
+    }
+  });
+}
+
+test('agentFileText: all 35 renders share one frontmatter key order', () => {
+  const want = ['name', 'description', 'tools', 'disallowedTools', 'color', 'effort', 'maxTurns', 'skills'];
+  let seen = 0;
+  for (const { rungs } of Object.values(RUNG_FILES)) {
+    for (const stem of Object.values(rungs)) {
+      const { order } = splitAgent(/** @type {string} */ (agentFileText(stem)));
+      assert.deepEqual(order, want.filter((k) => order.includes(k)), `${stem} key order`);
+      seen += 1;
+    }
+  }
+  assert.equal(seen, 35);
+});
+
+test('agentFileText: a stem the table does not name renders nothing', () => {
+  for (const stem of ['cad-executor-ultra', 'cad-nope', 'constructor', '']) {
+    assert.equal(agentFileText(stem), null, stem);
   }
 });
 
@@ -517,46 +645,55 @@ test('roleOfAgent and rungOfAgent live here, read-trace re-exports them, and the
 // exception to its two write rules (D-14) - a deliberate change, approved with the phase.
 // It was re-pinned once more when the checker lost Bash, so the section names the read and search tools only
 // (D-14) - a deliberate change, approved with the phase.
+// The agent files that changed were re-pinned when Plan 2 of the one-shared-agent-file phase generated all 35
+// from the table in lib/rung-agent.mjs: one key order, `Grep, Glob`, the gloss on every rung, no grant changed
+// (D-06) - a deliberate change, approved with the phase.
+// The 25 pinned agent files that lacked LSP were re-pinned when Plan 3 of that phase added it to every role's tools
+// (D-03, D-12) - a deliberate change, approved with the phase.
+// All 30 were re-pinned again when the same plan listed cad-shared-rules after each role contract (D-02, D-08) -
+// a deliberate change, approved with the phase.
+// The executor contract was re-pinned when Plan 4 of that phase stopped it naming grep as the way to find callers,
+// since the shared rule owns how references are found (D-10) - a deliberate change, approved with the phase.
 
 const CONTRACT_SURFACE_DIGESTS = {
-  'agents/cad-assumptions-analyzer-high.md': '631826d54561635203c1f87d099837cac1066028ca968dfcdacdc41008a5c2d2',
-  'agents/cad-assumptions-analyzer-low.md': '1ef64a8cef52e1b80b8f6ec72a4ceb3ef5a00dadbee914f80e1bfab478019bb7',
-  'agents/cad-assumptions-analyzer-max.md': '8a4deb8678743c0217ed0477d7d9c7b43d0bf6e49e0d3cbbec57e492a759320d',
-  'agents/cad-assumptions-analyzer-medium.md': '863e4639d20fe00d6d7b2c6f6797ea7edb4c0cd3072b9982ebcccfa4cf833210',
-  'agents/cad-assumptions-analyzer.md': '6c98a2154cbccca5cf2f13793341447ea22e8a3bc52146cabb6e3c90fad01148',
-  'agents/cad-executor-low.md': '809d47a45ca5559cf26b2da4dc62fe090b676dffc599b392ee1e5aac3d1e7825',
-  'agents/cad-executor-max.md': '9736b2e4520dcbf254569a3b9adedd29a3b78edc39e61632baa73a9a0ac56a5a',
-  'agents/cad-executor-medium.md': 'abeb7b1892a3db457ad8550a6c3bd5893a26ee4e6e7abac4eb2906fcc8875f18',
-  'agents/cad-executor-xhigh.md': '5e031c48d56a846acf4b28e612e7f3e2c65f60fe0e5a98d7883c15180b6d4730',
-  'agents/cad-executor.md': 'f325ac4c93a3053a88cfe5494cb8082864e69c9e50aef4258725fce8f6910af8',
-  'agents/cad-plan-checker-high.md': 'ac2852fed6b5e69e7c16842715d93be5f6992ce2d62c6d628d3a036c3a480a39',
-  'agents/cad-plan-checker-max.md': '770c664768f5fc9e94041c1ddcda705d9590ae88cc2e9438b1c3346bcd653524',
-  'agents/cad-plan-checker-medium.md': '8ec81f20aaab40665b2edab967864325968e2b5638d8fc13625a2f83faad4063',
-  'agents/cad-plan-checker-xhigh.md': '74c25e288e0cedcef72956ef989e5fcdf541bab386e730314388b5f4d2df6ad9',
-  'agents/cad-plan-checker.md': '13b81eaf1264b22b792e5d96e272cd4da32168478badfd1d7d2155507e3d2dd4',
-  'agents/cad-planner-low.md': 'e1aef9a8d61b68486dacc5cd69b702a65742ef9f781446f095c8d7b072a1b989',
-  'agents/cad-planner-max.md': '435cb6a65753dbd6024beae67870e9de8876ace5e24a6700acef49180a0de6e7',
-  'agents/cad-planner-medium.md': '56dc34a735cd0a1ffe5eb2b4737024a1d425c1b80f85e1b0fba1027a2eadf429',
-  'agents/cad-planner-xhigh.md': '3788cfe937d02b489455cbdaa4b21650bbb1b42dacb6db0f4fc7eb698cca8eaa',
-  'agents/cad-planner.md': '58b5941e214da19af16299b8b0e50a5bab07d02d4d3de21b8021ebfaf4ed0157',
-  'agents/cad-reviewer-low.md': '855eef7653a7a2d63292292ed4402ea8cf867e677c1c22e5abbe3b485301206b',
-  'agents/cad-reviewer-max.md': 'c22dfbdb302b65fed59ac325b377f7e83e3755e70320b5d23b06902185b57127',
-  'agents/cad-reviewer-medium.md': '4b64fae3952b3d5b894a6a07fe7c2322728ced6eeb60171f6d9aa5dd64825f16',
-  'agents/cad-reviewer-xhigh.md': 'bac25519cf1cfcdd36863828ce837efac2916bc60bba9361d977d7f9f58bcb50',
-  'agents/cad-reviewer.md': '444e513b88aa577ff6019a702137e847915e5d34c6aa10601c9bd77842fe44fa',
-  'agents/cad-verifier-low.md': '4a0a1c0681b051552f33eadf4cce0a1c33ad9ba057aebd9012f273c875ccc0d6',
-  'agents/cad-verifier-max.md': 'c34d409b7e1b85b2fd425a81bba519c6400296f9fa170f6e24f71bea75994bb2',
-  'agents/cad-verifier-medium.md': '2dff0b655da3cd09c651e7dba18d7857c885af8dcf2e3408892460a2f181f9f0',
-  'agents/cad-verifier-xhigh.md': '68d7da72dc62bc6d8d3a26ac2fb0055dfb0dbd1ddf1b4cb33974a0dd0033f0f6',
-  'agents/cad-verifier.md': '6095b69815656da56a29b951a1ef6557a7e5a23d092601d0151f0ec509260681',
+  'agents/cad-assumptions-analyzer-high.md': '28de11d2f99891fda6a35f57e8cf9b60e28493fa29d05b51fc76791c4ead6c8d',
+  'agents/cad-assumptions-analyzer-low.md': 'a7bb9094dc05737160119e0d0ab0532661f718c441848c9745cc8c26eb2059ec',
+  'agents/cad-assumptions-analyzer-max.md': '6bf9828322519245d6228748e4e753b176b2d0d21725664935da2ac6a649dea0',
+  'agents/cad-assumptions-analyzer-medium.md': '3e49f63190f79c413527c76bb737be0343f6ead419ffda0fb698f2284e2e5cea',
+  'agents/cad-assumptions-analyzer.md': '062c082bc3a7665b999b1fc691bf35a73fc8ad852d65ea259c075dd7e7f1ccae',
+  'agents/cad-executor-low.md': 'b9a70fdecb4e48ed97a3088b36ce5961363c54e5f4961c4cabc0b09d9ea70366',
+  'agents/cad-executor-max.md': '4ad9d9629063208244409585784e754f53b0f4c4e6085480b3fcb0a4aac5c456',
+  'agents/cad-executor-medium.md': 'de7bd697d596c66bf79edd8d2f0427e0b0bcff96d1e30a601e345bee8cd2dd1b',
+  'agents/cad-executor-xhigh.md': '08973f5048520defefbd56c27f0a3a946eeec2726c208d2a3920e762ca4adba6',
+  'agents/cad-executor.md': 'd0e81693a0259fa85ac5cda2685f83f49c683c20c5ff9d68e9c71b9b89dc6ea8',
+  'agents/cad-plan-checker-high.md': 'ec630d9efad523fab2dbbef77d8362c1ba5a559f44157c9b6579eb07f513c402',
+  'agents/cad-plan-checker-max.md': '979bfa96d651dfc64b38c800b12fe45562ab38296a442bc2d13d4551d7e5ecac',
+  'agents/cad-plan-checker-medium.md': 'a8c1529355dff3906cf5baf80aac5107d343ea4ed5900f96db9886db07c7fef8',
+  'agents/cad-plan-checker-xhigh.md': '479c3d679f87f5aa0c3ff7aa74a9ff5eed98839b05d5fdf7e3a1341f7c16ca2b',
+  'agents/cad-plan-checker.md': 'd1dd9aee6a84608a0f185e77cfc4dc316cdda003f55f6821cae5acff6b37863f',
+  'agents/cad-planner-low.md': 'ea10e363d64c27f559b2c234fa914d42b3b0db97a33ad201315201477f854ca8',
+  'agents/cad-planner-max.md': '11137099046f68de71d171a6b41a98ee04f24cea85a02cbbaffd345fcc973fad',
+  'agents/cad-planner-medium.md': 'f16056bcd58b29f637de71de968cbf9c4c0a711136014279ec36c00affc0612f',
+  'agents/cad-planner-xhigh.md': 'b829a4f3182291aa27b5797fb15ce85754e963f46fe3aade3f80f0c2964b4dc9',
+  'agents/cad-planner.md': '2f7639fd09c06720b4d44c3f6c018e5eb3f580540576415253936dd5c8811862',
+  'agents/cad-reviewer-low.md': 'a06f9a8395a4990eab81f652b37c1596c3e1b08cc0024957766d8b1d1ee71083',
+  'agents/cad-reviewer-max.md': 'ae10c559fad9e2f1557364896eba1b1f3c89acd3905e11416aa0fb0324083db7',
+  'agents/cad-reviewer-medium.md': '2dfd90a0ab94ae6ec9c439291cc114e77f967889c63470291c9a75ed8e411e70',
+  'agents/cad-reviewer-xhigh.md': '819237cee854053103912b0cd6e35412e10199be0bc304c9f6bbdf0ac796c7fe',
+  'agents/cad-reviewer.md': '4384c82b4994f615767421c62f1ddf778127404244246976c064f2e4bed4c8be',
+  'agents/cad-verifier-low.md': 'c48c2847b1d0bf3140f6dfb05fd0f036a1ce9715b49ab668ac83e8bf25527bf2',
+  'agents/cad-verifier-max.md': '4005ed688770e7376f4a8d9848b2a1cf3ef31ba54090c98eab53ab066a067e81',
+  'agents/cad-verifier-medium.md': 'a4bb138ab2c9b6e0bb90a9f15022a6e045cb9bee8303cb5c95b4af63aa836bd0',
+  'agents/cad-verifier-xhigh.md': 'd5020ea3f037c0aedaa468b3d5d9682ba4f085deee1a9aad2f06743472bef883',
+  'agents/cad-verifier.md': '8db2621ba6f5a811ac11f50a1d5a94b6ea43e2b3a56a266b4c298329c98179b8',
   'cadence-core/references/reviewer-brief.md': '5c4998a37a4e89a95c2b9cd09d7408e7d79a73e0c76a499ffbfb400a8f937585',
   'cadence-core/templates/PLAN.md': '4a7fb5784ae799357e33a30b0ddd4d0754b0eed69f56e64f07fb255d06fc963d',
   'skills/cad-assumptions-analyzer-contract/SKILL.md': 'ee690d7178a35d274d8c895367f6476df2160baf1e65889b92d55af3e94233bc',
-  'skills/cad-executor-contract/SKILL.md': '3c5482540f0d3193001fabebe08bb51b25afa8a059741612e4cdd11971d7004f',
+  'skills/cad-executor-contract/SKILL.md': '26a708a569b7bd7910d088555573eceb947c223c9ad7070bc55804d42679e596',
   'skills/cad-plan-checker-contract/SKILL.md': 'f84ccdfd51ff4389c0f54d70b11479b3673e8bdbe021ce0d8b33bfa62d9dcff5',
   'skills/cad-planner-contract/SKILL.md': 'b6aca8bc79bae4bd07bd422a6bb371c46c504aa51088325211b4e127d5c8ec7f',
   'skills/cad-reviewer-contract/SKILL.md': '4a400deacee7dd963bf0eab8d5f5dae638dda8b2250ef43e06e5394046a392e2',
-  'skills/cad-verifier-contract/SKILL.md': '4d7161a41fca476d10dfd6c39a34041b7353f5e9d2673fe60d9ff6bd11befa59',
+  'skills/cad-verifier-contract/SKILL.md': '6dc5b10b867151cbee1ae22a915aafaf7dbba41e61af02f593e2dfe2485842e9',
 };
 
 test('a switch\'s text written into a contract surface changes its 3.8.6 digest', () => {
@@ -591,7 +728,9 @@ test('the reviewer brief and contract both state the four rules, and the schema 
 test('the mapper contract carries the data rule, sends the reader to whole files, and holds no Bash', () => {
   const text = readFileSync(join(REPO, 'skills', 'cad-mapper-contract', 'SKILL.md'), 'utf8');
   assert.deepEqual(dataRuleIssues(text), []);
-  for (const tool of ['Read', 'Grep', 'Glob']) assert.match(text, new RegExp(`\\b${tool}\\b`), tool);
+  // Grep and Glob stay in the grant, but how callers are found is the shared rule's to say (D-10)
+  assert.match(text, /\bRead\b/);
+  assert.match(collapse(text), /Look outside the module for who uses it/);
   assert.match(text, /Never use `skim`/);
   // A refresh: whole files on a first build and `refresh: whole`; on `refresh: diff` the added paths, never `changed` wholesale.
   const collapsed = collapse(text);

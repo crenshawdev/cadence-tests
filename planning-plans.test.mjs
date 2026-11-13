@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import { copyFileSync, mkdirSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { makeTree, run, isEntryFile } from './planning.test.mjs';
+import { makeTree, run, isEntryFile, verifyChecked } from './planning.test.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -34,6 +34,7 @@ export function blockPlanTree(frontmatter, body = '') {
   });
   writeFileSync(join(dir, 'phases', '1', 'PLAN.md'),
     `---\nphase: 1\nplan: 1\n${frontmatter}\n---\n\n# Plan 1\n${body}`);
+  verifyChecked(dir);
   return dir;
 }
 
@@ -54,6 +55,7 @@ export function oneIdPlanTree(frontmatter, body = '') {
   });
   writeFileSync(join(dir, 'phases', '1', 'PLAN.md'),
     `---\nphase: 1\nplan: 1\n${frontmatter}\n---\n\n# Plan 1\n${body}`);
+  verifyChecked(dir);
   return dir;
 }
 

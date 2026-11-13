@@ -22,9 +22,17 @@ import {
   rotatedReadsPath, readsClaimPath, isReadsRotationMarker, rotateReads,
   READS_MARKER_BYTES, MAX_ERROR_TEXT, errorFlagOf, errorTextOf, redactCause,
 } from '../cadence-core/bin/lib/read-trace.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { statePath } from '../cadence-core/bin/lib/project-state.mjs';
+import { stampState, treeOf, v40Project } from './planning.test.mjs';
 
 const TS = '2026-08-14T00:00:00.000Z';
-const tmp = () => mkdtempSync(join(tmpdir(), 'cad-reads-'));
+// stamped, since appendRead writes nothing into a project with no valid state
+const tmp = () => {
+  const d = mkdtempSync(join(tmpdir(), 'cad-reads-'));
+  stampState(d);
+  return d;
+};
 
 test('a tool outside the recorded set is not a read', () => {
   for (const t of ['Edit', 'Write', 'Task', 'WebFetch', undefined]) {
@@ -198,6 +206,34 @@ test('a symlinked reads file is refused, appending nothing', () => {
   assert.equal(readFileSync(decoy, 'utf8'), '', 'the link target was written through');
 });
 
+test('a symlinked records folder is refused, and the first write lands inside the records folder', () => {
+  const d = mkdtempSync(join(tmpdir(), 'cad-reads-'));
+  const outside = mkdtempSync(join(tmpdir(), 'cad-outside-'));
+  symlinkSync(outside, recordsDir(d));
+  const res = appendRead(d, { ts: TS, tool: 'Read', target: '/a' });
+  assert.deepEqual(res, { written: false, reason: 'symlinked-records' });
+  assert.deepEqual(readdirSync(outside), []);
+
+  // the stamp made the folder; an unstamped one is never created, see the no-valid-state tests
+  const fresh = tmp();
+  assert.equal(appendRead(fresh, { ts: TS, tool: 'Read', target: '/a' }).written, true);
+  assert.equal(existsSync(readsPath(fresh)), true);
+  assert.equal(existsSync(join(fresh, 'reads.jsonl')), false);
+});
+
+// --- no valid state, nothing written (D-10) ---
+
+test('appendRead: an unstamped v4.0 project and a state file that does not parse each get no-valid-state and stay byte-identical', () => {
+  const unstamped = v40Project();
+  const torn = tmp();
+  writeFileSync(statePath(torn), '{torn');
+  for (const d of [unstamped, torn]) {
+    const before = treeOf(d);
+    assert.deepEqual(appendRead(d, { ts: TS, tool: 'Read', target: '/a' }), { written: false, reason: 'no-valid-state' });
+    assert.deepEqual(treeOf(d), before);
+  }
+});
+
 /**
  * Pad the reads record to ONE BYTE UNDER `MAX_READS_BYTES`, so the next append
  * is what carries it to the bound and the trigger under test is "this line
@@ -239,7 +275,7 @@ test('a record at the bound ROTATES and the append lands, rather than reporting 
 });
 
 /** Every file in the planning root named after the reads record. @param {string} d */
-const readsSiblings = (d) => readdirSync(d).filter((f) => f.startsWith('reads')).sort();
+const readsSiblings = (d) => readdirSync(recordsDir(d)).filter((f) => f.startsWith('reads')).sort();
 
 test('the marker SEALS the generation it carried away, in bytes', () => {
   // `carried_bytes` is how much of the generation this cut accounted for. The
@@ -966,13 +1002,25 @@ const HOOK = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core',
 const REAL_PLUGIN = resolve(dirname(HOOK), '..', '..');
 
 function hookRecords(file_path) {
-  const project = tmp();
+  const project = mkdtempSync(join(tmpdir(), 'cad-reads-'));
   mkdirSync(join(project, '.planning'), { recursive: true });
+  stampState(join(project, '.planning'));
   execFileSync(process.execPath, [HOOK], {
     input: JSON.stringify({ tool_name: 'Read', tool_input: { file_path }, cwd: project }),
   });
-  return readFileSync(join(project, '.planning', 'reads.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  return readFileSync(join(recordsDir(join(project, '.planning')), 'reads.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 }
+
+test('the hook run against an unstamped v4.0 project leaves .planning byte-identical and exits 0', () => {
+  const dir = v40Project();
+  const before = treeOf(dir);
+  const r = spawnSync(process.execPath, [HOOK], {
+    input: JSON.stringify({ tool_name: 'Read', tool_input: { file_path: join(dir, 'ROADMAP.md') }, cwd: dirname(dir) }),
+    encoding: 'utf8',
+  });
+  assert.deepEqual([r.status, r.stdout, r.stderr], [0, '', '']);
+  assert.deepEqual(treeOf(dir), before);
+});
 
 test('the hook records `outside` for a path outside both roots', () => {
   const [rec] = hookRecords('/etc/hosts');
@@ -1025,8 +1073,8 @@ test('a corpus recorded before files existed yields no file measurement rather t
 // is confidently wrong rather than honestly absent. Pure by injection, so the
 // caller supplies the bracket rows and this needs no trace file.
 
-import { joinReads, HOST_AGENT_TYPES, roleOfAgent, rungOfAgent } from '../cadence-core/bin/lib/read-trace.mjs';
-import { RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
+import { joinReads, HOST_AGENT_TYPES } from '../cadence-core/bin/lib/read-trace.mjs';
+import { RUNG_FILES, roleOfAgent, rungOfAgent } from '../cadence-core/bin/lib/rung-agent.mjs';
 
 /** One paired bracket row, the shape `renderTrace(...).brackets` returns. */
 const span = (role, plan, from, to) => ({
@@ -1137,7 +1185,7 @@ test('the rung mapping and RUNG_FILES cannot drift apart', () => {
   // what says so out loud.
   let checked = 0;
   for (const role of Object.keys(RUNG_FILES)) {
-    for (const [rung, stem] of Object.entries(RUNG_FILES[role])) {
+    for (const [rung, stem] of Object.entries(RUNG_FILES[role].rungs)) {
       assert.equal(rungOfAgent(`cadence:${stem}`), rung, `${stem} is ${role}'s ${rung}`);
       assert.equal(roleOfAgent(`cadence:${stem}`), role, `${stem} is a ${role} file`);
       checked += 1;
@@ -1197,7 +1245,7 @@ test('join: no bracket rows at all is every subagent read unjoined, never an err
 // the overlapping pair, and reads that land inside one, inside both, outside
 // all, under the two HOST agent types and on the coordinator.
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -1209,9 +1257,9 @@ const PLANNING = join(HERE, 'planning.mjs');
 /** A planning root holding both committed fixtures under their real names. */
 function joinRoot() {
   const dir = join(tmp(), '.planning');
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'trace.jsonl'), readFileSync(join(FIXTURES, 'join.trace.jsonl'), 'utf8'));
-  writeFileSync(join(dir, 'reads.jsonl'), readFileSync(join(FIXTURES, 'join.reads.jsonl'), 'utf8'));
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), readFileSync(join(FIXTURES, 'join.trace.jsonl'), 'utf8'));
+  writeFileSync(join(recordsDir(dir), 'reads.jsonl'), readFileSync(join(FIXTURES, 'join.reads.jsonl'), 'utf8'));
   return dir;
 }
 
@@ -1382,9 +1430,9 @@ test('in-dispatch: a read joined to no bracket contributes to nothing at all', (
 /** A planning root holding the committed reread pair under their real names. */
 function rereadRoot() {
   const dir = join(tmp(), '.planning');
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'trace.jsonl'), readFileSync(join(FIXTURES, 'reread.trace.jsonl'), 'utf8'));
-  writeFileSync(join(dir, 'reads.jsonl'), readFileSync(join(FIXTURES, 'reread.reads.jsonl'), 'utf8'));
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), readFileSync(join(FIXTURES, 'reread.trace.jsonl'), 'utf8'));
+  writeFileSync(join(recordsDir(dir), 'reads.jsonl'), readFileSync(join(FIXTURES, 'reread.reads.jsonl'), 'utf8'));
   return dir;
 }
 
@@ -1446,6 +1494,7 @@ test('seam: two rotations later, `reads` still reports the cut and bills no mark
   // are re-proved: it is REPORTED as a rotation, and it is COUNTED as nothing.
   const dir = join(tmp(), '.planning');
   mkdirSync(dir, { recursive: true });
+  stampState(dir);
   appendRead(dir, { ts: TS, tool: 'Read', agent: 'coordinator', target: '/gen-one' });
   padToReadsBound(dir);
   assert.equal(appendRead(dir, { ts: TS, tool: 'Read', agent: 'coordinator', target: '/gen-two' }).written, true);
@@ -1489,4 +1538,23 @@ test('the marker carrying the new field is still filtered out of both folds', ()
   const j = joinReads(records, []);
   assert.equal(j.unresolved, 0, 'the marker became an unresolved read');
   assert.equal(j.coordinator, 1);
+});
+
+// P3-2-07: the hook redacted the whole first error line before capping it, and `redactCause` is quadratic on a long
+// [\w.-] run, so a 256k failure text cost seconds in a hook that runs after every tool call. Redact a 4,096-char window.
+test('errorTextOf stores a very long failure text in bounded time', () => {
+  const resp = { error: 'Error: ' + 'node_modules.pkg-name.'.repeat(11700) };
+  const t0 = process.hrtime.bigint();
+  const text = errorTextOf(resp);
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  assert.ok(ms < 1000, `errorTextOf took ${ms} ms on a 256k first line`);
+  // the stored text is the same as redacting the first 4,096 characters and capping
+  const window = resp.error.slice(0, 4096);
+  assert.equal(text, redactCause(window).slice(0, MAX_ERROR_TEXT));
+});
+
+test('errorTextOf still masks a credential pair inside the first 200 characters of a long line', () => {
+  const text = errorTextOf({ error: 'auth failed: api_key=sk-live-0123456789 ' + 'x'.repeat(100000) });
+  assert.ok(text.startsWith('auth failed: api_key=<redacted>'), text);
+  assert.ok(!text.includes('sk-live'), text);
 });

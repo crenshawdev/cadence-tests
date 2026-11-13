@@ -921,3 +921,26 @@ test('AC4: a github record with NO origin reports too, and never touches tea', (
   assert.deepEqual(readFileSync(argvLog, 'utf8').trim().split('\n'),
     ['gh issue list --repo org/repo --state all --json number,state --limit 200']);
 });
+
+// P4-04: the `base..HEAD` log read had Node's 1 MiB default buffer, so a long branch history overflowed it and the
+// tracker report was skipped as an unreadable log, with no hint that the branch was only long.
+test('a base..HEAD log over 1 MiB is read, so the report gets past the log step', () => {
+  const dir = repo({ originUrl: 'https://github.com/org/repo.git', commits: ['feat: first cut (#42)'] });
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+  const body = `${'x'.repeat(79)}\n`.repeat(51);
+  let stream = '';
+  for (let i = 0; i < 300; i++) {
+    const msg = i === 0 ? `${body}refs #47\n` : body;
+    stream += `commit refs/heads/work\ncommitter t <t@example.com> ${1700000000 + i} +0000\n`
+      + `data ${Buffer.byteLength(msg)}\n${msg}\n${i === 0 ? 'from refs/heads/work^0\n' : ''}`
+      + `M 100644 inline big${i}.txt\ndata 1\nx\n\n`;
+  }
+  execFileSync('git', ['-C', dir, 'fast-import', '--quiet'], { input: stream, env, stdio: ['pipe', 'ignore', 'ignore'] });
+  execFileSync('git', ['-C', dir, 'reset', '-q', '--hard', 'work'], { env, stdio: 'ignore' });
+  const logBytes = execFileSync('git', ['-C', dir, 'log', 'main..HEAD', '--format=%B'], { env, maxBuffer: 1 << 26 }).length;
+  assert.ok(logBytes > 1048576, `the fixture log is ${logBytes} bytes, not over 1 MiB`);
+  const r = seam(['check', '--dir', dir, '--base', 'main'], { bare: true });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.doesNotMatch(r.reason, /could not be read/, r.reason);
+  assert.match(r.reason, /gh CLI is not on PATH/, r.reason);
+});

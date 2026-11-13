@@ -131,6 +131,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appendEvent } from '../cadence-core/bin/lib/trace.mjs';
+import { stampState } from './planning.test.mjs';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const PLANNING = join(HERE, 'planning.mjs');
@@ -140,6 +141,8 @@ function root() {
   const base = mkdtempSync(join(tmpdir(), 'cad-window-'));
   const dir = join(base, '.planning');
   mkdirSync(dir, { recursive: true });
+  // stamped, or appendEvent writes no bracket into it
+  stampState(dir);
   return { dir, noGlobal: join(base, 'absent-global.json') };
 }
 

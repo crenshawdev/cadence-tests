@@ -217,7 +217,7 @@ test('the brief check makes one call, with --phase and --plan and no --out-dir, 
 });
 
 test('the brief check skips an already-complete plan in a gaps run and re-dispatches nothing for it', () => {
-  assert.match(briefFlat, /In a `--gaps` run, skip a plan whose `reports\/plan-<k>\.md` opens `PLAN COMPLETE`/);
+  assert.match(briefFlat, /In a `--gaps` run, skip a plan whose `records\/reports\/plan-<k>\.md` opens `PLAN COMPLETE`/);
   assert.match(briefFlat, /re-dispatch nothing for it/);
   assert.ok(briefFlat.indexOf('skip a plan whose') < briefFlat.indexOf('re-dispatch ONCE'));
 });
@@ -320,7 +320,7 @@ test('the vocabulary pin fails when the workflow stretch loses its opening sente
 });
 
 test('the risk_surface fix pass paragraph is unchanged', () => {
-  const FIX = 'The dispatch prompt carries four things, nothing distilled by the coordinator: the plan file; the findings file\'s PATH, already persisted at `.planning/phases/<N>/REVIEW-risk_surface-plan-<k>.md` (references/risk-surface.md); the instruction to fix the blocker/high findings only; and the instruction NOT to rotate the plan\'s report but to append its fix row to the existing `<plandir>/reports/plan-<k>.md`';
+  const FIX = 'The dispatch prompt carries four things, nothing distilled by the coordinator: the plan file; the findings file\'s PATH, already persisted at `.planning/phases/<N>/records/REVIEW-risk_surface-plan-<k>.md` (references/risk-surface.md); the instruction to fix the blocker/high findings only; and the instruction NOT to rotate the plan\'s report but to append its fix row to the existing `<plandir>/records/reports/plan-<k>.md`';
   assert.ok(flatExec(EXECUTE).includes(FIX));
 });
 
@@ -372,6 +372,8 @@ test('through the real seams a scratch project reads the switch false and brief 
     assert.equal(readSwitch(undefined), false);
     const phase = join(root, '.planning', 'phases', '1');
     mkdirSync(phase, { recursive: true });
+    // phase folders with no roadmap are refused by every seam
+    writeFileSync(join(root, '.planning', 'ROADMAP.md'), '# Roadmap\n\n## Phases\n\n- [ ] **Phase 1: x** - y\n');
     writeFileSync(join(phase, 'PLAN.md'), '---\nphase: 1\nplan: 1\nfiles:\n  - a.txt\n---\n\n# Phase 1: x - Plan 1: y\n\n## Goal\n\nDo it.\n\n## Tasks\n\n### Task 1: one\n\n- **Files:** a.txt\n- **Action:** write it\n- **Verify:** cat a.txt\n');
     const out = mkdtempSync(join(tmpdir(), 'cad-wfbrief-out-'));
     try {

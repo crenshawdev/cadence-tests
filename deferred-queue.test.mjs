@@ -252,7 +252,7 @@ test('the module emits nothing: not one byte on stdout or stderr', () => {
 
 // --- The re-arm cap, keyed to the FIRE and not to a run (CONTEXT D-02). -----
 //
-// `references/triage-gate.md`'s blocking arm counts `rearm` outcome events
+// `references/triage-gate-blocking.md` counts `rearm` outcome events
 // under the CURRENT run's `corr`, which is right there: the fix and the fire
 // are the same run. A deferred fire's triage is not - it happens where
 // `/cad-land` refuses, in a session whose `corr` matches no `rearm` the

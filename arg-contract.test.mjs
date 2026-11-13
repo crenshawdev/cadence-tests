@@ -17,8 +17,21 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   evaluateFlag, evaluateRow, evaluatePresence, subcommandKey,
-  DISPOSITIONS, TYPES, CONTRACTS, PRESENCE_RULES, flagNames,
+  CONTRACTS, PRESENCE_RULES, flagNames,
 } from '../cadence-core/bin/lib/arg-contract.mjs';
+
+// Three words, all positions already shipped; making every typed flag refuse would reverse two of them.
+//   refuse    ok:false naming the flag, which lib/seam-input.mjs's `flagValue` does by hand.
+//   warn      the value is kept raw and the caller records a warning. No row declares it today, but the arm stays
+//             so the next such flag is a decision.
+//   fallback  the flag reads as absent so the caller's own `|| default` answers. A dropped bare flag is fallback too.
+const DISPOSITIONS = Object.freeze(['refuse', 'warn', 'fallback']);
+
+// Each type is an existing classifier, never a re-derived predicate: `int` is requireInt, `cursor` requireCursorNumber,
+// `phase` requirePhaseArg, `plan-key` requirePlanKey. `string` is the non-blank rule planning.mjs hand-writes at its
+// two `--root` guards. `boolean` is for flags whose bare form is the value (`--dry-run`, `--global`); without it a door
+// would call the only spelling the flag has malformed.
+const TYPES = Object.freeze(['string', 'boolean', 'int', 'cursor', 'phase', 'plan-key']);
 
 const MODULE_URL = new URL('../cadence-core/bin/lib/arg-contract.mjs', import.meta.url).href;
 
@@ -151,6 +164,10 @@ test('subcommandKey: the words a script was invoked with, resolved to its table 
     [['risk-check', 'run'], 'risk-check run', 'a hyphenated first word is still one word'],
     [['renumber', 'insert'], 'renumber insert', 'the same'],
     [['status'], 'status', 'a one-word subcommand takes no second word'],
+    [['state-rebuild'], 'state-rebuild', 'the rebuild of a state file that does not parse is one hyphenated word'],
+    [['phase-entry', 'add'], 'phase-entry add', 'a phase list entry is added and edited, two words like cursor get|set'],
+    [['phase-entry', 'edit'], 'phase-entry edit', 'the same'],
+    [['req-row'], 'req-row', 'one change to one requirement row is one hyphenated word'],
     [['recall', 'some', 'query'], 'recall', "recall's trailing words are its QUERY, not a sub-subcommand"],
     [['status', '--dir'], 'status', 'a flag after a one-word subcommand is a flag, not a key'],
     [[], '', 'no words at all is the bare form'],
@@ -208,6 +225,45 @@ test('evaluateRow: the first refusal, over the flags actually present', () => {
   // subcommand still falls through to the caller's own usage refusal.
   assert.equal(row(['bogus', '--name'], 'bogus').ok, true);
   assert.equal(row(['bogus', '--dir'], 'bogus').detail, '--dir');
+});
+
+test('state-rebuild: no flags of its own, and the global --dir rail still applies to it', () => {
+  const table = CONTRACTS['planning.mjs'];
+  assert.deepEqual(table['state-rebuild'], {});
+  assert.deepEqual(evaluateRow(['state-rebuild', '--dir', '/p/.planning'], table, 'state-rebuild'),
+    { ok: true, detail: '', values: { '--dir': '/p/.planning' }, warned: [] });
+  assert.deepEqual([evaluateRow(['state-rebuild', '--dir'], table, 'state-rebuild').ok,
+    evaluateRow(['state-rebuild', '--dir'], table, 'state-rebuild').detail], [false, '--dir']);
+});
+
+test('phase-entry add|edit: a phase number, and name and description each inline or by file, refused bare or malformed', () => {
+  const table = CONTRACTS['planning.mjs'];
+  for (const key of ['phase-entry add', 'phase-entry edit']) {
+    assert.deepEqual(flagNames(table[key]).sort(),
+      ['--description', '--description-file', '--name', '--name-file', '--phase'], key);
+    assert.equal(table[key]['--phase'].type, 'phase', `${key}: the state stores a phase number`);
+    const words = key.split(' ');
+    assert.deepEqual(evaluateRow([...words, '--phase', '2.1', '--name-file', '/t/n'], table, key),
+      { ok: true, detail: '', values: { '--phase': '2.1', '--name-file': '/t/n' }, warned: [] });
+    for (const [argv, flag] of [[['--phase', 'two'], '--phase'], [['--phase', '2', '--name'], '--name'],
+      [['--phase', '2', '--description', '  '], '--description'], [['--phase', '2', '--name-file'], '--name-file']]) {
+      const r = evaluateRow([...words, ...argv], table, key);
+      assert.deepEqual([r.ok, r.detail], [false, flag], `${key} ${argv.join(' ')}`);
+    }
+  }
+});
+
+test('req-row: an id, then a phase number or a bare --defer, the id and phase refused bare or malformed', () => {
+  const table = CONTRACTS['planning.mjs'];
+  assert.deepEqual(flagNames(table['req-row']).sort(), ['--defer', '--id', '--phase']);
+  assert.equal(table['req-row']['--defer'].type, 'boolean', 'presence is the defer flag\'s whole grammar');
+  assert.deepEqual(evaluateRow(['req-row', '--id', 'REQ-1', '--defer'], table, 'req-row'),
+    { ok: true, detail: '', values: { '--id': 'REQ-1', '--defer': true }, warned: [] });
+  for (const [argv, flag] of [[['--id'], '--id'], [['--id', '  '], '--id'], [['--id', 'R', '--phase', 'two'], '--phase'],
+    [['--id', 'R', '--phase'], '--phase']]) {
+    const r = evaluateRow(['req-row', ...argv], table, 'req-row');
+    assert.deepEqual([r.ok, r.detail], [false, flag], argv.join(' '));
+  }
 });
 
 // --- the conditional PRESENCE rule: a value that obliges another flag --------
@@ -421,12 +477,12 @@ test('every flag in every row declares a complete grammar', () => {
     }
   }
   // The walk reached the whole table, so no arm above is vacuous.
-  // CADENCE-CENSUS: arg-contract-flag-entries | asserts: the CONTRACTS table declares 252 flag entries across 19 top-level rows
+  // CADENCE-CENSUS: arg-contract-flag-entries | asserts: the CONTRACTS table declares 270 flag entries across 22 top-level rows
   // 203 since `route.mjs agent-type`; 202 since `config.mjs unset` joined the table with the same two rows its
   // `set` sibling carries (D-06). 201 and 19 since `test.mjs` left Cadence for the tests repository, taking its
-  // row (two `--list` entries) with it. 202 since `test-policy render` joined with `--root`; 203 with `test-policy check`; 204 with its `--base`; 206 with `uat record --job` and `--commit`; 210 with `test-policy ci-status`; 211 with `git-publish.mjs verify-publish --remote`; 212 with `config.mjs keys --walk`; 220 with `planning.mjs review-file`, whose eight flags are the record's and the queue member's; 224 with `planning.mjs workflow-run`; 228 with its `--payload-ref` and three notice totals; 229 with its `--analyzer`; 231 with `planning.mjs workflow-claim take|release`, one `--fire` each; 233 with `workflow-claim release --id` and `--stale`; 234 with `review-file --mark`; 233 without `workflow-run --analyzer`, which left with the analyzer script (Phase 2, D-01); 236 with `config.mjs layers`' `--group`, `--advanced` and `--key`; 238 with `route.mjs resolve`'s `--no-record` and `--planning-root`, which the config preview resolves through; 241 with `codemap slice`'s `--files`, `--symbols` and `--terms`; 243 with `codemap write`'s `--run-file` and `--launch-file`; 246 with its three `--notice-*` totals; 247 with `codemap status --out-dir`; 250 with `planning.mjs brief`'s `--phase`, `--plan` and `--out-dir`; 251 with its `--main-root`; 252 with `workflow-run --plans`.
-  assert.equal(entries, 252, `the table declares ${entries} flag entries`);
-  assert.equal(Object.keys(CONTRACTS).length, 19, 'one row per top-level bin script');
+  // row (two `--list` entries) with it. 202 since `test-policy render` joined with `--root`; 203 with `test-policy check`; 204 with its `--base`; 206 with `uat record --job` and `--commit`; 210 with `test-policy ci-status`; 211 with `git-publish.mjs verify-publish --remote`; 212 with `config.mjs keys --walk`; 220 with `planning.mjs review-file`, whose eight flags are the record's and the queue member's; 224 with `planning.mjs workflow-run`; 228 with its `--payload-ref` and three notice totals; 229 with its `--analyzer`; 231 with `planning.mjs workflow-claim take|release`, one `--fire` each; 233 with `workflow-claim release --id` and `--stale`; 234 with `review-file --mark`; 233 without `workflow-run --analyzer`, which left with the analyzer script (Phase 2, D-01); 236 with `config.mjs layers`' `--group`, `--advanced` and `--key`; 238 with `route.mjs resolve`'s `--no-record` and `--planning-root`, which the config preview resolves through; 241 with `codemap slice`'s `--files`, `--symbols` and `--terms`; 243 with `codemap write`'s `--run-file` and `--launch-file`; 246 with its three `--notice-*` totals; 247 with `codemap status --out-dir`; 250 with `planning.mjs brief`'s `--phase`, `--plan` and `--out-dir`; 251 with its `--main-root`; 252 with `workflow-run --plans`; 253 with `planning.mjs records-dir`; 263 with `planning.mjs phase-entry add|edit`, five each: `--phase` and the inline and `-file` forms of `--name` and `--description`; 266 with `planning.mjs req-row`'s `--id`, `--phase` and `--defer`; 267 and 20 rows with `skill-preload-proof.mjs --out`; 268 and 21 rows with `agent-files.mjs --root`; 270 and 22 rows with `executor-counts.mjs --transcript` and `--trace`.
+  assert.equal(entries, 270, `the table declares ${entries} flag entries`);
+  assert.equal(Object.keys(CONTRACTS).length, 22, 'one row per top-level bin script');
 });
 
 test('the declarations the CONTEXT decisions bind are the ones in the table', () => {

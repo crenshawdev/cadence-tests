@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { run } from './planning.test.mjs';
+import { ensureRoadmap, run } from './planning.test.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 
@@ -60,6 +60,7 @@ function project({ plans = { 'PLAN-3.md': planText() }, projectMd = PROJECT, con
   const dir = join(root, '.planning');
   const pdir = join(dir, 'phases', phase);
   mkdirSync(pdir, { recursive: true });
+  ensureRoadmap(dir);
   if (projectMd !== null) writeFileSync(join(dir, 'PROJECT.md'), projectMd);
   if (context !== null) writeFileSync(join(pdir, 'CONTEXT.md'), context);
   for (const [name, text] of Object.entries(plans)) writeFileSync(join(pdir, name), text);
@@ -484,7 +485,7 @@ test('brief reads: a path outside the repository is reported and its file is nev
 
 test('brief reads: an index that lost its symbols judges the path alone', () => {
   const { dir } = gitProject({ plans: readsOnly('src/a.mjs#nope, src/gone.mjs#x') });
-  const file = join(dir, 'codemap', 'index.json');
+  const file = join(dir, 'records', 'codemap', 'index.json');
   const index = JSON.parse(readFileSync(file, 'utf8'));
   index.symbols_shed = true;
   for (const row of index.rows) delete row.symbols;
@@ -579,10 +580,10 @@ const rowsOf = (text) => {
 const symbolsIn = (answer) => answer.rows.reduce((n, r) => n + (r.symbols ? r.symbols.length : 0), 0);
 /** The index's hashes become the entry's built_from, as `build()` does in codemap-slice.test.mjs. */
 function build(dir, path, entry = { summary: 'built' }) {
-  const index = JSON.parse(readFileSync(join(dir, 'codemap', 'index.json'), 'utf8'));
+  const index = JSON.parse(readFileSync(join(dir, 'records', 'codemap', 'index.json'), 'utf8'));
   const m = index.modules.find((x) => x.paths.includes(path));
   const built_from = Object.fromEntries(m.paths.map((p) => [p, index.rows.find((r) => r.path === p).hash]));
-  writeFileSync(join(dir, 'codemap', entryFile(m.name)), JSON.stringify({ built_from, ...entry }));
+  writeFileSync(join(dir, 'records', 'codemap', entryFile(m.name)), JSON.stringify({ built_from, ...entry }));
 }
 const filesPlan = (files, tasks) => planText({ files, tasks });
 const oneTask = (reads, pad) => `### Task 1: Rows\n\n${reads ? `- **Reads:** ${reads}\n` : ''}- **Action:** ${'x'.repeat(pad)}\n- **Verify:** v\n`;
@@ -716,4 +717,14 @@ test('brief rows: a note under the heading says the rows are data, the room coun
   assert.ok(tight.text.includes(NOTE) && rowsOf(tight.text) !== null);
   const none = briefText(crowded('', 100).dir);
   assert.ok(none.text.includes(ROWS_LEFT_OUT) && !none.text.includes(NOTE));
+});
+
+test('brief: a blank line before the opening --- still gives the lease', () => {
+  const { dir } = project({ plans: { 'PLAN-3.md': `\n${planText()}` } });
+  const out = scratch();
+  const r = brief(dir, ['--phase', '4', '--plan', '3', '--out-dir', out]);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const got = readFileSync(r.path, 'utf8');
+  assert.ok(got.includes("The plan's lease"), 'the lease section is kept');
+  assert.ok(got.includes('files:\n  - src/a.mjs\n  - tests/a.test.mjs (lease)'), 'the files: lines as written');
 });

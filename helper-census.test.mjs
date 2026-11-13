@@ -19,7 +19,9 @@
 // - a call-site census would redden on every legitimate use, so the patterns
 // below are the BODY IDIOM of each contract. Matching the body rather than the
 // name is also what makes a paste-back under a new name fail here: a copy is a
-// copy of the body.
+// copy of the body. Two rows are the exceptions and are still keyed by name:
+// `regexHere` and `dirents`, which match their function declaration, so a
+// renamed copy of either is not caught.
 //
 // The rules are LEXICAL, which means a rule can match its own source - the
 // discipline lib/merge-warnings.mjs states, where the fix belongs at the
@@ -270,14 +272,24 @@ const HELPERS = [
   {
     name: 'the RegExp escaper (escapeRe)',
     home: 'lib/text-util.mjs',
-    re: new RegExp('function escapeRe\\(|const escapeRe[ ]= ', 'g'),
+    // A DEFINITION whose body is the escaper, under any name: a function
+    // declaration returning it, or a const bound to an arrow that does. The
+    // class and the `\\$&` replacement are the body. An inline use inside a
+    // `new RegExp(...)` call is neither shape, so the tests that escape there stay.
+    re: new RegExp(String.raw`(?:function\s+[\w$]+\s*\([^)]*\)\s*\{\s*return\s|`
+      + String.raw`(?:const|let|var)\s+[\w$]+\s*=\s*(?:\([^)]*\)|[\w$]+)\s*=>\s*(?:\{\s*return\s)?)`
+      + String.raw`[^;{}]{0,80}?\.replace\(`
+      + String.raw`\/\[\.\*\+\?\^\$\{\}\(\)\|\[\\\]\\\\\]\/g,\s*'\\\\\$&'`, 'g'),
     note: 'Import { escapeRe } from ./lib/text-util.mjs. It imports nothing, '
       + 'so a module that must not touch the filesystem can use it too.',
   },
   {
     name: 'the plain-object type predicate (isPlainObject)',
     home: 'lib/text-util.mjs',
-    re: new RegExp('function isPlainObject\\(|const isPlainObject[ ]= ', 'g'),
+    // The predicate's BODY under any identifier: the same name in all three
+    // clauses, by backreference. The truthiness variant (`X && typeof X ===
+    // 'object' && ...`) is a different idiom and this row leaves it alone on purpose.
+    re: new RegExp("([A-Za-z_$][\\w$]*) !== null && typeof \\1 === 'object' && !Array\\.isArray\\(\\1\\)", 'g'),
     note: 'Import { isPlainObject } from ./lib/text-util.mjs (lib/config-merge.mjs '
       + 're-exports it). It is a type predicate, which the checkJs typecheck '
       + 'needs to narrow an unknown.',

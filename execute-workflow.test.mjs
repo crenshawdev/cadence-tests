@@ -22,7 +22,7 @@ test('workflow arm: the file above the new section is today\'s text byte for byt
   assert.equal(today.split('\n').filter((l) => l.startsWith('- ')).length, 5);
   // the sha-256 of worktree-executor.md as it stood before the arm was added
   assert.equal(createHash('sha256').update(today).digest('hex'),
-    '5ba9daf22cb1101330d50a781850acb95e75fffa82a59291e31e8d05eb2f90ee');
+    'd7326001cc3dda73ca8d1b85a6374fc6c3ebcb3a74857042a88e67ed7ea4477d');
 });
 
 test('workflow arm: its mode line differs from today\'s, says worktree, and names the branch', () => {
@@ -45,7 +45,7 @@ test('workflow arm: the branch is created first, an existing non-current one hal
 test('workflow arm: the report goes to the scratch path the prompt names, nothing is written into the main tree, and it is never committed', () => {
   const a = flat(arm);
   assert.match(a, /in the run's scratch directory\. Never write into the main tree/);
-  assert.match(a, /goes to the path the prompt names, in place of `<plandir>\/reports\/plan-<k>\.md`, and you NEVER commit it/);
+  assert.match(a, /goes to the path the prompt names, in place of `<plandir>\/records\/reports\/plan-<k>\.md`, and you NEVER commit it/);
   assert.match(a, /only after it has merged your branch/);
   assert.match(a, /ABSOLUTE paths outside the worktree, never relative to it/);
 });
@@ -183,7 +183,7 @@ test('a wider wave Reads execute-parallel.md by its full path, follows steps 3 t
 });
 
 test('a report moves from the scratch directory only after its branch merged, a report already there is rotated aside, and nothing in it is edited', () => {
-  assert.match(NOTICE, /Once a plan's branch has merged, move its report from `<the scratch directory>\/reports\/plan-<k>\.md` into `<plandir>\/reports\/plan-<k>\.md`/);
+  assert.match(NOTICE, /Once a plan's branch has merged, move its report from `<the scratch directory>\/reports\/plan-<k>\.md` into `<plandir>\/records\/reports\/plan-<k>\.md`/);
   assert.match(NOTICE, /First rotate a report already there aside to the next free `plan-<k>\.<n>\.md`/);
   assert.match(NOTICE, /Edit nothing in the moved file/);
   assert.match(NOTICE, /A plan whose branch has not merged keeps its report in the scratch directory, so the main tree never holds a `PLAN COMPLETE` for unmerged work/);

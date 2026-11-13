@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { makeTree, run, isEntryFile } from './planning.test.mjs';
 import { EMPTY_CAPTURE } from '../cadence-core/bin/lib/capture-file.mjs';
+import { readState } from '../cadence-core/bin/lib/project-state.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -190,6 +191,77 @@ test('phase-done: an unreadable REQUIREMENTS.md refuses whole; ROADMAP.md is byt
   assert.equal(r._exit, 1);
   assert.match(r.detail, /REQUIREMENTS\.md/); // names the file to repair
   assert.equal(sha(join(dir, 'ROADMAP.md')), before);
+});
+
+// --- the state is what changes; the box is rendered from it ------------------------------------------
+
+const phaseStatus = (dir, n) => readState(dir).state.phases.find((p) => p.n === n).status;
+
+test('phase-done and its undo change the state, and the regenerated box agrees', () => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
+  const done = run(['phase-done', '--n', '2'], dir);
+  assert.equal(done.ok, true);
+  assert.equal(phaseStatus(dir, 2), 'complete');
+  const roadmap = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
+  assert.match(roadmap, /^- \[x\] \*\*Phase 2: Two\*\*/m);
+  assert.equal(done.roadmap.line, roadmap.split('\n').findIndex((l) => l.startsWith('- [x] **Phase 2:')) + 1);
+
+  // undo returns the phase to what its artifacts derive, here a planned phase
+  mkdirSync(join(dir, 'phases', '2'), { recursive: true });
+  writeFileSync(join(dir, 'phases', '2', 'PLAN.md'), '# Plan 2\n');
+  const undone = run(['phase-done', '--n', '2', '--undo'], dir);
+  assert.equal(undone.roadmap.now, '[ ]');
+  assert.equal(phaseStatus(dir, 2), 'planned');
+  assert.match(readFileSync(join(dir, 'ROADMAP.md'), 'utf8'), /^- \[ \] \*\*Phase 2: Two\*\*/m);
+});
+
+test('phase-done: hand edits to the list change nothing, and the next close puts the generated text back', () => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
+  assert.equal(run(['phase-done', '--n', '1'], dir).ok, true);
+  const file = join(dir, 'ROADMAP.md');
+  const generated = readFileSync(file, 'utf8');
+  const statusBefore = run(['status'], dir);
+
+  // a hand-checked box, a hand-added phase line and a malformed line inside the list
+  writeFileSync(file, generated.replace('- [ ] **Phase 2: Two**', '- [x] **Phase 2: Two**')
+    .replace('- [x] **Phase 1: One** - desc\n', '- [x] **Phase 1: One** - desc\n- [ ] **Phase 5: Invented** - desc\n- Phase 3: X\n'));
+  assert.deepEqual(run(['status'], dir), statusBefore);
+  assert.equal(run(['phase-done', '--n', '5'], dir).reason, 'unknown-phase');
+
+  assert.equal(run(['phase-done', '--n', '2'], dir).ok, true);
+  const after = readFileSync(file, 'utf8');
+  assert.equal(after, generated.replace('- [ ] **Phase 2: Two**', '- [x] **Phase 2: Two**'));
+});
+
+test('phase-done and its undo set the state\'s rows, Deferred ones apart, and the table agrees; a hand-set row is put back', () => {
+  const dir = makeTree({
+    roadmap: [{ n: 1, name: 'One' }],
+    reqs: [['REQ-1', 1, 'Pending'], ['REQ-2', 1, 'Deferred'], ['REQ-3', 1, 'Pending']],
+  });
+  const rows = () => Object.fromEntries(readState(dir).state.requirements.map((r) => [r.id, r.status]));
+  assert.deepEqual(run(['phase-done', '--n', '1', '--reqs', 'REQ-1'], dir).reqs, ['REQ-1']);
+  assert.deepEqual(rows(), { 'REQ-1': 'Complete', 'REQ-2': 'Deferred', 'REQ-3': 'Pending' });
+  const file = join(dir, 'REQUIREMENTS.md');
+  assert.match(readFileSync(file, 'utf8'), /REQ-1 \| Phase 1 \| Complete/);
+
+  const statusBefore = run(['status'], dir);
+  writeFileSync(file, readFileSync(file, 'utf8').replace('REQ-3 | Phase 1 | Pending', 'REQ-3 | Phase 1 | Complete'));
+  assert.deepEqual(run(['status'], dir), statusBefore, 'a hand-set row is not read');
+  assert.deepEqual(run(['phase-done', '--n', '1'], dir).reqs, ['REQ-1', 'REQ-3']);
+  assert.deepEqual(rows(), { 'REQ-1': 'Complete', 'REQ-2': 'Deferred', 'REQ-3': 'Complete' });
+  assert.deepEqual(run(['phase-done', '--n', '1', '--undo'], dir).reqs, ['REQ-1', 'REQ-3']);
+  assert.deepEqual(rows(), { 'REQ-1': 'Pending', 'REQ-2': 'Deferred', 'REQ-3': 'Pending' });
+  assert.match(readFileSync(file, 'utf8'), /REQ-3 \| Phase 1 \| Pending/);
+});
+
+test('phase-done: a roadmap with no ## Phases heading is refused and nothing is written', () => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+  assert.equal(run(['status'], dir).ok, true);
+  writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap\n\nnothing listed\n');
+  const r = run(['phase-done', '--n', '1'], dir);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'unknown-phase');
+  assert.equal(phaseStatus(dir, 1), 'unplanned');
 });
 
 // The other half of the same distinction: absence is legitimate data, not a

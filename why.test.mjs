@@ -9,6 +9,10 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { mkdirSync as plantMkdir, writeFileSync as plantWrite } from 'node:fs';
+import { dirname as plantDirname } from 'node:path';
+const plantFile = (file, data) => { plantMkdir(plantDirname(file), { recursive: true }); plantWrite(file, data); };
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const SEAM = join(HERE, 'why.mjs');
@@ -155,8 +159,8 @@ test('two runs over an unchanged tree write byte-identical stdout', () => {
 test('the answer is unchanged whether .planning/trace.jsonl is present or absent', () => {
   const { dir } = repo();
   const before = run(['f.txt', '--dir', dir]).stdout;
-  execFileSync('mkdir', ['-p', join(dir, '.planning')]);
-  writeFileSync(join(dir, '.planning', 'trace.jsonl'), '{"not":"read"}\n');
+  execFileSync('mkdir', ['-p', recordsDir(join(dir, '.planning'))]);
+  writeFileSync(join(recordsDir(join(dir, '.planning')), 'trace.jsonl'), '{"not":"read"}\n');
   const after = run(['f.txt', '--dir', dir]).stdout;
   assert.equal(before, after);
 });
@@ -224,7 +228,7 @@ function repoWithArchivedPhase() {
 
   git('rm', '-q', '-r', join('.planning', 'phases', '1'));
   phase('_archive-v9.0.0');
-  writeFileSync(join(dir, '.planning', 'ARCHIVE.md'),
+  plantFile(join(recordsDir(join(dir, '.planning')), 'ARCHIVE.md'),
     ['# Archive', '', '## v9.0.0', '', '- `phases/1/SUMMARY.md`: archived', ''].join('\n'));
   git('add', '-A');
   at('chore: prune v9.0.0 completed phases', '2026-01-03T00:00:00-05:00');
@@ -381,7 +385,8 @@ function repoWithFinding() {
     `| 1 | 2 | ${b.slice(0, 8)} | the commit it does not |`,
     '', '## Deviations', '', '- [deviation] none of consequence', '',
   ].join('\n'));
-  writeFileSync(join(phase, 'ADJUDICATION-risk_surface-plan-1.json'), JSON.stringify({
+  mkdirSync(join(phase, 'records'), { recursive: true });
+  writeFileSync(join(phase, 'records', 'ADJUDICATION-risk_surface-plan-1.json'), JSON.stringify({
     phase: '1', trigger: 'risk_surface', discriminator: 'plan-1', round: 1,
     base_id: base, head_id: a,
     entries: [
@@ -427,7 +432,7 @@ test("a survived finding reaches the rendered chain on the commit its range cove
 
 test('a finding whose range does not resolve in this clone is stated unknown, never dropped or applied', () => {
   const { dir, a } = repoWithFinding();
-  const record = join(dir, '.planning', 'phases', '1', 'ADJUDICATION-risk_surface-plan-1.json');
+  const record = join(dir, '.planning', 'phases', '1', 'records', 'ADJUDICATION-risk_surface-plan-1.json');
   const parsed = JSON.parse(readFileSync(record, 'utf8'));
   parsed.head_id = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
   writeFileSync(record, JSON.stringify(parsed));
@@ -597,7 +602,7 @@ function repoWithNoRecord(opts = {}) {
     at('feat: the phase', '2026-01-02T00:00:00-05:00');
     git('rm', '-q', '-r', join('.planning', 'phases', '1'));
     mkdirSync(join(dir, '.planning'), { recursive: true });
-    writeFileSync(join(dir, '.planning', 'ARCHIVE.md'), [
+    plantFile(join(recordsDir(join(dir, '.planning')), 'ARCHIVE.md'), [
       '# Archive', '', `## ${opts.close}`, '',
       '- `phases/1/SUMMARY.md`: the residue this close kept', '',
     ].join('\n'));
@@ -651,7 +656,7 @@ test('a close labelled in ARCHIVE.md contributes its section rows, bound to the 
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   const entry = entryFor(env.text, sha);
   assert.match(entry, /^ {2}the gap sits under the close at [0-9a-f]{8}, labelled v9\.9\.0$/m);
-  assert.match(entry, /^ {2}\.planning\/ARCHIVE\.md keeps 1 residue row\(s\) under that label, bound to the label and to no commit \(D-04\):$/m);
+  assert.match(entry, /^ {2}\.planning\/records\/ARCHIVE\.md keeps 1 residue row\(s\) under that label, bound to the label and to no commit \(D-04\):$/m);
   assert.match(entry, /^ {4}phases\/1\/SUMMARY\.md: the residue this close kept$/m,
     "the row's origin and text, exactly as parseArchiveRows split them");
   assert.match(entry, /^phase: NOT RESOLVED - /m, 'ARCHIVE.md supplies no commit-to-phase edge and none is invented');
@@ -862,4 +867,27 @@ test('this repository: the exclusion reaches the rendered text with the count, t
     assert.ok(env.text.includes(shown), `${shown} is named in the text`);
   }
   assert.match(env.text, /git log --full-history -- cadence-core\/bin\/lib\/release-decision\.mjs$/m);
+});
+
+test('a path whose log output is over 1 MiB gets its whole chain, not git-failed', () => {
+  // git fast-import writes the history in one process: 1,200 commits with long subjects pass git's 1 MiB default read buffer
+  const dir = mkdtempSync(join(tmpdir(), 'cad-why-big-'));
+  execFileSync('git', ['-C', dir, 'init', '-q', '-b', 'main'], { stdio: 'ignore', env: GIT_ENV });
+  const n = 1200;
+  const pad = 's'.repeat(900);
+  let stream = '';
+  for (let i = 0; i < n; i++) {
+    const msg = `change ${i} ${pad}`;
+    const body = `v${i}\n`;
+    stream += `commit refs/heads/main\ncommitter cad <cad@example.invalid> ${1767225600 + i * 60} +0000\n`
+      + `data ${Buffer.byteLength(msg)}\n${msg}\nM 100644 inline f.txt\ndata ${Buffer.byteLength(body)}\n${body}\n`;
+  }
+  execFileSync('git', ['-C', dir, 'fast-import', '--quiet'], { input: stream, stdio: ['pipe', 'ignore', 'ignore'], env: GIT_ENV });
+  const logged = execFileSync('git', ['-C', dir, 'log', '--format=%H%x1f%cI%x1f%s', '--', 'f.txt'], { env: GIT_ENV, maxBuffer: 64 << 20 });
+  assert.ok(logged.length > 1024 * 1024, `fixture must pass 1 MiB, got ${logged.length}`);
+
+  const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
+  assert.equal(env.ok, true, JSON.stringify(env).slice(0, 300));
+  assert.equal(env.result, 'chain');
+  assert.equal(env.total, n);
 });

@@ -57,10 +57,10 @@ function planningWith(env, root, ...args) {
 }
 const scan = (root) => planning(root, 'codemap', 'scan');
 const status = (root, ...args) => planning(root, 'codemap', 'status', ...args);
-const index = (root) => JSON.parse(readFileSync(join(root, '.planning', 'codemap', 'index.json'), 'utf8'));
-const entryPath = (root, name) => join(root, '.planning', 'codemap', entryFile(name));
+const index = (root) => JSON.parse(readFileSync(join(root, '.planning', 'records', 'codemap', 'index.json'), 'utf8'));
+const entryPath = (root, name) => join(root, '.planning', 'records', 'codemap', entryFile(name));
 const entryOf = (root, name) => JSON.parse(readFileSync(entryPath(root, name), 'utf8'));
-const entryFiles = (root) => readdirSync(join(root, '.planning', 'codemap')).filter((f) => ENTRY_FILE.test(f));
+const entryFiles = (root) => readdirSync(join(root, '.planning', 'records', 'codemap')).filter((f) => ENTRY_FILE.test(f));
 
 /** The hashes the index holds now for a module's paths, which is what a launch pins. */
 function builtFrom(root, name) {
@@ -317,7 +317,7 @@ test('a run with two agent rows bills two brackets under phase 0 with each row\'
     assert.deepEqual([b.tokens, b.turns, b.duration_ms, b.agent_id], [1000 * (i + 1), 10 + i + 1, 5000 * (i + 1), `agent${i + 1}`]);
   }
   const dispatches = events0(root).filter((e) => e.event === 'dispatch');
-  assert.ok(dispatches.every((e) => e.plan.startsWith('wf_test-') && e.read.length === 1 && e.read[0] === '.planning/codemap/index.json'), 'the worker key carries the run id and the read set is the index');
+  assert.ok(dispatches.every((e) => e.plan.startsWith('wf_test-') && e.read.length === 1 && e.read[0] === '.planning/records/codemap/index.json'), 'the worker key carries the run id and the read set is the index');
   const written = readFileSync(entryPath(root, 'm1'), 'utf8');
 
   const before = events0(root).length;
@@ -608,7 +608,7 @@ test('a launch item names only what is safe to open: tests that are regular file
   const idx = index(root);
   const m1row = idx.rows.find((r) => r.path === 'm1/main.js');
   m1row.pinned_by = { files: [...(m1row.pinned_by?.files || []), '../../etc/hostname', '/etc/hostname', 'tests/../../x', 'tests/gone.test.mjs', '"q.test.mjs', 'tests/linked/x.test.mjs'] };
-  writeFileSync(join(root, '.planning', 'codemap', 'index.json'), JSON.stringify(idx));
+  writeFileSync(join(root, '.planning', 'records', 'codemap', 'index.json'), JSON.stringify(idx));
   // foo.test.mjs was a regular file when scanned and is a link now
   rmSync(join(root, 'tests', 'foo.test.mjs'));
   symlinkSync('/etc/hostname', join(root, 'tests', 'foo.test.mjs'));
@@ -645,7 +645,7 @@ function testsFor(files) {
   const idx = index(root);
   const m1row = idx.rows.find((r) => r.path === 'm1/main.js');
   m1row.pinned_by = { files: [...(m1row.pinned_by?.files || []), ...files] };
-  writeFileSync(join(root, '.planning', 'codemap', 'index.json'), JSON.stringify(idx));
+  writeFileSync(join(root, '.planning', 'records', 'codemap', 'index.json'), JSON.stringify(idx));
   writeFileSync(join(root, 'm1', 'main.js'), 'export function alpha() { return 1; }\n');
   const out = scratch();
   const st = status(root, '--out-dir', out);

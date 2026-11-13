@@ -16,13 +16,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
+  chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync,
   symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PLANNING, makeTree } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap, makeTree, run, stampState, verifyChecked } from './planning.test.mjs';
 
 /** The close gate this carry exists to keep fed. */
 const LAND = fileURLToPath(new URL('../cadence-core/bin/land-cleanup.mjs', import.meta.url));
@@ -37,8 +37,12 @@ writeFileSync(GLOBAL_ON, JSON.stringify({ git: { auto_close: true } }));
 function carryTree(phase, files) {
   const dir = join(mkdtempSync(join(tmpdir(), 'cad-risk-carry-')), '.planning');
   const pdir = join(dir, 'phases', String(phase));
-  mkdirSync(pdir, { recursive: true });
-  for (const [name, body] of Object.entries(files)) writeFileSync(join(pdir, name), body);
+  mkdirSync(join(pdir, 'records'), { recursive: true });
+  ensureRoadmap(dir);
+  // a person's document stays at the phase top; every other file is a record
+  for (const [name, body] of Object.entries(files)) {
+    writeFileSync(join(pdir, name === 'SUMMARY.md' ? '' : 'records', name), body);
+  }
   return dir;
 }
 
@@ -55,7 +59,7 @@ function riskCarry(dir, args) {
 
 /** What actually landed under `risk-carry/<phase>/`, sorted; `[]` when absent. */
 const carried = (dir, phase) => {
-  const d = join(dir, 'risk-carry', String(phase));
+  const d = join(dir, 'records', 'risk-carry', String(phase));
   return existsSync(d) ? readdirSync(d).sort() : [];
 };
 
@@ -103,8 +107,8 @@ test('risk-carry: the risk_surface artifacts arrive and every other record stays
   // Everything else is still in the phase directory, where the prune takes it.
   for (const left of ['ADJUDICATION-diff-plan-1.json', 'ADJUDICATION-plan-cad-plan-abc1234.json',
     'REVIEW-diff-plan-1.md', 'DEFERRED-risk_surface-plan-9.json', 'SUMMARY.md']) {
-    assert.equal(existsSync(join(dir, 'phases', '3', left)), true, `${left} was consumed`);
-    assert.equal(existsSync(join(dir, 'risk-carry', '3', left)), false, `${left} was carried`);
+    assert.equal(existsSync(join(dir, 'phases', '3', left === 'SUMMARY.md' ? '' : 'records', left)), true, `${left} was consumed`);
+    assert.equal(existsSync(join(dir, 'records', 'risk-carry', '3', left)), false, `${left} was carried`);
   }
 });
 
@@ -118,7 +122,7 @@ test('risk-carry: a COPY - the originals are still where they were', () => {
     [record('plan-1')]: recordBody('plan-1', 1, [entry()]),
   });
   assert.equal(riskCarry(dir, ['--phase', '3']).ok, true);
-  assert.deepEqual(readdirSync(join(dir, 'phases', '3')).sort(),
+  assert.deepEqual(readdirSync(join(dir, 'phases', '3', 'records')).sort(),
     [record('plan-1'), review('plan-1')].sort());
 });
 
@@ -149,13 +153,13 @@ test('risk-carry: a re-run finishes the job instead of refusing it', () => {
   const dir = carryTree(3, { [review('plan-1')]: '{"findings":[]}\n' });
   assert.equal(riskCarry(dir, ['--phase', '3']).copied, 1);
 
-  writeFileSync(join(dir, 'phases', '3', record('plan-1')),
+  writeFileSync(join(dir, 'phases', '3', 'records', record('plan-1')),
     recordBody('plan-1', 1, [entry()]));
   const again = riskCarry(dir, ['--phase', '3']);
   assert.equal(again.ok, true, JSON.stringify(again));
   assert.equal(again.copied, 1, 'the new record was not carried');
   assert.equal(again.skipped, 1, 'the already-carried review was copied a second time');
-  assert.deepEqual(again.carried.map((c) => c.to), [`risk-carry/3/${record('plan-1')}`]);
+  assert.deepEqual(again.carried.map((c) => c.to), [`records/risk-carry/3/${record('plan-1')}`]);
   assert.deepEqual(carried(dir, 3), [record('plan-1'), review('plan-1')].sort());
 });
 
@@ -169,16 +173,16 @@ test('risk-carry: a DIFFERING destination file refuses, and copies nothing', () 
     [review('plan-1')]: '{"findings":[]}\n',
     [record('plan-1')]: recordBody('plan-1', 1, [entry()]),
   });
-  mkdirSync(join(dir, 'risk-carry', '3'), { recursive: true });
-  writeFileSync(join(dir, 'risk-carry', '3', record('plan-1')), '{"entries":[]}\n');
+  mkdirSync(join(dir, 'records', 'risk-carry', '3'), { recursive: true });
+  writeFileSync(join(dir, 'records', 'risk-carry', '3', record('plan-1')), '{"entries":[]}\n');
 
   const r = riskCarry(dir, ['--phase', '3']);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'carry-exists');
-  assert.match(r.detail, new RegExp(`risk-carry/3/${record('plan-1')} already exists`));
+  assert.match(r.detail, new RegExp(`records/risk-carry/3/${record('plan-1')} already exists`));
   assert.deepEqual(carried(dir, 3), [record('plan-1')],
     'the refusal carried the OTHER member anyway, splitting one fire across two homes');
-  assert.equal(readFileSync(join(dir, 'risk-carry', '3', record('plan-1')), 'utf8'),
+  assert.equal(readFileSync(join(dir, 'records', 'risk-carry', '3', record('plan-1')), 'utf8'),
     '{"entries":[]}\n', 'the standing record was overwritten');
 });
 
@@ -186,15 +190,33 @@ test('risk-carry: a DIFFERING destination file refuses, and copies nothing', () 
 
 test('risk-carry: a symlink squatting the destination is refused, never followed', () => {
   const dir = carryTree(3, { [review('plan-1')]: '{"findings":[]}\n' });
-  mkdirSync(join(dir, 'risk-carry'), { recursive: true });
+  mkdirSync(join(dir, 'records', 'risk-carry'), { recursive: true });
   mkdirSync(join(dir, 'elsewhere'));
-  symlinkSync(join(dir, 'elsewhere'), join(dir, 'risk-carry', '3'));
+  symlinkSync(join(dir, 'elsewhere'), join(dir, 'records', 'risk-carry', '3'));
 
   const r = riskCarry(dir, ['--phase', '3']);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'carry-dest-unusable');
   assert.match(r.detail, /would follow out of the planning root/);
   assert.deepEqual(readdirSync(join(dir, 'elsewhere')), []);
+});
+
+test('risk-carry: a symlinked records folder is refused and nothing is copied', () => {
+  // one more path component is one more place a link could redirect the copy
+  const dir = carryTree(3, { [review('plan-1')]: '{"findings":[]}\n' });
+  // a link where the records folder belongs is refused at the state-file door, so the project is stamped first and its
+  // records folder then moved behind the link, state file and all
+  stampState(dir);
+  renameSync(join(dir, 'records'), join(dir, 'elsewhere'));
+  symlinkSync(join(dir, 'elsewhere'), join(dir, 'records'));
+
+  const r = riskCarry(dir, ['--phase', '3']);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.reason, 'carry-dest-unusable');
+  assert.match(r.detail, /would follow out of the planning root/);
+  assert.deepEqual(readdirSync(join(dir, 'elsewhere')).sort(), ['.gitignore', 'state.json'],
+    'the carry wrote through the link');
+  assert.equal(existsSync(join(dir, 'phases', '3', 'records', review('plan-1'))), true);
 });
 
 test('risk-carry: a symlink squatting the PARENT is refused too', () => {
@@ -205,7 +227,8 @@ test('risk-carry: a symlink squatting the PARENT is refused too', () => {
   // it. Two levels down takes two checks.
   const dir = carryTree(3, { [review('plan-1')]: '{"findings":[]}\n' });
   mkdirSync(join(dir, 'elsewhere'));
-  symlinkSync(join(dir, 'elsewhere'), join(dir, 'risk-carry'));
+  mkdirSync(join(dir, 'records'));
+  symlinkSync(join(dir, 'elsewhere'), join(dir, 'records', 'risk-carry'));
 
   const r = riskCarry(dir, ['--phase', '3']);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -213,7 +236,7 @@ test('risk-carry: a symlink squatting the PARENT is refused too', () => {
   assert.match(r.detail, /would follow out of the planning root/);
   assert.deepEqual(readdirSync(join(dir, 'elsewhere')), [],
     'the carry built its destination outside the planning root');
-  assert.equal(existsSync(join(dir, 'phases', '3', review('plan-1'))), true);
+  assert.equal(existsSync(join(dir, 'phases', '3', 'records', review('plan-1'))), true);
 });
 
 test('risk-carry: a symlink at a carried NAME is refused, never read as already carried', () => {
@@ -224,15 +247,15 @@ test('risk-carry: a symlink at a carried NAME is refused, never read as already 
   // `skipped` - and `milestone-prune` then deletes the target, leaving the
   // carried ruling a dangling link the gate cannot read at close time.
   const dir = carryTree(3, { [record('plan-1')]: recordBody('plan-1', 1, [entry()]) });
-  mkdirSync(join(dir, 'risk-carry', '3'), { recursive: true });
-  symlinkSync(join(dir, 'phases', '3', record('plan-1')),
-    join(dir, 'risk-carry', '3', record('plan-1')));
+  mkdirSync(join(dir, 'records', 'risk-carry', '3'), { recursive: true });
+  symlinkSync(join(dir, 'phases', '3', 'records', record('plan-1')),
+    join(dir, 'records', 'risk-carry', '3', record('plan-1')));
 
   const r = riskCarry(dir, ['--phase', '3']);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'carry-dest-unusable');
   assert.match(r.detail, /is not a regular file/);
-  assert.equal(lstatSync(join(dir, 'risk-carry', '3', record('plan-1'))).isSymbolicLink(), true,
+  assert.equal(lstatSync(join(dir, 'records', 'risk-carry', '3', record('plan-1'))).isSymbolicLink(), true,
     'the refusal overwrote the link instead of leaving it for the caller to clear');
 });
 
@@ -247,7 +270,7 @@ test('risk-carry: a mistyped phase spelling refuses before anything is copied', 
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'bad-args');
   assert.match(r.detail, /already exists on this tree/);
-  assert.equal(existsSync(join(dir, 'risk-carry')), false,
+  assert.equal(existsSync(join(dir, 'records', 'risk-carry')), false,
     'a refused carry minted its destination anyway');
 });
 
@@ -257,7 +280,7 @@ test('risk-carry: a phase with no risk_surface fire is an answer, not a refusal'
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(r.carried, []);
   assert.equal(r.copied, 0);
-  assert.equal(existsSync(join(dir, 'risk-carry')), false,
+  assert.equal(existsSync(join(dir, 'records', 'risk-carry')), false,
     'an empty carry minted a destination directory nothing accounts for');
 });
 
@@ -273,7 +296,7 @@ test('risk-carry: a symlinked source artifact is refused, and its target never l
   const outside = join(dir, '..', 'outside');
   mkdirSync(outside, { recursive: true });
   writeFileSync(join(outside, 'id_rsa'), 'SECRET-BYTES\n');
-  symlinkSync(join(outside, 'id_rsa'), join(dir, 'phases', '3', review('plan-1')));
+  symlinkSync(join(outside, 'id_rsa'), join(dir, 'phases', '3', 'records', review('plan-1')));
 
   const r = riskCarry(dir, ['--phase', '3']);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -281,7 +304,7 @@ test('risk-carry: a symlinked source artifact is refused, and its target never l
   assert.match(r.detail, /is not a regular file/);
   assert.deepEqual(carried(dir, 3), [],
     'the refusal carried the honest record anyway, and a link may have followed it');
-  assert.equal(existsSync(join(dir, 'risk-carry')), false,
+  assert.equal(existsSync(join(dir, 'records', 'risk-carry')), false,
     'a refused carry minted its destination anyway');
 });
 
@@ -293,6 +316,8 @@ test('risk-carry: a symlinked phases/<N> is refused before it is listed', () => 
   const outside = join(dir, '..', 'outside');
   mkdirSync(outside, { recursive: true });
   writeFileSync(join(outside, record('plan-9')), recordBody('plan-9', 1, [entry()]));
+  // a linked phase folder refuses the conversion itself, so the project is converted first
+  assert.equal(run(['status'], dir).ok, true);
   symlinkSync(outside, join(dir, 'phases', '3'));
 
   const r = riskCarry(dir, ['--phase', '3']);
@@ -317,7 +342,9 @@ test('risk-carry: an unlistable phases/<N> prints exactly the refusal it always 
   // what `/cad-milestone` already relays, and it may not move.
   for (const mode of [0o000, 0o311]) {
     const dir = carryTree(3, { [review('plan-1')]: '{"findings":[]}\n' });
-    chmodSync(join(dir, 'phases', '3'), mode);
+    // the first call converts the project and its answer says so; the pin is on the refusal after it
+    try { execFileSync('node', [PLANNING, '--dir', dir, 'status'], { stdio: 'ignore' }); } catch { /* the answer is not the point */ }
+    chmodSync(join(dir, 'phases', '3', 'records'), mode);
     try {
       let stdout;
       let code = 0;
@@ -326,14 +353,14 @@ test('risk-carry: an unlistable phases/<N> prints exactly the refusal it always 
           { encoding: 'utf8' });
       } catch (e) { stdout = e.stdout; code = e.status; }
       assert.equal(stdout,
-        '{"ok":false,"reason":"unlistable-phase","detail":"phases/3/ exists under ' + dir
+        '{"ok":false,"reason":"unlistable-phase","detail":"phases/3/records/ exists under ' + dir
         + ' and could not be listed, so this carry cannot prove what phase 3 has ruled",'
         + '"hint":"make that directory readable and re-run BEFORE milestone-prune, which deletes'
         + ' it - nothing was copied"}\n', `mode ${mode.toString(8)}`);
       assert.equal(code, 1);
-      assert.equal(existsSync(join(dir, 'risk-carry')), false);
+      assert.equal(existsSync(join(dir, 'records', 'risk-carry')), false);
     } finally {
-      chmodSync(join(dir, 'phases', '3'), 0o755);
+      chmodSync(join(dir, 'phases', '3', 'records'), 0o755);
     }
   }
 });
@@ -347,7 +374,16 @@ test('risk-carry: a phases/<N> that is not there is still an answer', () => {
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(r.carried, []);
   assert.equal(r.copied, 0);
-  assert.equal(existsSync(join(dir, 'risk-carry')), false);
+  assert.equal(existsSync(join(dir, 'records', 'risk-carry')), false);
+});
+
+test('risk-carry: a phase with no records folder has nothing to carry, and that is an answer', () => {
+  const dir = carryTree(3, {});
+  rmSync(join(dir, 'phases', '3', 'records'), { recursive: true });
+  const r = riskCarry(dir, ['--phase', '3']);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.carried, []);
+  assert.equal(existsSync(join(dir, 'records', 'risk-carry')), false);
 });
 
 test('risk-carry: a phases/ that cannot be searched refuses, never reads as absence', {
@@ -360,6 +396,8 @@ test('risk-carry: a phases/ that cannot be searched refuses, never reads as abse
   // 0o644 isolates the missing search bit; 0o000 is the other mode measured.
   for (const mode of [0o644, 0o000]) {
     const dir = carryTree(3, { [review('plan-1')]: '{"findings":[]}\n' });
+    // an unsearchable phases/ refuses the conversion itself, so the project is converted first
+    assert.equal(run(['status'], dir).ok, true);
     chmodSync(join(dir, 'phases'), mode);
     try {
       const spellings = mode === 0o644 ? ['3', '03'] : ['3'];
@@ -373,7 +411,7 @@ test('risk-carry: a phases/ that cannot be searched refuses, never reads as abse
         assert.ok(r.detail.includes(`phases/${phase}`), `${at}: ${r.detail}`);
         assert.doesNotMatch(r.detail, /exists/, at);
         assert.doesNotMatch(JSON.stringify(r), /EACCES/, at);
-        assert.equal(existsSync(join(dir, 'risk-carry')), false, at);
+        assert.equal(existsSync(join(dir, 'records', 'risk-carry')), false, at);
       }
     } finally {
       chmodSync(join(dir, 'phases'), 0o755);
@@ -391,7 +429,7 @@ test('risk-carry: a carried entry that cannot be stat\'ed refuses the whole carr
     [review('plan-1')]: '{"findings":[]}\n',
     [record('plan-1')]: recordBody('plan-1', 1, [entry()]),
   });
-  chmodSync(join(dir, 'phases', '3'), 0o444);
+  chmodSync(join(dir, 'phases', '3', 'records'), 0o444);
   try {
     const r = riskCarry(dir, ['--phase', '3']);
     assert.equal(r.ok, false, JSON.stringify(r));
@@ -399,12 +437,12 @@ test('risk-carry: a carried entry that cannot be stat\'ed refuses the whole carr
     assert.match(r.hint, /searchable/);
     assert.equal(r._exit, 1);
     assert.match(r.detail,
-      /phases\/3\/(ADJUDICATION|REVIEW)-risk_surface-plan-1\.(json|md)/);
+      /phases\/3\/records\/(ADJUDICATION|REVIEW)-risk_surface-plan-1\.(json|md)/);
     assert.doesNotMatch(JSON.stringify(r), /EACCES/);
-    assert.equal(existsSync(join(dir, 'risk-carry')), false,
+    assert.equal(existsSync(join(dir, 'records', 'risk-carry')), false,
       'a refused carry minted its destination anyway');
   } finally {
-    chmodSync(join(dir, 'phases', '3'), 0o755);
+    chmodSync(join(dir, 'phases', '3', 'records'), 0o755);
   }
 });
 
@@ -419,6 +457,7 @@ test('risk-carry: a symlinked phases/ is refused too', () => {
   writeFileSync(join(outside, '3', review('plan-1')), '{"findings":[]}\n');
   mkdirSync(dir, { recursive: true });
   symlinkSync(outside, join(dir, 'phases'));
+  ensureRoadmap(dir); // lists what the link shows, so the project is readable and the carry's own refusal is reached
 
   const r = riskCarry(dir, ['--phase', '3']);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -447,13 +486,13 @@ test('risk-carry: a risk-carry/ that cannot be searched refuses by name', {
   // Criterion 1. 0o644 isolates the missing search bit: `risk-carry/` itself
   // stats, `risk-carry/<N>` under it cannot, and that used to throw raw.
   const dir = carryTree(3, { [review('plan-1')]: '{"findings":[]}\n' });
-  mkdirSync(join(dir, 'risk-carry'));
-  chmodSync(join(dir, 'risk-carry'), 0o644);
+  mkdirSync(join(dir, 'records', 'risk-carry'), { recursive: true });
+  chmodSync(join(dir, 'records', 'risk-carry'), 0o644);
   try {
     const r = riskCarry(dir, ['--phase', '3']);
-    assertNamedRefusal(r, 'carry-dest-unsearchable', 'risk-carry/3');
+    assertNamedRefusal(r, 'carry-dest-unsearchable', 'records/risk-carry/3');
   } finally {
-    chmodSync(join(dir, 'risk-carry'), 0o755);
+    chmodSync(join(dir, 'records', 'risk-carry'), 0o755);
   }
   assert.deepEqual(carried(dir, 3), []);
 });
@@ -467,15 +506,15 @@ test('risk-carry: an unreadable source ruling refuses before any directory is ma
     [review('plan-1')]: '{"findings":[]}\n',
     [record('plan-1')]: recordBody('plan-1', 1, [entry()]),
   });
-  const ruling = join(dir, 'phases', '3', record('plan-1'));
+  const ruling = join(dir, 'phases', '3', 'records', record('plan-1'));
   chmodSync(ruling, 0o000);
   try {
     const r = riskCarry(dir, ['--phase', '3']);
-    assertNamedRefusal(r, 'unreadable-ruling', `phases/3/${record('plan-1')}`);
+    assertNamedRefusal(r, 'unreadable-ruling', `phases/3/records/${record('plan-1')}`);
   } finally {
     chmodSync(ruling, 0o644);
   }
-  assert.equal(existsSync(join(dir, 'risk-carry')), false,
+  assert.equal(existsSync(join(dir, 'records', 'risk-carry')), false,
     'a refused carry minted its destination anyway');
 });
 
@@ -486,13 +525,13 @@ test('risk-carry: an unreadable carried copy says so, never carry-exists', {
   // and "differs" would both be claims about a comparison that never ran.
   const body = '{"findings":[]}\n';
   const dir = carryTree(3, { [review('plan-1')]: body });
-  mkdirSync(join(dir, 'risk-carry', '3'), { recursive: true });
-  const copy = join(dir, 'risk-carry', '3', review('plan-1'));
+  mkdirSync(join(dir, 'records', 'risk-carry', '3'), { recursive: true });
+  const copy = join(dir, 'records', 'risk-carry', '3', review('plan-1'));
   writeFileSync(copy, body);
   chmodSync(copy, 0o000);
   try {
     const r = riskCarry(dir, ['--phase', '3']);
-    assertNamedRefusal(r, 'unreadable-carried-copy', `risk-carry/3/${review('plan-1')}`);
+    assertNamedRefusal(r, 'unreadable-carried-copy', `records/risk-carry/3/${review('plan-1')}`);
     assert.match(r.detail, /could not be read/);
     assert.doesNotMatch(r.detail, /differs/);
   } finally {
@@ -506,13 +545,13 @@ test('risk-carry: a risk-carry/ that cannot be written refuses by name', {
   // 0o555 stats and searches fine, so the rails pass and the mkdir is the
   // first thing to hit the missing write bit - the last raw throw left.
   const dir = carryTree(3, { [review('plan-1')]: '{"findings":[]}\n' });
-  mkdirSync(join(dir, 'risk-carry'));
-  chmodSync(join(dir, 'risk-carry'), 0o555);
+  mkdirSync(join(dir, 'records', 'risk-carry'), { recursive: true });
+  chmodSync(join(dir, 'records', 'risk-carry'), 0o555);
   try {
     const r = riskCarry(dir, ['--phase', '3']);
-    assertNamedRefusal(r, 'carry-write-failed', 'risk-carry/3');
+    assertNamedRefusal(r, 'carry-write-failed', 'records/risk-carry/3');
   } finally {
-    chmodSync(join(dir, 'risk-carry'), 0o755);
+    chmodSync(join(dir, 'records', 'risk-carry'), 0o755);
   }
   assert.deepEqual(carried(dir, 3), []);
 });
@@ -556,9 +595,10 @@ test('risk-carry + milestone-prune --mode delete: the same verdict, off the carr
   // `/cad-land` straight after it. Before this carry the gate had nothing left
   // to read at the moment it had to decide.
   const dir = makeTree({ roadmap: [{ n: 3, name: 'Ruled', checked: true }] });
+  verifyChecked(dir);
   const root = join(dir, '..');
   writeFileSync(join(dir, 'config.json'), JSON.stringify({ git: { auto_close: true } }));
-  const pdir = join(dir, 'phases', '3');
+  const pdir = join(dir, 'phases', '3', 'records');
   mkdirSync(pdir, { recursive: true });
   writeFileSync(join(pdir, review('plan-1')), '{"findings":[]}\n');
   // Round one holds a survivor NOTHING ELSE names; round two holds the one that
@@ -590,7 +630,7 @@ test('risk-carry + milestone-prune --mode delete: the same verdict, off the carr
   // rebuilt from them alone.
   assert.deepEqual(carried(dir, 3),
     [record('plan-1'), record('plan-1', 2), review('plan-1')].sort());
-  const after = unionFrom(join(dir, 'risk-carry', '3'));
+  const after = unionFrom(join(dir, 'records', 'risk-carry', '3'));
   assert.deepEqual(after, before, 'the payload rebuilt after the prune is not the one before it');
   const second = gate(root, after);
   assert.equal(second.action, first.action);
@@ -601,8 +641,8 @@ test('risk-carry + milestone-prune --mode delete: the same verdict, off the carr
   // THE FALSIFIER, run rather than described: take the carry away and the close
   // has nothing to rebuild from, so the verdict flips to the one that merges a
   // live blocker. This is the state every close was in before LND-02.
-  rmSync(join(dir, 'risk-carry'), { recursive: true });
-  assert.throws(() => unionFrom(join(dir, 'risk-carry', '3')),
+  rmSync(join(dir, 'records', 'risk-carry'), { recursive: true });
+  assert.throws(() => unionFrom(join(dir, 'records', 'risk-carry', '3')),
     'the records outlived a carry that was deleted');
   assert.equal(gate(root, { findings: [], unruled: [] }).action, 'proceed',
     'with the rulings gone the gate proceeds - which is exactly what the carry exists to prevent');

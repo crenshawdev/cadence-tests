@@ -22,12 +22,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { closeForStop } from '../cadence-core/bin/lib/subagent-trace.mjs';
 import { appendEvent, renderTrace } from '../cadence-core/bin/lib/trace.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { stampState, treeOf, v40Project } from './planning.test.mjs';
 
 /** One `unpaired[]` row, the shape `renderTrace(...)` returns. */
 const open = (role, plan, ts, extra) => ({ corr: '2-abc1234', phase: '2', plan, ts, role, ...extra });
@@ -818,8 +820,9 @@ function fixtureProject() {
   const project = mkdtempSync(join(tmpdir(), 'subagent-trace-'));
   const planning = join(project, '.planning');
   mkdirSync(planning, { recursive: true });
+  stampState(planning);
   appendEvent(planning, { phase: 1, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor' });
-  return { project, trace: join(planning, 'trace.jsonl') };
+  return { project, trace: join(recordsDir(planning), 'trace.jsonl') };
 }
 
 /** @param {string} trace @returns {any[]} */
@@ -862,6 +865,17 @@ test('hook process: a non-Cadence stop and malformed stdin exit 0 silently and a
   }
 });
 
+test('hook process: run against an unstamped v4.0 project it leaves .planning byte-identical and exits 0', () => {
+  const dir = v40Project();
+  // an open dispatch where the hook reads, so the old hook had a bracket to close and wrote into the unstamped project
+  mkdirSync(recordsDir(dir));
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${JSON.stringify({ phase: '1', family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor', corr: '1-abc1234', ts: T(1) })}\n`);
+  const before = treeOf(dir);
+  const r = runHook(JSON.stringify({ cwd: dirname(dir), agent_type: 'cadence:cad-executor-xhigh' }));
+  assert.deepEqual([r.status, r.stdout, r.stderr], [0, '', '']);
+  assert.deepEqual(treeOf(dir), before);
+});
+
 // --- a workflow agent's stop closes no one else's bracket --------------------
 
 // The host keeps a workflow agent's transcript under `subagents/workflows/`. Its dispatch is written after the run, from
@@ -876,6 +890,7 @@ const ORDINARY_STOP = { ...WORKFLOW_STOP, agent_transcript_path: '/home/u/.claud
 /** A real trace holding one open `cad-reviewer` dispatch, a panel's own, and the render the hook would read. */
 function openReviewer() {
   const root = mkdtempSync(join(tmpdir(), 'cad-wfstop-'));
+  stampState(root);
   appendEvent(root, { phase: '1', family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   appendEvent(root, { phase: '1', family: 'lifecycle', event: 'dispatch', plan: 'cad-reviewer', role: 'cad-reviewer' });
   return { root, render: renderTrace(root) };

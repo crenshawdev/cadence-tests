@@ -23,6 +23,10 @@ import {
 import {
   decisionsFor, declaringTasks, parseCommitRows, parseDeviations, taskDeclaredFiles,
 } from '../cadence-core/bin/lib/why-record.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { mkdirSync as plantMkdir, writeFileSync as plantWrite } from 'node:fs';
+import { dirname as plantDirname } from 'node:path';
+const plantFile = (file, data) => { plantMkdir(plantDirname(file), { recursive: true }); plantWrite(file, data); };
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 /**
@@ -257,10 +261,13 @@ test('readAdjudications finds records by the one filename rule and skips everyth
     head_id: 'b'.repeat(40),
     entries: [{ ruling: 'survived', claim: 'kept', failure_scenario: 'why', severity: 'high', file: 'x.mjs', line: 1 }],
   };
-  writeFileSync(join(dir.path, 'ADJUDICATION-risk_surface-plan-1.json'), JSON.stringify(record));
-  writeFileSync(join(dir.path, 'ADJUDICATION-risk_surface-plan-1-r2.json'), JSON.stringify(record));
-  writeFileSync(join(dir.path, 'REVIEW-risk_surface-plan-1.md'), 'not a record');
-  writeFileSync(join(dir.path, 'notes.json'), '{"also":"not a record"}');
+  mkdirSync(join(dir.path, 'records'));
+  writeFileSync(join(dir.path, 'records', 'ADJUDICATION-risk_surface-plan-1.json'), JSON.stringify(record));
+  writeFileSync(join(dir.path, 'records', 'ADJUDICATION-risk_surface-plan-1-r2.json'), JSON.stringify(record));
+  writeFileSync(join(dir.path, 'records', 'REVIEW-risk_surface-plan-1.md'), 'not a record');
+  writeFileSync(join(dir.path, 'records', 'notes.json'), '{"also":"not a record"}');
+  // a record at the phase top is the old layout, which a disk phase is not read in
+  writeFileSync(join(dir.path, 'ADJUDICATION-risk_surface-plan-9.json'), JSON.stringify(record));
 
   const { records, warnings } = readAdjudications(dir);
   assert.deepEqual(warnings, []);
@@ -273,14 +280,15 @@ test('readAdjudications finds records by the one filename rule and skips everyth
 test('an unparseable record warns by name and code, and the other records still read', () => {
   const root = planningRoot({ 'phases/1': commitsTable([['1', '1', 'aaaaaaa', 'a phase']]) });
   const dir = { label: 'phases/1', path: join(root, 'phases', '1') };
-  writeFileSync(join(dir.path, 'ADJUDICATION-plan-good.json'), JSON.stringify({
+  mkdirSync(join(dir.path, 'records'));
+  writeFileSync(join(dir.path, 'records', 'ADJUDICATION-plan-good.json'), JSON.stringify({
     base_id: 'a'.repeat(40), head_id: 'b'.repeat(40), entries: [],
   }));
-  writeFileSync(join(dir.path, 'ADJUDICATION-plan-bad.json'), '{ truncated');
+  writeFileSync(join(dir.path, 'records', 'ADJUDICATION-plan-bad.json'), '{ truncated');
 
   const { records, warnings } = readAdjudications(dir);
   assert.equal(records.length, 2);
-  assert.deepEqual(warnings, ['phases/1/ADJUDICATION-plan-bad.json: unparseable-json']);
+  assert.deepEqual(warnings, ['phases/1/records/ADJUDICATION-plan-bad.json: unparseable-json']);
 });
 
 test('a phase directory with no record at all is silent', () => {
@@ -378,7 +386,8 @@ test('a close older than ARCHIVE.md itself reports an ABSENT label rather than g
  * @param {string[]} labels
  * @returns {string}
  */
-function repoWithCloses(labels, summaryFor = (label, phase) => `# ${label} phase ${phase}\n`, extraFiles = () => ({})) {
+function repoWithCloses(labels, summaryFor = (label, phase) => `# ${label} phase ${phase}\n`, extraFiles = () => ({}),
+  archiveFileOf = (planning) => join(recordsDir(planning), 'ARCHIVE.md')) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-why-prune-'));
   gitIn(dir, ['init', '-q', '-b', 'main']);
   let archive = '# Archive\n';
@@ -388,6 +397,7 @@ function repoWithCloses(labels, summaryFor = (label, phase) => `# ${label} phase
     mkdirSync(pdir, { recursive: true });
     writeFileSync(join(pdir, 'SUMMARY.md'), summaryFor(label, phase));
     for (const [name, body] of Object.entries(extraFiles(label, phase))) {
+      mkdirSync(dirname(join(pdir, name)), { recursive: true });
       writeFileSync(join(pdir, name), body);
     }
     gitIn(dir, ['add', '-A']);
@@ -399,7 +409,7 @@ function repoWithCloses(labels, summaryFor = (label, phase) => `# ${label} phase
     // `git rm -r` on the last tracked file under `.planning/` takes the empty
     // directory with it, so the close re-creates it before writing ARCHIVE.md.
     mkdirSync(join(dir, '.planning'), { recursive: true });
-    writeFileSync(join(dir, '.planning', 'ARCHIVE.md'), archive);
+    plantFile(archiveFileOf(join(dir, '.planning')), archive);
     gitIn(dir, ['add', '-A']);
     execFileSync('git', ['-C', dir, 'commit', '-q', '-m', `chore: prune ${label} completed phases`],
       { env: { ...GIT_ENV, GIT_AUTHOR_DATE: `2026-01-0${i + 1}T12:00:00-05:00`, GIT_COMMITTER_DATE: `2026-01-0${i + 1}T12:00:00-05:00` }, stdio: 'ignore' });
@@ -415,6 +425,11 @@ test('two closes in one repository each come back under their own label, in a st
   assert.deepEqual(first.prunes.map((p) => p.label), ['v9.1.0', 'v9.0.0'], 'newest close first');
   assert.deepEqual(first.prunes.map((p) => p.phases.map((x) => x.phase)), [['2'], ['1']]);
   assert.deepEqual(second, first, 'two runs over an unchanged repository answer identically');
+});
+
+test('a close committed before the ledger moved still binds its label from the old path', () => {
+  const dir = repoWithCloses(['v9.0.0'], undefined, undefined, (planning) => join(planning, 'ARCHIVE.md'));
+  assert.deepEqual(findPruneCommits(dir).prunes.map((p) => p.label), ['v9.0.0']);
 });
 
 test('a merge-shaped prune record is REPORTED, never answered out of an arbitrary parent', () => {
@@ -596,6 +611,30 @@ test('a recovered adjudication record is found by listing the tree, not by guess
     '| 1 | 1 | aaaaaaa | the only task |', '',
   ].join('\n');
   const extras = () => ({
+    'records/ADJUDICATION-risk_surface-plan-e7c1f09.json': JSON.stringify({
+      base_id: 'a'.repeat(40),
+      head_id: 'b'.repeat(40),
+      entries: [{ ruling: 'survived', claim: 'kept out of a tree', failure_scenario: 'why', severity: 'high' }],
+    }),
+    'records/REVIEW-risk_surface-plan-e7c1f09.md': 'not a record',
+  });
+  const dir = repoWithCloses(['v9.3.0'], summary, extras);
+  const recovered = buildRecoveredIndex(dir).dirs[0];
+  const { records, warnings } = readAdjudications(recovered, dir);
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(records.map((r) => r.name), ['ADJUDICATION-risk_surface-plan-e7c1f09.json']);
+  assert.equal(records[0].survivors[0].claim, 'kept out of a tree');
+});
+
+test('a recovered tree that predates the records folder is read at its top, since a made commit cannot be converted', () => {
+  // The discriminator in `ADJUDICATION-<trigger>-<discriminator>.json` is not
+  // predictable, so the read has to ask the tree what is there.
+  const summary = (label, phase) => [
+    `# ${label} phase ${phase}`, '', '## Commits', '',
+    '| Plan | Task | Commit | Description |', '|---|---|---|---|',
+    '| 1 | 1 | aaaaaaa | the only task |', '',
+  ].join('\n');
+  const extras = () => ({
     'ADJUDICATION-risk_surface-plan-e7c1f09.json': JSON.stringify({
       base_id: 'a'.repeat(40),
       head_id: 'b'.repeat(40),
@@ -603,7 +642,7 @@ test('a recovered adjudication record is found by listing the tree, not by guess
     }),
     'REVIEW-risk_surface-plan-e7c1f09.md': 'not a record',
   });
-  const dir = repoWithCloses(['v9.3.0'], summary, extras);
+  const dir = repoWithCloses(['v9.4.0'], summary, extras);
   const recovered = buildRecoveredIndex(dir).dirs[0];
   const { records, warnings } = readAdjudications(recovered, dir);
   assert.deepEqual(warnings, []);

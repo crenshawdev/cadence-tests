@@ -49,7 +49,7 @@ const scriptsIn = (surface) =>
  */
 const READBACKS = [
   {
-    surface: 'cadence-core/references/triage-gate.md',
+    surface: 'cadence-core/references/triage-gate-blocking.md',
     cases: [
       {
         name: 'a render truncated mid-object', reason: 'scratch-unreadable',

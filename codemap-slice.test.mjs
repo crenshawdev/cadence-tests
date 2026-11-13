@@ -37,7 +37,7 @@ function run(root, ...args) {
 }
 const slice = (root, ...args) => run(root, 'slice', ...args);
 const scan = (root) => run(root, 'scan').json;
-const index = (root) => JSON.parse(readFileSync(join(root, '.planning', 'codemap', 'index.json'), 'utf8'));
+const index = (root) => JSON.parse(readFileSync(join(root, '.planning', 'records', 'codemap', 'index.json'), 'utf8'));
 const size = (out) => Buffer.byteLength(out);
 
 /** Writes `entry` for the module holding `path`, built from the hashes the index holds now. */
@@ -45,7 +45,7 @@ function build(root, path, entry = {}) {
   const i = index(root);
   const m = i.modules.find((x) => x.paths.includes(path));
   const built_from = Object.fromEntries(m.paths.map((p) => [p, i.rows.find((r) => r.path === p).hash]));
-  const file = join(root, '.planning', 'codemap', entryFile(m.name));
+  const file = join(root, '.planning', 'records', 'codemap', entryFile(m.name));
   writeFileSync(file, JSON.stringify({ built_from, ...entry }));
   return m.name;
 }
@@ -253,7 +253,7 @@ test('--terms searches an entry\'s string values and not its field names or its 
 test('an index whose rows or symbols are not objects with a path answers no-index', () => {
   const { root } = repo({ 'a.mjs': 'export function a() {}\n' });
   scan(root);
-  const file = join(root, '.planning', 'codemap', 'index.json');
+  const file = join(root, '.planning', 'records', 'codemap', 'index.json');
   const good = index(root);
   for (const bad of [{ rows: [null], modules: [] }, { rows: [{ path: 1 }], modules: [] }, { rows: [{ path: 'a.mjs', symbols: 'x' }], modules: [] },
     { rows: [{ path: 'a.mjs', symbols: [null] }], modules: [] }, { rows: [[]], modules: [] }]) {
@@ -279,14 +279,14 @@ test('5,000 built modules all left out by one broad term print at or under 10,00
   const t = Date.now();
   const body = sliceOf({
     rows, modules: rows.map((r) => ({ name: r.path.split('/')[0], paths: [r.path] })), states, entries,
-    select: { files: [], symbols: [], terms: ['pkg'] }, entryPath: (m) => `.planning/codemap/${m}.json`, current: new Set(rows.map((r) => r.path)),
+    select: { files: [], symbols: [], terms: ['pkg'] }, entryPath: (m) => `.planning/records/codemap/${m}.json`, current: new Set(rows.map((r) => r.path)),
   });
   assert.ok(Date.now() - t < 3000, `took ${Date.now() - t} ms`);
   assert.ok(Buffer.byteLength(JSON.stringify({ ok: true, ...body })) + 1 <= 10000);
   assert.equal(body.total, 5000);
   assert.equal(body.entries, undefined);
   assert.equal(body.entries_omitted.length, 20);
-  assert.deepEqual(body.entries_omitted[19], { module: 'pkg0019', file: '.planning/codemap/pkg0019.json' });
+  assert.deepEqual(body.entries_omitted[19], { module: 'pkg0019', file: '.planning/records/codemap/pkg0019.json' });
   assert.equal(body.entries_omitted_more, 4980);
 });
 
@@ -302,7 +302,7 @@ function manyRows(n, { withEntries = false } = {}) {
   }
   return {
     rows, modules: rows.map((r) => ({ name: r.path.split('/')[0], paths: [r.path] })), states, entries,
-    select: { files: [], symbols: [], terms: ['pkg'] }, entryPath: (m) => `.planning/codemap/${m}.json`, current: new Set(rows.map((r) => r.path)),
+    select: { files: [], symbols: [], terms: ['pkg'] }, entryPath: (m) => `.planning/records/codemap/${m}.json`, current: new Set(rows.map((r) => r.path)),
   };
 }
 const printed = (body) => Buffer.byteLength(JSON.stringify({ ok: true, ...body })) + 1;

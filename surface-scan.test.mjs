@@ -348,3 +348,24 @@ test('a tool table`s ignored-dependencies is a setting, not a dependency', () =>
   assert.deepEqual(r.evidenced, [], JSON.stringify(r.evidenced));
   assert.equal(r.inconclusive, true);
 });
+
+// --- key files evidence the secrets surface (decision 6) ---------------------
+
+for (const [tree, signal] of [
+  [{ files: ['id_rsa'] }, 'file id_rsa'],
+  [{ files: ['id_ed25519'] }, 'file id_ed25519'],
+  [{ extensions: ['.pem'] }, '.pem files'],
+  [{ extensions: ['.key'] }, '.key files'],
+  [{ extensions: ['.p12'] }, '.p12 files'],
+  [{ extensions: ['.pfx'] }, '.pfx files'],
+]) {
+  test(`a key file evidences secrets: ${signal}`, () => {
+    const r = scanTree(tree);
+    assert.deepEqual(r.evidenced, [{ category: 'secrets', signal }]);
+  });
+}
+
+test('a tree that already reports file .env keeps that evidence string beside the key files', () => {
+  const r = scanTree({ files: ['id_rsa', '.env'], extensions: ['.pem'] });
+  assert.deepEqual(r.evidenced, [{ category: 'secrets', signal: 'file .env' }]);
+});

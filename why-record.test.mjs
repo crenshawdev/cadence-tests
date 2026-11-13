@@ -750,3 +750,15 @@ test('a plan whose task headings do not parse declares nothing rather than somet
   assert.deepEqual(taskDeclaredFiles('# a plan with no tasks'), []);
   assert.deepEqual(declaringTasks('', 'src/a.js'), []);
 });
+
+test('planTaskBodies: a fenced `### Task 9:` example stays inside the task that holds it', () => {
+  const plan = [
+    '## Tasks', '', '### Task 1: Real one', '', 'Write it like this:', '', '```md', '### Task 9: example', '```', '',
+    '### Task 2: Real two', '', '- **Verify:** ok', '',
+  ].join('\n');
+  const bodies = planTaskBodies(plan);
+  assert.equal(bodies.length, 2);
+  assert.deepEqual(bodies.map((b) => b.title), ['Real one', 'Real two']);
+  assert.ok(bodies[0].body.includes('### Task 9: example'), 'the fenced example is inside the first body');
+  assert.ok(!bodies[1].body.includes('Task 9'));
+});

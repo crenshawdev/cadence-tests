@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { PLANNING, isEntryFile } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap, isEntryFile } from './planning.test.mjs';
 
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 
@@ -27,12 +27,13 @@ function tree({ phase = 2, plans = ['PLAN.md'], reports = {}, headings = {} } = 
   const dir = join(mkdtempSync(join(tmpdir(), 'cad-replay-')), '.planning');
   const pdir = join(dir, 'phases', String(phase));
   mkdirSync(pdir, { recursive: true });
+  ensureRoadmap(dir);
   for (const p of plans) {
     writeFileSync(join(pdir, p), `---\nphase: ${phase}\nfiles: []\n---\n${headings[p] ?? '# plan'}\n`);
   }
-  if (Object.keys(reports).length) mkdirSync(join(pdir, 'reports'), { recursive: true });
+  if (Object.keys(reports).length) mkdirSync(join(pdir, 'records', 'reports'), { recursive: true });
   for (const [k, body] of Object.entries(reports)) {
-    writeFileSync(join(pdir, 'reports', `plan-${k}.md`), body);
+    writeFileSync(join(pdir, 'records', 'reports', `plan-${k}.md`), body);
   }
   return dir;
 }
@@ -57,7 +58,7 @@ test('AC1: every plan reporting PLAN COMPLETE is a replay, and nothing is dispat
   assert.deepEqual(r.dispatch_set, []);
   // The caller composes its stop text from what was READ, so the paths it must
   // name come back rather than being re-derived at the message.
-  assert.deepEqual(r.reports_read, ['phases/2/reports/plan-1.md']);
+  assert.deepEqual(r.reports_read, ['phases/2/records/reports/plan-1.md']);
 });
 
 test('AC1: a multi-plan phase is a replay only when EVERY plan reports complete', () => {
@@ -70,7 +71,7 @@ test('AC1: a multi-plan phase is a replay only when EVERY plan reports complete'
   assert.equal(r.replay, true);
   assert.deepEqual(r.dispatch_set, []);
   assert.deepEqual(r.reports_read,
-    ['phases/2/reports/plan-1.md', 'phases/2/reports/plan-2.md']);
+    ['phases/2/records/reports/plan-1.md', 'phases/2/records/reports/plan-2.md']);
 });
 
 // --- AC2: a genuine continuation still dispatches ---------------------------
@@ -171,7 +172,7 @@ test('a bare PLAN.md is keyed k=1 and PLAN-<k>.md by its own number', () => {
   const r = check(dir, ['--phase', '2']);
 
   assert.equal(r.reports[0].k, 3);
-  assert.equal(r.reports[0].report, 'phases/2/reports/plan-3.md');
+  assert.equal(r.reports[0].report, 'phases/2/records/reports/plan-3.md');
   assert.equal(r.replay, true);
 });
 
@@ -293,7 +294,7 @@ test('a no-policy plan with legacy sections and no evidence section completes, r
   assert.equal(done.replay.replay, true);
   assert.deepEqual(done.replay.dispatch_set, []);
   assert.deepEqual(done.status.outstanding, []);
-  assert.equal(readFileSync(join(done.dir, 'phases', '3', 'reports', 'plan-1.md'), 'utf8'), body);
+  assert.equal(readFileSync(join(done.dir, 'phases', '3', 'records', 'reports', 'plan-1.md'), 'utf8'), body);
 
   // Without this, an empty `outstanding` would pass on a phase `status` never saw.
   const partial = settle(body.replace('PLAN COMPLETE', 'PLAN PARTIAL'));

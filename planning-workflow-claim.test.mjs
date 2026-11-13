@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { stampState } from './planning.test.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PLANNING = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
@@ -64,7 +65,9 @@ for (const [name, repo, global] of OFF_SHAPES) {
     assert.equal((await rel(t, 'diff-plan-1', a.id)).released, true);
     assert.equal((await rel(t, 'diff-plan-1', a.id)).released, false, 'a retried release is fine');
     assert.equal((await cli(t, 'take', 'diff-plan-2')).launch, true);
-    assert.equal(t.git('status', '--porcelain'), '');
+    // the first seam call stamped the project: its state file and the records folder's ignore file are the only new files
+    assert.equal(t.git('status', '--porcelain', '--untracked-files=all'),
+      '?? .planning/records/.gitignore\n?? .planning/records/state.json');
     assert.deepEqual(claimFiles(t), ['cadence-workflow-claim'], 'no temp file is left beside the claim');
   });
 }
@@ -85,6 +88,7 @@ test('off: a release with the old claim\'s id leaves a new claim on the same lab
 
 test('off: a claim with no id is freed only by --stale, never by an id', async () => {
   const t = tree(null, null);
+  stampState(t.dir); // a project not yet converted refuses while any claim is held
   writeFileSync(join(t.root, '.git', 'cadence-workflow-claim'), JSON.stringify({ label: 'old-1', at: Date.now() - 5000 }));
   const lose = await cli(t, 'take', 'new-1');
   assert.equal(lose.launch, false); assert.equal(lose.holder, 'old-1'); assert.equal(lose.holder_id, null);
@@ -119,7 +123,9 @@ test('on in both layers: two claims both launch and no file exists', async () =>
   assert.equal((await cli(t, 'take', 'diff-plan-1')).launch, true);
   assert.equal((await cli(t, 'take', 'diff-plan-2')).launch, true);
   assert.deepEqual(claimFiles(t), []);
-  assert.equal(t.git('status', '--porcelain'), '');
+  // the state file and the records folder's ignore file are all the stamped project gained
+  assert.equal(t.git('status', '--porcelain', '--untracked-files=all'),
+    '?? .planning/records/.gitignore\n?? .planning/records/state.json');
 });
 
 test('off: eight processes claiming at once yield exactly one launch', async () => {
@@ -134,6 +140,8 @@ test('off: an executor worktree sees the same claim', async () => {
   const wt = join(t.root, '..', `${t.root.split('/').pop()}-wt`);
   t.git('worktree', 'add', '-q', wt, '-b', 'side');
   mkdirSync(join(wt, '.planning'), { recursive: true });
+  stampState(t.dir);
+  stampState(join(wt, '.planning')); // a project not yet converted refuses while any claim is held
   assert.equal((await cli(t, 'take', 'diff-plan-1')).launch, true);
   const r = await cli(t, 'take', 'diff-plan-2', join(wt, '.planning'));
   assert.equal(r.launch, false); assert.equal(r.holder, 'diff-plan-1');

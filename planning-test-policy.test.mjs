@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PLANNING } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap } from './planning.test.mjs';
 import { stub } from './issue-check.test.mjs';
 
 const POLICY = join('.github', 'cadence', 'coverage-policy.json');
@@ -229,6 +229,7 @@ function ciProject(body) {
   const root = project({ scope: 'focused', required_jobs: ['node-test', 'self-verify'] },
     { forge_provider: 'github', forge_repo: 'o/r' });
   mkdirSync(join(root, '.planning', 'phases', '1'), { recursive: true });
+  ensureRoadmap(join(root, '.planning'));
   writeFileSync(join(root, '.planning', 'phases', '1', 'UAT.md'),
     '---\nstatus: testing\nphase: 1\nupdated: 2026-11-03\n---\n\n## Items\n\n'
     + '### 1. Gate\nexpected: green\nstatus: pending_ci\njob: node-test\ncommit: ace48e6\n\n## Summary\n\ntotal: 1\n');
@@ -296,4 +297,44 @@ test('a torn config or an invalid scope fails instead of reading as no policy', 
     cwd: bogus, encoding: 'utf8', env: { ...process.env, CADENCE_GLOBAL_CONFIG: join(bogus, 'no-global.json') },
   }));
   assert.match(read.warnings.join(' '), /testing\.scope.*"bogus"/);
+});
+
+// --- check: a tracked set past git's 1 MiB default read buffer ---------------
+
+/** Stage `count` long paths under `dir/` in `root`'s index with no working files: one blob, many index entries. */
+function bigIndex(root, dir, count) {
+  const blob = execFileSync('git', ['-C', root, 'hash-object', '-w', '--stdin'], { input: 'x', encoding: 'utf8' }).trim();
+  const pad = 'p'.repeat(180);
+  const lines = [];
+  for (let i = 0; i < count; i++) lines.push(`100644 ${blob}\t${dir}/${pad}${i}.js\n`);
+  execFileSync('git', ['-C', root, 'update-index', '--add', '--index-info'], { input: lines.join('') });
+}
+
+test('check does not report a glob matching nothing when the tracked list is over 1 MiB', () => {
+  const root = agreeing();
+  bigIndex(root, 'big', 6000);
+  const listed = execFileSync('git', ['-C', root, 'ls-files'], { maxBuffer: 64 << 20 }).length;
+  assert.ok(listed > 1024 * 1024, `fixture must pass 1 MiB, got ${listed}`);
+  const config = join(root, '.planning', 'config.json');
+  const edited = JSON.parse(readFileSync(config, 'utf8'));
+  edited.testing.coverage.include = ['big/**'];
+  writeFileSync(config, JSON.stringify(edited));
+  assert.equal(policy(['render'], root).ok, true);
+  execFileSync('git', ['-C', root, 'add', POLICY]);
+  const r = policy(['check'], root);
+  assert.deepEqual(r.problems, [], JSON.stringify(r));
+  assert.equal(r.ok, true);
+});
+
+test('check still reports an include glob that no tracked file matches', () => {
+  const root = agreeing();
+  const config = join(root, '.planning', 'config.json');
+  const edited = JSON.parse(readFileSync(config, 'utf8'));
+  edited.testing.coverage.include = ['src/**', 'nowhere/**'];
+  writeFileSync(config, JSON.stringify(edited));
+  assert.equal(policy(['render'], root).ok, true);
+  execFileSync('git', ['-C', root, 'add', POLICY]);
+  const r = policy(['check'], root);
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.problems, ['coverage.include "nowhere/**" matches no tracked file']);
 });

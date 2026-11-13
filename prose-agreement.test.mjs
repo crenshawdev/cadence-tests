@@ -905,7 +905,7 @@ test('EXP-03: only the plans without a completed report reach a dispatch', () =>
   // 4. And the set does NOT reach `summary`: SUMMARY.md is the phase's record,
   //    so a skipped plan's report is still read there.
   const summary = stepBody(execute, 'summary', 'execute.md');
-  assert.match(summary, /each plan's `<plandir>\/reports\/plan-<k>\.md`/,
+  assert.match(summary, /each plan's `<plandir>\/records\/reports\/plan-<k>\.md`/,
     "execute.md's summary step no longer reads every plan's report, so a plan skipped at "
     + 'dispatch drops out of the phase record its work is part of');
 });
@@ -1150,8 +1150,8 @@ test('LND-02: milestone.md carries the rulings BEFORE the prune, and stops on ok
   assert.match(region, /ok:false[^.]{0,80}stop/i,
     'milestone.md no longer says an `ok:false` from the risk_surface carry STOPS the close. '
     + 'Continuing past one prunes exactly the rulings the carry could not copy');
-  assert.match(region, /\.planning\/risk-carry\//,
-    'the carry paragraph no longer names `.planning/risk-carry/`, which is the root '
+  assert.match(region, /\.planning\/records\/risk-carry\//,
+    'the carry paragraph no longer names `.planning/records/risk-carry/`, which is the root '
     + '/cad-land globs for the records the phase dirs no longer hold');
 
   // And step 7 does NOT delete it, on either arm. Step 3 already pruned the
@@ -1163,7 +1163,7 @@ test('LND-02: milestone.md carries the rulings BEFORE the prune, and stops on ok
   const eight = lines.findIndex((l, i) => i > seven && l.startsWith('## 8.'));
   assert.ok(seven > -1 && eight > seven, 'milestone.md no longer spells step 7');
   const step7 = lines.slice(seven, eight).join(' ').replace(/\s+/g, ' ');
-  assert.match(step7, /Do NOT delete `\.planning\/risk-carry\/` here, on either arm/,
+  assert.match(step7, /Do NOT delete `\.planning\/records\/risk-carry\/` here, on either arm/,
     'step 7 deletes `.planning/risk-carry/` again. Step 3 pruned the phase dirs, so that is '
     + 'the last copy of the rulings the halt rests on, and the next /cad-land merges over it');
   assert.match(step7, /`\/cad-land` step 4/,
@@ -1180,7 +1180,7 @@ test('LND-02: milestone.md carries the rulings BEFORE the prune, and stops on ok
   const land = doc('skills', 'cad-land', 'SKILL.md');
   const step4 = (land.split('4. **Terminal cleanup')[1] || '').split('</process>')[0]
     .replace(/\s+/g, ' ');
-  assert.match(step4, /Delete `\.planning\/risk-carry\/`/,
+  assert.match(step4, /Delete `\.planning\/records\/risk-carry\/`/,
     "cad-land's terminal cleanup no longer deletes `.planning/risk-carry/`, so nothing clears "
     + 'the carry milestone.md step 7 now deliberately leaves behind');
   assert.match(step4, /ONLY actor that clears them/,
@@ -1214,8 +1214,8 @@ test('LND-02: cad-land 3(b) unions the RULINGS from both roots, not the review f
 
   for (const [needle, why] of [
     ['ADJUDICATION-risk_surface*.json', 'the record it reads'],
-    ['.planning/phases/*/', 'the live record root'],
-    ['.planning/risk-carry/*/', 'the carried record root, the only one left after a prune'],
+    ['.planning/phases/*/records/', 'the live record root'],
+    ['.planning/records/risk-carry/*/', 'the carried record root, the only one left after a prune'],
     ['entries[]', 'the array the union is taken from'],
     ['unruled', 'the payload key that halts on a fire nothing ruled'],
     ['overridden', 'the envelope key carrying a halt a person already cleared'],
@@ -1391,6 +1391,19 @@ test('progress.md: an executed phase with outstanding dispatches routes to /cad-
     'the reconcile step gained an outstanding status mapping; the derived status stays `executed`');
 });
 
+test('progress.md: roadmap-box drift folds a lagging state below complete and sends complete to /cad-verify (#393)', () => {
+  const wf = doc('cadence-core', 'workflows', 'progress.md');
+  const start = wf.indexOf('- Drift kind `roadmap-box`');
+  assert.ok(start > -1, 'progress.md has no roadmap-box arm of its own');
+  const arm = wf.slice(start, wf.indexOf('\n- ', start + 1)).replace(/\s+/g, ' ');
+  const lagging = arm.slice(arm.indexOf('lags'), arm.indexOf('`complete` on either side'));
+  assert.ok(arm.includes('lags') && lagging.length > 0, 'the arm does not split by direction');
+  assert.match(lagging, /neither is `complete`/);
+  assert.match(lagging, /replay-check --phase <N>/,
+    'a state lagging below complete is routed past the fold that repairs it');
+  assert.match(arm.slice(arm.indexOf('`complete` on either side')), /\/cad-verify N/);
+});
+
 test('execute.md state: a deferring run points the cursor at its queue and commits it', () => {
   // Both halves of what makes a deferred finding survive the session that
   // deferred it: a resume pointer that says the queue is there, and the member
@@ -1414,7 +1427,7 @@ test('execute.md state: a deferring run points the cursor at its queue and commi
   assert.match(state, /Keep `--status executed` exactly as it\s+is/,
     'the state step no longer pins --status executed on the deferring branch');
 
-  assert.match(state, /\.planning\/phases\/<N>\/DEFERRED-\*\.json/,
+  assert.match(state, /\.planning\/phases\/<N>\/records\/DEFERRED-\*\.json/,
     'the commit list no longer stages the queue member, so it is untracked on a fresh clone');
 });
 
@@ -1579,7 +1592,7 @@ test('ENFORCEMENT, execute.md: the blocking FAIL arm dispatches a continuation c
     'the FAIL arm no longer names the worker key `<k>` the fix is dispatched under, so the '
     + 'fix leaves no second bracket on the run record under the plan it belongs to and '
     + 'nothing can show a worker rather than the coordinator authored it');
-  assert.match(arm, /\.planning\/phases\/<N>\/REVIEW-risk_surface-plan-<k>\.md/,
+  assert.match(arm, /\.planning\/phases\/<N>\/records\/REVIEW-risk_surface-plan-<k>\.md/,
     'the FAIL arm no longer carries the PERSISTED findings path, so the coordinator is back '
     + 'to distilling the findings into the prompt itself - the reading step this dispatch '
     + 'exists to take off it');
@@ -1721,7 +1734,11 @@ test('PAR-01: both parallel risk-check calls name that plan\'s OWN merge range',
 
 test('GAT-04: every fenced outcome receipt names its trigger, plan and both range ends', () => {
   const files = [
+    // triage-gate.md became a router: `gate_pass` and `override` stayed in it,
+    // `deferral` and `rearm` moved with their arms
     ['cadence-core', 'references', 'triage-gate.md'],
+    ['cadence-core', 'references', 'triage-gate-deferred.md'],
+    ['cadence-core', 'references', 'triage-gate-blocking.md'],
     // The `adjudication` receipt cold-split out of `review-triggers.md` step 5
     // in LOD-06 and the row travels with the command, the way BRACKETING's
     // rows in trace.test.mjs do.
@@ -1750,7 +1767,7 @@ test('GAT-04: every fenced outcome receipt names its trigger, plan and both rang
   }
   // All five settle points, so a receipt block DELETED fails here too rather
   // than passing vacuously: adjudication (review-record.md) plus the four
-  // in triage-gate.md - `gate_pass`, `override`, `rearm` and the `deferred`
+  // in the triage-gate files - `gate_pass`, `override`, `rearm` and the `deferred`
   // arm's `deferral`, which settles by QUEUING rather than by ruling and needs
   // the same joinable receipt to keep `risk-check status` from reading its
   // range as unfired forever.
@@ -1791,7 +1808,7 @@ test('GAT-04: every fenced outcome receipt names its trigger, plan and both rang
 const SURVIVED_SURFACES = [
   ['cadence-core', 'bin', 'lib', 'adjudication-record.mjs'],
   ['cadence-core', 'bin', 'lib', 'filing-decision.mjs'],
-  ['cadence-core', 'references', 'triage-gate.md'],
+  ['cadence-core', 'references', 'triage-gate-blocking.md'],
   ['cadence-core', 'references', 'review-record.md'],
 ];
 const SURVIVED_MEANING = 'confirmed and not fixed';
@@ -2042,7 +2059,7 @@ test('TRN-02: the bulk-output rule is stated once, and every converted site perf
   //    censuses find one - a line that also names `planning.mjs` - so a
   //    sentence ABOUT what the render reports is never mistaken for a call.
   for (const surface of [
-    ['cadence-core', 'references', 'triage-gate.md'],
+    ['cadence-core', 'references', 'triage-gate-blocking.md'],
     ['cadence-core', 'workflows', 'progress.md'],
     ['cadence-core', 'workflows', 'report.md'],
   ]) {
@@ -2297,7 +2314,7 @@ test('AC6: report.md renders its Gates line from the record, states the unrecord
   // 1. THE RECORD IS AN ARTIFACT THE STEP OPENS. The `REVIEW-*.md` glob beside
   //    it cannot match a `.json` sibling, so without this entry the Gates line
   //    below asks for a file the step never opened.
-  assert.match(text, /\.planning\/phases\/<N>\/ADJUDICATION-\*\.json/,
+  assert.match(text, /\.planning\/phases\/<N>\/records\/ADJUDICATION-\*\.json/,
     `${where}: read_record's scoped-artifact list no longer opens the adjudication record`);
 
   // 2. THE GATES LINE COUNTS, and compares against the event's own figures.
@@ -2536,7 +2553,7 @@ test('IVW-01: both risk-surface interview sites carry the ask-user rules, and th
 
 // --- Two caps, two different reads, and neither one unified away ------------
 //
-// `references/triage-gate.md` now states the one-round re-arm cap TWICE, on
+// the triage-gate arm files state the one-round re-arm cap TWICE, on
 // purpose (CONTEXT D-02): the blocking arm counts `rearm` outcome events under
 // the current run's `corr`, and the deferred arm reads the highest round on
 // disk for the fire. They look like duplication, and the obvious tidy - one
@@ -2552,7 +2569,9 @@ test('IVW-01: both risk-surface interview sites carry the ask-user rules, and th
 // the one place that fails.
 
 test('triage-gate.md: the corr-keyed re-arm read-back survives the deferred arm beside it', () => {
-  const text = doc('cadence-core', 'references', 'triage-gate.md');
+  // the two caps now sit in two arm files, so each half reads its own
+  const text = doc('cadence-core', 'references', 'triage-gate-blocking.md');
+  const deferred = doc('cadence-core', 'references', 'triage-gate-deferred.md');
 
   // 1. The blocking cap, at the bytes that MAKE it corr-keyed AND plan-keyed:
   //    the filter is quoted whole rather than matched loosely, because every
@@ -2580,17 +2599,15 @@ test('triage-gate.md: the corr-keyed re-arm read-back survives the deferred arm 
     'the blocking read-back no longer chains the render to that directory');
 
   // 2. The deferred cap, read off its own named anchor so a rewrap that
-  //    changed no fact stays green. It runs to the `adjudicated` bullet.
+  //    changed no fact stays green. It runs to the end of its arm file.
   const anchor = '**The DEFERRED queue is triaged later, and its cap rides the QUEUE.**';
-  const start = text.indexOf(anchor);
-  assert.ok(start > -1, 'triage-gate.md states no deferred triage arm - a queue nothing '
+  const start = deferred.indexOf(anchor);
+  assert.ok(start > -1, 'triage-gate-deferred.md states no deferred triage arm - a queue nothing '
     + 'says how to clear is a land that never unblocks');
-  assert.ok(start > text.indexOf(corrFilter),
-    'the deferred arm is stated ABOVE the blocking re-arm it defers to; it says "the '
-    + 'blocking re-arm above already states", which is then false');
-  const end = text.indexOf('- **adjudicated**', start);
-  assert.ok(end > start, 'the deferred triage arm runs past the adjudicated bullet');
-  const block = text.slice(start, end).replace(/\s+/g, ' ');
+  const block = deferred.slice(start).replace(/\s+/g, ' ');
+  assert.match(block, /STOP-and-ask the blocking re-arm in `references\/triage-gate\.md` already states/,
+    'the deferred arm no longer names the router as where the narrowed round and its '
+    + 'STOP-and-ask it defers to are stated');
 
   assert.match(block, /highest round on disk for THAT fire/,
     'the deferred cap no longer says the round count is read off the queue');
@@ -2628,7 +2645,7 @@ test('triage-gate.md: the corr-keyed re-arm read-back survives the deferred arm 
 // a machine-readable fact, and the copied line here is executable.
 
 test('triage-gate.md: the re-arm read-back, RUN, answers per PLAN and not per corr alone', () => {
-  const text = doc('cadence-core', 'references', 'triage-gate.md');
+  const text = doc('cadence-core', 'references', 'triage-gate-blocking.md');
   const corrFilter = 'o.event==="rearm"&&o.trigger===process.argv[2]&&o.corr===r.corr'
     + '&&(o.plan??"")===(process.argv[3]??"")';
   const block = text.split('```').find((b) => b.includes(corrFilter));
@@ -2671,6 +2688,55 @@ test('triage-gate.md: the re-arm read-back, RUN, answers per PLAN and not per co
     + 'this phase\'s own goal clause failing (D-04)');
 });
 
+// --- the triage-gate split: a rule more than one gate needs stays in the router
+//
+// triage-gate.md routes each gate to its own arm file, so a passage in the
+// wrong file is a rule some gate never reads. The sorted-lines comparison the
+// split was checked with cannot see placement; these rows can.
+
+const TRIAGE_ARMS = ['deferred', 'blocking', 'adjudicated', 'unfixed'].map((a) => `triage-gate-${a}.md`);
+const triage = (name) => flat(doc('cadence-core', 'references', name));
+
+test('triage-gate.md: cad-verify\'s fire is sent to the adjudicated rule from the router, not from the unfixed file', () => {
+  // a /cad-verify fire with nothing unfixed never opens the unfixed file
+  const sentence = 'its list is always triaged through the `adjudicated` rule';
+  assert.ok(triage('triage-gate.md').includes(sentence),
+    'the router no longer says /cad-verify\'s fire is triaged through the adjudicated rule');
+  assert.ok(!triage('triage-gate-unfixed.md').includes(sentence),
+    'the /cad-verify rule sits in the unfixed file, which a fire with nothing unfixed never reads');
+});
+
+test('triage-gate.md: the --trigger rule and the fenced override receipt are in the router, not the blocking file', () => {
+  // an adjudicated fire writes `override` and never reads the blocking file
+  const rule = 'carries `--trigger <trigger>` in that structured flag';
+  const override = 'trace append --phase <N> --family outcome --event override';
+  for (const want of [rule, override]) {
+    assert.ok(triage('triage-gate.md').includes(want), `the router no longer holds: ${want}`);
+    assert.ok(!triage('triage-gate-blocking.md').includes(want),
+      `the blocking file holds a rule the adjudicated arm needs: ${want}`);
+  }
+});
+
+for (const [name, markers] of [
+  ['the "Two caps, two different numbers" paragraph',
+    ['**Two caps, two different numbers.**', 'N survivors become `ceil(N/3)` questions']],
+  ['the narrowed round and the blocking re-arm\'s terminal STOP-and-ask',
+    ['the artifact is the fix\'s own diff plus the blocker list it is confirming',
+      're-armed once on its own fix and still reports N blocker/high findings']],
+  ['the "A contradictory answer re-asks, once" block and its "Pick again" ask',
+    ['**A contradictory answer re-asks, once.**', '- header: "Pick again"']],
+]) {
+  test(`triage-gate.md: ${name} is in the router and in no arm file`, () => {
+    for (const marker of markers) {
+      assert.ok(triage('triage-gate.md').includes(marker), `the router no longer holds: ${marker}`);
+      for (const arm of TRIAGE_ARMS) {
+        assert.ok(!triage(arm).includes(marker),
+          `${arm} holds a passage more than one gate needs, so the other gates never read it: ${marker}`);
+      }
+    }
+  });
+}
+
 
 // --- RDX-01: the in-dispatch figure, its coverage and its exclusions, in prose
 //
@@ -2698,7 +2764,7 @@ test('RDX-01: report.md prints the in-dispatch figure with its coverage, its exc
   // 1. The shape block's Reading LINE - the point at which the figure is
   //    PRINTED. A rule further down is a rule a reader can compose the line
   //    without.
-  const lineStart = text.indexOf('Reading (whole `.planning/reads.jsonl`');
+  const lineStart = text.indexOf('Reading (whole `.planning/records/reads.jsonl`');
   assert.ok(lineStart >= 0, 'report.md has no Reading line');
   const readingLine = text.slice(lineStart, text.indexOf('\n', lineStart));
   for (const token of ['inDispatch.roles', 'inDispatch.coverage', 'inDispatch.coordinatorFiles']) {
@@ -2710,7 +2776,7 @@ test('RDX-01: report.md prints the in-dispatch figure with its coverage, its exc
   // 2. The rule block, read from its named anchor to the next TOP-LEVEL bullet,
   //    so the sub-bullets under it are inside the slice and the next rule is
   //    not.
-  const ruleStart = text.indexOf('- The reading line prices `.planning/reads.jsonl`');
+  const ruleStart = text.indexOf('- The reading line prices `.planning/records/reads.jsonl`');
   assert.ok(ruleStart >= 0, 'report.md has no reading-line rule');
   const next = text.indexOf('\n- ', ruleStart + 1);
   // Whitespace-FLATTENED before matching, so a rewrap that changed no fact
@@ -3210,7 +3276,7 @@ function assertOneSuiteSite(text) {
     + 'prose that binds only when it is set changes nothing');
 
   // Order: the site sits after the last numbered item and before the digest.
-  const lastStep = text.indexOf('5. Rewrite `<plandir>/reports/plan-<k>.md`');
+  const lastStep = text.indexOf('5. Rewrite `<plandir>/records/reports/plan-<k>.md`');
   assert.ok(lastStep > -1, 'the per-task loop no longer ends at the report write');
   assert.ok(lastStep < text.indexOf("After the last task's commit"),
     'the suite site sits ABOVE the last per-task step, so it would run between tasks');
@@ -3717,12 +3783,12 @@ test('RSK-10: a plan that landed no commits records the skip rather than a clean
 // green.
 
 test('triage-gate.md: the ask face makes one visibility read and the question names the repository', () => {
-  const flat = doc('cadence-core', 'references', 'triage-gate.md').replace(/\s+/g, ' ');
+  const flat = doc('cadence-core', 'references', 'triage-gate-unfixed.md').replace(/\s+/g, ' ');
 
   assert.doesNotMatch(flat, /it spawns no forge child/,
     'triage-gate.md still says the ask face spawns no forge child; `unfixed` now makes one '
     + 'read-only visibility call (D-05)');
-  assert.match(flat, /THE ASK FACE reads `\.planning\/DECLINED\.md` and makes one read-only visibility read of the configured repository - no list, no create, no page/,
+  assert.match(flat, /THE ASK FACE reads `\.planning\/records\/DECLINED\.md` and makes one read-only visibility read of the configured repository - no list, no create, no page/,
     'triage-gate.md does not state the ask face\'s one read-only visibility read');
   assert.match(flat, /the question names the target repository \(the envelope\'s `repo`\) and its visibility \(`visibility`\)/,
     'triage-gate.md does not say the question names the repository and its visibility');
@@ -3740,7 +3806,7 @@ test('triage-gate.md: the ask face makes one visibility read and the question na
 // dispositions, so it is a decline. Flattened so a rewrap stays green.
 
 test('triage-gate.md: a risk_surface finding bound for a public repository is asked a second time', () => {
-  const flat = doc('cadence-core', 'references', 'triage-gate.md').replace(/\s+/g, ' ');
+  const flat = doc('cadence-core', 'references', 'triage-gate-unfixed.md').replace(/\s+/g, ' ');
 
   assert.match(flat, /[Ww]hen the fire is a `risk_surface` review and the `unfixed` envelope reports a public visibility or a `visibility_read` of false, every finding the user accepted at the first ask is asked a second time/,
     'triage-gate.md does not state the second ask for a risk_surface finding on a public or unreadable repository');
@@ -3762,7 +3828,7 @@ test('the eight relay sites carry the data-not-instructions sentence', async () 
   const { DATA_RULE } = await import('../cadence-core/bin/lib/data-rule.mjs');
   const sites = [
     ['cadence-core', 'references', 'review-triggers.md'],
-    ['cadence-core', 'references', 'triage-gate.md'],
+    ['cadence-core', 'references', 'triage-gate-unfixed.md'],
     ['cadence-core', 'references', 'review-cross-model.md'],
     ['cadence-core', 'references', 'consult.md'],
     ['cadence-core', 'references', 'risk-surface.md'],
@@ -3828,9 +3894,105 @@ test('cad-undo sets disable-model-invocation: true in its frontmatter', () => {
 // what the tracker gets.
 
 test('triage-gate.md does not say a finding reaches the tracker unchanged', () => {
-  const text = flat(doc('cadence-core', 'references', 'triage-gate.md'));
+  const text = flat(doc('cadence-core', 'references', 'triage-gate-unfixed.md'));
   assert.ok(!/reaches the user and the tracker unchanged/.test(text),
     'triage-gate.md still says a finding\'s text reaches the tracker unchanged');
   assert.match(text, /A finding's text reaches the user as raised, and the tracker with any credential replaced by `<redacted>`:/,
     'triage-gate.md does not say the tracker gets the finding with credentials redacted');
+});
+
+// Phase 1 plan 12 (D-13, D-04, D-05): every seam that rewrites a view rewrites
+// `.planning/records/state.json` first, and `status` trusts that file over the
+// views. A commit that stages a view without it leaves the tree dirty and the
+// committed state frozen behind the committed views, so a clone reads stale.
+
+/** Sentences that name a view and say commit or stage while instructing no commit, with why. */
+const STATE_FILE_EXCEPTIONS = [
+  { file: 'cadence-core/workflows/coverage.md', sentence: 'needs the commit range from SUMMARY.md',
+    reason: 'a batch of reads; the commit range is what the diff reads, nothing is committed' },
+  { file: 'cadence-core/workflows/progress.md', sentence: 'derives its own commit timeline',
+    reason: '--stats reads the commit history and writes nothing, STATE.md included' },
+];
+
+/**
+ * A Markdown file's sentences, whitespace flattened. A paragraph, a list item, a table row, a heading, a tag line and
+ * each fenced line is a unit of its own first, since a criteria list has no full stops to split it.
+ */
+const mdSentences = (text) => {
+  const units = [];
+  let cur = [];
+  let fence = false;
+  const flush = () => { if (cur.length) units.push(cur.join('\n')); cur = []; };
+  for (const line of text.split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) { flush(); fence = !fence; continue; }
+    if (fence) { units.push(line); continue; }
+    if (!line.trim() || /^\s*([-*+] |\d+[.)] |\||#|<)/.test(line)) flush();
+    cur.push(line);
+  }
+  flush();
+  return units.flatMap((u) => sentencesOf(flat(u).trim()));
+};
+
+test('every commit or stage sentence that names a generated view also names the state file', () => {
+  const VIEW = /STATE\.md|ROADMAP\.md|REQUIREMENTS\.md/;
+  const ACT = /commit|stag/i;
+  const mdUnder = (dir) => readdirSync(join(REPO, dir), { recursive: true })
+    .filter((f) => String(f).endsWith('.md')).map((f) => join(dir, String(f)).split(sep).join('/'));
+  const bad = [];
+  for (const file of ['cadence-core/workflows', 'cadence-core/references', 'skills'].flatMap(mdUnder)) {
+    for (const s of mdSentences(doc(file))) {
+      if (!ACT.test(s) || !VIEW.test(s) || s.includes('records/state.json')) continue;
+      if (STATE_FILE_EXCEPTIONS.some((e) => e.file === file && s.includes(e.sentence))) continue;
+      bad.push(`${file}: ${s}`);
+    }
+  }
+  assert.deepEqual(bad, [], 'these sentences commit or stage a view without .planning/records/state.json');
+});
+
+// Phase 2 plan 4 (#392, D-10): a renumber shifts every `Phase K` heading, so a
+// `### Phase N:` section hand-edited before the seam runs is moved or removed
+// under the edit. Both "Change phases" loops state the order phase.md uses.
+
+test('new-project.md and adopt.md: "Change phases" runs the renumber seam before the hand edit (#392)', () => {
+  for (const file of ['new-project.md', 'adopt.md']) {
+    const wf = doc('cadence-core', 'workflows', file);
+    const start = wf.indexOf('On "Change phases"');
+    assert.ok(start > -1, `${file} has no "Change phases" passage`);
+    const passage = flat(wf.slice(start, wf.indexOf('Run `criteria-size` again', start)));
+    assert.match(passage, /The seam runs before the `### Phase N:` sections are hand-edited/,
+      `${file}'s "Change phases" loop does not say the seam runs before the hand edit`);
+  }
+});
+
+// Phase 2 plan 4 (#395, D-06, D-07): `phase-entry add` writes the cursor itself
+// when nothing else is unfinished, and a cycle-opening add leaves the Overview's
+// no-cycle sentence stale unless the session rewrites the prose it wrote.
+
+test('phase.md: the add arm rewrites the Overview on opened_cycle and drops the cursor-not-written line (#395)', () => {
+  const wf = doc('cadence-core', 'workflows', 'phase.md');
+  const start = wf.indexOf('### add');
+  assert.ok(start > -1, 'phase.md has no ### add arm');
+  const arm = flat(wf.slice(start, wf.indexOf('\n### ', start + 1)));
+  assert.match(arm, /opened_cycle/, 'the add arm does not name opened_cycle');
+  assert.match(arm, /Overview/, 'the add arm does not send the session to the Overview');
+  assert.doesNotMatch(arm, /cursor is not re-written/, 'the add arm still says the cursor is not re-written');
+});
+
+// the seam leaves a paused cursor alone, so the arm's cursor sentence says so too
+test('phase.md: the add arm states the paused-cursor exception beside the cursor sentence', () => {
+  const wf = doc('cadence-core', 'workflows', 'phase.md');
+  const start = wf.indexOf('### add');
+  const arm = flat(wf.slice(start, wf.indexOf('\n### ', start + 1)));
+  assert.match(arm, /points the cursor at the new phase itself, in the same write, unless the cursor is paused, which stays as the user left it; never run `cursor set` after it/,
+    'the add arm\'s cursor sentence does not carry the paused exception');
+});
+
+// a close-only milestone writes "no cycle open" in three places, and the add that reopens has to reach all three
+test('phase.md: the add arm sends opened_cycle to PROJECT.md ### Active and REQUIREMENTS.md ## Active too', () => {
+  const wf = doc('cadence-core', 'workflows', 'phase.md');
+  const start = wf.indexOf('### add');
+  const arm = flat(wf.slice(start, wf.indexOf('\n### ', start + 1)));
+  const instruction = arm.slice(arm.indexOf('When the answer carries `opened_cycle: true`'));
+  assert.match(instruction, /PROJECT\.md `### Active`/, 'the opened_cycle instruction does not name PROJECT.md ### Active');
+  assert.match(instruction, /REQUIREMENTS\.md `## Active`/, 'the opened_cycle instruction does not name REQUIREMENTS.md ## Active');
 });

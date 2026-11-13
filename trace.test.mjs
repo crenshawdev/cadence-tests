@@ -20,19 +20,23 @@ import {
   appendEvent, correlationId, renderTrace, tracePath, rotatedTracePath,
   rotationClaimPath,
   MAX_TRACE_BYTES, ROTATED_TRACE_FILE, ROTATION_CLAIM_FILE, FAMILIES,
-  ANCHOR, DISPATCH, TERMINAL, COORDINATOR, WORKER_CACHE, ROTATION,
+  ANCHOR, DISPATCH, TERMINAL, COORDINATOR, WORKER_CACHE, ROTATION, CYCLE,
 } from '../cadence-core/bin/lib/trace.mjs';
 import { STEP_WINDOW } from '../cadence-core/bin/lib/trace.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { ensureRoadmap, stampState, treeOf, v40Project } from './planning.test.mjs';
+import { statePath } from '../cadence-core/bin/lib/project-state.mjs';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const TESTS = dirname(fileURLToPath(import.meta.url));
 const PLANNING = join(HERE, 'planning.mjs');
 const REPO = join(HERE, '..', '..');
 
-/** A fresh, empty planning root. */
+/** A fresh, empty planning root, stamped: the appender writes nothing into a project with no valid state. */
 function root() {
   const dir = join(mkdtempSync(join(tmpdir(), 'cad-trace-')), '.planning');
   mkdirSync(dir, { recursive: true });
+  stampState(dir);
   return dir;
 }
 
@@ -132,7 +136,7 @@ test('appendEvent: an interleaved write sequence keeps every event, in order', (
  * rather than being filtered out of them, and the six-writer race row below is
  * what proves the release still holds under contention.
  */
-const siblings = (dir) => readdirSync(dir).filter((e) => e.startsWith('trace.')).sort();
+const siblings = (dir) => readdirSync(recordsDir(dir)).filter((e) => e.startsWith('trace.')).sort();
 
 /** What a COMPLETED rotation leaves on disk: the pair, plus the inert sidecar. */
 const ROTATED_SET = [ROTATED_TRACE_FILE, ROTATION_CLAIM_FILE, 'trace.jsonl'];
@@ -1573,6 +1577,7 @@ function fireRepo(phase = 2) {
   git('config', 'user.name', 'T');
   const dir = join(repo, '.planning');
   mkdirSync(join(dir, 'phases', String(phase)), { recursive: true });
+  ensureRoadmap(dir);
   writeFileSync(join(repo, 'src.js'), 'let x = 1;\n');
   git('add', '-A');
   git('commit', '-q', '-m', 'base');
@@ -1753,7 +1758,7 @@ test('recount: the ROUND decides which record is read, so a re-arm cannot pass o
   fireRecord(repo, dir, { rulings: ['survived', 'refuted', 'refuted'] });
   fireRecord(repo, dir, { round: 2, rulings: ['downgraded', 'refuted'] });
   assert.deepEqual(
-    readdirSync(join(dir, 'phases', '2')).filter((f) => f.startsWith('ADJUDICATION')).sort(),
+    readdirSync(join(dir, 'phases', '2', 'records')).filter((f) => f.startsWith('ADJUDICATION')).sort(),
     ['ADJUDICATION-plan-plan-1-r2.json', 'ADJUDICATION-plan-plan-1.json']);
 
   const two = ['--survivors', '0', '--downgraded', '1', '--refuted', '1'];
@@ -3204,7 +3209,8 @@ const BRACKETING = new Map([
   [join('cadence-core', 'workflows', 'context.md'), 1],
   [join('cadence-core', 'workflows', 'plan.md'), 2],
   [join('cadence-core', 'references', 'plan-revision.md'), 2],
-  [join('cadence-core', 'references', 'review-triggers.md'), 1],
+  // step 4's by-hand reviewer dispatch moved out of review-triggers.md
+  [join('cadence-core', 'references', 'review-inline.md'), 1],
   [join('cadence-core', 'workflows', 'execute.md'), 1],
   [join('cadence-core', 'workflows', 'decision-review.md'), 1],
   [join('cadence-core', 'workflows', 'minimalism-review.md'), 1],
@@ -3701,6 +3707,51 @@ test('appendEvent: a symlinked trace path is refused and nothing is appended', (
   assert.equal(readFileSync(outside, 'utf8'), 'ORIGINAL\n');
   // Nothing replaced the link either - the refusal writes nowhere at all.
   assert.equal(lstatSync(tracePath(dir)).isSymbolicLink(), true);
+});
+
+test('appendEvent: a symlinked records folder is refused and nothing is written through it', () => {
+  const outside = mkdtempSync(join(tmpdir(), 'cad-outside-'));
+  const dir = join(mkdtempSync(join(tmpdir(), 'cad-trace-')), '.planning');
+  mkdirSync(dir, { recursive: true });
+  symlinkSync(outside, recordsDir(dir));
+
+  const res = appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
+  assert.deepEqual(res, { written: false, reason: 'symlinked-records' });
+  assert.deepEqual(readdirSync(outside), []);
+});
+
+// --- appendEvent: no valid state, nothing written (D-10) ---
+
+test('appendEvent: an unstamped v4.0 project gets no-valid-state and stays byte-identical; once converted the append lands in records/', () => {
+  const dir = v40Project();
+  const before = treeOf(dir);
+  const event = { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' };
+  assert.deepEqual(appendEvent(dir, event), { written: false, reason: 'no-valid-state' });
+  assert.deepEqual(treeOf(dir), before);
+  // the main session's first seam call converts it, and the old log moves in with it
+  assert.equal(run(dir, ['status']).ok, true);
+  assert.equal(appendEvent(dir, event).written, true);
+  const got = readFileSync(tracePath(dir), 'utf8').trim().split('\n');
+  assert.deepEqual([got.length, got[0], JSON.parse(got[1]).event], [2, '{"old":"trace"}', 'phase_start']);
+  assert.equal(existsSync(join(dir, 'trace.jsonl')), false);
+});
+
+test('appendEvent: a state file that does not parse gets no-valid-state and stays byte-identical', () => {
+  const dir = root();
+  writeFileSync(statePath(dir), '{torn');
+  const before = treeOf(dir);
+  assert.deepEqual(appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' }),
+    { written: false, reason: 'no-valid-state' });
+  assert.deepEqual(treeOf(dir), before);
+});
+
+// the stamp made the records folder, so the appender never creates one; the unstamped case is the no-valid-state tests
+test('appendEvent: the first write lands the record inside the records folder', () => {
+  const dir = root();
+  const res = appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
+  assert.equal(res.written, true);
+  assert.equal(existsSync(join(recordsDir(dir), 'trace.jsonl')), true);
+  assert.equal(existsSync(join(dir, 'trace.jsonl')), false);
 });
 
 test('appendEvent: an ordinary trace file still appends and reports written', () => {
@@ -4683,4 +4734,99 @@ test('trace seam: a step-window fact prices a figureless close end to end', () =
   assert.equal(r.brackets[0].agent_id, 'a1');
   assert.equal(r.brackets[0].tokens, 123);
   assert.equal(r.roles['cad-reviewer'].unrecorded, 1);
+});
+
+// --- the cycle boundary (D-02, D-03) -------------------------------------------
+//
+// Two cycles each run a phase 1. A phase-scoped read starts after the newest
+// cycle marker, so the second cycle's phase 1 isn't summed with the first's;
+// an unscoped read, and any read of a record with no marker, is unchanged.
+
+const cyc = (m) => new Date(Date.UTC(2026, 7, 12, 10, m)).toISOString();
+const cycEv = (corr, m, event, extra = {}) => ({ corr, phase: 1, ts: cyc(m), family: 'lifecycle', event, ...extra });
+const FIRST = [
+  cycEv('1-aaa1111', 0, ANCHOR, { sha: 'aaa1111' }),
+  cycEv('1-aaa1111', 1, DISPATCH, { plan: '1', role: 'cad-executor' }),
+  cycEv('1-aaa1111', 5, 'return', { plan: '1', tokens: 900000 }),
+];
+const MARKER = { corr: '', ts: cyc(10), family: 'lifecycle', event: CYCLE };
+const SECOND = [
+  cycEv('1-bbb2222', 11, ANCHOR, { sha: 'bbb2222' }),
+  cycEv('1-bbb2222', 12, DISPATCH, { plan: '1', role: 'cad-planner' }),
+  cycEv('1-bbb2222', 15, 'return', { plan: '1', tokens: 200 }),
+];
+
+/** A stamped root whose trace is exactly these events, one line each. */
+function traced(events) {
+  const dir = root();
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(tracePath(dir), events.map((e) => `${JSON.stringify(e)}\n`).join(''));
+  return dir;
+}
+
+/** A render or a CLI answer with its root's paths taken out, so two roots' answers compare. */
+const unrooted = (dir, v) => JSON.parse(JSON.stringify(v).replaceAll(dir, '<root>'));
+
+test('cycle boundary: a phase-scoped render holds only the events after the newest marker, an unscoped one holds all', () => {
+  const dir = traced([...FIRST, MARKER, ...SECOND]);
+  const only = traced(SECOND);
+  const r = renderTrace(dir, 1);
+  assert.deepEqual(r.events.map((e) => e.corr), ['1-bbb2222', '1-bbb2222', '1-bbb2222']);
+  assert.deepEqual(r.counts, { routing: 0, provider: 0, lifecycle: 3, outcome: 0 });
+  assert.equal(r.corr, '1-bbb2222', 'the anchor taken is the one after the marker');
+  assert.deepEqual(unrooted(dir, r), unrooted(only, renderTrace(only, 1)));
+  const all = renderTrace(dir);
+  assert.equal(all.events.length, FIRST.length + 1 + SECOND.length);
+  assert.deepEqual(all.counts, { routing: 0, provider: 0, lifecycle: 7, outcome: 0 });
+});
+
+test('cycle boundary: an anchor only before the marker leaves a phase-scoped read on the bare id', () => {
+  const dir = traced([...FIRST, MARKER, ...SECOND.slice(1)]);
+  const r = renderTrace(dir, 1);
+  assert.equal(r.corr, '1');
+  assert.equal(r.events.length, 2);
+});
+
+test('cycle boundary: trace render, suggest and window --phase 1 answer as on a record of the later cycle alone', () => {
+  const dir = traced([...FIRST, MARKER, ...SECOND]);
+  const only = traced(SECOND);
+  for (const sub of ['render', 'suggest', 'window']) {
+    const marked = run(dir, ['trace', sub, '--phase', '1']);
+    assert.equal(marked.ok, true, sub);
+    assert.deepEqual(unrooted(dir, marked), unrooted(only, run(only, ['trace', sub, '--phase', '1'])), sub);
+  }
+});
+
+test('cycle boundary: with the marker line removed the three calls still read both cycles\' phase 1', () => {
+  const dir = traced([...FIRST, ...SECOND]);
+  const rendered = run(dir, ['trace', 'render', '--phase', '1']);
+  assert.equal(rendered.corr, '1-bbb2222');
+  assert.deepEqual(rendered.brackets.map((b) => b.role), ['cad-executor', 'cad-planner']);
+  assert.deepEqual(rendered.roles, { 'cad-executor': { dispatches: 1, tokens: 900000 }, 'cad-planner': { dispatches: 1, tokens: 200 } });
+  assert.equal(run(dir, ['trace', 'suggest', '--phase', '1']).events_read, 6);
+  assert.equal(run(dir, ['trace', 'window', '--phase', '1']).compared, 2);
+});
+
+// D-22: the writer's `correlationId` stops at the same marker the reader does. Between a new cycle's marker and
+// that phase's own `phase_start`, the writer stamped the old cycle's `1-aaa1111` while the reader answered `1`.
+
+test('cycle boundary: a rearm written before the new cycle\'s anchor is counted by the re-arm cap\'s read', () => {
+  const dir = traced([...FIRST, MARKER]);
+  const wrote = run(dir, ['trace', 'append', '--phase', '1', '--family', 'outcome', '--event', 'rearm',
+    '--trigger', 'plan', '--plan', '1', '--base', 'aaa1111', '--sha', 'ccc3333', '--detail', 'plan']);
+  assert.equal(wrote.ok, true, JSON.stringify(wrote));
+  const r = run(dir, ['trace', 'render', '--phase', '1']);
+  // the filter references/triage-gate-blocking.md's cap runs on this payload
+  const rearms = r.outcomes.filter((o) => o.event === 'rearm' && o.trigger === 'plan' && o.corr === r.corr && (o.plan ?? '') === '1');
+  assert.equal(rearms.length, 1, `render corr ${r.corr}, outcomes ${JSON.stringify(r.outcomes)}`);
+});
+
+test('cycle boundary: an event written and a phase-scoped render in the same window carry the same corr', () => {
+  const dir = traced([...FIRST, MARKER]);
+  const wrote = appendEvent(dir, { phase: 1, family: 'lifecycle', event: DISPATCH, plan: '1', role: 'cad-planner', ts: cyc(12) });
+  assert.equal(wrote.written, true, JSON.stringify(wrote));
+  const r = renderTrace(dir, 1);
+  assert.equal(r.events.length, 1);
+  assert.equal(r.events[0].corr, r.corr);
+  assert.equal(r.corr, '1');
 });

@@ -10,10 +10,11 @@
 // a sibling that imports a fixture from here registers nothing twice.
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { makeTree, run, isEntryFile } from './planning.test.mjs';
+import { makeTree, run, isEntryFile, verifyChecked } from './planning.test.mjs';
 import { archive } from './planning-recall.test.mjs';
+import { readState, statePath } from '../cadence-core/bin/lib/project-state.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -26,11 +27,13 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 // out of the planning root and answered {"ok":true,"action":"pruned"}.
 
 function pruneTree() {
-  return makeTree({
+  const dir = makeTree({
     roadmap: [{ n: 1, name: 'One', checked: true }, { n: 2, name: 'Two' }],
     phases: { 1: { plan: true }, 2: { plan: true } },
     reqs: [['REQ-1', 1, 'Complete']],
   });
+  verifyChecked(dir);
+  return dir;
 }
 
 for (const mode of ['archive', 'delete']) {
@@ -75,4 +78,54 @@ test('milestone-prune: a spaced milestone-name label still prunes normally', () 
   assert.equal(existsSync(join(dir, `_archive-${label}`, '1', 'PLAN.md')), true);
   assert.deepEqual(readdirSync(join(dir, 'phases')).sort(), ['2']);
   assert.match(readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8'), new RegExp(label));
+});
+
+// The phases a close removes are the state's: it drops them, and the list is rendered from what is left.
+test('milestone-prune: the pruned phases leave the state and the regenerated list, and an all-complete close empties both', () => {
+  const dir = pruneTree();
+  const r = run(['milestone-prune', '--label', 'v1', '--mode', 'delete'], dir);
+  assert.equal(r.ok, true);
+  assert.deepEqual(readState(dir).state.phases.map((p) => p.n), [2]);
+  assert.deepEqual(readFileSync(join(dir, 'ROADMAP.md'), 'utf8').match(/^- \[.\] \*\*Phase \d+/gm), ['- [ ] **Phase 2']);
+
+  const closing = makeTree({ roadmap: [{ n: 1, name: 'One', checked: true }], phases: { 1: { plan: true } } });
+  verifyChecked(closing);
+  assert.equal(run(['milestone-prune', '--label', 'v2', '--mode', 'delete'], closing).ok, true);
+  const state = readState(closing).state;
+  assert.deepEqual([state.phases, state.cycleOpen], [[], false]);
+  assert.equal(readFileSync(join(closing, 'ROADMAP.md'), 'utf8').match(/^- \[.\] \*\*Phase/gm), null);
+  assert.match(readFileSync(join(closing, 'STATE.md'), 'utf8'), /^No cycle is open/m);
+});
+
+test('milestone-prune: a close leaves ## Shipped holding the rows with their summaries and the state holding none of them', () => {
+  const dir = pruneTree();
+  writeFileSync(join(dir, 'REQUIREMENTS.md'),
+    '# Requirements\n\n## Active\n\n- **REQ-1**: it ships\n- **REQ-2**: it waits\n\n## Traceability\n\n'
+    + '| Requirement | Phase | Status |\n|---|---|---|\n| REQ-1 | Phase 1 | Complete |\n| REQ-2 | Phase 2 | Pending |\n\nNotes under the table.\n');
+  verifyChecked(dir);
+  assert.equal(run(['milestone-prune', '--label', 'v1', '--mode', 'delete'], dir).ok, true);
+  assert.deepEqual(readState(dir).state.requirements, [{ id: 'REQ-2', phase: 2, status: 'Pending' }]);
+  const text = readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8');
+  assert.match(text, /\| REQ-1 \(it ships\) \| 1 \| Complete \| v1 \|/);
+  assert.match(text, /\| REQ-2 \| Phase 2 \| Pending \|/);
+  assert.match(text, /Notes under the table\./);
+});
+
+test('milestone-prune: a re-run after a refused state write finishes the state and files each shipped row once', () => {
+  const dir = pruneTree();
+  writeFileSync(join(dir, 'REQUIREMENTS.md'),
+    '# Requirements\n\n## Active\n\n- **REQ-1**: it ships\n- **REQ-2**: it waits\n\n## Traceability\n\n'
+    + '| Requirement | Phase | Status |\n|---|---|---|\n| REQ-1 | Phase 1 | Complete |\n| REQ-2 | Phase 2 | Pending |\n');
+  verifyChecked(dir);
+  const lock = `${statePath(dir)}.lock`;
+  writeFileSync(lock, ''); // a live writer holds the state file
+  const first = run(['milestone-prune', '--label', 'v1', '--mode', 'delete'], dir);
+  assert.equal(first.reason, 'state-write-failed');
+  rmSync(lock);
+  const again = run(['milestone-prune', '--label', 'v1', '--mode', 'delete'], dir);
+  assert.equal(again.ok, true);
+  assert.deepEqual(again.requirements.moved, []);
+  assert.deepEqual(readState(dir).state.requirements, [{ id: 'REQ-2', phase: 2, status: 'Pending' }]);
+  assert.equal(readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8').match(/^\| REQ-1 /gm).length, 1);
+  assert.match(readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8'), /\| REQ-1 \(it ships\) \| 1 \| Complete \| v1 \|/);
 });

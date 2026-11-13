@@ -38,7 +38,7 @@ function codemap(root, sub, dir = join(root, '.planning')) {
   return JSON.parse(stdout);
 }
 
-const index = (root) => JSON.parse(readFileSync(join(root, '.planning', 'codemap', 'index.json'), 'utf8'));
+const index = (root) => JSON.parse(readFileSync(join(root, '.planning', 'records', 'codemap', 'index.json'), 'utf8'));
 const rowOf = (root, path) => index(root).rows.filter((r) => r.path === path);
 const hashOf = (text) => execFileSync('git', ['hash-object', '--stdin'], { input: text, encoding: 'utf8' }).trim();
 
@@ -121,12 +121,12 @@ test('binary and over-cap files hold a hash and bytes, and the kind says why', (
   assert.match(big.hash, /^[0-9a-f]{40}$/);
 });
 
-test('a tracked .planning/codemap symlink is refused and its target stays empty', () => {
+test('a tracked .planning/records/codemap symlink is refused and its target stays empty', () => {
   const out = mkdtempSync(join(tmpdir(), 'cad-map-target-'));
   const { root } = repo({ 'a.js': 'a\n' });
-  mkdirSync(join(root, '.planning'));
-  symlinkSync(out, join(root, '.planning', 'codemap'));
-  execFileSync('git', ['-C', root, 'add', '-f', '.planning/codemap']);
+  mkdirSync(join(root, '.planning', 'records'), { recursive: true });
+  symlinkSync(out, join(root, '.planning', 'records', 'codemap'));
+  execFileSync('git', ['-C', root, 'add', '-f', '.planning/records/codemap']);
   const r = codemap(root, 'scan');
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'unsafe-dir');
@@ -142,12 +142,12 @@ test('a directory that is not a repository answers ok:false', () => {
 });
 
 test('git add .planning never stages the map, and a nested rule is what ignores it', () => {
-  const { root, git } = repo({ 'a.js': 'a\n', '.planning/STATE.md': 'state\n' });
+  const { root, git } = repo({ 'a.js': 'a\n', '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
   assert.equal(codemap(root, 'scan').ok, true);
   git('add', '.planning');
-  assert.equal(git('status', '--short').split('\n').filter((l) => l.includes('.planning/codemap')).length, 0);
-  assert.match(git('check-ignore', '-v', '.planning/codemap/index.json'), /\.planning\/codemap\/\.gitignore/);
-  assert.equal(readFileSync(join(root, '.planning', 'codemap', '.gitignore'), 'utf8'), '*\n');
+  assert.equal(git('status', '--short').split('\n').filter((l) => l.includes('.planning/records/codemap')).length, 0);
+  assert.match(git('check-ignore', '-v', '.planning/records/codemap/index.json'), /\.planning\/records\/codemap\/\.gitignore/);
+  assert.equal(readFileSync(join(root, '.planning', 'records', 'codemap', '.gitignore'), 'utf8'), '*\n');
 });
 
 test('a root below the repository top level lists paths relative to itself', () => {
@@ -155,7 +155,7 @@ test('a root below the repository top level lists paths relative to itself', () 
   const sub = join(root, 'sub');
   const r = codemap(sub, 'scan', join(sub, '.planning'));
   assert.equal(r.ok, true);
-  const rows = JSON.parse(readFileSync(join(sub, '.planning', 'codemap', 'index.json'), 'utf8')).rows;
+  const rows = JSON.parse(readFileSync(join(sub, '.planning', 'records', 'codemap', 'index.json'), 'utf8')).rows;
   assert.deepEqual(rows.map((x) => x.path), ['deep/d.js', 'in.js']);
 });
 
@@ -263,18 +263,18 @@ test('an entry file name is derived by hash, so no module name can reach index.j
 // --- the same, through the CLI --------------------------------------------------------------------------------------
 
 const modulesOf = (root) => index(root).modules;
-const mapFile = (root, f) => join(root, '.planning', 'codemap', f);
+const mapFile = (root, f) => join(root, '.planning', 'records', 'codemap', f);
 
 test('scan stores the module list, and a removed last file removes its module and its entry file', () => {
   // 100 KiB each, so the two directories cannot share one 128 KiB module
   const big = 'x'.repeat(100 * 1024);
-  const { root, git } = repo({ 'a/1.js': big, 'b/2.js': big, '.planning/STATE.md': 's\n' });
+  const { root, git } = repo({ 'a/1.js': big, 'b/2.js': big, '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
   const first = codemap(root, 'scan');
   assert.equal(first.modules, 3);
   assert.equal(first.no_reader, 1);
   const gone = modulesOf(root).find((m) => m.paths.includes('b/2.js'));
   writeFileSync(mapFile(root, gone.entry), '{}');
-  const keep = join(root, '.planning', 'codemap', 'notes.txt');
+  const keep = join(root, '.planning', 'records', 'codemap', 'notes.txt');
   writeFileSync(keep, 'mine');
   git('rm', '-q', 'b/2.js');
   const second = codemap(root, 'scan');
@@ -308,7 +308,7 @@ test('a torn index.json is a fresh cut, not a failure', () => {
 const KB = (n) => 'x'.repeat(n * 1024);
 /** a/ holds 80 KiB of text and a binary file, b/ holds 100 KiB, so the two are separate modules; .planning has its own */
 function mapped() {
-  const t = repo({ 'a/1.js': KB(50), 'a/2.js': KB(30), 'b/3.js': KB(100), '.planning/STATE.md': 's\n' });
+  const t = repo({ 'a/1.js': KB(50), 'a/2.js': KB(30), 'b/3.js': KB(100), '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
   writeFileSync(join(t.root, 'a', 'img.bin'), Buffer.from([0, 1, 2]));
   t.git('add', '-A'); t.git('commit', '-q', '-m', 'more');
   assert.equal(codemap(t.root, 'scan').modules, 3);
@@ -366,7 +366,7 @@ test('a module with no entry or a torn one reads unbuilt, never stale, and a no-
   writeFileSync(mapFile(root, moduleHolding(root, 'a/1.js').entry), '{"built_from": {');
   r = codemap(root, 'status');
   assert.deepEqual([r.stale, r.unbuilt, r.no_reader], [0, 2, 1]);
-  const planning = moduleHolding(root, '.planning/STATE.md').name;
+  const planning = moduleHolding(root, '.planning/ROADMAP.md').name;
   assert.ok(!r.unbuilt_modules.includes(planning) && !r.stale_modules.includes(planning));
 });
 
@@ -374,7 +374,7 @@ test('scan prices a launch by the stale and unbuilt modules and the text bytes a
   const { root } = mapped();
   let r = codemap(root, 'scan');
   assert.deepEqual([r.modules, r.readers, r.reader_bytes], [3, 2, (50 + 30 + 100) * 1024], 'no entries: every reader module, text only');
-  assert.equal(r.bytes, (50 + 30 + 100) * 1024 + 3 + 2, 'the total counts every byte, the picture and STATE.md too');
+  assert.equal(r.bytes, (50 + 30 + 100) * 1024 + 3 + 22, 'the total counts every byte, the picture and ROADMAP.md too');
   build(root);
   assert.deepEqual([codemap(root, 'scan').readers, codemap(root, 'scan').reader_bytes], [0, 0]);
   writeFileSync(join(root, 'a', '2.js'), KB(30) + 'y');
@@ -487,7 +487,7 @@ test('a dirty file under a root below the top level gets its own hash, not a sam
   writeFileSync(join(sub, 'a.txt'), 'sub edited\n');
   writeFileSync(join(sub, 'b.txt'), 'b edited\n');
   codemap(sub, 'scan', join(sub, '.planning'));
-  const rows = JSON.parse(readFileSync(join(sub, '.planning', 'codemap', 'index.json'), 'utf8')).rows;
+  const rows = JSON.parse(readFileSync(join(sub, '.planning', 'records', 'codemap', 'index.json'), 'utf8')).rows;
   const real = (f) => execFileSync('git', ['-C', sub, 'hash-object', f], { encoding: 'utf8' }).trim();
   assert.equal(rows.find((x) => x.path === 'a.txt').hash, real('a.txt'));
   assert.equal(rows.find((x) => x.path === 'b.txt').hash, real('b.txt'), 'with no same-named file at the top it is not null');
@@ -524,7 +524,7 @@ test('an assume-unchanged or skip-worktree file that was edited takes its workin
 });
 
 test('a non-UTF-8 .planning path stays out of code modules, and a non-UTF-8 .js path still holds its symbols', () => {
-  const { root, git } = repo({ 'a.js': 'a\n', '.planning/STATE.md': 's\n' });
+  const { root, git } = repo({ 'a.js': 'a\n', '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
   const odd = (dir, ext) => Buffer.concat([Buffer.from(`${root}/${dir}caf`), Buffer.from([0xe9]), Buffer.from(ext)]);
   writeFileSync(odd('.planning/', '.md'), '# note\n');
   writeFileSync(odd('', '.js'), 'export const beta = 1;\n');
@@ -572,16 +572,16 @@ test('an index just past 64 MiB is still read by status', () => {
 });
 
 test('scan refuses when the repository tracks files under the map and writes nothing', () => {
-  const { root, git } = repo({ 'a.js': 'a\n', '.planning/codemap/index.json': '{"mine": true}\n' });
+  const { root, git } = repo({ 'a.js': 'a\n', '.planning/records/codemap/index.json': '{"mine": true}\n' });
   const r = codemap(root, 'scan');
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'tracked-map');
-  assert.match(r.hint, /git rm -r --cached \.planning\/codemap/);
+  assert.match(r.hint, /git rm -r --cached \.planning\/records\/codemap/);
   assert.equal(readFileSync(mapFile(root, 'index.json'), 'utf8'), '{"mine": true}\n');
   assert.equal(existsSync(mapFile(root, '.gitignore')), false);
   // the quoted spelling of a non-UTF-8 name under the map is caught too
-  writeFileSync(Buffer.concat([Buffer.from(`${root}/.planning/codemap/caf`), Buffer.from([0xe9])]), 'x');
-  git('rm', '-q', '--cached', '.planning/codemap/index.json'); git('add', '-A');
+  writeFileSync(Buffer.concat([Buffer.from(`${root}/.planning/records/codemap/caf`), Buffer.from([0xe9])]), 'x');
+  git('rm', '-q', '--cached', '.planning/records/codemap/index.json'); git('add', '-A');
   assert.equal(codemap(root, 'scan').reason, 'tracked-map');
 });
 

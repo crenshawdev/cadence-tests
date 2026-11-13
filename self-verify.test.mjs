@@ -7,13 +7,15 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, cpSyn
 import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { rungBody, RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
+import { agentFileText, rungBody, RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
 import { mergeWarningIssues } from '../cadence-core/bin/lib/merge-warnings.mjs';
+import { CENSUSES } from '../cadence-core/bin/lib/census-registry.mjs';
 import { deferredReadIssues, DEFERRED_READS } from '../cadence-core/bin/lib/deferred-reads.mjs';
 import { referenceRouterIssues } from '../cadence-core/bin/lib/reference-routers.mjs';
 import { WAIVED } from '../cadence-core/bin/lib/include-consumers.mjs';
 import { GLOBAL_ONLY_KEYS, globalOnlyMarkerIssues } from '../cadence-core/bin/lib/global-only-keys.mjs';
 import { CONTRACTS, flagNames } from '../cadence-core/bin/lib/arg-contract.mjs';
+import { SHARED_RULE, SHARED_SKILL, roleTableIssues } from '../cadence-core/bin/lib/shared-rule.mjs';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const VERIFY = join(HERE, 'self-verify.mjs');
@@ -141,21 +143,38 @@ function rungAgentText(stem, rung) {
 }
 
 /**
- * Every file RUNG_FILES names, as `agents/<stem>.md` fixture entries. Built
- * FROM the map rather than typed: check 8's map -> disk arm reads that same
- * map, so a rung the ladder grows arrives here without an edit, and a fixture
- * can never claim a ladder the map does not state.
+ * Every file RUNG_FILES names, as `agents/<stem>.md` fixture entries, each the
+ * table's own render. Built FROM the table rather than typed: check 8's map ->
+ * disk arm and check 8c's byte comparison read that same table, so a rung the
+ * ladder grows arrives here without an edit, and a full-tree row never fails
+ * 8c for a reason it is not about.
  * @param {string[]} [omit] stems to leave OFF disk
  */
 function ladderAgents(omit = []) {
   /** @type {Record<string, string>} */
   const out = {};
-  for (const [, rungs] of Object.entries(RUNG_FILES)) {
-    for (const [rung, stem] of Object.entries(rungs)) {
+  for (const { rungs } of Object.values(RUNG_FILES)) {
+    for (const stem of Object.values(rungs)) {
       if (omit.includes(stem)) continue;
-      out[`${stem}.md`] = rungAgentText(stem, rung);
+      out[`${stem}.md`] = /** @type {string} */ (agentFileText(stem));
     }
   }
+  return out;
+}
+
+/**
+ * Every skill the table's renders preload, as `skills/<name>/SKILL.md` fixture
+ * entries carrying only the data-rule sentence: check 6 needs each to resolve
+ * and check 27 needs the sentence, and nothing more would be read. The shared
+ * skill is the real one, since check 8d reads the LSP rule out of it.
+ */
+function ladderSkills() {
+  /** @type {Record<string, string>} */
+  const out = {};
+  for (const { skills } of Object.values(RUNG_FILES)) {
+    for (const skill of skills) out[skill] = `---\nname: ${skill}\n---\n${DATA_RULE}\n`;
+  }
+  out[SHARED_SKILL] = readFileSync(join(REPO, 'skills', SHARED_SKILL, 'SKILL.md'), 'utf8');
   return out;
 }
 
@@ -185,6 +204,11 @@ function fullFixture() {
   for (const [name, text] of Object.entries(ladderAgents())) {
     writeFileSync(join(root, 'agents', name), text);
     budgets[`agents/${name}`] = Buffer.byteLength(text, 'utf8');
+  }
+  for (const [skill, text] of Object.entries(ladderSkills())) {
+    mkdirSync(join(root, 'skills', skill), { recursive: true });
+    writeFileSync(join(root, 'skills', skill, 'SKILL.md'), text);
+    budgets[`skills/${skill}/SKILL.md`] = Buffer.byteLength(text, 'utf8');
   }
   writeFileSync(join(root, 'cadence-core', 'bin', 'weight-budgets.json'),
     JSON.stringify({ budgets }, null, 2));
@@ -305,7 +329,7 @@ test('placeholder keys expand: <t> prose covers every trigger key', () => {
   // trigger keys as inert - <t> expands to all triggers.
   const root = fixture(
     '`review.triggers.<t>.gate` `review.triggers.<t>.tier` `review.triggers.<t>.effort`\n' +
-    '`review.triggers.<t>.surfaces` `review.triggers.<t>.waive_routing_floor`\n' +
+    '`review.triggers.<t>.surfaces` `review.triggers.<t>.when` `review.triggers.<t>.waive_routing_floor`\n' +
     '`review.providers.<name>.tiers` `review.mode` `review.reviewers` `review.key_file`\n' +
     '`review.request_timeout_ms` `review.max_prompt_tokens`\n' +
     '`review.consult.enabled` `review.consult.tier` `review.consult.effort`\n' +
@@ -976,6 +1000,138 @@ test('check 8 (reverse): an UNSUFFIXED agent file the map names nowhere is NOT f
   assert.deepEqual(p.filter((x) => x.kind === 'undeclared-rung-agent'), [], JSON.stringify(p));
 });
 
+// --- check 8c: a table-named agent file is what the table renders (D-07) ---
+
+/** One byte of agents/cad-planner.md changed in place, so only the bytes differ, not the length. */
+function nudgePlanner(root) {
+  const file = join(root, 'agents', 'cad-planner.md');
+  const text = readFileSync(file, 'utf8');
+  assert.ok(text.includes('picks it'));
+  writeFileSync(file, text.replace('picks it', 'pickS it'));
+}
+
+test('check 8c: a full tree rendered from the table files no agent-file-render problem', () => {
+  const p = run(['--root', fullFixture()]).problems;
+  assert.deepEqual(p.filter((x) => x.kind === 'agent-file-render'), [], JSON.stringify(p));
+});
+
+test('check 8c: one byte changed in one table-named file files exactly one problem, naming it', () => {
+  const root = fullFixture();
+  nudgePlanner(root);
+  const r = run(['--root', root]);
+  assert.equal(r.ok, false);
+  const hits = r.problems.filter((x) => x.kind === 'agent-file-render');
+  assert.equal(hits.length, 1, JSON.stringify(r.problems));
+  assert.equal(hits[0].file, 'agents/cad-planner.md');
+  assert.match(hits[0].detail, /generated/);
+  assert.match(hits[0].detail, /node cadence-core\/bin\/agent-files\.mjs/);
+});
+
+test('check 8c: the same changed file in a tree without a plugin manifest files none', () => {
+  // The isFullTree gate: the table lives in code, so a --root fixture is not an install with drifted files.
+  const root = fullFixture();
+  rmSync(join(root, '.claude-plugin', 'plugin.json'));
+  nudgePlanner(root);
+  const p = run(['--root', root]).problems;
+  assert.deepEqual(p.filter((x) => x.kind === 'agent-file-render'), [], JSON.stringify(p));
+});
+
+test('check 8c: a one-off agent file the table does not name, with prose of its own, files none', () => {
+  const root = fullFixture();
+  writeFileSync(join(root, 'agents', 'cad-oneoff.md'),
+    '---\nname: cad-oneoff\ntools: Read\n---\nRead the file you are handed and say what it does.\n');
+  const p = run(['--root', root]).problems;
+  assert.deepEqual(p.filter((x) => x.kind === 'agent-file-render'), [], JSON.stringify(p));
+});
+
+/** Rewrite one file of a full-tree fixture through `edit`, asserting the edit changed it. */
+function editFixture(root, rel, edit) {
+  const file = join(root, rel);
+  const before = readFileSync(file, 'utf8');
+  const after = edit(before);
+  assert.notEqual(after, before, `${rel} unchanged`);
+  writeFileSync(file, after);
+}
+
+test('check 8c: an agent file with LSP taken out of its tools files a problem naming it', () => {
+  const root = fullFixture();
+  editFixture(root, 'agents/cad-mapper.md', (t) => t.replace(/^(tools:.*), LSP$/m, '$1'));
+  const r = run(['--root', root]);
+  assert.equal(r.ok, false);
+  assert.ok(r.problems.some((x) => x.kind === 'agent-file-render' && x.file === 'agents/cad-mapper.md'),
+    JSON.stringify(r.problems));
+});
+
+test('check 8c: an agent file with the shared skill taken out of its skills files a problem naming it', () => {
+  const root = fullFixture();
+  editFixture(root, 'agents/cad-planner.md', (t) => t.replace('  - cad-shared-rules\n', ''));
+  const r = run(['--root', root]);
+  assert.equal(r.ok, false);
+  assert.ok(r.problems.some((x) => x.kind === 'agent-file-render' && x.file === 'agents/cad-planner.md'),
+    JSON.stringify(r.problems));
+});
+
+test('check 8d: the LSP rule deleted from the shared skill files a problem naming the skill', () => {
+  const root = fullFixture();
+  editFixture(root, `skills/${SHARED_SKILL}/SKILL.md`, (t) => t.replace(SHARED_RULE, ''));
+  const r = run(['--root', root]);
+  assert.equal(r.ok, false);
+  const hits = r.problems.filter((x) => x.kind === 'shared-skill-lacks-rule');
+  assert.equal(hits.length, 1, JSON.stringify(r.problems));
+  assert.equal(hits[0].file, `skills/${SHARED_SKILL}/SKILL.md`);
+});
+
+test('check 8d: the LSP rule rewrapped across lines in the shared skill files none', () => {
+  const root = fullFixture();
+  editFixture(root, `skills/${SHARED_SKILL}/SKILL.md`,
+    (t) => t.replace(SHARED_RULE, SHARED_RULE.replace(/ (?=before grep)/, '\n').replace(/ (?=If it errors)/, '\n  ')));
+  const p = run(['--root', root]).problems;
+  assert.ok(!p.some((x) => x.kind === 'shared-skill-lacks-rule'), JSON.stringify(p));
+});
+
+/** RUNG_FILES copied to plain objects, with one role's row changed by `edit`. */
+function tableWith(role, edit) {
+  /** @type {Record<string, {tools: string[], disallowedTools: string[], skills: string[]}>} */
+  const table = {};
+  for (const [r, row] of Object.entries(RUNG_FILES)) {
+    table[r] = { tools: [...row.tools], disallowedTools: [...row.disallowedTools], skills: [...row.skills] };
+  }
+  edit(table[role]);
+  return table;
+}
+
+test('check 8e: a role listing LSP in its tools and denying it is named', () => {
+  const issues = roleTableIssues(tableWith('cad-mapper', (row) => { row.disallowedTools.push('LSP'); }));
+  assert.deepEqual(issues.map((i) => i.role), ['cad-mapper']);
+  assert.match(issues[0].detail, /denies LSP/);
+});
+
+test('check 8e: a role without LSP in its tools is named', () => {
+  const issues = roleTableIssues(tableWith('cad-reviewer', (row) => { row.tools = row.tools.filter((t) => t !== 'LSP'); }));
+  assert.deepEqual(issues.map((i) => i.role), ['cad-reviewer']);
+  assert.match(issues[0].detail, /LSP/);
+});
+
+test('check 8e: a role without the shared skill is named', () => {
+  const issues = roleTableIssues(tableWith('cad-executor', (row) => { row.skills = row.skills.filter((s) => s !== SHARED_SKILL); }));
+  assert.deepEqual(issues.map((i) => i.role), ['cad-executor']);
+  assert.match(issues[0].detail, /cad-shared-rules/);
+});
+
+test('check 8e: a role listing the shared skill before its contract is named', () => {
+  const issues = roleTableIssues(tableWith('cad-verifier', (row) => { row.skills.reverse(); }));
+  assert.deepEqual(issues.map((i) => i.role), ['cad-verifier']);
+  assert.match(issues[0].detail, /after cad-verifier-contract/);
+});
+
+test('check 8e: the live table files none, and the CLI names both new checks in `checked`', () => {
+  assert.deepEqual(roleTableIssues(RUNG_FILES), []);
+  const r = run();
+  assert.equal(r.ok, true);
+  const checked = r.checked.split(', ');
+  assert.ok(checked.includes('shared-rule') && checked.includes('role-table'), r.checked);
+});
+
 test('a minimal (non-full-tree) fixture omitting optional inputs stays free of missing-input problems', () => {
   // The plain fixture() helper never creates .claude-plugin/plugin.json and
   // never creates weight-budgets.json/INTERNALS.md - it must NOT be treated
@@ -1471,8 +1627,8 @@ test('check 12: *.test.mjs is off the walk - a test may write any shape', () => 
   assert.deepEqual(mergeProblems(binFixture({ 'seam.test.mjs': BARE_CALL })), []);
 });
 
-// CADENCE-CENSUS: self-verify-merge-layers | asserts: twenty mergeLayers callsites over fourteen files, each in one of the two warning-surfacing arms
-test('check 12: the live tree is TWENTY callsites over FOURTEEN files, each in an arm', () => {
+// CADENCE-CENSUS: self-verify-merge-layers | asserts: twenty-one mergeLayers callsites over fifteen files, each in one of the two warning-surfacing arms
+test('check 12: the live tree is TWENTY-ONE callsites over FIFTEEN files, each in an arm', () => {
   // The count is taken here INDEPENDENTLY of the rule (a plain line scan), so a
   // miscount in either direction fails rather than passing quietly, and a
   // new callsite cannot be added without choosing an arm.
@@ -1487,7 +1643,9 @@ test('check 12: the live tree is TWENTY callsites over FOURTEEN files, each in a
   // eighteen reads over fourteen files. Then FRG-06 gave forge.mjs `create` a
   // read of its own - the persisted instance whose port a `--remote-url` must
   // name - so that file now holds two: nineteen reads over the same fourteen
-  // files.
+  // files. Then planning/phase-entry.mjs read workflow.skip_discuss for the
+  // cursor an add writes: twenty-one reads over fifteen files. The title moves
+  // with census-registry.mjs, which quotes it verbatim.
   const binDir = join(REPO, 'cadence-core', 'bin');
   const skip = join(binDir, 'lib', 'config-merge.mjs');
   /** @param {string} dir @returns {string[]} */
@@ -1520,8 +1678,12 @@ test('check 12: the live tree is TWENTY callsites over FOURTEEN files, each in a
       }
     }
   }
-  assert.equal(total, 20, `callsites: ${files.join(', ')}`);
-  assert.equal(files.length, 14, files.join(', '));
+  assert.equal(total, 21, `callsites: ${files.join(', ')}`);
+  assert.equal(files.length, 15, files.join(', '));
+  // a file holding a callsite that the registry row doesn't name is one a plan can move without the census firing
+  const row = CENSUSES.find((e) => e.id === 'self-verify-merge-layers');
+  assert.deepEqual(files.map((f) => f.split('\\').join('/')).filter((f) => !row?.subjects.includes(f)), [],
+    'census-registry.mjs lacks these files in self-verify-merge-layers subjects');
   // Arm (b) is the exception, not the habit: exactly one file states the reason
   // in its header, and it is the one whose two other reads are memoized scalars.
   assert.deepEqual(armB, [join('cadence-core', 'bin', 'review-provider.mjs')]);
@@ -2270,12 +2432,12 @@ test('check 20: a registered site back on the transcript reports the inline kind
   // proves the register the CLI reads is the register the module ships - not a
   // fixture's own copy of it.
   const root = fixture('nothing to see\n');
-  writeFileSync(join(root, 'cadence-core', 'references', 'triage-gate.md'),
+  writeFileSync(join(root, 'cadence-core', 'references', 'triage-gate-blocking.md'),
     'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" trace render --phase <N>\n');
   const hits = run(['--root', root]).problems
     .filter((p) => p.kind === 'bulk-output-inline');
   assert.equal(hits.length, 1, JSON.stringify(hits));
-  assert.equal(hits[0].file, 'cadence-core/references/triage-gate.md');
+  assert.equal(hits[0].file, 'cadence-core/references/triage-gate-blocking.md');
   assert.match(hits[0].detail, /conventions\.md/);
 });
 
@@ -2321,13 +2483,13 @@ test('check 21: a fixed shared scratch path reaches problems, naming the surface
   // the line carries the redirect that check demands and shares the fixed name
   // this one refuses, which is exactly the pair the two checks split.
   const root = fixture('nothing to see\n');
-  writeFileSync(join(root, 'cadence-core', 'references', 'triage-gate.md'),
+  writeFileSync(join(root, 'cadence-core', 'references', 'triage-gate-blocking.md'),
     'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" trace render --phase <N> > "${TMPDIR:-/tmp}/cad-rearm.json"\n');
   const j = run(['--root', root]);
   assert.match(j.checked, /scratch-path/);
   const hits = j.problems.filter((p) => p.kind === 'scratch-shared-path');
   assert.equal(hits.length, 1, JSON.stringify(j.problems));
-  assert.equal(hits[0].file, 'cadence-core/references/triage-gate.md');
+  assert.equal(hits[0].file, 'cadence-core/references/triage-gate-blocking.md');
   assert.match(hits[0].detail, /mktemp/);
   assert.deepEqual(j.problems.filter((p) => p.kind === 'bulk-output-inline'), []);
 });
@@ -2954,4 +3116,24 @@ test('workflow scripts: a full tree missing workflows/ reports missing-input', (
   rmSync(join(root, 'workflows'), { recursive: true });
   const hit = run(['--root', root]).problems.find((p) => p.kind === 'missing-input' && p.file === 'workflows');
   assert.ok(hit);
+});
+
+// --- check 37: node:fs writes go through the write module ---------------------
+
+test('check 37: a script under bin holding a writeFileSync is named with the write-module kind', () => {
+  const root = binFixture({});
+  mkdirSync(join(root, 'cadence-core', 'bin', 'planning'), { recursive: true });
+  writeFileSync(join(root, 'cadence-core', 'bin', 'planning', 'seam.mjs'),
+    "import { writeFileSync } from 'node:fs';\nwriteFileSync('.planning/STATE.md', 'x');\n");
+  const j = run(['--root', root]);
+  assert.equal(j.ok, false);
+  assert.match(j.checked, /write-module/);
+  const hits = j.problems.filter((p) => p.kind === 'fs-write-outside-write-module');
+  assert.equal(hits.length, 1, JSON.stringify(j.problems));
+  assert.equal(hits[0].file, 'cadence-core/bin/planning/seam.mjs');
+});
+
+test('check 37: a fixture with no bin directory is not a failure', () => {
+  const j = run(['--root', fixture('nothing to see\n')]);
+  assert.deepEqual(j.problems.filter((p) => p.kind.startsWith('fs-write-')), []);
 });

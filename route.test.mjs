@@ -9,7 +9,8 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rungFile, RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
-import { renderCursor } from '../cadence-core/bin/lib/planning-files.mjs';
+import { writeState } from '../cadence-core/bin/lib/project-state.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const ROUTE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'route.mjs');
 const dir = mkdtempSync(join(tmpdir(), 'cad-route-'));
@@ -977,7 +978,7 @@ test('an unreadable schema degrades to ok:false, reason bad-schema, no stack', (
 // route.mjs REPORTS effort; it cannot SET it. Effort is definition-time
 // frontmatter on the spawn-agent seam (seams.md), so the only thing that makes
 // the reported value true is the agent file agreeing with the table. Prose in
-// references/review-triggers.md now tells the user which effort a
+// references/review-inline.md now tells the user which effort a
 // claude-subagent review actually runs at (`cad-reviewer` = high), so that
 // claim gets a test rather than a promise.
 const AGENTS = join(dirname(fileURLToPath(import.meta.url)), '..', 'agents');
@@ -1001,7 +1002,7 @@ test('every rung the MAP names has an agent file carrying exactly that effort', 
   // of them is now a rung a dispatch can land on.
   /** @type {Map<string,string>} agent-file stem -> the rung that produced it */
   const byName = new Map();
-  for (const [role, rungs] of Object.entries(RUNG_FILES)) {
+  for (const [role, { rungs }] of Object.entries(RUNG_FILES)) {
     for (const rung of Object.keys(rungs)) {
       const stem = rungFile(role, rung);
       assert.ok(stem, `${role} rung ${rung} has no file in RUNG_FILES`);
@@ -1335,11 +1336,20 @@ function traceRoot(name, breakTrace) {
   const planning = join(mkdtempSync(join(tmpdir(), `cad-route-${name}-`)), '.planning');
   mkdirSync(planning, { recursive: true });
   writeFileSync(join(planning, 'config.json'), JSON.stringify({}));
+  // stamped, since route.mjs's appends write nothing into a project with no valid state
+  const stamped = writeState(planning, { cycleOpen: false, cursor: null, phases: [], requirements: [] });
+  if (!stamped.ok) throw new Error(`traceRoot: ${stamped.reason} ${stamped.detail}`);
   // trace.jsonl as a DIRECTORY is the unwritable case: appendFileSync fails
   // EISDIR for ANY uid, where a chmod is silently a no-op under a root test
   // runner and would make this pass without proving anything.
-  if (breakTrace) mkdirSync(join(planning, 'trace.jsonl'));
+  if (breakTrace) mkdirSync(join(recordsDir(planning), 'trace.jsonl'), { recursive: true });
   return planning;
+}
+
+/** Put a cursor in the planning root's state file, where `cursorPhase` reads it. */
+function stateCursor(planning, cursor) {
+  const wrote = writeState(planning, { cycleOpen: true, cursor, phases: [], requirements: [] });
+  if (!wrote.ok) throw new Error(`stateCursor: ${wrote.reason} ${wrote.detail}`);
 }
 
 /** The raw stdout bytes, for the comparison that has to be byte-for-byte. */
@@ -1353,7 +1363,7 @@ function resolveRaw(file, extra = []) {
   }
 }
 
-const traceLines = (planning) => readFileSync(join(planning, 'trace.jsonl'), 'utf8')
+const traceLines = (planning) => readFileSync(join(recordsDir(planning), 'trace.jsonl'), 'utf8')
   .split('\n').filter(Boolean).map((l) => JSON.parse(l));
 
 test('a resolve records ONE routing event carrying the decision, not the text', () => {
@@ -1410,7 +1420,7 @@ test('a planning root that is not a directory resolves clean and records nothing
   writeFileSync(planning, 'not a directory');
   const r = resolve('cad-executor', join(planning, 'config.json'), ['--phase', '4']);
   assert.equal(r.ok, true);
-  assert.equal(existsSync(join(planning, 'trace.jsonl')), false);
+  assert.equal(existsSync(join(recordsDir(planning), 'trace.jsonl')), false);
   assert.equal(r.warnings.length, 1, JSON.stringify(r.warnings));
   assert.match(r.warnings[0], /failed to parse and was skipped/);
 });
@@ -1419,15 +1429,12 @@ test('no phase and no cursor records nothing rather than an unjoinable line', ()
   const planning = traceRoot('trace-nophase', false);
   const r = resolve('cad-executor', join(planning, 'config.json'));
   assert.equal(r.ok, true);
-  assert.equal(existsSync(join(planning, 'trace.jsonl')), false);
+  assert.equal(existsSync(join(recordsDir(planning), 'trace.jsonl')), false);
 });
 
 test('the cursor supplies the phase when --phase is absent', () => {
   const planning = traceRoot('trace-cursor', false);
-  writeFileSync(join(planning, 'STATE.md'), renderCursor({
-    phase: 2, total: 5, name: 'Fixture', status: 'planned',
-    next: '/cad-execute 2', updated: '2026-01-01',
-  }));
+  stateCursor(planning, { phase: 2, status: 'planned', next: '/cad-execute 2', updated: '2026-01-01' });
   assert.equal(resolve('cad-executor', join(planning, 'config.json')).ok, true);
   assert.equal(traceLines(planning)[0].phase, 2);
 });
@@ -1441,10 +1448,7 @@ test('CER-01: a malformed --phase is REFUSED and routes nothing, reversing the w
   // the resolved bundle reveals as wrong. Refusing is the only disposition that
   // cannot silently route a phase off another phase's plans.
   const planning = traceRoot('trace-badphase', false);
-  writeFileSync(join(planning, 'STATE.md'), renderCursor({
-    phase: 2, total: 5, name: 'Fixture', status: 'planned',
-    next: '/cad-execute 2', updated: '2026-01-01',
-  }));
+  stateCursor(planning, { phase: 2, status: 'planned', next: '/cad-execute 2', updated: '2026-01-01' });
   const cfgPath = join(planning, 'config.json');
   for (const bad of [['--phase', '1.10.3'], ['--phase', 'abc'], ['--phase', ''], ['--phase']]) {
     const r = resolve('cad-executor', cfgPath, bad);
@@ -1454,7 +1458,7 @@ test('CER-01: a malformed --phase is REFUSED and routes nothing, reversing the w
   }
   // Routes NOTHING: four refusals, and not one line in the trace. A refusal at
   // argument shape happens before any phase is in hand to key an event to.
-  assert.equal(existsSync(join(planning, 'trace.jsonl')), false);
+  assert.equal(existsSync(join(recordsDir(planning), 'trace.jsonl')), false);
 
   // The control on both sides: a well-formed --phase resolves clean and silent...
   const good = resolve('cad-executor', cfgPath, ['--phase', '3']);
@@ -1531,7 +1535,7 @@ test('a valueless --bracket-read is refused, not recorded as an empty read-set',
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'usage');
   assert.match(r.detail, /--bracket-read/);
-  assert.equal(existsSync(join(planning, 'trace.jsonl')), false);
+  assert.equal(existsSync(join(recordsDir(planning), 'trace.jsonl')), false);
 });
 
 // --- the preview's two flags: --no-record and --planning-root -----------------
@@ -1541,13 +1545,13 @@ test('--no-record leaves trace.jsonl alone with --phase and --bracket-read, and 
   const flags = ['--phase', '3', '--bracket-read', 'PLAN.md'];
   const quiet = resolve('cad-executor', join(planning, 'config.json'), [...flags, '--no-record']);
   assert.equal(quiet.ok, true);
-  assert.equal(existsSync(join(planning, 'trace.jsonl')), false);
+  assert.equal(existsSync(join(recordsDir(planning), 'trace.jsonl')), false);
   // the negative control: the identical call minus the flag writes its two rows
   resolve('cad-executor', join(planning, 'config.json'), flags);
   assert.equal(traceLines(planning).length, 2);
-  const before = readFileSync(join(planning, 'trace.jsonl'), 'utf8');
+  const before = readFileSync(join(recordsDir(planning), 'trace.jsonl'), 'utf8');
   resolve('cad-executor', join(planning, 'config.json'), [...flags, '--no-record']);
-  assert.equal(readFileSync(join(planning, 'trace.jsonl'), 'utf8'), before);
+  assert.equal(readFileSync(join(recordsDir(planning), 'trace.jsonl'), 'utf8'), before);
 });
 
 test('--planning-root reads the floor off the real tree while --file names a scratch config', () => {
@@ -2170,6 +2174,8 @@ test('--plan: it is NOT --bracket-plan, which still keys the trace alone', () =>
   // non-executor dispatch, so reading it as a floor key would make a
   // phase-scoped role indistinguishable from a plan key naming no file.
   const fx = mixedPhase();
+  // stamped so the bracket can land; the floor reads the plan files either way
+  assert.equal(writeState(fx.planning, { cycleOpen: false, cursor: null, phases: [], requirements: [] }).ok, true);
   const r = resolve('cad-executor', fx.file,
     ['--phase', '3', '--bracket-read', 'PLAN-1.md', '--bracket-plan', '1']);
   // The floor still took the phase UNION, so the risky sibling raised it.
@@ -2506,5 +2512,5 @@ test('agent-type: writes no routing record, even run beside a planning root', ()
   const planning = traceRoot('agent-type-cmd', false);
   const r = routeWith(['agent-type', '--stem', 'cad-reviewer'], { cwd: dirname(planning) });
   assert.equal(r.ok, true);
-  assert.equal(existsSync(join(planning, 'trace.jsonl')), false);
+  assert.equal(existsSync(join(recordsDir(planning), 'trace.jsonl')), false);
 });

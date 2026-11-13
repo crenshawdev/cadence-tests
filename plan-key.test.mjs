@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requirePlanKey } from '../cadence-core/bin/lib/plan-key.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 /** [value, accepted, why] - the grammar, stated once. */
 export const PLAN_KEYS = [
@@ -130,7 +131,7 @@ function planning(repo, dir, args) {
 /** Every parsed line of the fixture's trace, or [] when it was never written. */
 function traceLines(dir) {
   let text;
-  try { text = readFileSync(join(dir, 'trace.jsonl'), 'utf8'); } catch { return []; }
+  try { text = readFileSync(join(recordsDir(dir), 'trace.jsonl'), 'utf8'); } catch { return []; }
   return text.split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
 }
 
@@ -185,7 +186,8 @@ test('risk-check status: a 1-fix bracket is satisfiable - record, then fire rece
   const { repo, dir } = riskRepo();
   const base = commitFile(repo, 'README.md', 'start\n');
   const head = commitFile(repo, 'src/auth.js', CREDENTIAL_LINE);
-  writeFileSync(join(dir, 'trace.jsonl'), `${bracket('1-fix').join('\n')}\n`);
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${bracket('1-fix').join('\n')}\n`);
 
   const before = planning(repo, dir, ['risk-check', 'status', '--phase', '3']);
   assert.equal(before.ok, false, JSON.stringify(before));
@@ -219,7 +221,8 @@ test('risk-check status: a bracketed key the grammar REFUSES is malformed, not m
   // dropped, which is what made the exclusion arm fail-open.
   const { repo, dir } = riskRepo();
   commitFile(repo, 'README.md', 'start\n');
-  writeFileSync(join(dir, 'trace.jsonl'), `${bracket('1-fix ').join('\n')}\n`);
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${bracket('1-fix ').join('\n')}\n`);
   const r = planning(repo, dir, ['risk-check', 'status', '--phase', '3']);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(r.malformed, ['1-fix ']);
@@ -233,7 +236,8 @@ test('risk-check status: a bracket with NO plan at all is still required', () =>
   // unidentified completed range stays required rather than quietly exempt.
   const { repo, dir } = riskRepo();
   commitFile(repo, 'README.md', 'start\n');
-  writeFileSync(join(dir, 'trace.jsonl'), `${bracket(undefined).join('\n')}\n`);
+  mkdirSync(recordsDir(dir), { recursive: true });
+  writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${bracket(undefined).join('\n')}\n`);
   const r = planning(repo, dir, ['risk-check', 'status', '--phase', '3']);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'risk-record-missing');

@@ -1,5 +1,4 @@
-// Tests for lib/state-cursor.mjs, the STATE.md cursor parser planning-files
-// re-exports. Run: node --test tests/state-cursor.test.mjs
+// Tests for lib/state-cursor.mjs, the STATE.md cursor parser (the importer's), and cursor get over a migrated STATE.md. Run: node --test tests/state-cursor.test.mjs
 //
 // Not named planning-*: test-groups.test.mjs pins the `planning` group to
 // exactly those files.
@@ -23,9 +22,13 @@ const LINES = [
 ];
 const STATE = `# State\n\n${LINES.join('\n')}\n`;
 
-test('planning-files re-exports this parseCursor, not a copy', () => {
-  assert.equal(planningFiles.parseCursor, parseCursor);
-});
+/** A roadmap of `total` phases, the cursor's phase `at` among them under `name`, so the view's total and name match the cursor line. */
+function roadmapOf(total, at, name) {
+  const nums = Array.from({ length: Number.isInteger(at) ? total : total - 1 }, (_, i) => i + 1);
+  if (!Number.isInteger(at)) nums.push(at);
+  const lines = nums.sort((x, y) => x - y).map((n) => `- [ ] **Phase ${n}: ${n === at ? name : `Phase ${n}`}** - fixture`);
+  return `# Roadmap\n\n## Phases\n\n${lines.join('\n')}\n`;
+}
 
 test('parses the canonical four lines, decimal phase included', () => {
   assert.deepEqual(parseCursor(STATE), {
@@ -45,6 +48,8 @@ test('agrees with planning.mjs cursor get on a fixture STATE.md', () => {
   const root = mkdtempSync(join(tmpdir(), 'state-cursor-'));
   try {
     mkdirSync(join(root, '.planning'));
+    // the first seam call imports this STATE.md; the total and name come from the phase list the roadmap holds
+    writeFileSync(join(root, '.planning', 'ROADMAP.md'), roadmapOf(4, 2.1, 'Fixture phase'));
     writeFileSync(join(root, '.planning', 'STATE.md'), STATE);
     const out = execFileSync(process.execPath,
       [join(BIN, 'planning.mjs'), '--dir', join(root, '.planning'), 'cursor', 'get'],
@@ -98,10 +103,11 @@ test('a four-line cursor written by 3.9.3 parses to exactly its six fields, and 
   const dir = mkdtempSync(join(tmpdir(), 'cad-cursor-'));
   try {
     mkdirSync(join(dir, '.planning'));
+    writeFileSync(join(dir, '.planning', 'ROADMAP.md'), roadmapOf(8, 8, BALEY_FIELDS.name));
     writeFileSync(join(dir, '.planning', 'STATE.md'), BALEY);
     const out = JSON.parse(execFileSync(process.execPath,
       [join(BIN, 'planning.mjs'), 'cursor', 'get', '--dir', join(dir, '.planning')], { encoding: 'utf8' }));
-    const { ok, ...fields } = out;
+    const { ok, migration, ...fields } = out; // the converting call's added field is the migration's, not the cursor's
     assert.equal(ok, true);
     assert.deepEqual(fields, BALEY_FIELDS);
   } finally { rmSync(dir, { recursive: true, force: true }); }

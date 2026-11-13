@@ -19,6 +19,10 @@ import { PLANNING, makeTree, run, isEntryFile } from './planning.test.mjs';
 // its fixtures come from the arms that own that seam rather than a second
 // copy of them here.
 import { taskRepo, runIn, TASK_COMMITS } from './planning-task-record.test.mjs';
+import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { mkdirSync as plantMkdir, writeFileSync as plantWrite } from 'node:fs';
+import { dirname as plantDirname } from 'node:path';
+const plantFile = (file, data) => { plantMkdir(plantDirname(file), { recursive: true }); plantWrite(file, data); };
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -84,6 +88,8 @@ test('recall: two runs on the same corpus are byte-identical', () => {
     capture: [{ section: 'Todos', text: 'wire the beta recall path', phase: 1 },
       { section: 'Seeds', text: 'gamma indexing idea' }],
   });
+  // the first call converts the project and its answer says so, so the compared calls are the ones after it
+  recall('beta gamma', dir);
   const a = recall('beta gamma', dir);
   const b = recall('beta gamma', dir);
   assert.equal(a.raw, b.raw);
@@ -131,6 +137,8 @@ test('recall: two runs over a corpus with ## Durable decisions are byte-identica
       1: { durableDecisions: ['alpha beta gamma durable'], contextDecisions: ['delta epsilon local'] },
     },
   });
+  // the first call converts the project and its answer says so, so the compared calls are the ones after it
+  recall('beta gamma', dir);
   const a = recall('beta gamma', dir);
   const b = recall('beta gamma', dir);
   assert.equal(a.raw, b.raw);
@@ -146,6 +154,7 @@ test('recall: bare words after the query are joined, not truncated (#47.2)', () 
       2: { summaryBody: { deviations: ['renumber phases desync report'] } },
     },
   });
+  recall('decimal phases', dir); // converts the project, and its answer says so
   const bare = recall(['decimal', 'phases'], dir);
   const quoted = recall('decimal phases', dir);
   assert.equal(bare.json.ok, true);
@@ -242,7 +251,7 @@ test('recall: memory.backend none reports off with empty results, exit 0', () =>
 
 /** Write an ARCHIVE.md into a fixture tree; `rows` are raw grammar lines. */
 export function archive(dir, label, rows) {
-  writeFileSync(join(dir, 'ARCHIVE.md'),
+  plantFile(join(recordsDir(dir), 'ARCHIVE.md'),
     `# Archive\n\n## ${label}\n\n${rows.map((r) => `- ${r}`).join('\n')}\n`);
   return dir;
 }
@@ -303,6 +312,8 @@ test('recall: two runs over a corpus holding live AND archived rows are byte-ide
     '`phases/1/SUMMARY.md`: beta gamma from the closed milestone',
     '`phases/1/CONTEXT.md`: D-01 (REC-01): gamma stays flat-ranked',
   ]);
+  // the first call converts the project and its answer says so, so the compared calls are the ones after it
+  recall('beta gamma', dir);
   const a = recall('beta gamma', dir);
   const b = recall('beta gamma', dir);
   assert.equal(a.raw, b.raw);
@@ -380,6 +391,8 @@ test('recall: two runs over a corpus holding a task record are byte-identical', 
   const dir = taskRecordIn(makeTree(TASK_TIER_SPEC), 'bound-plan-size',
     ['a plan-size ceiling nothing enforced', 'the beta gamma path this task took']);
   taskRecordIn(dir, 'another-task', ['a second beta record, sorted after the first']);
+  // the first call converts the project and its answer says so, so the compared calls are the ones after it
+  recall('beta gamma', dir);
   const a = recall('beta gamma', dir);
   const b = recall('beta gamma', dir);
   assert.equal(a.raw, b.raw);
@@ -422,7 +435,7 @@ test('task-record -> recall: a record written by the seam is found by what it sa
 
 /** Write a FILED.md into a fixture tree; `rows` are raw grammar lines. */
 function filed(dir, rows) {
-  writeFileSync(join(dir, 'FILED.md'),
+  plantFile(join(recordsDir(dir), 'FILED.md'),
     `# Filed\n\n${rows.map((r) => `- ${r}`).join('\n')}\n`);
   return dir;
 }
@@ -461,7 +474,7 @@ test('recall: a tree with no FILED.md answers byte-identically to one that never
 
 test('recall: a note in FILED.md that is not a row mints no corpus entry', () => {
   const dir = makeTree({ phases: { 1: { summaryBody: { deviations: ['a live deviation'] } } } });
-  writeFileSync(join(dir, 'FILED.md'),
+  plantFile(join(recordsDir(dir), 'FILED.md'),
     '# Filed\n\nsomeone wrote a paragraph about zebrafish here.\n\n- not a row either\n');
   const r = recall('zebrafish', dir);
   assert.deepEqual(r.json.results.filter((x) => x.source === 'FILED.md'), []);
@@ -470,6 +483,8 @@ test('recall: a note in FILED.md that is not a row mints no corpus entry', () =>
 test('recall: two runs over a corpus holding a filed row are byte-identical', () => {
   const dir = makeTree({ phases: { 1: { summaryBody: { deviations: ['alpha beta gamma'] } } } });
   filed(dir, ['2026-08-25 gitlab acme/widget aabbccddeeff0011: [cadence aabbccddeeff0011] beta gamma pointer']);
+  // the first call converts the project and its answer says so, so the compared calls are the ones after it
+  recall('beta gamma', dir);
   assert.equal(recall('beta gamma', dir).raw, recall('beta gamma', dir).raw);
 });
 

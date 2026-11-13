@@ -34,7 +34,7 @@ function scan(root) {
   return JSON.parse(stdout);
 }
 
-const rows = (root) => JSON.parse(readFileSync(join(root, '.planning', 'codemap', 'index.json'), 'utf8')).rows;
+const rows = (root) => JSON.parse(readFileSync(join(root, '.planning', 'records', 'codemap', 'index.json'), 'utf8')).rows;
 const rowOf = (root, path) => rows(root).find((r) => r.path === path);
 const symOf = (root, path, name) => rowOf(root, path).symbols.find((s) => s.name === name);
 
@@ -188,7 +188,7 @@ function withClone(outer, clone) {
   execFileSync('git', ['clone', '-q', src.root, join(root, 'tests')], { stdio: 'pipe' });
   return { root, git, clone: join(root, 'tests') };
 }
-const idx = (root) => JSON.parse(readFileSync(join(root, '.planning', 'codemap', 'index.json'), 'utf8'));
+const idx = (root) => JSON.parse(readFileSync(join(root, '.planning', 'records', 'codemap', 'index.json'), 'utf8'));
 
 test('a test in the nested clone pins the file whose hyphenated stem it names and the symbol it holds', () => {
   const { root, clone } = withClone(
@@ -282,7 +282,7 @@ test('an index that would pass 128 MiB sheds its edges, says so, and status and 
   assert.equal(r.ok, true);
   assert.equal(r.edges_shed, true);
   assert.equal(r.symbols_shed, undefined);
-  const file = join(root, '.planning', 'codemap', 'index.json');
+  const file = join(root, '.planning', 'records', 'codemap', 'index.json');
   assert.ok(statSync(file).size < 128 * 1024 * 1024);
   const i = JSON.parse(readFileSync(file, 'utf8'));
   assert.equal(i.edges_shed, true);
@@ -339,7 +339,7 @@ test('a nested clone of 400 text files of 1,000,000 B scans within a 256 MiB hea
   execFileSync('git', ['-C', clone, 'update-index', '--add', '--index-info'], { input: `${lines.join('\n')}\n` });
   const r = cli(root, ['scan'], { NODE_OPTIONS: '--max-old-space-size=256' });
   assert.equal(r.ok, true);
-  assert.equal(JSON.parse(readFileSync(join(root, '.planning', 'codemap', 'index.json'), 'utf8')).nested_paths.length, 400);
+  assert.equal(JSON.parse(readFileSync(join(root, '.planning', 'records', 'codemap', 'index.json'), 'utf8')).nested_paths.length, 400);
 });
 
 test('. .. ./ ../ and a trailing slash resolve to the directory\'s index', () => {

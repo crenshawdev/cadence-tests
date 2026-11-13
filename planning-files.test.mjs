@@ -20,14 +20,16 @@ import {
   parseRequirements, setReqStatus,
   classifyPhaseList, cutPhaseDetail, parseRoadmapPhases, setPhaseBox,
   classifyActiveSection, isRequirementId, classifyAcceptanceCriteria,
-  atomicWrite, parseCaptureSnippets, captureSections, phaseCriteria,
+  parseCaptureSnippets, captureSections, phaseCriteria,
   parseArchiveRows, appendArchiveRows, parseFiledRows, appendFiledRow,
   parseDeclinedRows, appendDeclinedRow,
-  parsePlanFiles, parseTaskRecordSnippets, CURSOR_STATUSES,
+  parsePlanFiles, parseTaskRecordSnippets, parseSummarySnippets, CURSOR_STATUSES,
+  parseUat, renderUat, planTaskTitles,
 } from '../cadence-core/bin/lib/planning-files.mjs';
+import { atomicWrite } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
-const LIB = join(HERE, 'lib', 'planning-files.mjs');
+const STORE = join(HERE, 'lib', 'planning-store.mjs');
 
 /** A fresh scratch directory - atomicWrite does real I/O, so it needs one. */
 const scratch = () => mkdtempSync(join(tmpdir(), 'cad-atomic-'));
@@ -1551,6 +1553,26 @@ for (const row of DECLARES_ROWS) {
   });
 }
 
+// An indented heading is still a heading to CommonMark up to three spaces, so it is a typo of the section, not
+// an absence of it (P3-1-04). Four spaces is code, and keeps the exemption.
+for (const spaces of [1, 3]) {
+  test(`acceptance-criteria near-miss: ${spaces} leading space(s) before the heading report it, never the exemption`, () => {
+    const r = classifyAcceptanceCriteria(
+      `# Phase 1 Context\n\n${' '.repeat(spaces)}## Acceptance criteria\n\n- [ ] AC1: the tests pass\n`);
+    assert.equal(r.criteria, null);
+    assert.equal(r.declaresIds, 'unknown');
+    assert.deepEqual(r.issues.map((i) => [i.line, i.code]), [[3, 'criteria-heading-near-miss']]);
+  });
+}
+
+test('acceptance-criteria near-miss: four leading spaces are code, so the heading stays absent and declares nothing', () => {
+  const r = classifyAcceptanceCriteria(
+    '# Phase 1 Context\n\n    ## Acceptance criteria\n\n- [ ] AC1: the tests pass\n');
+  assert.equal(r.criteria, null);
+  assert.equal(r.declaresIds, 'none');
+  assert.deepEqual(r.issues, []);
+});
+
 // This repo's own four v2.0.0 phases, FROZEN: the fixture no synthetic row can
 // replace, because the grammar must keep reading the files it was written
 // against - wrapped continuations, backticks, embedded colons and all.
@@ -1960,7 +1982,7 @@ test('atomicWrite: two concurrent writers of one target land one payload whole',
   const file = join(dir, 'STATE.md');
   const child = join(dir, 'write.mjs');
   writeFileSync(child,
-    `import { atomicWrite } from ${JSON.stringify(LIB)};\n`
+    `import { atomicWrite } from ${JSON.stringify(STORE)};\n`
     + 'atomicWrite(process.argv[2], process.argv[3].repeat(Number(process.argv[4])));\n');
 
   const run = (ch) => new Promise((resolve, reject) => {
@@ -2579,4 +2601,117 @@ test('planName: no name, no stand-in', async () => {
     '',
   ]) assert.equal(planName(text), null, JSON.stringify(text));
   for (const bad of [undefined, null, 5, {}, ['# a - Plan 1: x']]) assert.equal(planName(bad), null);
+});
+
+// --- the recall section reader sees fences (P2-1-01) -------------------------
+// A `## ` line inside a fenced block is output, not a heading, so it must not end a recall section.
+
+test('parseCaptureSnippets: a fenced `## ` line inside `## Todos` does not drop the todo after it', () => {
+  const text = [
+    '# Capture', '', '## Todos', '', '- first todo', '',
+    '```text', '## build output', '```', '',
+    '- second todo', '', '## Seeds', '', '- a seed', '',
+  ].join('\n');
+  assert.deepEqual(parseCaptureSnippets(text),
+    [{ text: 'first todo' }, { text: 'second todo' }, { text: 'a seed' }]);
+});
+
+test('parseSummarySnippets: a fenced `## ` line inside `## Deviations` keeps both bullets', () => {
+  const text = [
+    '# Summary', '', '## Deviations', '', '- [deviation] first bullet',
+    '```', '## not a heading', '```',
+    '- second bullet', '', '## Open items', '', '- an open item', '',
+  ].join('\n');
+  assert.deepEqual(parseSummarySnippets(text), ['first bullet', 'second bullet', 'an open item']);
+});
+
+// --- the recall readers on a CRLF checkout (P4-05) ----------------------------
+
+test('the SUMMARY, RECORD and CAPTURE snippet readers give a CRLF checkout the same snippets as its LF twin', () => {
+  const crlf = (t) => t.replace(/\n/g, '\r\n');
+  const summary = '# Summary\n\n## Deviations\n\n- [deviation] a deviation\n\n## Open items\n\n- an open item\n';
+  const record = '# Task: a-slug\n\n## What shipped\n\n- first thing\n- second thing\n\n## Commits\n';
+  const captureText = '# Capture\n\n## Todos\n\n- [ ] (phase 3) a todo\n\n## Seeds\n\n- a seed\n\n## Notes\n\n- a note\n';
+  for (const [read, text, expected] of [
+    [parseSummarySnippets, summary, ['a deviation', 'an open item']],
+    [parseTaskRecordSnippets, record, ['first thing', 'second thing']],
+    [parseCaptureSnippets, captureText,
+      [{ text: 'a todo', phase: 3 }, { text: 'a seed' }, { text: 'a note' }]],
+  ]) {
+    assert.deepEqual(read(text), expected, `${read.name} on LF`);
+    assert.deepEqual(read(crlf(text)), expected, `${read.name} on CRLF`);
+  }
+});
+
+// --- the phase detail locator sees fences (P3-2-01) ---------------------------
+
+test('phaseCriteria: a fenced `# ` line inside the criteria list does not end the block', () => {
+  const text = [
+    '# Roadmap', '', '## Phase Details', '', '### Phase 1: A', '**Goal:** a',
+    '**Success Criteria:**', '', '1. first', '2. second', '```sh', '# a comment', '```', '3. third', '',
+    '### Phase 2: B', '**Goal:** b', '**Success Criteria:**', '1. only one', '',
+  ].join('\n');
+  assert.deepEqual(phaseCriteria(text, 1), { found: true, count: 3 });
+  assert.deepEqual(phaseCriteria(text, 2), { found: true, count: 1 });
+});
+
+test('cutPhaseDetail: a fenced `### ` line inside the section is cut with it, not left behind', () => {
+  const head = '# R\n\n## Phase Details\n\n';
+  const next = '### Phase 2: Next\n**Goal:** b\n';
+  const section = ['### Phase 1: A', '**Goal:** a', '```', '### not a heading', '```', 'tail prose', '', ''].join('\n');
+  assert.equal(cutPhaseDetail(head + section + next, 1), head + next);
+});
+
+// --- parseUat splits only on unfenced `### ` lines (P3-2-02) ------------------
+
+const uatWithFence = [
+  '---', 'status: executed', 'phase: 1', 'started: 2026-01-01', '---', '', '## Items', '',
+  '### 1. Real item', 'status: pass', 'evidence: seen', '```text', '### 2. phantom', '```', '',
+  '### Repro notes', '', 'Steps:', '', '```md', '### 3. also phantom', '```', '', 'Still fails.', '',
+  '## Summary', '', 'total: 1', '',
+].join('\n');
+
+test('parseUat: a fenced `### N.` line inside an item body mints no item', () => {
+  const uat = parseUat(uatWithFence);
+  assert.deepEqual(uat.items.map((i) => i.k), [1]);
+  assert.equal(uat.items[0].status, 'pass');
+  assert.equal(uat.counts.pass, 1);
+});
+
+test('parseUat: a fenced `### N.` line in a hand-added section survives a render whole', () => {
+  const uat = parseUat(uatWithFence);
+  assert.equal(uat.extras.length, 1);
+  const out = renderUat(uat);
+  const kept = ['### Repro notes', '', 'Steps:', '', '```md', '### 3. also phantom', '```', '', 'Still fails.'].join('\n');
+  assert.equal(out.split(kept).length - 1, 1);
+  assert.equal((out.match(/^```/gm) || []).length % 2, 0);
+  assert.equal(parseUat(out).items.length, 1);
+});
+
+// --- a CRLF UAT.md reads its frontmatter (P3-2-06) ----------------------------
+
+test('parseUat: a CRLF UAT.md reads status, phase and started like its LF twin, and render keeps them', () => {
+  const lf = [
+    '---', 'status: executed', 'phase: 1', 'started: 2026-01-01', '---', '', '## Items', '',
+    '### 1. Real item', 'status: pass', '', '## Summary', '', 'total: 1', '',
+  ].join('\n');
+  const crlf = lf.replace(/\n/g, '\r\n');
+  const a = parseUat(lf);
+  const b = parseUat(crlf);
+  assert.equal(b.status, a.status);
+  assert.equal(b.phase, a.phase);
+  assert.equal(b.fm.started, '2026-01-01');
+  assert.deepEqual(b.items, a.items);
+  const out = renderUat(b);
+  for (const line of ['status: executed', 'phase: 1', 'started: 2026-01-01']) assert.ok(out.includes(`${line}\n`), line);
+});
+
+// --- a fenced `### Task` line is not a task (P3-2-03) --------------------------
+
+test('planTaskTitles: a fenced `### Task 9:` example inside a task is not counted', () => {
+  const plan = [
+    '## Tasks', '', '### Task 1: Real one', '', 'Write it like this:', '', '```md', '### Task 9: example', '```', '',
+    '### Task 2: Real two', '', '- **Verify:** ok', '',
+  ].join('\n');
+  assert.deepEqual(planTaskTitles(plan), ['Real one', 'Real two']);
 });
