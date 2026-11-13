@@ -2356,6 +2356,7 @@ test('risk-check status: a skip answers only for the self-comparing range it des
   const same = riskStatus(dir, ['--phase', '1', '--plan', '1', '--base', a, '--head', a], repo);
   assert.equal(same.ok, true, JSON.stringify(same));
   assert.equal(same.plans.find((/** @type {any} */ p) => p.plan === '1').state, 'skipped');
+  assert.deepEqual(same.plans.find((/** @type {any} */ p) => p.plan === '1').skips, [a]);
 
   const b = commitFile(repo, 'docs/one.md', 'one\n');
   const real = riskStatus(dir, ['--phase', '1', '--plan', '1', '--base', a, '--head', b], repo);

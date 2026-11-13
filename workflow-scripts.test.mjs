@@ -31,8 +31,11 @@ function host(answers) {
       for (const e of opts.bashCommandClamp) if (!CLAMP_ENTRY.test(e)) throw new Error(`bad bashCommandClamp entry: ${e}`);
     }
     if (opts.schema && (opts.disallowedTools || []).includes('StructuredOutput')) throw new Error('StructuredOutput denied');
-    calls.push({ prompt, opts });
-    return answers(opts.label, prompt, opts);
+    const call = { prompt, opts };
+    calls.push(call);
+    // what the agent returned is what the host's journal keeps, so a test reads findings and rulings off it
+    try { call.returned = await answers(opts.label, prompt, opts); } catch (e) { call.threw = true; throw e; }
+    return call.returned;
   };
   const parallel = (thunks) => Promise.all(thunks.map((t) => Promise.resolve().then(t).catch(() => null)));
   const pipeline = (items, ...stages) => Promise.all(items.map(async (item, index) => {
@@ -45,6 +48,12 @@ function host(answers) {
   }));
   return { agent, parallel, pipeline, phase: () => {}, log: (m) => logs.push(m), calls, logs };
 }
+
+/** The journal the host writes beside the run file: a started line per call, and a result line for each that did not throw. */
+const journalOf = (h) => h.calls.flatMap((c, i) => [
+  { type: 'started', agentId: `agent-${i}`, label: c.opts.label },
+  ...(c.threw ? [] : [{ type: 'result', agentId: `agent-${i}`, result: c.returned ?? null }]),
+]).map((l) => JSON.stringify(l)).join('\n');
 
 async function runScript(src, h, args) {
   const fn = new AsyncFunction('agent', 'parallel', 'pipeline', 'phase', 'log', 'args', 'Date', 'Math', stripMeta(src));
@@ -350,13 +359,19 @@ test('review-panel: its real return, with a local voice and a provider voice, pl
   writeFileSync(join(repo, 'f.js'), '2\n'); git('add', 'f.js'); git('commit', '-q', '-m', 'head');
   const head = git('rev-parse', 'HEAD');
 
+  // the host's layout: the return in the run file, and what each agent returned in the journal beside it
   const fixture = JSON.parse(readFileSync(join(ROOT, 'tests', 'fixtures', 'workflow-run.completed.json'), 'utf8'));
-  writeFileSync(join(repo, 'run.json'), JSON.stringify({ ...fixture, result: out }));
+  const runFile = join(repo, 'session', 'workflows', `${fixture.runId}.json`);
+  const journalDir = join(repo, 'session', 'subagents', 'workflows', fixture.runId);
+  mkdirSync(dirname(runFile), { recursive: true });
+  mkdirSync(journalDir, { recursive: true });
+  writeFileSync(runFile, JSON.stringify({ ...fixture, result: out }));
+  writeFileSync(join(journalDir, 'journal.jsonl'), journalOf(h));
   mkdirSync(join(repo, 'scratch'));
   const planning = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
   const call = (...a) => JSON.parse(execFileSync('node', [planning, '--dir', join(repo, '.planning'), ...a], { encoding: 'utf8', cwd: repo }));
 
-  const seam = call('workflow-run', '--phase', '1', '--run-file', join(repo, 'run.json'), '--out-dir', join(repo, 'scratch'), '--payload-ref', `${base}..${head}`);
+  const seam = call('workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', join(repo, 'scratch'), '--payload-ref', `${base}..${head}`);
   assert.equal(seam.ok, true, JSON.stringify(seam));
   // the null checker's finding is in no count until answered, and the dropped voice is named
   assert.deepEqual(seam.counts, { raised: 5, survived: 2, downgraded: 0, refuted: 2, unruled: 1 });
@@ -374,7 +389,7 @@ test('review-panel: its real return, with a local voice and a provider voice, pl
   const answers = join(repo, 'answers.json');
   const texts = Object.fromEntries(SIX.map((k) => [k, `${k} text`]));
   writeFileSync(answers, JSON.stringify({ answers: [{ voice: 'openai', index: 0, ruling: 'survived', ...texts }] }));
-  const ruled = call('workflow-run', '--phase', '1', '--run-file', join(repo, 'run.json'), '--out-dir', join(repo, 'scratch'), '--payload-ref', `${base}..${head}`, '--answers-file', answers);
+  const ruled = call('workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', join(repo, 'scratch'), '--payload-ref', `${base}..${head}`, '--answers-file', answers);
   assert.deepEqual(ruled.counts, { raised: 5, survived: 3, downgraded: 0, refuted: 2, unruled: 0 });
   assert.equal(ruled.ready, true, ruled.not_ready);
   const adj = adjudicate(ruled.payload);
