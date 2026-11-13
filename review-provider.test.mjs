@@ -1329,7 +1329,8 @@ test('fence: consult fences its situation too (#167)', async () => {
   const SECRET = 'hunter2-not-a-real-password';
   const file = join(faultCwd, 'fence-consult.json');
   writeFileSync(file, JSON.stringify({
-    situation: 'the deploy fails and password=' + SECRET + ' is in the log',
+    // an env shape: a lower-case `password=` is a pair the narrow fence leaves alone
+    situation: 'the deploy fails and DB_PASSWORD=' + SECRET + ' is in the log',
   }));
   const body = JSON.stringify({
     output_text: JSON.stringify({
@@ -1351,7 +1352,7 @@ test('fence: an artifact that already holds the mark still reports a redaction (
   // arithmetic alone comes back 0 and both the envelope and the trace would say
   // the reviewer got the whole artifact. It did not.
   const SECRET = 's3cr3t-value-that-must-not-ship';
-  const artifact = 'password="already <redacted> and then ' + SECRET + '"';
+  const artifact = 'DB_PASSWORD="already <redacted> and then ' + SECRET + '"';
   const before = providerEvents().length;
   const r = await runFaked(
     fencePayloadArgs('fence-premarked.json', { instruction: 'refute this', artifact }),
@@ -1373,8 +1374,8 @@ test('fence: the cap measures the FENCED text, not the raw payload (#167)', asyn
   // The fixture config pins a small cap, so an artifact whose RAW form is over
   // it and whose FENCED form is under it separates the two orderings by outcome
   // rather than by inspection.
-  const raw = 'api_key=' + 'A'.repeat(400);
-  const fenced = raw.replace(/api_key=A+/, '<redacted>');
+  const raw = 'OPENAI_API_KEY=' + 'A'.repeat(400);
+  const fenced = raw.replace(/=A+/, '=<redacted>');
   assert.ok(raw.length > fenced.length + 300, 'the fixture does not separate the two lengths');
   const r = await runFaked(
     fencePayloadArgs('fence-cap.json', { instruction: 'x', artifact: raw }),
@@ -1383,6 +1384,37 @@ test('fence: the cap measures the FENCED text, not the raw payload (#167)', asyn
   // wire body is the fenced text, and it is the fenced text the cap admitted.
   assert.equal(r.envelope.ok, true, `the fenced payload was refused: ${r.line}`);
   assert.equal(r.seen[0].body.includes('A'.repeat(400)), false);
+});
+
+test('fence: the four outbound shapes never reach the wire, and each is counted', async () => {
+  const values = ['sk-fake-ENV0123456789', 'fake-userinfo-0123', 'fake.bearer-0123456789', 'fake-key-AAAA1111'];
+  const artifact = [
+    '+export OPENAI_API_KEY=' + values[0],
+    '+remote = https://' + values[1] + '@host.invalid/r.git',
+    '+Authorization: Bearer ' + values[2],
+    '+{"api_key": "' + values[3] + '"}',
+  ].join('\n');
+  const r = await runFaked(
+    fencePayloadArgs('fence-four.json', { instruction: 'refute this', artifact }),
+    { status: 200, body: FENCE_OK_BODY });
+  for (const v of values) assert.equal(r.seen[0].body.includes(v), false, `${v} reached the wire`);
+  assert.equal(r.envelope.ok, true);
+  assert.ok(r.envelope.redactions >= 4, `reported ${r.envelope.redactions} redactions`);
+});
+
+test('fence: the tracked source corpus crosses byte for byte (D-18)', async () => {
+  // the narrow rule exists because the wide one rewrote 64 of these files; fence() calls redactOutbound, so this is it
+  const { redactOutbound } = await import('../cadence-core/bin/lib/redact-url.mjs');
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const files = execFileSync('git', ['ls-files', '--', 'cadence-core/**/*.mjs', 'workflows/*.js', 'hooks/*',
+    'cadence-core/references/*.md', 'skills/**/*.md', 'agents/*.md'], { cwd: root, encoding: 'utf8' })
+    .split('\n').filter(Boolean);
+  // 285 on 2026-11-13; the floor stops an empty listing passing as a clean one
+  assert.ok(files.length >= 200, `only ${files.length} tracked files listed`);
+  for (const f of files) {
+    const text = readFileSync(join(root, f), 'utf8');
+    assert.ok(redactOutbound(text) === text, `${f} changed crossing the fence`);
+  }
 });
 
 test('fault mode 1/6 - request timeout: the caller sees transport, and the trace names it', async () => {
@@ -1915,6 +1947,18 @@ test('CST-04: a credential-shaped span in the provider usage object never reache
   const before = providerEvents().length;
   await runFaked(REVIEW_ARGS, { status: 200, body: openaiBody(OPENAI_USAGE) });
   assert.deepEqual(providerEvents().slice(before)[0].usage_raw, OPENAI_USAGE);
+});
+
+test('CST-04: a pair the narrow fence lets through still keeps usage_raw out of the trace', async () => {
+  // the usage guard keeps the full credential rules; on the narrow fence this pair would land in trace.jsonl
+  const before = providerEvents().length;
+  const r = await runFaked(REVIEW_ARGS,
+    { status: 200, body: openaiBody({ ...OPENAI_USAGE, secret: 'hunter2' }) });
+  assert.equal(r.envelope.ok, true, r.line);
+  const ev = providerEvents().slice(before);
+  assert.equal(ev.length, 1);
+  assert.equal('usage_raw' in ev[0], false, JSON.stringify(ev[0]));
+  assert.deepEqual(ev[0].usage, { input: 1837, output: 402 });
 });
 
 test('CST-04: a call that burned its budget and came back unusable still records what it burned', async () => {
