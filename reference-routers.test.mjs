@@ -11,7 +11,7 @@
 // does not.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -285,4 +285,66 @@ test('a clean fixture reports nothing', () => {
   put(root, COLD, '# cold\n');
   put(root, ROUTER, `# router\n\n${readLine(COLD)}\n`);
   assert.deepEqual(referenceRouterIssues(root, ROW), []);
+});
+
+// --- what each review arm reads -----------------------------------------------
+//
+// The first review of a run reads the reference text for the arm it is on, not
+// the five review references whole. Typed from the routers' prose, never
+// derived from ROUTERS, so it is a second statement of who reads what.
+
+/** D-15: review-triggers, review-workflow, triage-gate, review-record and risk-surface, read whole before plan 1-8 */
+const BEFORE_BYTES = 97588;
+// typed, never computed from the files, or growth could never trip it
+// heaviest arm: adjudicated on the workflow path for a risk_surface fire, 83,991 B on 2026-11-13, rounded up
+const ARM_BOUND = 85000;
+
+const ENTRY = ['review-triggers.md', 'triage-gate.md'];
+const GATE_FILES = ['triage-gate-deferred.md', 'triage-gate-blocking.md', 'triage-gate-adjudicated.md'];
+
+// beyond the two entry files; unfixed is counted on every gate, as though the fire held a finding it won't fix
+const ARMS = [
+  { arm: 'advisory, inline, risk_surface', gate: 'advisory',
+    reads: ['review-inline.md', 'risk-surface.md', 'triage-gate-unfixed.md'] },
+  { arm: 'advisory, inline, other trigger', gate: 'advisory',
+    reads: ['review-inline.md', 'triage-gate-unfixed.md'] },
+  { arm: 'deferred, inline, risk_surface', gate: 'deferred',
+    reads: ['review-inline.md', 'review-record.md', 'risk-surface.md', 'triage-gate-deferred.md', 'triage-gate-unfixed.md'] },
+  { arm: 'deferred, inline, other trigger', gate: 'deferred',
+    reads: ['review-inline.md', 'review-record.md', 'triage-gate-deferred.md', 'triage-gate-unfixed.md'] },
+  { arm: 'blocking, inline, risk_surface', gate: 'blocking',
+    reads: ['review-inline.md', 'review-record.md', 'risk-surface.md', 'triage-gate-blocking.md', 'triage-gate-unfixed.md'] },
+  { arm: 'blocking, inline, other trigger', gate: 'blocking',
+    reads: ['review-inline.md', 'review-record.md', 'triage-gate-blocking.md', 'triage-gate-unfixed.md'] },
+  { arm: 'adjudicated, inline, risk_surface', gate: 'adjudicated',
+    reads: ['review-inline.md', 'review-record.md', 'risk-surface.md', 'triage-gate-adjudicated.md', 'triage-gate-unfixed.md'] },
+  { arm: 'adjudicated, inline, other trigger', gate: 'adjudicated',
+    reads: ['review-inline.md', 'review-record.md', 'triage-gate-adjudicated.md', 'triage-gate-unfixed.md'] },
+  { arm: 'adjudicated, workflow, risk_surface', gate: 'adjudicated',
+    reads: ['review-workflow.md', 'review-record.md', 'risk-surface.md', 'triage-gate-adjudicated.md', 'triage-gate-unfixed.md'] },
+  { arm: 'adjudicated, workflow, other trigger', gate: 'adjudicated',
+    reads: ['review-workflow.md', 'review-record.md', 'triage-gate-adjudicated.md', 'triage-gate-unfixed.md'] },
+];
+
+test('each review arm reads at most the bound in reference bytes, and only its own gate file', (t) => {
+  assert.equal(ARM_BOUND % 5000, 0, 'the bound is not a multiple of 5,000');
+  assert.ok(ARM_BOUND < BEFORE_BYTES, `the bound ${ARM_BOUND} is not below the ${BEFORE_BYTES} B read before the split`);
+  const routed = new Set(ROUTERS.map((r) => r.cold));
+  const over = [];
+  for (const { arm, gate, reads } of ARMS) {
+    const files = [...ENTRY, ...reads];
+    let total = 0;
+    for (const name of files) {
+      const rel = `cadence-core/references/${name}`;
+      // a renamed or unregistered file fails here rather than dropping out of the sum
+      assert.ok(ENTRY.includes(name) || routed.has(rel), `${arm}: ${rel} is not a file any ROUTERS row routes to`);
+      assert.ok(existsSync(join(REPO, ...rel.split('/'))), `${arm}: ${rel} is missing`);
+      total += statSync(join(REPO, ...rel.split('/'))).size;
+    }
+    const strays = reads.filter((f) => GATE_FILES.includes(f) && f !== `triage-gate-${gate}.md`);
+    assert.deepEqual(strays, [], `${arm} reads another gate's arm file`);
+    t.diagnostic(`${arm}: ${total} B`);
+    if (total > ARM_BOUND) over.push(`${arm}: ${total} B`);
+  }
+  assert.deepEqual(over, [], `over the ${ARM_BOUND} B bound`);
 });
