@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, cpSyn
 import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { rungBody, RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
+import { agentFileText, rungBody, RUNG_FILES } from '../cadence-core/bin/lib/rung-agent.mjs';
 import { mergeWarningIssues } from '../cadence-core/bin/lib/merge-warnings.mjs';
 import { deferredReadIssues, DEFERRED_READS } from '../cadence-core/bin/lib/deferred-reads.mjs';
 import { referenceRouterIssues } from '../cadence-core/bin/lib/reference-routers.mjs';
@@ -141,20 +141,35 @@ function rungAgentText(stem, rung) {
 }
 
 /**
- * Every file RUNG_FILES names, as `agents/<stem>.md` fixture entries. Built
- * FROM the map rather than typed: check 8's map -> disk arm reads that same
- * map, so a rung the ladder grows arrives here without an edit, and a fixture
- * can never claim a ladder the map does not state.
+ * Every file RUNG_FILES names, as `agents/<stem>.md` fixture entries, each the
+ * table's own render. Built FROM the table rather than typed: check 8's map ->
+ * disk arm and check 8c's byte comparison read that same table, so a rung the
+ * ladder grows arrives here without an edit, and a full-tree row never fails
+ * 8c for a reason it is not about.
  * @param {string[]} [omit] stems to leave OFF disk
  */
 function ladderAgents(omit = []) {
   /** @type {Record<string, string>} */
   const out = {};
   for (const { rungs } of Object.values(RUNG_FILES)) {
-    for (const [rung, stem] of Object.entries(rungs)) {
+    for (const stem of Object.values(rungs)) {
       if (omit.includes(stem)) continue;
-      out[`${stem}.md`] = rungAgentText(stem, rung);
+      out[`${stem}.md`] = /** @type {string} */ (agentFileText(stem));
     }
+  }
+  return out;
+}
+
+/**
+ * Every skill the table's renders preload, as `skills/<name>/SKILL.md` fixture
+ * entries carrying only the data-rule sentence: check 6 needs each to resolve
+ * and check 27 needs the sentence, and nothing more would be read.
+ */
+function ladderSkills() {
+  /** @type {Record<string, string>} */
+  const out = {};
+  for (const { skills } of Object.values(RUNG_FILES)) {
+    for (const skill of skills) out[skill] = `---\nname: ${skill}\n---\n${DATA_RULE}\n`;
   }
   return out;
 }
@@ -185,6 +200,11 @@ function fullFixture() {
   for (const [name, text] of Object.entries(ladderAgents())) {
     writeFileSync(join(root, 'agents', name), text);
     budgets[`agents/${name}`] = Buffer.byteLength(text, 'utf8');
+  }
+  for (const [skill, text] of Object.entries(ladderSkills())) {
+    mkdirSync(join(root, 'skills', skill), { recursive: true });
+    writeFileSync(join(root, 'skills', skill, 'SKILL.md'), text);
+    budgets[`skills/${skill}/SKILL.md`] = Buffer.byteLength(text, 'utf8');
   }
   writeFileSync(join(root, 'cadence-core', 'bin', 'weight-budgets.json'),
     JSON.stringify({ budgets }, null, 2));
@@ -974,6 +994,50 @@ test('check 8 (reverse): an UNSUFFIXED agent file the map names nowhere is NOT f
   });
   const p = run(['--root', root]).problems;
   assert.deepEqual(p.filter((x) => x.kind === 'undeclared-rung-agent'), [], JSON.stringify(p));
+});
+
+// --- check 8c: a table-named agent file is what the table renders (D-07) ---
+
+/** One byte of agents/cad-planner.md changed in place, so only the bytes differ, not the length. */
+function nudgePlanner(root) {
+  const file = join(root, 'agents', 'cad-planner.md');
+  const text = readFileSync(file, 'utf8');
+  assert.ok(text.includes('picks it'));
+  writeFileSync(file, text.replace('picks it', 'pickS it'));
+}
+
+test('check 8c: a full tree rendered from the table files no agent-file-render problem', () => {
+  const p = run(['--root', fullFixture()]).problems;
+  assert.deepEqual(p.filter((x) => x.kind === 'agent-file-render'), [], JSON.stringify(p));
+});
+
+test('check 8c: one byte changed in one table-named file files exactly one problem, naming it', () => {
+  const root = fullFixture();
+  nudgePlanner(root);
+  const r = run(['--root', root]);
+  assert.equal(r.ok, false);
+  const hits = r.problems.filter((x) => x.kind === 'agent-file-render');
+  assert.equal(hits.length, 1, JSON.stringify(r.problems));
+  assert.equal(hits[0].file, 'agents/cad-planner.md');
+  assert.match(hits[0].detail, /generated/);
+  assert.match(hits[0].detail, /node cadence-core\/bin\/agent-files\.mjs/);
+});
+
+test('check 8c: the same changed file in a tree without a plugin manifest files none', () => {
+  // The isFullTree gate: the table lives in code, so a --root fixture is not an install with drifted files.
+  const root = fullFixture();
+  rmSync(join(root, '.claude-plugin', 'plugin.json'));
+  nudgePlanner(root);
+  const p = run(['--root', root]).problems;
+  assert.deepEqual(p.filter((x) => x.kind === 'agent-file-render'), [], JSON.stringify(p));
+});
+
+test('check 8c: a one-off agent file the table does not name, with prose of its own, files none', () => {
+  const root = fullFixture();
+  writeFileSync(join(root, 'agents', 'cad-oneoff.md'),
+    '---\nname: cad-oneoff\ntools: Read\n---\nRead the file you are handed and say what it does.\n');
+  const p = run(['--root', root]).problems;
+  assert.deepEqual(p.filter((x) => x.kind === 'agent-file-render'), [], JSON.stringify(p));
 });
 
 test('a minimal (non-full-tree) fixture omitting optional inputs stays free of missing-input problems', () => {
