@@ -610,6 +610,14 @@ test('redactOutbound: a ${NAME} or ${{ ... }} user does not carry a literal pass
   assert.equal(redactOutbound(variable), variable);
 });
 
+test('redactOutbound: a YAML block scalar under a credential name loses the block and keeps the key', () => {
+  const body = '+  env:\n+    PRIVATE_KEY: |\n+      -----BEGIN RSA PRIVATE KEY-----\n+      MIIEowIBAAKCAQEAfake0123\n'
+    + '+      -----END RSA PRIVATE KEY-----\n+    NEXT: 1';
+  assert.equal(redactOutbound(body), `+  env:\n+    PRIVATE_KEY: |\n+      ${REDACTION_MARK}\n+    NEXT: 1`);
+  const script = '  steps:\n    - run: |\n        echo "$GITHUB_TOKEN" | gh auth login --with-token\n        gh pr list\n';
+  assert.equal(redactOutbound(script), script);
+});
+
 test('cost: redactOutbound on a 480,000-character input stays linear', () => {
   // same loose bound as the #167 cost arm: it fails on a quadratic walk, not a slow machine
   for (const [name, body] of Object.entries({
