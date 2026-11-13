@@ -3949,3 +3949,18 @@ test('every commit or stage sentence that names a generated view also names the 
   }
   assert.deepEqual(bad, [], 'these sentences commit or stage a view without .planning/records/state.json');
 });
+
+// Phase 2 plan 4 (#392, D-10): a renumber shifts every `Phase K` heading, so a
+// `### Phase N:` section hand-edited before the seam runs is moved or removed
+// under the edit. Both "Change phases" loops state the order phase.md uses.
+
+test('new-project.md and adopt.md: "Change phases" runs the renumber seam before the hand edit (#392)', () => {
+  for (const file of ['new-project.md', 'adopt.md']) {
+    const wf = doc('cadence-core', 'workflows', file);
+    const start = wf.indexOf('On "Change phases"');
+    assert.ok(start > -1, `${file} has no "Change phases" passage`);
+    const passage = flat(wf.slice(start, wf.indexOf('Run `criteria-size` again', start)));
+    assert.match(passage, /The seam runs before the `### Phase N:` sections are hand-edited/,
+      `${file}'s "Change phases" loop does not say the seam runs before the hand edit`);
+  }
+});
