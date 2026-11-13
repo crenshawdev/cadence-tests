@@ -652,6 +652,8 @@ test('agentFileText: a stem the table does not name renders nothing', () => {
 // (D-03, D-12) - a deliberate change, approved with the phase.
 // All 30 were re-pinned again when the same plan listed cad-shared-rules after each role contract (D-02, D-08) -
 // a deliberate change, approved with the phase.
+// The executor contract was re-pinned when Plan 4 of that phase stopped it naming grep as the way to find callers,
+// since the shared rule owns how references are found (D-10) - a deliberate change, approved with the phase.
 
 const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-assumptions-analyzer-high.md': '28de11d2f99891fda6a35f57e8cf9b60e28493fa29d05b51fc76791c4ead6c8d',
@@ -687,7 +689,7 @@ const CONTRACT_SURFACE_DIGESTS = {
   'cadence-core/references/reviewer-brief.md': '5c4998a37a4e89a95c2b9cd09d7408e7d79a73e0c76a499ffbfb400a8f937585',
   'cadence-core/templates/PLAN.md': '4a7fb5784ae799357e33a30b0ddd4d0754b0eed69f56e64f07fb255d06fc963d',
   'skills/cad-assumptions-analyzer-contract/SKILL.md': 'ee690d7178a35d274d8c895367f6476df2160baf1e65889b92d55af3e94233bc',
-  'skills/cad-executor-contract/SKILL.md': '5a6a028310da97a3e70ea2f7a200f50536f7ac173fa24146ccffe358435164b6',
+  'skills/cad-executor-contract/SKILL.md': '26a708a569b7bd7910d088555573eceb947c223c9ad7070bc55804d42679e596',
   'skills/cad-plan-checker-contract/SKILL.md': 'f84ccdfd51ff4389c0f54d70b11479b3673e8bdbe021ce0d8b33bfa62d9dcff5',
   'skills/cad-planner-contract/SKILL.md': 'b6aca8bc79bae4bd07bd422a6bb371c46c504aa51088325211b4e127d5c8ec7f',
   'skills/cad-reviewer-contract/SKILL.md': '4a400deacee7dd963bf0eab8d5f5dae638dda8b2250ef43e06e5394046a392e2',
@@ -726,7 +728,9 @@ test('the reviewer brief and contract both state the four rules, and the schema 
 test('the mapper contract carries the data rule, sends the reader to whole files, and holds no Bash', () => {
   const text = readFileSync(join(REPO, 'skills', 'cad-mapper-contract', 'SKILL.md'), 'utf8');
   assert.deepEqual(dataRuleIssues(text), []);
-  for (const tool of ['Read', 'Grep', 'Glob']) assert.match(text, new RegExp(`\\b${tool}\\b`), tool);
+  // Grep and Glob stay in the grant, but how callers are found is the shared rule's to say (D-10)
+  assert.match(text, /\bRead\b/);
+  assert.match(collapse(text), /Look outside the module for who uses it/);
   assert.match(text, /Never use `skim`/);
   // A refresh: whole files on a first build and `refresh: whole`; on `refresh: diff` the added paths, never `changed` wholesale.
   const collapsed = collapse(text);
