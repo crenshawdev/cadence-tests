@@ -6,13 +6,14 @@
 // in planning.test.mjs and is imported, never copied.
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseReachTable } from '../cadence-core/bin/lib/config-reach.mjs';
 import { parseRoadmapPhases } from '../cadence-core/bin/lib/planning-files.mjs';
 import { readState, statePath, writeState } from '../cadence-core/bin/lib/project-state.mjs';
 import { renderStateMd } from '../cadence-core/bin/lib/state-views.mjs';
+import { CYCLE, appendEvent, tracePath } from '../cadence-core/bin/lib/trace.mjs';
 import { makeTree, run, isEntryFile, today, verifyChecked } from './planning.test.mjs';
 import { renumberTree } from './planning-renumber.test.mjs';
 
@@ -207,4 +208,66 @@ test('phase-entry add and edit refuse, writing nothing, when ROADMAP.md has no #
     assert.equal(stateBytes(dir), state);
     assert.equal(roadmapOf(dir), roadmap);
   }
+});
+
+// --- the cycle marker the close and the cycle-opening add write -------------------------------
+const markers = (dir) => (existsSync(tracePath(dir)) ? readFileSync(tracePath(dir), 'utf8') : '').split('\n')
+  .filter(Boolean).filter((l) => JSON.parse(l).event === CYCLE).length;
+const prune = (dir) => run(['milestone-prune', '--label', 'v1', '--mode', 'delete'], dir, undefined, NO_GLOBAL);
+
+test('cycle marker: a close, a phase-less event, then the cycle-opening add leave exactly one', () => {
+  const dir = allComplete('phase complete');
+  const closed = prune(dir);
+  assert.deepEqual([closed.ok, closed.action], [true, 'pruned']);
+  assert.deepEqual((closed.warnings ?? []).filter((w) => /cycle boundary/.test(w)), []);
+  assert.equal(markers(dir), 1);
+  assert.equal(appendEvent(dir, { family: 'lifecycle', event: 'coordinator', step: 'suggest' }).written, true);
+  const opened = add(dir, 1);
+  assert.deepEqual([opened.ok, opened.opened_cycle, 'warnings' in opened], [true, true, false]);
+  assert.equal(markers(dir), 1);
+});
+
+test('cycle marker: a cycle-opening add writes one onto a record with none, and a second when a phase event follows the last', () => {
+  const bare = makeTree({ roadmap: [] });
+  assert.equal(run(['status'], bare).ok, true);
+  assert.equal(appendEvent(bare, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'aaa1111' }).written, true);
+  assert.equal(add(bare, 1).opened_cycle, true);
+  assert.equal(markers(bare), 1);
+
+  const followed = makeTree({ roadmap: [] });
+  assert.equal(run(['status'], followed).ok, true);
+  assert.equal(appendEvent(followed, { family: 'lifecycle', event: CYCLE }).written, true);
+  assert.equal(appendEvent(followed, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'aaa1111' }).written, true);
+  assert.equal(add(followed, 1).opened_cycle, true);
+  assert.equal(markers(followed), 2);
+});
+
+test('cycle marker: an add into an open cycle writes none, the every-phase-complete form included', () => {
+  for (const [dir, n] of [[threePhases(), 4], [allComplete('phase complete'), 3]]) {
+    assert.equal(appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'aaa1111' }).written, true);
+    const r = add(dir, n);
+    assert.deepEqual([r.ok, 'opened_cycle' in r], [true, false]);
+    assert.equal(markers(dir), 0);
+  }
+});
+
+test('cycle marker: two cycles\' phase 1 through real adds and a close, and trace render --phase 1 counts the second alone', () => {
+  const dir = makeTree({ roadmap: [] });
+  assert.equal(run(['status'], dir).ok, true);
+  const cycle = (sha, role) => {
+    assert.equal(add(dir, 1).opened_cycle, true);
+    for (const e of [{ event: 'phase_start', sha }, { event: 'dispatch', plan: '1', role }, { event: 'return', plan: '1', tokens: 10 }]) {
+      assert.equal(appendEvent(dir, { phase: 1, family: 'lifecycle', ...e }).written, true);
+    }
+  };
+  cycle('aaa1111', 'cad-executor');
+  const held = readState(dir).state;
+  assert.equal(writeState(dir, { ...held, phases: held.phases.map((p) => ({ ...p, status: 'complete' })) }).ok, true);
+  assert.equal(prune(dir).action, 'pruned');
+  cycle('bbb2222', 'cad-planner');
+  assert.equal(markers(dir), 2, 'the first add and the close; the second add found the close already the boundary');
+  const r = run(['trace', 'render', '--phase', '1'], dir, undefined, NO_GLOBAL);
+  assert.equal(r.corr, '1-bbb2222');
+  assert.deepEqual(r.counts, { routing: 0, provider: 0, lifecycle: 3, outcome: 0 });
+  assert.deepEqual(r.roles, { 'cad-planner': { dispatches: 1, tokens: 10 } });
 });
