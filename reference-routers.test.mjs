@@ -46,13 +46,13 @@ const kinds = (issues) => issues.map((i) => i.kind).sort();
 
 // --- the register itself ------------------------------------------------------
 
-// CADENCE-CENSUS: reference-router-branches | asserts: the register is 12 rows over 3 routers
+// CADENCE-CENSUS: reference-router-branches | asserts: the register is 13 rows over 3 routers
 test('the register pins its row count and its router count', () => {
   // Two numbers, not one. The row count alone passes a register whose four rows
   // all landed on one router, which is the shape a copy-paste produces; the
   // router count is what says these are independent cold splits. Both move
   // in the commit that makes the cut and never on their own.
-  assert.equal(ROUTERS.length, 12);
+  assert.equal(ROUTERS.length, 13);
   assert.equal(new Set(ROUTERS.map((r) => r.router)).size, 3);
 });
 
@@ -62,6 +62,13 @@ test('the live tree registers each triage-gate arm file and files no router prob
   const routed = ROUTERS.filter((r) => r.router === TRIAGE).map((r) => r.cold).sort();
   assert.deepEqual(routed, ['adjudicated', 'blocking', 'deferred', 'unfixed']
     .map((arm) => `cadence-core/references/triage-gate-${arm}.md`));
+  assert.deepEqual(referenceRouterIssues(REPO), []);
+});
+
+test('the live tree registers review-inline.md under review-triggers.md', () => {
+  // step 4's by-hand reviewer dispatch is one Read from the router, off the workflow path
+  assert.ok(ROUTERS.some((r) => r.router === 'cadence-core/references/review-triggers.md'
+    && r.cold === 'cadence-core/references/review-inline.md'));
   assert.deepEqual(referenceRouterIssues(REPO), []);
 });
 

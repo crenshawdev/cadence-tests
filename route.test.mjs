@@ -978,7 +978,7 @@ test('an unreadable schema degrades to ok:false, reason bad-schema, no stack', (
 // route.mjs REPORTS effort; it cannot SET it. Effort is definition-time
 // frontmatter on the spawn-agent seam (seams.md), so the only thing that makes
 // the reported value true is the agent file agreeing with the table. Prose in
-// references/review-triggers.md now tells the user which effort a
+// references/review-inline.md now tells the user which effort a
 // claude-subagent review actually runs at (`cad-reviewer` = high), so that
 // claim gets a test rather than a promise.
 const AGENTS = join(dirname(fileURLToPath(import.meta.url)), '..', 'agents');

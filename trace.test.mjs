@@ -3209,7 +3209,8 @@ const BRACKETING = new Map([
   [join('cadence-core', 'workflows', 'context.md'), 1],
   [join('cadence-core', 'workflows', 'plan.md'), 2],
   [join('cadence-core', 'references', 'plan-revision.md'), 2],
-  [join('cadence-core', 'references', 'review-triggers.md'), 1],
+  // step 4's by-hand reviewer dispatch moved out of review-triggers.md
+  [join('cadence-core', 'references', 'review-inline.md'), 1],
   [join('cadence-core', 'workflows', 'execute.md'), 1],
   [join('cadence-core', 'workflows', 'decision-review.md'), 1],
   [join('cadence-core', 'workflows', 'minimalism-review.md'), 1],
