@@ -159,12 +159,14 @@ test('a dispatch input carrying the second marker fails naming the dispatch inpu
   const r = run(stream({ returned: BOTH, dispatchPrompt: `Reply with ${MARKERS.second}.` }));
   assert.notEqual(r.status, 0);
   assert.match(r.stdout, /dispatch-input-carries-marker/);
+  assert.equal(existsSync(r.out), false, 'a failed run must not leave a file that reads as a pass');
 });
 
 test('a stream with no record from inside the subagent fails naming that cause', () => {
   const r = run(stream({ returned: BOTH, nested: false }));
   assert.notEqual(r.status, 0);
   assert.match(r.stdout, /no-subagent-record/);
+  assert.equal(existsSync(r.out), false, 'an unchecked 0 must never be stored');
 });
 
 test('a host that exits non-zero, and no host on PATH, fail and write no result', () => {
