@@ -286,6 +286,27 @@ test('detect-commands: eslint and tsc in node_modules/.bin are named by that pat
   // stated rather than discovered.
 });
 
+test('detect-commands: a CI-file tree with typescript installed but no .bin link runs that tsc through node', () => {
+  // Without this the arm offers the bare tsc off PATH, which can be another
+  // version from the one the project pinned - the case on this repo's own box.
+  const tree = () => {
+    const root = projectTree({ 'tsconfig.ci.json': '{}' });
+    mkdirSync(join(root, 'node_modules', 'typescript', 'bin'), { recursive: true });
+    writeFileSync(join(root, 'node_modules', 'typescript', 'bin', 'tsc'), '#!/usr/bin/env node\n');
+    return root;
+  };
+  const installed = detect(tree(), { reachable: null });
+  assert.equal(installed.typecheck, 'node node_modules/typescript/bin/tsc -p tsconfig.ci.json', JSON.stringify(installed));
+  assert.equal(installed.source.typecheck, 'tsconfig.ci.json');
+
+  // a .bin link is what the bare form resolves to, so it keeps the bare form
+  const linked = detect(nodeModulesBin(tree(), ['tsc']));
+  assert.equal(linked.typecheck, 'tsc -p tsconfig.ci.json', JSON.stringify(linked));
+
+  const neither = detect(projectTree({ 'tsconfig.ci.json': '{}' }));
+  assert.equal(neither.typecheck, 'tsc -p tsconfig.ci.json', JSON.stringify(neither));
+});
+
 test('detect-commands: a tool only on PATH is named bare', () => {
   // No node_modules at all, and a tsc stub on the child's PATH: the production
   // resolver answers from bytes the fixture wrote.
