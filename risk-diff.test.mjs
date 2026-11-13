@@ -2269,13 +2269,68 @@ test('risk-check status: a skipped EARLIER plan does not refuse a LATER plan\'s 
   // A skip is its OWN state, never `recorded`: a reader can still tell a range
   // nobody had to read from one the detector read and cleared.
   assert.equal(one.state, 'skipped', JSON.stringify(one));
-  assert.deepEqual(one.skips, [a]);
-  assert.deepEqual(one.records, []);
   assert.equal(two.state, 'recorded', JSON.stringify(two));
   assert.equal(two.skips, undefined, 'a row with no skip keeps the shape it had');
-  // And the phase-wide arm agrees.
+  // And the phase-wide arm agrees; it prints plan 1's skips and records, which a --plan 2 ask drops (D-05).
   const w = riskStatus(dir, ['--phase', '1'], repo);
   assert.equal(w.ok, true, JSON.stringify(w));
+  const wideOne = w.plans.find((/** @type {any} */ p) => p.plan === '1');
+  assert.deepEqual(wideOne.skips, [a]);
+  assert.deepEqual(wideOne.records, []);
+});
+
+/** A third completed plan under FROZEN_PHASE_1's anchor, for the narrowed --plan print. */
+const PLAN_3_RETURN = [
+  '{"corr":"1-ae5ca09","phase":"1","ts":"2026-08-15T18:56:00.000Z","family":"lifecycle","event":"dispatch","plan":"3","role":"cad-executor","read":[".planning/phases/1/PLAN-3.md"]}',
+  '{"corr":"1-ae5ca09","phase":"1","ts":"2026-08-15T18:58:00.000Z","family":"lifecycle","event":"return","plan":"3","role":"cad-executor","tokens":40000}',
+];
+
+/** Three completed plans, each recorded over its own range unless `record3` is false; plan 2's range is b..c. */
+function threePlanRecord({ record3 = true } = {}) {
+  const { repo, dir } = repoFixture([...FROZEN_PHASE_1, ...PLAN_2_RETURN, ...PLAN_3_RETURN]);
+  const a = commitFile(repo, 'README.md', 'start\n');
+  const b = commitFile(repo, 'docs/one.md', 'one\n');
+  const c = commitFile(repo, 'docs/two.md', 'two\n');
+  const d = commitFile(repo, 'docs/three.md', 'three\n');
+  const ranges = [['1', a, b], ['2', b, c], ...(record3 ? [['3', c, d]] : [])];
+  for (const [plan, base, head] of ranges) {
+    const run = riskCheck(repo, dir, ['run', '--phase', '1', '--plan', plan, '--base', base, '--head', head]);
+    assert.equal(run.ok, true, JSON.stringify(run));
+  }
+  return { repo, dir, b, c };
+}
+
+/** Plan 2's row whole, the others down to plan, run and state - D-05's narrowed print. */
+function assertNarrowed(/** @type {any} */ r) {
+  const two = r.plans.find((/** @type {any} */ p) => p.plan === '2');
+  assert.ok(Array.isArray(two.records) && two.records.length === 1, JSON.stringify(two));
+  assert.ok('wanted' in two, JSON.stringify(two));
+  for (const plan of ['1', '3']) {
+    const row = r.plans.find((/** @type {any} */ p) => p.plan === plan);
+    assert.deepEqual(Object.keys(row).sort(), ['plan', 'run', 'state'], JSON.stringify(row));
+  }
+}
+
+test('risk-check status --plan prints records on the asked plan\'s row only, and the verdict is the one it was', () => {
+  // the verdicts below were typed in from this same call on the code before the narrowing
+  const all = threePlanRecord();
+  const pass = riskStatus(all.dir, ['--phase', '1', '--plan', '2', '--base', all.b, '--head', all.c], all.repo);
+  assert.equal(pass.ok, true, JSON.stringify(pass));
+  assertNarrowed(pass);
+  const wide = riskStatus(all.dir, ['--phase', '1'], all.repo);
+  assert.equal(wide.plans.length, 3);
+  for (const row of wide.plans) assert.equal(row.records.length, 1, JSON.stringify(row));
+
+  const gap = threePlanRecord({ record3: false });
+  const refused = riskStatus(gap.dir, ['--phase', '1', '--plan', '2', '--base', gap.b, '--head', gap.c], gap.repo);
+  assert.equal(refused.ok, false, JSON.stringify(refused));
+  assert.equal(refused.reason, 'risk-record-missing');
+  assert.deepEqual(refused.missing, ['3']);
+  assert.equal(refused.hint, 'run risk-check run --phase 1 --plan <k> --base <ref> --head <ref> for each plan'
+    + ' listed (or, for a plan that landed no commits, trace append --family outcome --event risk_check_skipped'
+    + ' --plan <k> --sha <that end>), then re-run this check');
+  assertNarrowed(refused);
+  assert.equal(refused.plans.find((/** @type {any} */ p) => p.plan === '3').state, 'missing');
 });
 
 test('risk-check status: a skip carrying NO sha satisfies nothing', () => {
