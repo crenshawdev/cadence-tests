@@ -489,6 +489,69 @@ test('redactOutbound: ordinary code and look-alikes cross byte-identical', () =>
   }
 });
 
+// The five inputs the plan-1 risk review found crossing whole. Each was watched failing before the fix.
+test('redactOutbound: a quoted env value that spans lines goes whole', () => {
+  const body = '+PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n+MIIEowIBAAKCAQEAfake0123\n+-----END RSA PRIVATE KEY-----"\n+NEXT=1';
+  const out = redactOutbound(body);
+  assert.equal(out, `+PRIVATE_KEY=${REDACTION_MARK}\n+NEXT=1`);
+});
+
+test("redactOutbound: a userinfo password holding ' ( or ) still goes", () => {
+  for (const [body, value] of [
+    ['DATABASE_URL=postgres://admin:Pa(ss)w0rd@db.internal:5432/app', 'Pa(ss)w0rd'],
+    ['redis://:p4ss(w0rd)@cache:6379', 'p4ss(w0rd)'],
+    ["amqp://u:it's-fake@mq.invalid/", "it's-fake"],
+  ]) {
+    const out = redactOutbound(body);
+    assert.equal(out.includes(value), false, `the password survived: ${out}`);
+    assert.ok(out.includes(`://${REDACTION_MARK}@`), `nothing was redacted in ${out}`);
+  }
+});
+
+test('redactOutbound: a backtick-quoted Authorization Bearer header loses its literal token', () => {
+  const body = 'headers: { Authorization: `Bearer sk-live-0123456789abcdef` },';
+  assert.equal(redactOutbound(body), `headers: { Authorization: \`Bearer ${REDACTION_MARK}\` },`);
+  // a template variable is not a literal and still crosses
+  const variable = 'headers: { Authorization: `Bearer ${key}` },';
+  assert.equal(redactOutbound(variable), variable);
+});
+
+test('redactOutbound: a value starting with $ that is not a variable still goes', () => {
+  for (const [body, value] of [
+    // single quotes never expand, so this is a literal
+    ["export DB_PASSWORD='$9xK!q2zz'", '$9xK!q2zz'],
+    // the user is a variable, the password is not
+    ['git clone https://$GITHUB_ACTOR:ghp_literal123456@github.com/o/r.git', 'ghp_literal123456'],
+  ]) {
+    const out = redactOutbound(body);
+    assert.equal(out.includes(value), false, `the value survived: ${out}`);
+    assert.ok(out.includes(REDACTION_MARK), `nothing was redacted in ${out}`);
+  }
+});
+
+test('redactOutbound: a YAML env-map entry with a credential name and a literal value goes', () => {
+  for (const [body, value] of [
+    ['  environment:\n    POSTGRES_PASSWORD: s3cr3t-literal\n', 's3cr3t-literal'],
+    ['+    env:\n+      OPENAI_API_KEY: "sk-fake-0123456789"\n', 'sk-fake-0123456789'],
+    ['      - AWS_SECRET_ACCESS_KEY: fakeAWS/0123456789\n', 'fakeAWS/0123456789'],
+  ]) {
+    const out = redactOutbound(body);
+    assert.equal(out.includes(value), false, `the value survived: ${out}`);
+    assert.ok(out.includes(REDACTION_MARK), `nothing was redacted in ${out}`);
+  }
+});
+
+test('redactOutbound: variables in the newly covered spellings still cross', () => {
+  for (const body of [
+    '      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}',
+    '    DB_PASSWORD: $DB_PASSWORD',
+    'git clone https://$GITHUB_ACTOR:$GITHUB_TOKEN@github.com/o/r.git',
+    'export API_TOKEN="$API_TOKEN"',
+  ]) {
+    assert.equal(redactOutbound(body), body);
+  }
+});
+
 test('cost: redactOutbound on a 480,000-character input stays linear', () => {
   // same loose bound as the #167 cost arm: it fails on a quadratic walk, not a slow machine
   for (const [name, body] of Object.entries({
