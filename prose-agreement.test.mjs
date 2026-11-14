@@ -2551,6 +2551,35 @@ test('IVW-01: both risk-surface interview sites carry the ask-user rules, and th
   }
 });
 
+// --- D-12: the ask-user seam pushes before either arm blocks -----------------
+//
+// The defect worth catching is a push named for one arm only, which leaves the
+// open-ended question waiting on a user who walked away. Read off the same
+// section IVW-01 reads, so the rule can't wander out of the binding either.
+
+test('D-12: the ask-user binding pushes once before both arms, one line under 200 characters, skipped without the tool', () => {
+  const where = 'references/seam-ask-user.md `## Seam: ask-user`';
+  const askUser = doc('cadence-core', 'references', 'seam-ask-user.md')
+    .split('## Seam: ask-user')[1]?.split(/\n## /)[0];
+  assert.ok(askUser, `${where}: no such section`);
+  const binding = askUser.split('**Claude Code binding:**')[1]?.split('\n\n')[0];
+  assert.ok(binding, `${where}: no **Claude Code binding:** list`);
+
+  const bullets = binding.split(/\n- /).map(flat);
+  const at = (lead) => bullets.findIndex((b) => b.startsWith(lead));
+  const push = bullets.findIndex((b) => b.includes('`PushNotification`'));
+  assert.ok(push >= 0, `${where}: the binding names no \`PushNotification\``);
+  const rule = bullets[push];
+
+  assert.match(rule, /`AskUserQuestion`/, `${where}: the push rule leaves out the structured-choice arm`);
+  assert.match(rule, /open-ended question/, `${where}: the push rule leaves out the open-ended arm`);
+  assert.match(rule, /one line under 200 characters/, `${where}: the push rule states no 200-character line`);
+  assert.match(rule, /without the tool[^.]*skips the push/,
+    `${where}: the push rule never says a host without the tool skips it`);
+  assert.ok(push < at('Structured choice:') && push < at('Open-ended question:'),
+    `${where}: the push rule sits after an arm it has to come before`);
+});
+
 // --- Two caps, two different reads, and neither one unified away ------------
 //
 // the triage-gate arm files state the one-round re-arm cap TWICE, on
