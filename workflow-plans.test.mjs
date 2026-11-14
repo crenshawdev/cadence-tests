@@ -146,9 +146,20 @@ function plannerStretchOf(text) {
   return { start, end };
 }
 
+// check_gate's phase-input stretch: its opening sentence to the checker's Prompt: line. Null when the opening is gone.
+const CHECKER_OPEN = 'With `planning.workflow_plans` read in `parse` as `true`, the checker reads the plan files and the phase input';
+function checkerStretchOf(text) {
+  const start = text.indexOf(CHECKER_OPEN);
+  if (start === -1) return null;
+  const end = text.indexOf('\n\nPrompt:\n', start);
+  assert.notEqual(end, -1, 'the checker stretch has no end');
+  return { start, end };
+}
+
 // Every vocabulary match outside the stretches, the brief step, the inline sentence and the key's line.
 function outside(text) {
-  const spans = [stretchOf(text), plannerStretchOf(text), briefStepOf(text), inlineOf(text), keyLineOf(text)].filter(Boolean);
+  const spans = [stretchOf(text), plannerStretchOf(text), checkerStretchOf(text), briefStepOf(text), inlineOf(text), keyLineOf(text)]
+    .filter(Boolean);
   return [...text.matchAll(VOCAB), ...text.matchAll(MARKERS)]
     .filter((m) => !spans.some((s) => m.index >= s.start && m.index < s.end));
 }
@@ -260,6 +271,49 @@ test('plan-revision.md step 1 keeps its read-set and names the planner stretch\'
   const step1 = rev.slice(rev.indexOf('\n1. '), rev.indexOf('\n2. '));
   assert.ok(step1.includes(REVISION_READ), 'step 1\'s --bracket-read read-set changed');
   assert.match(step1.replace(/\s+/g, ' '), /With `planning\.workflow_plans` `true`[^.]*`--bracket-read` value is `<the phase input path>` `spawn_planner`'s stretch kept/);
+});
+
+// --- /cad-plan: the checker's phase input ---------------------------------------------------------------------
+
+// Copied from 3f3f6a3e: with the switch off the checker's dispatch is exactly these.
+const CHECKER_BRACKET = '--bracket-read ".planning/phases/{N}/PLAN*.md,.planning/ROADMAP.md,.planning/REQUIREMENTS.md,.planning/phases/{N}/CONTEXT.md"';
+const CHECKER_READS = `Read:
+- .planning/phases/{N}/PLAN*.md (the plans under review)
+- .planning/ROADMAP.md and .planning/REQUIREMENTS.md
+- .planning/phases/{N}/CONTEXT.md (if present)
+`;
+const CHECKER_STRETCH = (() => { const at = checkerStretchOf(PLAN_MD); return at ? PLAN_MD.slice(at.start, at.end) : ''; })();
+const checkerFlat = CHECKER_STRETCH.replace(/\s+/g, ' ');
+
+test('switch off: the checker\'s bracket string and Read: list are as at 3f3f6a3e', () => {
+  assert.ok(PLAN_MD.includes(CHECKER_BRACKET), 'the checker\'s --bracket-read string changed');
+  assert.ok(PLAN_MD.includes(CHECKER_READS), 'the checker\'s Read: list changed');
+});
+
+test('the checker stretch sits in check_gate before its prompt, brackets the plans plus the composed path and names no whole document', () => {
+  const at = checkerStretchOf(PLAN_MD);
+  assert.ok(at, 'no checker stretch in plan.md');
+  assert.ok(PLAN_MD.indexOf('<step name="check_gate">') < at.start);
+  assert.ok(at.end < PLAN_MD.indexOf('<verification_context>'));
+  const m = /`--bracket-read` value is `([^`]*)`/.exec(checkerFlat);
+  assert.ok(m, 'the flag is not in backticks with its value apart');
+  assert.equal(m[1], '.planning/phases/{N}/PLAN*.md,<the phase input path>');
+  assert.doesNotMatch(CHECKER_STRETCH, /--bracket-read\s/, 'a flag followed by whitespace is a second open to the trace census');
+  assert.doesNotMatch(CHECKER_STRETCH, /ROADMAP\.md|REQUIREMENTS\.md|CONTEXT\.md/);
+  assert.doesNotMatch(CHECKER_STRETCH, /node "/, 'the compose call is spawn_planner\'s, referenced and never spelled again');
+  assert.match(checkerFlat, /Name the phase input `spawn_planner`'s stretch composed/);
+});
+
+// The key is this stretch's only vocabulary and it sits in the opening, so the sentence loses its anchor and keeps the key.
+test('the pin fails when the checker stretch loses its opening sentence', () => {
+  assert.ok(outside(PLAN_MD.replace(CHECKER_OPEN, 'With `planning.workflow_plans` read in `parse` as `true`, x')).length > 0);
+});
+
+test('the plan checker contract reads the files its dispatch names and still names the CONTEXT decisions', () => {
+  const contract = readFileSync(join(ROOT, 'skills', 'cad-plan-checker-contract', 'SKILL.md'), 'utf8');
+  const step1 = contract.slice(contract.indexOf('<process>'), contract.indexOf('\n2. ', contract.indexOf('<process>'))).replace(/\s+/g, ' ');
+  assert.match(step1, /from the files your dispatch names/);
+  assert.match(step1, /CONTEXT decisions/);
 });
 
 // --- /cad-plan: the brief check ------------------------------------------------
