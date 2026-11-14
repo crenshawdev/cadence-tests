@@ -984,7 +984,15 @@ CONTEXT-SENTINEL-${n}
 NOTES-SENTINEL-${n}
 `;
 
-const SUMMARY = `# Phase 4: Thing - Summary
+const SUMMARY = `---
+phase: 4
+status: partial
+completed: 2026-11-13
+---
+
+# Phase 4: Thing - Summary
+
+SUMMARY-LEAD-LINE
 
 ## What shipped
 
@@ -1034,7 +1042,7 @@ test('brief verifier input: criteria, UAT items, every plan truth and SUMMARY cl
   for (const want of ['**Success Criteria:**\n1. CRITERION-ONE',
     '### 1. First item\nexpected: UAT-EXPECTED-ONE\ncriterion: AC1\nstatus: pending', '### 2. Second item\nexpected: UAT-EXPECTED-TWO\nstatus: pass',
     '# Phase 4: Thing - Plan 1: Part 1', '## Must be true when done\n\n- TRUTH-1-A\n- TRUTH-1-B', '- TRUTH-2-A\n- TRUTH-2-B',
-    '## What shipped\n\nSUMMARY-SHIPPED', '## Goal check\n\nSUMMARY-GOAL-CHECK']) {
+    '# Phase 4: Thing - Summary', 'status: partial', 'SUMMARY-LEAD-LINE\n\n## What shipped\n\nSUMMARY-SHIPPED', '## Goal check\n\nSUMMARY-GOAL-CHECK']) {
     assert.ok(got.includes(want), `holds ${want}`);
   }
   assert.ok(got.indexOf('TRUTH-1-A') < got.indexOf('TRUTH-2-A'), 'plans in plan order');
