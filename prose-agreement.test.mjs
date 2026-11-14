@@ -2586,22 +2586,30 @@ test('D-12: the ask-user binding pushes once before both arms, one line under 20
 // seam file, so the rule has to ride in the skill. The list comes off the files,
 // so a new asking skill without the rule goes red here.
 
-test('D-12: every skill whose allowed-tools holds AskUserQuestion also holds PushNotification and the one push sentence', () => {
+// a workflow can ask with no AskUserQuestion at all, by ending its turn on a plain-text question
+const endsTurnOnQuestion = (text) => text.replace(/\s+/g, ' ').split(/(?<=\.) /)
+  .some((s) => /\bend(?:s|ing)? the turn\b/i.test(s) && /\b(?:ask|asking|question)\b/i.test(s));
+
+test('D-12: every skill that asks, by AskUserQuestion or by a workflow ending its turn on a question, also holds PushNotification and the one push sentence', () => {
   const skills = readdirSync(join(REPO, 'skills'), { withFileTypes: true })
     .filter((e) => e.isDirectory())
     .map((e) => `skills/${e.name}/SKILL.md`)
     .filter((f) => { try { doc(f); return true; } catch { return false; } });
 
   const sentences = new Map();
+  const proseOnly = [];
   for (const f of skills) {
     const text = doc(f);
     const end = text.indexOf('\n---', 4);
     assert.ok(text.startsWith('---\n') && end > 0, `${f}: no frontmatter block`);
     const tools = (text.slice(0, end).split('allowed-tools:')[1] ?? '')
       .split('\n').filter((l) => /^\s+- /.test(l)).map((l) => l.replace(/^\s+- /, '').trim());
-    if (!tools.includes('AskUserQuestion')) continue;
+    const workflows = [...text.matchAll(/@\$\{CLAUDE_PLUGIN_ROOT\}\/(cadence-core\/workflows\/\S+\.md)/g)].map((m) => m[1]);
+    const asksInProse = workflows.some((w) => endsTurnOnQuestion(doc(w)));
+    if (!tools.includes('AskUserQuestion') && !asksInProse) continue;
+    if (!tools.includes('AskUserQuestion')) proseOnly.push(f);
 
-    assert.ok(tools.includes('PushNotification'), `${f}: asks with AskUserQuestion but lists no PushNotification`);
+    assert.ok(tools.includes('PushNotification'), `${f}: asks the user but lists no PushNotification`);
     // The sentence starts its paragraph and ends at the first line-ending period.
     const found = text.slice(end + 4).match(/(?:^|\n\n)([^\n]*`PushNotification`[\s\S]*?\.)(?=\n)/);
     assert.ok(found, `${f}: asks but its body carries no push sentence`);
@@ -2609,6 +2617,7 @@ test('D-12: every skill whose allowed-tools holds AskUserQuestion also holds Pus
   }
 
   assert.ok(sentences.size > 0, 'no skill lists AskUserQuestion, so this check reads nothing');
+  assert.ok(proseOnly.length > 0, 'no skill asks in prose alone, so the workflow read has gone blind');
   const [first, sentence] = [...sentences][0];
   assert.match(sentence, /`references\/seam-ask-user\.md`/, `${first}: the push sentence never names the seam`);
   for (const [f, s] of sentences) {
