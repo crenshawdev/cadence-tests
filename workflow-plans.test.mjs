@@ -590,3 +590,57 @@ test('through the real seams a scratch project reads the switch false and brief 
     } finally { rmSync(out, { recursive: true, force: true }); }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+// --- /cad-verify --deep: the verifier's input ------------------------------------------------------------------
+
+const DEEP = readFileSync(join(ROOT, 'cadence-core', 'workflows', 'verify-deep.md'), 'utf8');
+const DEEP_OPEN = 'With `planning.workflow_plans` `true`, the verifier reads one composed input';
+// Copied from 3f3f6a3e: with the switch off the verifier's dispatch is exactly these.
+const DEEP_BRACKET = '`--bracket-read ".planning/phases/<N>/PLAN*.md,.planning/phases/<N>/SUMMARY*.md,.planning/ROADMAP.md,.planning/phases/<N>/UAT.md"`';
+const DEEP_HAND = `Hand it the phase number, goal,
+the current UAT items, the PLAN/SUMMARY/ROADMAP paths, and the path it must
+write: \`.planning/phases/<N>/records/verifier-findings.json\`.`;
+const DEEP_STRETCH = (() => {
+  const start = DEEP.indexOf(DEEP_OPEN);
+  return start === -1 ? '' : DEEP.slice(start, DEEP.indexOf('\n\nClose the bracket HERE', start));
+})();
+const deepFlat = DEEP_STRETCH.replace(/\s+/g, ' ');
+
+test('switch off: the deep verifier\'s bracket string and hand-it sentence are as at 3f3f6a3e', () => {
+  assert.ok(DEEP.includes(DEEP_BRACKET), 'the verifier\'s --bracket-read string changed');
+  assert.ok(DEEP.includes(DEEP_HAND), 'the verifier\'s hand-it sentence changed');
+});
+
+test('the deep stretch sits in dispatch, reads the key in its one config.mjs get and composes the verifier input', () => {
+  assert.ok(DEEP_STRETCH.length > 300, 'no stretch in verify-deep.md');
+  const dispatch = stepOf(DEEP, 'dispatch');
+  assert.ok(dispatch.includes(DEEP_STRETCH));
+  const gets = DEEP.match(/config\.mjs" get [^\n]*/g) || [];
+  assert.equal(gets.length, 1);
+  assert.ok(DEEP_STRETCH.includes(gets[0]));
+  assert.match(gets[0], /get planning\.workflow_plans$/);
+  assert.match(DEEP_STRETCH, /planning\.mjs" brief --phase <N> --role verifier --out-dir <the scratch directory>/);
+  assert.match(deepFlat, /mktemp -d "\$\{TMPDIR:-\/tmp\}\/cad-XXXXXX"/);
+});
+
+test('the deep stretch\'s bracket value is the composed path and it names no PLAN, SUMMARY, ROADMAP or UAT path', () => {
+  const m = /`--bracket-read` value is `([^`]*)`/.exec(deepFlat);
+  assert.ok(m, 'the flag is not in backticks with its value apart');
+  assert.equal(m[1], '<the verifier input path>');
+  assert.doesNotMatch(DEEP_STRETCH, /--bracket-read\s/, 'a flag followed by whitespace is a second open to the trace census');
+  assert.doesNotMatch(DEEP_STRETCH, /\.planning\/|PLAN[^\s,]*\.md|SUMMARY[^\s,]*\.md|ROADMAP\.md|UAT\.md/);
+  assert.match(deepFlat, /that file by its absolute path in place of the document paths and the UAT items it already carries, and the findings path above/);
+  assert.match(deepFlat, /\*\*A refused or unreadable answer\.\*\* Print one line with what it names, and dispatch as the paragraph above does/);
+});
+
+test('verify-deep.md still holds exactly three <step name= tags', () => {
+  assert.equal((DEEP.match(/<step name=/g) || []).length, 3);
+});
+
+test('the verifier contract\'s step 1 names the stand-in input and still reads CONTEXT.md for acceptance criteria', () => {
+  const contract = readFileSync(join(ROOT, 'skills', 'cad-verifier-contract', 'SKILL.md'), 'utf8');
+  const step1 = contract.slice(contract.indexOf('## 1. Load context'), contract.indexOf('## 2.')).replace(/\s+/g, ' ');
+  assert.match(step1, /Read what your dispatch hands you: the documents below, or the one input that stands in for them/);
+  assert.match(step1, /the success criteria, the UAT items, each plan's must-be-true lines and the SUMMARY's claims/);
+  assert.ok(step1.includes('- Acceptance criteria: `.planning/phases/<N>/CONTEXT.md` if present.'));
+});
