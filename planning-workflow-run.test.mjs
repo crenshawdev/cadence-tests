@@ -597,6 +597,80 @@ test('workflow-run: trace suggest and the window report run on that record and c
   assert.equal(w.compared, 1);
 });
 
+// --- --plan-reads: a per-plan reviewer and its checkers bill what they were handed ---------------------------------
+
+const P1 = ['.planning/phases/1/PLAN-1.md', '/tmp/cad-x/plan-1-reviewer.md'];
+const P2 = ['.planning/phases/1/PLAN-2.md', '/tmp/cad-x/plan-2-reviewer.md'];
+const PLAN_READS = `1=${P1.join(',')};2=${P2.join(',')}`;
+
+/** A three-plan split run: each plan's reviewer and two checkers, the cross-plan reviewer and its checker, a provider and its checker. */
+function splitRun() {
+  const run = clone(FIXTURE);
+  const voices = [1, 2, 3].map((k) => `claude-subagent-plan-${k}`).concat('claude-subagent-cross-plan');
+  const rows = [];
+  const row = (label, agentType) => rows.push({ type: 'workflow_agent', label, agentId: `ag${rows.length + 1}`,
+    ...(agentType ? { agentType } : {}), state: 'done', tokens: 100, toolCalls: 1, durationMs: 10 });
+  for (const v of voices) {
+    row(`reviewer ${v}`, 'cadence:cad-reviewer-low');
+    row(`checker ${v} 1`, 'cadence:cad-reviewer-low');
+    if (v !== 'claude-subagent-cross-plan') row(`checker ${v} 2`, 'cadence:cad-reviewer-low');
+  }
+  row('provider openai');
+  row('checker openai 1', 'cadence:cad-reviewer-low');
+  run.workflowProgress = rows;
+  run.result = { voices: voices.map((voice) => ({ voice, ran: true, result: { findings: [] }, rulings: [] })) };
+  return run;
+}
+
+/** Each dispatch's read set by the label of the row it billed. */
+function readsByLabel(t, run) {
+  const label = new Map(rowsOf(run).map((r) => [`${run.runId}-${r.agentId}`, r.label]));
+  return new Map(rawEvents(t).filter((e) => e.event === 'dispatch').map((e) => [label.get(e.plan), e.read]));
+}
+
+function splitCall(t, run, extra = []) {
+  const { runFile } = hostFiles(t, run);
+  return cli(t, ['workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', t.out, '--payload-ref', REF, ...extra]);
+}
+
+test('workflow-run --plan-reads: each mapped plan\'s reviewer and checkers read its own path and input, and every other row the payload', () => {
+  const t = tree();
+  const run = splitRun();
+  const r = splitCall(t, run, ['--plan-reads', PLAN_READS]);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.brackets.written, 13);
+  const reads = readsByLabel(t, run);
+  assert.equal(reads.size, 13);
+  const want = (lbl) => (/plan-1( \d+)?$/.test(lbl) ? P1 : /plan-2( \d+)?$/.test(lbl) ? P2 : [REF]);
+  for (const [lbl, read] of reads) assert.deepEqual(read, want(lbl), lbl);
+  // the unmapped plan, the cross-plan reviewer and the provider stay on the payload, and no plan holds another's input
+  for (const lbl of ['reviewer claude-subagent-plan-3', 'checker claude-subagent-plan-3 2', 'reviewer claude-subagent-cross-plan',
+    'checker claude-subagent-cross-plan 1', 'provider openai', 'checker openai 1']) assert.deepEqual(reads.get(lbl), [REF], lbl);
+  assert.deepEqual(reads.get('checker claude-subagent-plan-1 2'), P1);
+  assert.deepEqual(reads.get('reviewer claude-subagent-plan-2'), P2);
+  assert.equal([...reads.values()].filter((x) => x.includes(P1[1])).length, 3);
+  assert.equal([...reads.values()].filter((x) => x.includes(P2[1])).length, 3);
+});
+
+test('workflow-run --plan-reads: without it the same run bills every row the payload reference', () => {
+  const t = tree();
+  const run = splitRun();
+  assert.equal(splitCall(t, run).brackets.written, 13);
+  const reads = readsByLabel(t, run);
+  assert.equal(reads.size, 13);
+  for (const [lbl, read] of reads) assert.deepEqual(read, [REF], lbl);
+});
+
+test('workflow-run --plan-reads: a malformed map is refused and nothing is written', () => {
+  for (const bad of [null, '', 'x', '=a,b', '1=', '1=a,,b', '1=a,b;', '1=a,b;1=c,d']) {
+    const t = tree();
+    const r = splitCall(t, splitRun(), bad === null ? ['--plan-reads'] : ['--plan-reads', bad]);
+    assert.equal(r.reason, 'bad-args', JSON.stringify(bad));
+    assert.equal(existsSync(join(recordsDir(t.dir), 'trace.jsonl')), false, `${JSON.stringify(bad)} wrote no bracket`);
+    assert.deepEqual(emptyOut(t), []);
+  }
+});
+
 // --- a provider voice: the envelope on disk wins over the wrapper's retyping ---------------------------------
 
 /** The fixture's local voice replaced by one proved finding, plus an `openai` voice whose envelope is written (or not) beside the run. */

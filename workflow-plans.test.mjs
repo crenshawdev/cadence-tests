@@ -136,9 +136,40 @@ function briefStepOf(text) {
   return start === -1 ? null : { start, end: text.indexOf('</step>', start) + '</step>'.length };
 }
 
-// Every vocabulary match outside the stretch, the brief step, the inline sentence and the key's line.
+// spawn_planner's phase-input stretch: its opening sentence to the paragraph that opens recall. Null when the opening is gone.
+const PLANNER_OPEN = 'With `planning.workflow_plans` read in `parse` as `true`, the planner reads one composed phase input';
+function plannerStretchOf(text) {
+  const start = text.indexOf(PLANNER_OPEN);
+  if (start === -1) return null;
+  const end = text.indexOf('\n\nBefore assembling the prompt, recall', start);
+  assert.notEqual(end, -1, 'the planner stretch has no end');
+  return { start, end };
+}
+
+// check_gate's phase-input stretch: its opening sentence to the checker's Prompt: line. Null when the opening is gone.
+const CHECKER_OPEN = 'With `planning.workflow_plans` read in `parse` as `true`, the checker reads the plan files and the phase input';
+function checkerStretchOf(text) {
+  const start = text.indexOf(CHECKER_OPEN);
+  if (start === -1) return null;
+  const end = text.indexOf('\n\nPrompt:\n', start);
+  assert.notEqual(end, -1, 'the checker stretch has no end');
+  return { start, end };
+}
+
+// The review step's phase-input stretch: its opening sentence to the gate paragraph. Null when the opening is gone.
+const REVIEW_OPEN = 'With `planning.workflow_plans` read in `parse` as `true`, the payload is the PLAN file(s) plus the phase input';
+function reviewStretchOf(text) {
+  const start = text.indexOf(REVIEW_OPEN);
+  if (start === -1) return null;
+  const end = text.indexOf('\n\nThe gate comes from the routing bundle', start);
+  assert.notEqual(end, -1, 'the review stretch has no end');
+  return { start, end };
+}
+
+// Every vocabulary match outside the stretches, the brief step, the inline sentence and the key's line.
 function outside(text) {
-  const spans = [stretchOf(text), briefStepOf(text), inlineOf(text), keyLineOf(text)].filter(Boolean);
+  const spans = [stretchOf(text), plannerStretchOf(text), checkerStretchOf(text), reviewStretchOf(text), briefStepOf(text), inlineOf(text), keyLineOf(text)]
+    .filter(Boolean);
   return [...text.matchAll(VOCAB), ...text.matchAll(MARKERS)]
     .filter((m) => !spans.some((s) => m.index >= s.start && m.index < s.end));
 }
@@ -191,6 +222,156 @@ test('the pin fails when the stretch loses its opening sentence', () => {
 
 test('the pin fails when the brief step loses its tag', () => {
   assert.ok(outside(PLAN_MD.replace('<step name="check_brief">', '<step name="x">')).length > 0);
+});
+
+// --- /cad-plan: the planner's phase input ---------------------------------------------------------------------
+
+// Copied from 3f3f6a3e: with the switch off the planner's dispatch is exactly these.
+const PLANNER_RESOLVE = `node "\${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/route.mjs" resolve --role cad-planner \\
+  --attempt 1 --phase {N} \\
+  --bracket-read ".planning/ROADMAP.md,.planning/REQUIREMENTS.md,.planning/PROJECT.md,.planning/phases/{N}/CONTEXT.md"`;
+const PLANNER_READS = `Read before planning:
+- .planning/ROADMAP.md (this phase's entry and its dependencies)
+- .planning/REQUIREMENTS.md
+- .planning/PROJECT.md
+- .planning/phases/{N}/CONTEXT.md (locked user decisions - if present)
+`;
+const RECALL_BATCH = `When
+recall does run, batch it with the \`route.mjs resolve\` above in one message -
+both only feed the single dispatch and neither depends on the other.`;
+const REVISION_READ = '`--bracket-read ".planning/ROADMAP.md,.planning/REQUIREMENTS.md,.planning/PROJECT.md,.planning/phases/{N}/CONTEXT.md"`.';
+const PLANNER_STRETCH = (() => { const at = plannerStretchOf(PLAN_MD); return at ? PLAN_MD.slice(at.start, at.end) : ''; })();
+const plannerFlat = PLANNER_STRETCH.replace(/\s+/g, ' ');
+
+test('switch off: the planner\'s resolve block, its four document lines and the recall batching sentence are as at 3f3f6a3e', () => {
+  assert.ok(PLAN_MD.includes(PLANNER_RESOLVE), 'the planner\'s resolve block changed');
+  assert.ok(PLAN_MD.includes(PLANNER_READS), 'the Read before planning document lines changed');
+  assert.ok(PLAN_MD.includes(RECALL_BATCH), 'the sentence batching recall with the resolve changed');
+});
+
+test('the planner stretch sits in spawn_planner outside the prompt fence and composes the phase input once with --out-dir', () => {
+  const at = plannerStretchOf(PLAN_MD);
+  assert.ok(at, 'no planner stretch in plan.md');
+  assert.ok(PLAN_MD.indexOf('<step name="spawn_planner">') < at.start);
+  assert.ok(at.end < PLAN_MD.indexOf('<planning_context>\nPhase:'));
+  const calls = PLANNER_STRETCH.match(/planning\.mjs" brief [^\n]*/g) || [];
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /--phase \{N\} --role phase --out-dir <the scratch directory>/);
+  assert.match(plannerFlat, /mktemp -d "\$\{TMPDIR:-\/tmp\}\/cad-XXXXXX"/);
+  assert.match(plannerFlat, /before the resolve above goes out/);
+});
+
+test('the planner stretch\'s bracket value is the composed path, gaps adds its files, and it names no phase document', () => {
+  const m = /`--bracket-read` value is `([^`]*)`/.exec(plannerFlat);
+  assert.ok(m, 'the flag is not in backticks with its value apart');
+  assert.equal(m[1], '<the phase input path>');
+  assert.match(plannerFlat, /In gaps mode it is that path plus `\.planning\/phases\/\{N\}\/UAT\.md` and the existing PLAN\* and SUMMARY\* files/);
+  assert.doesNotMatch(PLANNER_STRETCH, /--bracket-read\s/, 'a flag followed by whitespace is a second open to the trace census');
+  assert.doesNotMatch(PLANNER_STRETCH, /ROADMAP\.md|REQUIREMENTS\.md|PROJECT\.md|CONTEXT\.md/);
+  assert.match(plannerFlat, /names that file by its absolute path in place of its four document lines, and keeps the gaps line and the source-files line/);
+  assert.match(plannerFlat, /\*\*A refused or unreadable answer\.\*\* Print one line with what it names, and dispatch the way this step does with the key not `true`/);
+});
+
+test('the pin fails when the planner stretch loses its opening sentence', () => {
+  assert.ok(outside(PLAN_MD.replace(PLANNER_OPEN, 'x')).length > 0);
+});
+
+test('plan-revision.md step 1 keeps its read-set and names the planner stretch\'s path with the switch on', () => {
+  const rev = readFileSync(join(ROOT, 'cadence-core', 'references', 'plan-revision.md'), 'utf8');
+  const step1 = rev.slice(rev.indexOf('\n1. '), rev.indexOf('\n2. '));
+  assert.ok(step1.includes(REVISION_READ), 'step 1\'s --bracket-read read-set changed');
+  assert.match(step1.replace(/\s+/g, ' '), /With `planning\.workflow_plans` `true`[^.]*`--bracket-read` value is `<the phase input path>` `spawn_planner`'s stretch kept/);
+});
+
+// --- /cad-plan: the checker's phase input ---------------------------------------------------------------------
+
+// Copied from 3f3f6a3e: with the switch off the checker's dispatch is exactly these.
+const CHECKER_BRACKET = '--bracket-read ".planning/phases/{N}/PLAN*.md,.planning/ROADMAP.md,.planning/REQUIREMENTS.md,.planning/phases/{N}/CONTEXT.md"';
+const CHECKER_READS = `Read:
+- .planning/phases/{N}/PLAN*.md (the plans under review)
+- .planning/ROADMAP.md and .planning/REQUIREMENTS.md
+- .planning/phases/{N}/CONTEXT.md (if present)
+`;
+const CHECKER_STRETCH = (() => { const at = checkerStretchOf(PLAN_MD); return at ? PLAN_MD.slice(at.start, at.end) : ''; })();
+const checkerFlat = CHECKER_STRETCH.replace(/\s+/g, ' ');
+
+test('switch off: the checker\'s bracket string and Read: list are as at 3f3f6a3e', () => {
+  assert.ok(PLAN_MD.includes(CHECKER_BRACKET), 'the checker\'s --bracket-read string changed');
+  assert.ok(PLAN_MD.includes(CHECKER_READS), 'the checker\'s Read: list changed');
+});
+
+test('the checker stretch sits in check_gate before its prompt, brackets the plans plus the composed path and names no whole document', () => {
+  const at = checkerStretchOf(PLAN_MD);
+  assert.ok(at, 'no checker stretch in plan.md');
+  assert.ok(PLAN_MD.indexOf('<step name="check_gate">') < at.start);
+  assert.ok(at.end < PLAN_MD.indexOf('<verification_context>'));
+  const m = /`--bracket-read` value is `([^`]*)`/.exec(checkerFlat);
+  assert.ok(m, 'the flag is not in backticks with its value apart');
+  assert.equal(m[1], '.planning/phases/{N}/PLAN*.md,<the phase input path>');
+  assert.doesNotMatch(CHECKER_STRETCH, /--bracket-read\s/, 'a flag followed by whitespace is a second open to the trace census');
+  assert.doesNotMatch(CHECKER_STRETCH, /ROADMAP\.md|REQUIREMENTS\.md|CONTEXT\.md/);
+  assert.doesNotMatch(CHECKER_STRETCH, /node "/, 'the compose call is spawn_planner\'s, referenced and never spelled again');
+  assert.match(checkerFlat, /Name the phase input `spawn_planner`'s stretch composed/);
+});
+
+// The key is this stretch's only vocabulary and it sits in the opening, so the sentence loses its anchor and keeps the key.
+test('the pin fails when the checker stretch loses its opening sentence', () => {
+  assert.ok(outside(PLAN_MD.replace(CHECKER_OPEN, 'With `planning.workflow_plans` read in `parse` as `true`, x')).length > 0);
+});
+
+// --- /cad-plan: the plan review's phase input ------------------------------------------------------------------
+
+// Copied from 3f3f6a3e: with the switch off the plan fire's payload is exactly this.
+const REVIEW_PAYLOAD = `<step name="review">
+Fire the \`plan\` review trigger per references/review-triggers.md, payload = the
+PLAN file(s) PLUS the three artifacts the reviewer is asked to check them
+against: \`.planning/ROADMAP.md\`, \`.planning/REQUIREMENTS.md\` and
+\`.planning/phases/{N}/CONTEXT.md\`. All four are REFERENCE PATHS the reviewer
+resolves itself - never inlined text, which would keep every byte of them
+resident here for the rest of the run - and all four ride the fire's \`--read\`
+bracket list (review-triggers.md step 4). On the workflow path a fire over more
+than one PLAN file runs one reviewer per plan and one cross-plan reviewer, and
+today's path runs one reviewer over all of them.
+
+`;
+const REVIEW_STRETCH = (() => { const at = reviewStretchOf(PLAN_MD); return at ? PLAN_MD.slice(at.start, at.end) : ''; })();
+const reviewFlat = REVIEW_STRETCH.replace(/\s+/g, ' ');
+
+test('switch off: the review step\'s payload paragraph is as at 3f3f6a3e', () => {
+  assert.ok(PLAN_MD.includes(REVIEW_PAYLOAD), 'the review step\'s first paragraph changed');
+});
+
+test('the review stretch names the phase input in place of the three artifacts, names none of them, and spells no call', () => {
+  const at = reviewStretchOf(PLAN_MD);
+  assert.ok(at, 'no review stretch in plan.md');
+  assert.ok(PLAN_MD.indexOf('<step name="review">') < at.start);
+  assert.match(reviewFlat, /the payload is the PLAN file\(s\) plus the phase input in place of the three artifacts/);
+  assert.match(reviewFlat, /Name the phase input `spawn_planner`'s stretch composed/);
+  assert.match(reviewFlat, /rides the fire's `--read` bracket list in place of the three/);
+  assert.doesNotMatch(REVIEW_STRETCH, /ROADMAP\.md|REQUIREMENTS\.md|CONTEXT\.md/);
+  assert.doesNotMatch(REVIEW_STRETCH, /node "/, 'the compose call is spawn_planner\'s, referenced and never spelled again');
+});
+
+// As with the checker, the key is this stretch's only vocabulary, so the sentence loses its anchor and keeps the key.
+test('the pin fails when the review stretch loses its opening sentence', () => {
+  assert.ok(outside(PLAN_MD.replace(REVIEW_OPEN, 'With `planning.workflow_plans` read in `parse` as `true`, x')).length > 0);
+});
+
+test('review-triggers.md\'s plan row still names the three artifacts and states the switch-on replacement', () => {
+  const triggers = readFileSync(join(ROOT, 'cadence-core', 'references', 'review-triggers.md'), 'utf8');
+  const row = triggers.split('\n').find((l) => l.startsWith('| `plan` |')) ?? '';
+  assert.ok(row.includes('(c) the PLAN file path(s), plus `.planning/ROADMAP.md`, `.planning/REQUIREMENTS.md` and `.planning/phases/<N>/CONTEXT.md` (optional)'),
+    'the plan row no longer names today\'s three artifacts');
+  assert.match(row, /With `planning\.workflow_plans` `true` the three become one, the phase input `[^`]*brief --phase <N> --role phase --out-dir <dir>` composes, by its absolute path, the PLAN path\(s\) unchanged/);
+  assert.match(row, /else one `config\.mjs get planning\.workflow_plans`/);
+  assert.match(row, /A refused answer is named in one line and the fire takes the three/);
+});
+
+test('the plan checker contract reads the files its dispatch names and still names the CONTEXT decisions', () => {
+  const contract = readFileSync(join(ROOT, 'skills', 'cad-plan-checker-contract', 'SKILL.md'), 'utf8');
+  const step1 = contract.slice(contract.indexOf('<process>'), contract.indexOf('\n2. ', contract.indexOf('<process>'))).replace(/\s+/g, ' ');
+  assert.match(step1, /from the files your dispatch names/);
+  assert.match(step1, /CONTEXT decisions/);
 });
 
 // --- /cad-plan: the brief check ------------------------------------------------
@@ -320,7 +501,7 @@ test('the vocabulary pin fails when the workflow stretch loses its opening sente
 });
 
 test('the risk_surface fix pass paragraph is unchanged', () => {
-  const FIX = 'The dispatch prompt carries four things, nothing distilled by the coordinator: the plan file; the findings file\'s PATH, already persisted at `.planning/phases/<N>/records/REVIEW-risk_surface-plan-<k>.md` (references/risk-surface.md); the instruction to fix the blocker/high findings only; and the instruction NOT to rotate the plan\'s report but to append its fix row to the existing `<plandir>/records/reports/plan-<k>.md`';
+  const FIX = 'The dispatch prompt carries four things, nothing distilled by the coordinator: the plan file; the findings file\'s PATH, already persisted at `.planning/phases/<N>/records/REVIEW-risk_surface-<discriminator>.md` (references/risk-surface.md), the discriminator being that fire\'s range (references/review-triggers.md step 5); the instruction to fix the blocker/high findings only; and the instruction NOT to rotate the plan\'s report but to append its fix row to the existing `<plandir>/records/reports/plan-<k>.md`';
   assert.ok(flatExec(EXECUTE).includes(FIX));
 });
 
@@ -357,7 +538,27 @@ test('the stretch has a continuation name the same file, the refused arm, and th
   assert.match(stretchFlat, /That return owes no report file/);
   assert.match(stretchFlat, /After a first dispatch, where no task has run, it starts the plan fresh and names no report path/);
   assert.match(stretchFlat, /keeps what `handle_checkpoint` carries: the report path, the checkpoint outcome, "continue from task <k>" and the same pre-plan HEAD/);
-  assert.match(stretchFlat, /A `risk_surface` fix pass keeps what its own paragraph lists/);
+  assert.match(stretchFlat, /A `risk_surface` fix pass names that same brief file in place of the plan file, under the same `blocked` exception, and keeps the other three things its own paragraph lists/);
+});
+
+test('the stretch hands the fix pass the brief, the findings path and its two instructions, and composes again after a files: amendment', () => {
+  const at = stretchFlat.indexOf('A `risk_surface` fix pass');
+  assert.notEqual(at, -1, 'the stretch names no fix pass');
+  const fix = stretchFlat.slice(at);
+  assert.match(fix, /^A `risk_surface` fix pass names that same brief file in place of the plan file/);
+  assert.match(fix, /the findings file's path, the instruction to fix the blocker and high findings only, and the instruction to append its fix row to the plan's report rather than rotate it/);
+  assert.match(fix, /Its resolve carries the \*\*Bracket\*\* value above/);
+  assert.match(fix, /amended `PLAN-<k>\.md`'s `files:`[^.]*runs the \*\*Compose\*\* call again into the same scratch directory before that dispatch/);
+  assert.match(fix, /the lease the brief shows is the one `lease-check` reads/);
+});
+
+test('the executor contract reads what its dispatch names, with no read list that presumes CONTEXT.md or PROJECT.md', () => {
+  const contract = readFileSync(join(ROOT, 'skills', 'cad-executor-contract', 'SKILL.md'), 'utf8');
+  const role = contract.slice(contract.indexOf('<role>'), contract.indexOf('</role>'));
+  const line = role.slice(role.indexOf('Read the files'), role.indexOf('\n\n', role.indexOf('Read the files'))).replace(/\s+/g, ' ');
+  assert.match(line, /^Read the files your dispatch prompt names before touching anything\./);
+  assert.doesNotMatch(line, /CONTEXT\.md|PROJECT\.md/);
+  assert.match(line, /Project CLAUDE\.md directives are hard constraints/);
 });
 
 test('the parallel reference still reuses this prompt and keeps its per-worker bracket', () => {
@@ -388,4 +589,59 @@ test('through the real seams a scratch project reads the switch false and brief 
       assert.equal(readFileSync(written.path, 'utf8').length > 0, true);
     } finally { rmSync(out, { recursive: true, force: true }); }
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// --- /cad-verify --deep: the verifier's input ------------------------------------------------------------------
+
+const DEEP = readFileSync(join(ROOT, 'cadence-core', 'workflows', 'verify-deep.md'), 'utf8');
+const DEEP_OPEN = 'With `planning.workflow_plans` `true`, the verifier reads one composed input';
+// Copied from 3f3f6a3e: with the switch off the verifier's dispatch is exactly these.
+const DEEP_BRACKET = '`--bracket-read ".planning/phases/<N>/PLAN*.md,.planning/phases/<N>/SUMMARY*.md,.planning/ROADMAP.md,.planning/phases/<N>/UAT.md"`';
+const DEEP_HAND = `Hand it the phase number, goal,
+the current UAT items, the PLAN/SUMMARY/ROADMAP paths, and the path it must
+write: \`.planning/phases/<N>/records/verifier-findings.json\`.`;
+const DEEP_STRETCH = (() => {
+  const start = DEEP.indexOf(DEEP_OPEN);
+  return start === -1 ? '' : DEEP.slice(start, DEEP.indexOf('\n\nClose the bracket HERE', start));
+})();
+const deepFlat = DEEP_STRETCH.replace(/\s+/g, ' ');
+
+test('switch off: the deep verifier\'s bracket string and hand-it sentence are as at 3f3f6a3e', () => {
+  assert.ok(DEEP.includes(DEEP_BRACKET), 'the verifier\'s --bracket-read string changed');
+  assert.ok(DEEP.includes(DEEP_HAND), 'the verifier\'s hand-it sentence changed');
+});
+
+test('the deep stretch sits in dispatch, reads the key in its one config.mjs get and composes the verifier input', () => {
+  assert.ok(DEEP_STRETCH.length > 300, 'no stretch in verify-deep.md');
+  const dispatch = stepOf(DEEP, 'dispatch');
+  assert.ok(dispatch.includes(DEEP_STRETCH));
+  const gets = DEEP.match(/config\.mjs" get [^\n]*/g) || [];
+  assert.equal(gets.length, 1);
+  assert.ok(DEEP_STRETCH.includes(gets[0]));
+  assert.match(gets[0], /get planning\.workflow_plans$/);
+  assert.match(DEEP_STRETCH, /planning\.mjs" brief --phase <N> --role verifier --out-dir <the scratch directory>/);
+  assert.match(deepFlat, /mktemp -d "\$\{TMPDIR:-\/tmp\}\/cad-XXXXXX"/);
+});
+
+test('the deep stretch\'s bracket value is the composed path and it names no PLAN, SUMMARY, ROADMAP or UAT path', () => {
+  const m = /`--bracket-read` value is `([^`]*)`/.exec(deepFlat);
+  assert.ok(m, 'the flag is not in backticks with its value apart');
+  assert.equal(m[1], '<the verifier input path>');
+  assert.doesNotMatch(DEEP_STRETCH, /--bracket-read\s/, 'a flag followed by whitespace is a second open to the trace census');
+  assert.doesNotMatch(DEEP_STRETCH, /\.planning\/|PLAN[^\s,]*\.md|SUMMARY[^\s,]*\.md|ROADMAP\.md|UAT\.md/);
+  assert.match(deepFlat, /that file by its absolute path in place of the document paths and the UAT items it already carries, and the findings path above/);
+  assert.match(deepFlat, /\*\*A refused or unreadable answer\.\*\* Print one line with what it names, and dispatch as the paragraph above does/);
+});
+
+test('verify-deep.md still holds exactly three <step name= tags', () => {
+  assert.equal((DEEP.match(/<step name=/g) || []).length, 3);
+});
+
+test('the verifier contract\'s step 1 names the stand-in input, which carries the acceptance criteria, and keeps CONTEXT.md in its document list', () => {
+  const contract = readFileSync(join(ROOT, 'skills', 'cad-verifier-contract', 'SKILL.md'), 'utf8');
+  const step1 = contract.slice(contract.indexOf('## 1. Load context'), contract.indexOf('## 2.')).replace(/\s+/g, ' ');
+  assert.match(step1, /Read what your dispatch hands you: the documents below, or the one input that stands in for them/);
+  assert.match(step1, /the success criteria, CONTEXT's acceptance criteria, the UAT items, each plan's must-be-true lines and the SUMMARY's claims/);
+  assert.ok(!step1.includes('carries no CONTEXT.md'));
+  assert.ok(step1.includes('- Acceptance criteria: `.planning/phases/<N>/CONTEXT.md` if present.'));
 });

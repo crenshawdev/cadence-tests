@@ -1224,8 +1224,8 @@ test('LND-02: cad-land 3(b) unions the RULINGS from both roots, not the review f
     assert.ok(bullet.includes(needle),
       `cad-land's gate bullet no longer names \`${needle}\` (${why})`);
   }
-  assert.match(bullet, /every round/i,
-    "the bullet no longer says EVERY round is unioned - round 2's record is not round 1's, "
+  assert.match(bullet, /every record/i,
+    "the bullet no longer says EVERY record is unioned - round 2's record is not round 1's, "
     + 'and taking the highest alone drops what only an earlier round stated');
   assert.match(bullet, /never parsed/,
     'the bullet dropped the sentence that the gate never reports "no surviving finding" '
@@ -1592,7 +1592,7 @@ test('ENFORCEMENT, execute.md: the blocking FAIL arm dispatches a continuation c
     'the FAIL arm no longer names the worker key `<k>` the fix is dispatched under, so the '
     + 'fix leaves no second bracket on the run record under the plan it belongs to and '
     + 'nothing can show a worker rather than the coordinator authored it');
-  assert.match(arm, /\.planning\/phases\/<N>\/records\/REVIEW-risk_surface-plan-<k>\.md/,
+  assert.match(arm, /\.planning\/phases\/<N>\/records\/REVIEW-risk_surface-<discriminator>\.md/,
     'the FAIL arm no longer carries the PERSISTED findings path, so the coordinator is back '
     + 'to distilling the findings into the prompt itself - the reading step this dispatch '
     + 'exists to take off it');
@@ -2548,6 +2548,80 @@ test('IVW-01: both risk-surface interview sites carry the ask-user rules, and th
     const options = interviewOptions(scan, answered);
     assert.ok(options.length >= 1 && options.length <= cap,
       `${label}: the builder returned ${options.length} options against the seam's cap of ${cap}`);
+  }
+});
+
+// --- D-12: the ask-user seam pushes before either arm blocks -----------------
+//
+// The defect worth catching is a push named for one arm only, which leaves the
+// open-ended question waiting on a user who walked away. Read off the same
+// section IVW-01 reads, so the rule can't wander out of the binding either.
+
+test('D-12: the ask-user binding pushes once before both arms, one line under 200 characters, skipped without the tool', () => {
+  const where = 'references/seam-ask-user.md `## Seam: ask-user`';
+  const askUser = doc('cadence-core', 'references', 'seam-ask-user.md')
+    .split('## Seam: ask-user')[1]?.split(/\n## /)[0];
+  assert.ok(askUser, `${where}: no such section`);
+  const binding = askUser.split('**Claude Code binding:**')[1]?.split('\n\n')[0];
+  assert.ok(binding, `${where}: no **Claude Code binding:** list`);
+
+  const bullets = binding.split(/\n- /).map(flat);
+  const at = (lead) => bullets.findIndex((b) => b.startsWith(lead));
+  const push = bullets.findIndex((b) => b.includes('`PushNotification`'));
+  assert.ok(push >= 0, `${where}: the binding names no \`PushNotification\``);
+  const rule = bullets[push];
+
+  assert.match(rule, /`AskUserQuestion`/, `${where}: the push rule leaves out the structured-choice arm`);
+  assert.match(rule, /open-ended question/, `${where}: the push rule leaves out the open-ended arm`);
+  assert.match(rule, /one line under 200 characters/, `${where}: the push rule states no 200-character line`);
+  assert.match(rule, /without the tool[^.]*skips the push/,
+    `${where}: the push rule never says a host without the tool skips it`);
+  assert.ok(push < at('Structured choice:') && push < at('Open-ended question:'),
+    `${where}: the push rule sits after an arm it has to come before`);
+});
+
+// --- D-12: every skill that asks carries the push rule itself ----------------
+//
+// The asking session has the skill and its workflow loaded and never opens the
+// seam file, so the rule has to ride in the skill. The list comes off the files,
+// so a new asking skill without the rule goes red here.
+
+// a workflow can ask with no AskUserQuestion at all, by ending its turn on a plain-text question
+const endsTurnOnQuestion = (text) => text.replace(/\s+/g, ' ').split(/(?<=\.) /)
+  .some((s) => /\bend(?:s|ing)? the turn\b/i.test(s) && /\b(?:ask|asking|question)\b/i.test(s));
+
+test('D-12: every skill that asks, by AskUserQuestion or by a workflow ending its turn on a question, also holds PushNotification and the one push sentence', () => {
+  const skills = readdirSync(join(REPO, 'skills'), { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => `skills/${e.name}/SKILL.md`)
+    .filter((f) => { try { doc(f); return true; } catch { return false; } });
+
+  const sentences = new Map();
+  const proseOnly = [];
+  for (const f of skills) {
+    const text = doc(f);
+    const end = text.indexOf('\n---', 4);
+    assert.ok(text.startsWith('---\n') && end > 0, `${f}: no frontmatter block`);
+    const tools = (text.slice(0, end).split('allowed-tools:')[1] ?? '')
+      .split('\n').filter((l) => /^\s+- /.test(l)).map((l) => l.replace(/^\s+- /, '').trim());
+    const workflows = [...text.matchAll(/@\$\{CLAUDE_PLUGIN_ROOT\}\/(cadence-core\/workflows\/\S+\.md)/g)].map((m) => m[1]);
+    const asksInProse = workflows.some((w) => endsTurnOnQuestion(doc(w)));
+    if (!tools.includes('AskUserQuestion') && !asksInProse) continue;
+    if (!tools.includes('AskUserQuestion')) proseOnly.push(f);
+
+    assert.ok(tools.includes('PushNotification'), `${f}: asks the user but lists no PushNotification`);
+    // The sentence starts its paragraph and ends at the first line-ending period.
+    const found = text.slice(end + 4).match(/(?:^|\n\n)([^\n]*`PushNotification`[\s\S]*?\.)(?=\n)/);
+    assert.ok(found, `${f}: asks but its body carries no push sentence`);
+    sentences.set(f, found[1]);
+  }
+
+  assert.ok(sentences.size > 0, 'no skill lists AskUserQuestion, so this check reads nothing');
+  assert.ok(proseOnly.length > 0, 'no skill asks in prose alone, so the workflow read has gone blind');
+  const [first, sentence] = [...sentences][0];
+  assert.match(sentence, /`references\/seam-ask-user\.md`/, `${first}: the push sentence never names the seam`);
+  for (const [f, s] of sentences) {
+    assert.equal(s, sentence, `${f}: the push sentence drifted from ${first}'s`);
   }
 });
 
