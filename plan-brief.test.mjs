@@ -728,3 +728,152 @@ test('brief: a blank line before the opening --- still gives the lease', () => {
   assert.ok(got.includes("The plan's lease"), 'the lease section is kept');
   assert.ok(got.includes('files:\n  - src/a.mjs\n  - tests/a.test.mjs (lease)'), 'the files: lines as written');
 });
+
+// --- narrowed role inputs: the phase-wide one (planner, plan checker, a whole-phase plan reviewer) ---
+
+const ROADMAP = `# Roadmap: Fixture
+
+## Phases
+
+- [ ] **Phase 3: Before** - fixture
+- [ ] **Phase 4: Thing** - fixture
+- [ ] **Phase 5: After** - fixture
+
+## Phase Details
+
+### Phase 3: Before
+**Goal:** SENTINEL-PHASE-3
+**Requirements:** OTH-01
+
+### Phase 4: Thing
+**Goal:** SENTINEL-PHASE-4
+**Requirements:** NAR-01, NAR-02
+**Success Criteria:**
+1. CRITERION-ONE
+
+### Phase 5: After
+**Goal:** SENTINEL-PHASE-5
+**Requirements:** None
+`;
+
+const REQUIREMENTS = `# Requirements: Fixture
+
+## Active
+
+- **NAR-01**: NAR-ONE-BULLET
+  NAR-ONE-WRAPPED
+- **NAR-02**: NAR-TWO-BULLET
+- **OTH-01**: OTH-BULLET
+
+\`\`\`
+- **NAR-01**: FENCED-EXAMPLE
+\`\`\`
+
+## Traceability
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| NAR-01 (NAR-ONE-ROW) | 4 | Pending |
+| NAR-02 | 4 | Pending |
+| OTH-01 | 3 | Pending |
+`;
+
+const PHASE_CONTEXT = `# Phase 4: Thing - Context
+
+## Scope boundary
+
+In: SCOPE-IN. Deferred: DEFERRED-ITEM.
+
+## Durable decisions
+
+- D-01 (a): DURABLE-ONE
+
+## Decisions
+
+- D-02 (b): DECISION-TWO
+- D-03 (c): DECISION-THREE
+
+## Acceptance criteria
+
+- AC1: ACCEPT-ONE
+`;
+
+/** A project whose ROADMAP holds three phases' detail blocks; `null` leaves a document out. */
+function phaseProject({ roadmap = ROADMAP, requirements = REQUIREMENTS, projectMd = PROJECT, context = PHASE_CONTEXT } = {}) {
+  const p = project({ projectMd, context });
+  if (roadmap !== null) writeFileSync(join(p.dir, 'ROADMAP.md'), roadmap);
+  if (requirements !== null) writeFileSync(join(p.dir, 'REQUIREMENTS.md'), requirements);
+  return p;
+}
+const phaseInput = (dir, extra = []) => brief(dir, ['--phase', '4', '--role', 'phase', ...extra]);
+
+test('brief phase input: every decision, this phase entry and its requirements, the Constraints, and nothing else', () => {
+  const { dir } = phaseProject();
+  const r = phaseInput(dir, ['--out-dir', scratch()]);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.role, 'phase');
+  const got = readFileSync(r.path, 'utf8');
+  assert.equal(r.bytes, Buffer.byteLength(got));
+  for (const want of ['- D-01 (a): DURABLE-ONE', '- D-02 (b): DECISION-TWO', '- D-03 (c): DECISION-THREE',
+    '## Scope boundary\n\nIn: SCOPE-IN. Deferred: DEFERRED-ITEM.', '## Acceptance criteria\n\n- AC1: ACCEPT-ONE',
+    '### Phase 4: Thing\n**Goal:** SENTINEL-PHASE-4\n**Requirements:** NAR-01, NAR-02\n**Success Criteria:**\n1. CRITERION-ONE',
+    '- **NAR-01**: NAR-ONE-BULLET\n  NAR-ONE-WRAPPED', '- **NAR-02**: NAR-TWO-BULLET',
+    '| Requirement | Phase | Status |\n|-------------|-------|--------|\n| NAR-01 (NAR-ONE-ROW) | 4 | Pending |\n| NAR-02 | 4 | Pending |',
+    '## Constraints\n\n- **Dependencies**: no npm runtime dependencies, ever\n- **Seams**: judgment stays prose']) {
+    assert.ok(got.includes(want), `holds ${want}`);
+  }
+  for (const gone of ['SENTINEL-PHASE-3', 'SENTINEL-PHASE-5', 'OTH-01', 'OTH-BULLET', 'FENCED-EXAMPLE',
+    'SECRET-WHAT-THIS-IS', 'KEY-DECISIONS-TEXT', '# Phase 4: Thing - Context']) {
+    assert.ok(!got.includes(gone), `leaves out ${gone}`);
+  }
+  assert.ok(got.includes('stands in for `.planning/ROADMAP.md`, `.planning/REQUIREMENTS.md`, `.planning/PROJECT.md` and `.planning/phases/4/CONTEXT.md`'));
+  const line = JSON.stringify(r);
+  assert.ok(!line.includes('DECISION-TWO') && !line.includes('SENTINEL-PHASE-4'), 'the answer carries no composed text');
+});
+
+test('brief phase input: two runs give identical bytes, and with no --out-dir nothing is written', () => {
+  const { dir, pdir } = phaseProject();
+  const a = phaseInput(dir, ['--out-dir', scratch()]);
+  const b = phaseInput(dir, ['--out-dir', scratch()]);
+  assert.deepEqual(readFileSync(a.path), readFileSync(b.path));
+  const before = listing(pdir);
+  const bare = phaseInput(dir);
+  assert.equal(bare.ok, true, JSON.stringify(bare));
+  assert.equal(bare.path, undefined);
+  assert.equal(bare.bytes, a.bytes);
+  assert.deepEqual(listing(pdir), before);
+});
+
+test('brief phase input: its file and the executor brief share one directory without colliding', () => {
+  const { dir } = phaseProject();
+  const out = scratch();
+  const p = phaseInput(dir, ['--out-dir', out]);
+  const e = brief(dir, ['--phase', '4', '--plan', '3', '--out-dir', out]);
+  assert.equal(e.ok, true, JSON.stringify(e));
+  assert.notEqual(p.path, e.path);
+  assert.equal(listing(out).length, 2);
+});
+
+test('brief phase input: a phase with no detail block is refused naming it, and an unknown role is refused', () => {
+  const { dir } = phaseProject({ roadmap: null });
+  const r = phaseInput(dir, ['--out-dir', scratch()]);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /Phase 4:/);
+  assert.equal(brief(dir, ['--phase', '4', '--role', 'nobody']).reason, 'bad-args');
+  assert.equal(brief(dir, ['--phase', '4', '--role']).reason, 'bad-args');
+});
+
+test('brief phase input: a project with no REQUIREMENTS.md, PROJECT.md or CONTEXT.md composes without them', () => {
+  const { dir } = phaseProject({ requirements: null, projectMd: null, context: null });
+  const r = phaseInput(dir, ['--out-dir', scratch()]);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const got = readFileSync(r.path, 'utf8');
+  assert.ok(got.includes('SENTINEL-PHASE-4'));
+  for (const gone of ["This phase's requirements", '## Constraints', 'D-01']) assert.ok(!got.includes(gone), `no ${gone}`);
+});
+
+test('brief phase input: a phase whose block names no requirement carries no requirement text', () => {
+  const { dir } = phaseProject({ roadmap: ROADMAP.replaceAll('NAR-01, NAR-02', 'None') });
+  const got = readFileSync(phaseInput(dir, ['--out-dir', scratch()]).path, 'utf8');
+  assert.ok(!got.includes('NAR-') && !got.includes("This phase's requirements"));
+});
