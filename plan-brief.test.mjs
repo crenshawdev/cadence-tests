@@ -877,3 +877,73 @@ test('brief phase input: a phase whose block names no requirement carries no req
   const got = readFileSync(phaseInput(dir, ['--out-dir', scratch()]).path, 'utf8');
   assert.ok(!got.includes('NAR-') && !got.includes("This phase's requirements"));
 });
+
+// --- narrowed role inputs: one plan's reviewer (D-08) ---
+
+const REVIEW_CONTEXT = PHASE_CONTEXT.replace('- D-03 (c): DECISION-THREE\n', '- D-03 (c): DECISION-THREE\n- D-04 (d): DECISION-FOUR\n');
+const reviewedPlan = (decisions) => planText({
+  tasks: `### Task 1: One\n\n${decisions === null ? '' : `- **Decisions:** ${decisions}\n`}- **Action:** TASK-SENTINEL\n- **Verify:** v\n`,
+});
+const reviewerProject = (plans) => {
+  const p = phaseProject({ context: REVIEW_CONTEXT });
+  for (const [name, text] of Object.entries(plans)) writeFileSync(join(p.pdir, name), text);
+  return p;
+};
+const reviewerInput = (dir, plan = '3', extra = []) => brief(dir, ['--phase', '4', '--plan', plan, '--role', 'reviewer', ...extra]);
+
+test('brief reviewer input: exactly the named decisions once each, this phase entry, and no section of the plan', () => {
+  const { dir } = reviewerProject({ 'PLAN-3.md': reviewedPlan('D-04, D-02, D-04') });
+  const r = reviewerInput(dir, '3', ['--out-dir', scratch()]);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.role, 'reviewer');
+  const got = readFileSync(r.path, 'utf8');
+  assert.ok(got.includes('## Decisions the tasks name\n\n- D-04 (d): DECISION-FOUR\n- D-02 (b): DECISION-TWO\n'), 'first-named order');
+  assert.equal(got.split('DECISION-FOUR').length - 1, 1, 'a decision named twice rides once');
+  for (const want of ['### Phase 4: Thing\n**Goal:** SENTINEL-PHASE-4', '| NAR-02 | 4 | Pending |',
+    'The plan under review is `.planning/phases/4/PLAN-3.md`, the plan file your dispatch names, not this file.',
+    'stands in for `.planning/ROADMAP.md`, `.planning/REQUIREMENTS.md` and `.planning/phases/4/CONTEXT.md`']) {
+    assert.ok(got.includes(want), `holds ${want}`);
+  }
+  for (const gone of ['DURABLE-ONE', 'DECISION-THREE', 'GOAL-SENTENCE', 'TASK-SENTINEL', 'truth one', 'NOTES-ONLY-TEXT',
+    'SENTINEL-PHASE-3', 'SENTINEL-PHASE-5', 'OTH-01', '## Constraints', 'SECRET-WHAT-THIS-IS', 'ACCEPT-ONE']) {
+    assert.ok(!got.includes(gone), `leaves out ${gone}`);
+  }
+});
+
+test('brief reviewer input: a bad id is refused naming plan, task and id, and nothing is written', () => {
+  const { dir } = reviewerProject({ 'PLAN-3.md': reviewedPlan('D-02, D-09') });
+  const out = scratch();
+  const r = reviewerInput(dir, '3', ['--out-dir', out]);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'bad-plan');
+  assert.match(r.detail, /PLAN-3\.md Task 1 names D-09/);
+  assert.deepEqual(listing(out), []);
+});
+
+test('brief reviewer input: no --plan is refused, and a phase with no detail block is refused naming it', () => {
+  const { dir } = reviewerProject({});
+  const r = brief(dir, ['--phase', '4', '--role', 'reviewer']);
+  assert.equal(r.reason, 'bad-args');
+  assert.match(r.detail, /--role reviewer needs --plan/);
+  writeFileSync(join(dir, 'ROADMAP.md'), ROADMAP.replace(/### Phase 4:[\s\S]*?(?=### Phase 5)/, ''));
+  const none = reviewerInput(dir);
+  assert.equal(none.reason, 'no-roadmap');
+  assert.match(none.detail, /Phase 4:/);
+});
+
+test('brief reviewer input: a plan naming no decision points at CONTEXT.md; two plans give two files and repeat their bytes', () => {
+  const { dir } = reviewerProject({ 'PLAN-3.md': reviewedPlan(null), 'PLAN-2.md': reviewedPlan('D-01') });
+  const out = scratch();
+  const three = reviewerInput(dir, '3', ['--out-dir', out]);
+  const two = reviewerInput(dir, '2', ['--out-dir', out]);
+  const exec = brief(dir, ['--phase', '4', '--plan', '3', '--out-dir', out]);
+  assert.equal(exec.ok, true, JSON.stringify(exec));
+  assert.equal(new Set([three.path, two.path, exec.path]).size, 3);
+  assert.equal(listing(out).length, 3);
+  const got = readFileSync(three.path, 'utf8');
+  assert.match(got, /No decision was carried: no task names one\. `\.planning\/phases\/4\/CONTEXT\.md` holds/);
+  assert.ok(!got.includes('## Decisions the tasks name'));
+  assert.ok(readFileSync(two.path, 'utf8').includes('- D-01 (a): DURABLE-ONE'));
+  const again = reviewerInput(dir, '3', ['--out-dir', scratch()]);
+  assert.deepEqual(readFileSync(again.path), readFileSync(three.path));
+});
