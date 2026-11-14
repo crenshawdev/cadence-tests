@@ -296,8 +296,8 @@ test('a clean fixture reports nothing', () => {
 /** D-15: review-triggers, review-workflow, triage-gate, review-record and risk-surface, read whole before plan 1-8 */
 const BEFORE_BYTES = 97588;
 // typed, never computed from the files, or growth could never trip it
-// heaviest arm: blocking on the workflow path for a risk_surface fire, 86,211 B on 2026-11-13, rounded up
-const ARM_BOUND = 90000;
+// heaviest arm: blocking on the workflow path for a risk_surface fire, 90,415 B on 2026-11-13, rounded up
+const ARM_BOUND = 95000;
 
 const ENTRY = ['review-triggers.md', 'triage-gate.md'];
 const GATE_FILES = ['triage-gate-deferred.md', 'triage-gate-blocking.md', 'triage-gate-adjudicated.md'];

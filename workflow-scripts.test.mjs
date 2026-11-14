@@ -719,7 +719,7 @@ test('every args name review-workflow.md gives for the per-plan split is one rev
   const keys = bullet.match(/\{("\w+"(?:, "\w+")*)\}/);
   assert.ok(head && keys, 'the bullet names its args and the shape of a plans entry');
   const names = [head[1], head[2], ...keys[1].split(', ').map((k) => JSON.parse(k))];
-  assert.deepEqual(names, ['plans', 'cross_agent_type', 'plan', 'path']);
+  assert.deepEqual(names, ['plans', 'cross_agent_type', 'plan', 'path', 'input']);
   for (const n of names) assert.ok(PANEL.includes(`.${n}`), `review-panel.js reads ${n}`);
 });
 
