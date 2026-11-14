@@ -358,6 +358,76 @@ test('review-panel: the return for two voices and three findings holds counts an
   ]);
 });
 
+// --- a plan fire over several plans: one reviewer per plan and one across them ---------------------------------------
+const PLANS = [1, 2, 3].map((plan) => ({ plan, path: `.planning/phases/1/PLAN-${plan}.md` }));
+const AGAINST = ['.planning/ROADMAP.md', '.planning/REQUIREMENTS.md', '.planning/phases/1/CONTEXT.md'];
+const PLAN_ARGS = {
+  ...ARGS, trigger: 'plan', instruction: 'Refute this phase plan against its goal.', model: 'sonnet',
+  artifact: `${PLANS.map((p) => p.path).join(', ')}, plus ${AGAINST.join(', ')} (optional)`,
+  checker_artifact: PLANS.map((p) => p.path).join(' '), plans: PLANS, cross_agent_type: 'cadence:cad-reviewer-low',
+};
+const SPLIT = ['claude-subagent-plan-1', 'claude-subagent-plan-2', 'claude-subagent-plan-3', 'claude-subagent-cross-plan'];
+
+test('review-panel: a plan fire over three plans starts three plan reviewers and one cross-plan reviewer, each its own voice with its own checkers', async () => {
+  const claims = Object.fromEntries(SPLIT.map((v, i) => [`reviewer ${v}`, Array.from({ length: i + 1 }, (_, n) => find('x.md', `${v} claim ${n}`))]));
+  const h = host((label) => (label.startsWith('reviewer') ? { findings: claims[label] } : verdict('proved')));
+  const out = await runScript(PANEL, h, PLAN_ARGS);
+  const reviewers = h.calls.filter((c) => c.opts.label.startsWith('reviewer'));
+  assert.deepEqual(reviewers.map((c) => c.opts.label), SPLIT.map((v) => `reviewer ${v}`));
+  assert.deepEqual(reviewers.map((c) => c.opts.agentType), ['cad-reviewer-high', 'cad-reviewer-high', 'cad-reviewer-high', 'cadence:cad-reviewer-low']);
+  assert.ok(reviewers.every((c) => c.opts.model === 'sonnet'), 'every reviewer runs on the fire\'s model');
+  for (const [k, p] of PLANS.entries()) {
+    const { prompt } = reviewers[k];
+    assert.deepEqual(PLANS.map((q) => prompt.includes(q.path)), PLANS.map((q) => q === p), `plan ${p.plan} reads its own plan alone`);
+    for (const f of AGAINST) assert.ok(prompt.includes(f), `plan ${p.plan} is checked against ${f}`);
+  }
+  const cross = reviewers[3].prompt;
+  for (const f of [...PLANS.map((p) => p.path), ...AGAINST]) assert.ok(cross.includes(f), `the cross-plan reviewer names ${f}`);
+  assert.match(cross, /success criterion .* no plan delivers/);
+  assert.match(cross, /depends_on or tests-pin chain/);
+  assert.match(cross, /two things only/);
+  const checkers = h.calls.filter((c) => c.opts.label.startsWith('checker')).map((c) => c.opts.label);
+  assert.deepEqual(checkers.sort(), SPLIT.flatMap((v, i) => Array.from({ length: i + 1 }, (_, n) => `checker ${v} ${n + 1}`)).sort());
+  assert.deepEqual(out.voices.map((v) => [v.voice, v.ran, v.counts.raised, v.counts.proved]), SPLIT.map((v, i) => [v, true, i + 1, i + 1]));
+  const json = JSON.stringify(out);
+  for (const list of Object.values(claims)) for (const f of list) assert.ok(!json.includes(f.claim), f.claim);
+});
+
+test('review-panel: a split plan fire still calls a provider once, and one plan or none keeps the single claude-subagent reviewer', async () => {
+  const h = host((label) => (label.startsWith('provider') ? { ok: true, findings: [] } : { findings: [] }));
+  const out = await runScript(PANEL, h, { ...PROV_ARGS, ...PLAN_ARGS, reviewers: ['claude-subagent', 'openai'] });
+  assert.equal(h.calls.filter((c) => c.opts.label.startsWith('provider ')).length, 1);
+  assert.deepEqual(out.voices.map((v) => v.voice), [...SPLIT, 'openai']);
+  for (const plans of [[PLANS[0]], [], undefined]) {
+    const one = host(() => ({ findings: [] }));
+    const res = await runScript(PANEL, one, { ...PLAN_ARGS, plans });
+    assert.deepEqual(one.calls.map((c) => c.opts.label), ['reviewer claude-subagent']);
+    assert.ok(one.calls[0].prompt.includes(PLAN_ARGS.artifact), 'the single reviewer keeps the whole artifact');
+    assert.deepEqual(res.voices.map((v) => [v.voice, v.ran]), [['claude-subagent', true]]);
+  }
+});
+
+test('review-panel: a plan reviewer that dies is named while the others are checked and no fallback runs, and malformed plans start no agent', async () => {
+  const h = host((label) => {
+    if (label === 'reviewer claude-subagent-plan-2') throw new Error('dead agent');
+    return label.startsWith('reviewer') ? { findings: [find('x.md', label)] } : verdict('proved');
+  });
+  const out = await runScript(PANEL, h, PLAN_ARGS);
+  assert.deepEqual(out.voices.map((v) => [v.voice, v.ran, v.counts.proved]), SPLIT.map((v) => [v, v !== SPLIT[1], v === SPLIT[1] ? 0 : 1]));
+  assert.match(out.voices[1].reason, /returned nothing/);
+  assert.equal(h.calls.filter((c) => c.opts.label.startsWith('reviewer')).length, 4, 'no fallback');
+  for (const plans of [
+    'PLAN-1.md', [null, PLANS[1]], [{ plan: 0, path: PLANS[0].path }, PLANS[1]], [{ plan: 1, path: '' }, PLANS[1]],
+    [PLANS[0], { plan: 2, path: '.planning/phases/1/PLAN-9.md' }], [PLANS[0], { ...PLANS[1], plan: 1 }], [PLANS[0], { ...PLANS[0], plan: 2 }],
+  ]) {
+    const bad = host(() => assert.fail('an agent started'));
+    assert.match(await runScript(PANEL, bad, { ...PLAN_ARGS, plans }), /started no agent/, JSON.stringify(plans));
+    assert.equal(bad.calls.length, 0);
+  }
+  const noCross = host(() => assert.fail('an agent started'));
+  assert.match(await runScript(PANEL, noCross, { ...PLAN_ARGS, cross_agent_type: undefined }), /started no agent/);
+});
+
 // Drift between the script's return and the seam that reads it would refuse every live run, so the real return goes through both.
 test('review-panel: its real return, with a local voice and a provider voice, placed in a run file, passes workflow-run and the record\'s own adjudication', async () => {
   const mild = (file, claim, severity) => ({ file, line: 3, severity, claim, failure_scenario: `${claim} breaks` });
