@@ -654,6 +654,8 @@ test('agentFileText: a stem the table does not name renders nothing', () => {
 // a deliberate change, approved with the phase.
 // The executor contract was re-pinned when Plan 4 of that phase stopped it naming grep as the way to find callers,
 // since the shared rule owns how references are found (D-10) - a deliberate change, approved with the phase.
+// The plan-checker contract was re-pinned when Plan 2 of the narrow-handoff phase had step 1 read the phase goal,
+// requirement IDs and CONTEXT decisions from the files its dispatch names (D-07) - a deliberate change, approved with the phase.
 
 const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-assumptions-analyzer-high.md': '28de11d2f99891fda6a35f57e8cf9b60e28493fa29d05b51fc76791c4ead6c8d',
@@ -690,7 +692,7 @@ const CONTRACT_SURFACE_DIGESTS = {
   'cadence-core/templates/PLAN.md': '4a7fb5784ae799357e33a30b0ddd4d0754b0eed69f56e64f07fb255d06fc963d',
   'skills/cad-assumptions-analyzer-contract/SKILL.md': 'ee690d7178a35d274d8c895367f6476df2160baf1e65889b92d55af3e94233bc',
   'skills/cad-executor-contract/SKILL.md': '26a708a569b7bd7910d088555573eceb947c223c9ad7070bc55804d42679e596',
-  'skills/cad-plan-checker-contract/SKILL.md': 'f84ccdfd51ff4389c0f54d70b11479b3673e8bdbe021ce0d8b33bfa62d9dcff5',
+  'skills/cad-plan-checker-contract/SKILL.md': 'd476575b9e0cfb02b37f900151528957c7370b1e6fddbbfa607049d409c23355',
   'skills/cad-planner-contract/SKILL.md': 'b6aca8bc79bae4bd07bd422a6bb371c46c504aa51088325211b4e127d5c8ec7f',
   'skills/cad-reviewer-contract/SKILL.md': '4a400deacee7dd963bf0eab8d5f5dae638dda8b2250ef43e06e5394046a392e2',
   'skills/cad-verifier-contract/SKILL.md': '6dc5b10b867151cbee1ae22a915aafaf7dbba41e61af02f593e2dfe2485842e9',
