@@ -656,6 +656,8 @@ test('agentFileText: a stem the table does not name renders nothing', () => {
 // since the shared rule owns how references are found (D-10) - a deliberate change, approved with the phase.
 // The plan-checker contract was re-pinned when Plan 2 of the narrow-handoff phase had step 1 read the phase goal,
 // requirement IDs and CONTEXT decisions from the files its dispatch names (D-07) - a deliberate change, approved with the phase.
+// The executor and verifier contracts were re-pinned when Plan 4 of that phase had each read what its dispatch names,
+// a brief or one composed input in place of the full documents (D-07) - a deliberate change, approved with the phase.
 
 const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-assumptions-analyzer-high.md': '28de11d2f99891fda6a35f57e8cf9b60e28493fa29d05b51fc76791c4ead6c8d',
@@ -691,11 +693,11 @@ const CONTRACT_SURFACE_DIGESTS = {
   'cadence-core/references/reviewer-brief.md': '5c4998a37a4e89a95c2b9cd09d7408e7d79a73e0c76a499ffbfb400a8f937585',
   'cadence-core/templates/PLAN.md': '4a7fb5784ae799357e33a30b0ddd4d0754b0eed69f56e64f07fb255d06fc963d',
   'skills/cad-assumptions-analyzer-contract/SKILL.md': 'ee690d7178a35d274d8c895367f6476df2160baf1e65889b92d55af3e94233bc',
-  'skills/cad-executor-contract/SKILL.md': '26a708a569b7bd7910d088555573eceb947c223c9ad7070bc55804d42679e596',
+  'skills/cad-executor-contract/SKILL.md': '22b8541a9d53ba16fd3a67dab1e3fb24ae561aea22cee436f752797f1e4115ab',
   'skills/cad-plan-checker-contract/SKILL.md': 'd476575b9e0cfb02b37f900151528957c7370b1e6fddbbfa607049d409c23355',
   'skills/cad-planner-contract/SKILL.md': 'b6aca8bc79bae4bd07bd422a6bb371c46c504aa51088325211b4e127d5c8ec7f',
   'skills/cad-reviewer-contract/SKILL.md': '4a400deacee7dd963bf0eab8d5f5dae638dda8b2250ef43e06e5394046a392e2',
-  'skills/cad-verifier-contract/SKILL.md': '6dc5b10b867151cbee1ae22a915aafaf7dbba41e61af02f593e2dfe2485842e9',
+  'skills/cad-verifier-contract/SKILL.md': '2f8a0e51a5db7ff1247fab6ec6ecfd8b981fd0c156221a290ae82a17e15ebcad',
 };
 
 test('a switch\'s text written into a contract surface changes its 3.8.6 digest', () => {
