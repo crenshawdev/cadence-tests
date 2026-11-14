@@ -1024,8 +1024,8 @@ status: pass
 total: 2
 `;
 
-function verifierProject({ uat = UAT, summary = SUMMARY } = {}) {
-  const p = phaseProject();
+function verifierProject({ uat = UAT, summary = SUMMARY, context = PHASE_CONTEXT } = {}) {
+  const p = phaseProject({ context });
   for (const n of [1, 2]) writeFileSync(join(p.pdir, `PLAN-${n}.md`), verifiedPlan(n));
   if (uat !== null) writeFileSync(join(p.pdir, 'UAT.md'), uat);
   if (summary !== null) writeFileSync(join(p.pdir, 'SUMMARY.md'), summary);
@@ -1033,27 +1033,31 @@ function verifierProject({ uat = UAT, summary = SUMMARY } = {}) {
 }
 const verifierInput = (dir, extra = []) => brief(dir, ['--phase', '4', '--role', 'verifier', ...extra]);
 
-test('brief verifier input: criteria, UAT items, every plan truth and SUMMARY claim, and no plan Tasks, Goal or Context', () => {
+test('brief verifier input: criteria, acceptance criteria, UAT items, every plan truth and SUMMARY claim, and no decision or plan Tasks, Goal or Context', () => {
   const { dir } = verifierProject();
   const r = verifierInput(dir, ['--out-dir', scratch()]);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.role, 'verifier');
   const got = readFileSync(r.path, 'utf8');
-  for (const want of ['**Success Criteria:**\n1. CRITERION-ONE',
+  for (const want of ['**Success Criteria:**\n1. CRITERION-ONE', '## Acceptance criteria\n\n- AC1: ACCEPT-ONE',
     '### 1. First item\nexpected: UAT-EXPECTED-ONE\ncriterion: AC1\nstatus: pending', '### 2. Second item\nexpected: UAT-EXPECTED-TWO\nstatus: pass',
     '# Phase 4: Thing - Plan 1: Part 1', '## Must be true when done\n\n- TRUTH-1-A\n- TRUTH-1-B', '- TRUTH-2-A\n- TRUTH-2-B',
     '# Phase 4: Thing - Summary', 'status: partial', 'SUMMARY-LEAD-LINE\n\n## What shipped\n\nSUMMARY-SHIPPED', '## Goal check\n\nSUMMARY-GOAL-CHECK']) {
     assert.ok(got.includes(want), `holds ${want}`);
   }
   assert.ok(got.indexOf('TRUTH-1-A') < got.indexOf('TRUTH-2-A'), 'plans in plan order');
-  for (const gone of ['TASKS-SENTINEL', 'GOAL-SENTINEL', 'CONTEXT-SENTINEL', 'NOTES-SENTINEL', 'src/v1.mjs', '## Tasks', 'total: 2']) {
+  for (const gone of ['TASKS-SENTINEL', 'GOAL-SENTINEL', 'CONTEXT-SENTINEL', 'NOTES-SENTINEL', 'src/v1.mjs', '## Tasks', 'total: 2',
+    'DURABLE-ONE', 'DECISION-TWO', 'SCOPE-IN', '# Phase 4: Thing - Context']) {
     assert.ok(!got.includes(gone), `leaves out ${gone}`);
   }
   const again = verifierInput(dir, ['--out-dir', scratch()]);
   assert.deepEqual(readFileSync(again.path), readFileSync(r.path));
 });
 
-test('brief verifier input: composes with no UAT.md and with no SUMMARY.md', () => {
+test('brief verifier input: composes with no CONTEXT.md, with no UAT.md and with no SUMMARY.md', () => {
+  const noContext = verifierProject({ context: null });
+  const noCtx = readFileSync(verifierInput(noContext.dir, ['--out-dir', scratch()]).path, 'utf8');
+  assert.ok(!noCtx.includes('## Acceptance criteria') && noCtx.includes('UAT-EXPECTED-ONE') && noCtx.includes('TRUTH-2-B'));
   const noUat = readFileSync(verifierInput(verifierProject({ uat: null }).dir, ['--out-dir', scratch()]).path, 'utf8');
   assert.ok(!noUat.includes('UAT-EXPECTED') && !noUat.includes('## UAT items') && noUat.includes('SUMMARY-SHIPPED'));
   const noSummary = readFileSync(verifierInput(verifierProject({ summary: null }).dir, ['--out-dir', scratch()]).path, 'utf8');
@@ -1066,7 +1070,7 @@ test('brief: with --main-root the phase, reviewer and verifier heads name their 
   const heads = {
     phase: { args: ['--role', 'phase'], docs: ['ROADMAP.md', 'REQUIREMENTS.md', 'PROJECT.md', 'phases/4/CONTEXT.md'] },
     reviewer: { args: ['--role', 'reviewer', '--plan', '1'], docs: ['ROADMAP.md', 'REQUIREMENTS.md', 'phases/4/CONTEXT.md', 'phases/4/PLAN-1.md'] },
-    verifier: { args: ['--role', 'verifier'], docs: ['phases/4/PLAN-1.md', 'phases/4/PLAN-2.md', 'phases/4/SUMMARY.md', 'ROADMAP.md', 'REQUIREMENTS.md', 'phases/4/UAT.md'] },
+    verifier: { args: ['--role', 'verifier'], docs: ['phases/4/PLAN-1.md', 'phases/4/PLAN-2.md', 'phases/4/SUMMARY.md', 'phases/4/CONTEXT.md', 'ROADMAP.md', 'REQUIREMENTS.md', 'phases/4/UAT.md'] },
   };
   for (const [role, { args, docs }] of Object.entries(heads)) {
     const r = brief(dir, ['--phase', '4', ...args, '--main-root', root, '--out-dir', scratch()]);

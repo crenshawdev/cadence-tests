@@ -637,10 +637,11 @@ test('verify-deep.md still holds exactly three <step name= tags', () => {
   assert.equal((DEEP.match(/<step name=/g) || []).length, 3);
 });
 
-test('the verifier contract\'s step 1 names the stand-in input and still reads CONTEXT.md for acceptance criteria', () => {
+test('the verifier contract\'s step 1 names the stand-in input, which carries the acceptance criteria, and keeps CONTEXT.md in its document list', () => {
   const contract = readFileSync(join(ROOT, 'skills', 'cad-verifier-contract', 'SKILL.md'), 'utf8');
   const step1 = contract.slice(contract.indexOf('## 1. Load context'), contract.indexOf('## 2.')).replace(/\s+/g, ' ');
   assert.match(step1, /Read what your dispatch hands you: the documents below, or the one input that stands in for them/);
-  assert.match(step1, /the success criteria, the UAT items, each plan's must-be-true lines and the SUMMARY's claims/);
+  assert.match(step1, /the success criteria, CONTEXT's acceptance criteria, the UAT items, each plan's must-be-true lines and the SUMMARY's claims/);
+  assert.ok(!step1.includes('carries no CONTEXT.md'));
   assert.ok(step1.includes('- Acceptance criteria: `.planning/phases/<N>/CONTEXT.md` if present.'));
 });
