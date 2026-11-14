@@ -538,7 +538,27 @@ test('the stretch has a continuation name the same file, the refused arm, and th
   assert.match(stretchFlat, /That return owes no report file/);
   assert.match(stretchFlat, /After a first dispatch, where no task has run, it starts the plan fresh and names no report path/);
   assert.match(stretchFlat, /keeps what `handle_checkpoint` carries: the report path, the checkpoint outcome, "continue from task <k>" and the same pre-plan HEAD/);
-  assert.match(stretchFlat, /A `risk_surface` fix pass keeps what its own paragraph lists/);
+  assert.match(stretchFlat, /A `risk_surface` fix pass names that same brief file in place of the plan file, under the same `blocked` exception, and keeps the other three things its own paragraph lists/);
+});
+
+test('the stretch hands the fix pass the brief, the findings path and its two instructions, and composes again after a files: amendment', () => {
+  const at = stretchFlat.indexOf('A `risk_surface` fix pass');
+  assert.notEqual(at, -1, 'the stretch names no fix pass');
+  const fix = stretchFlat.slice(at);
+  assert.match(fix, /^A `risk_surface` fix pass names that same brief file in place of the plan file/);
+  assert.match(fix, /the findings file's path, the instruction to fix the blocker and high findings only, and the instruction to append its fix row to the plan's report rather than rotate it/);
+  assert.match(fix, /Its resolve carries the \*\*Bracket\*\* value above/);
+  assert.match(fix, /amended `PLAN-<k>\.md`'s `files:`[^.]*runs the \*\*Compose\*\* call again into the same scratch directory before that dispatch/);
+  assert.match(fix, /the lease the brief shows is the one `lease-check` reads/);
+});
+
+test('the executor contract reads what its dispatch names, with no read list that presumes CONTEXT.md or PROJECT.md', () => {
+  const contract = readFileSync(join(ROOT, 'skills', 'cad-executor-contract', 'SKILL.md'), 'utf8');
+  const role = contract.slice(contract.indexOf('<role>'), contract.indexOf('</role>'));
+  const line = role.slice(role.indexOf('Read the files'), role.indexOf('\n\n', role.indexOf('Read the files'))).replace(/\s+/g, ' ');
+  assert.match(line, /^Read the files your dispatch prompt names before touching anything\./);
+  assert.doesNotMatch(line, /CONTEXT\.md|PROJECT\.md/);
+  assert.match(line, /Project CLAUDE\.md directives are hard constraints/);
 });
 
 test('the parallel reference still reuses this prompt and keeps its per-worker bracket', () => {
