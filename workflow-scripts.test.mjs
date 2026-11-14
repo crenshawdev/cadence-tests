@@ -432,6 +432,100 @@ test('review-panel: its real return, with a local voice and a provider voice, pl
   assert.equal(file.split('\n').filter((l) => l === '### What breaks').length, 3, 'the answered survivor has its headings in the review file');
 });
 
+test('review-panel: a blocking risk_surface run with a proved blocker holds the halt at both seams until a fix commit settles it', async () => {
+  const claim = 'the vault key is read before the session guard runs';
+  const blocker = { file: 'src/secrets/vault.ts', line: 1, severity: 'blocker', claim, failure_scenario: 'a caller with no session reads the key' };
+  const h = host((label) => (label.startsWith('reviewer') ? { findings: [blocker] } : verdict('proved', { severity: 'blocker' })));
+  const out = JSON.parse(JSON.stringify(await runScript(PANEL, h, { ...ARGS, trigger: 'risk_surface' })));
+  assert.deepEqual(out.voices.map((v) => [v.voice, v.ran]), [['claude-subagent', true]]);
+
+  // a repository whose committed range the detector matches on the secrets surface
+  const repo = mkdtempSync(join(tmpdir(), 'cad-wfs-risk-'));
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim();
+  git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T'); git('config', 'commit.gpgsign', 'false');
+  const dir = join(repo, '.planning');
+  mkdirSync(join(dir, 'phases', '1'), { recursive: true });
+  ensureRoadmap(dir);
+  writeFileSync(join(dir, 'config.json'), JSON.stringify({ review: { triggers: { risk_surface: { surfaces: ['secrets'] } } } }));
+  writeFileSync(join(repo, 'README.md'), 'start\n'); git('add', '-A'); git('commit', '-q', '-m', 'base');
+  const base = git('rev-parse', 'HEAD');
+  mkdirSync(join(repo, 'src', 'secrets'), { recursive: true });
+  writeFileSync(join(repo, 'src', 'secrets', 'vault.ts'), 'export const K = 1;\n'); git('add', '-A'); git('commit', '-q', '-m', 'head');
+  const head = git('rev-parse', 'HEAD');
+
+  const fixture = JSON.parse(readFileSync(join(ROOT, 'tests', 'fixtures', 'workflow-run.completed.json'), 'utf8'));
+  const runFile = join(repo, 'session', 'workflows', `${fixture.runId}.json`);
+  const journalDir = join(repo, 'session', 'subagents', 'workflows', fixture.runId);
+  mkdirSync(dirname(runFile), { recursive: true });
+  mkdirSync(journalDir, { recursive: true });
+  writeFileSync(runFile, JSON.stringify({ ...fixture, result: out }));
+  writeFileSync(join(journalDir, 'journal.jsonl'), journalOf(h));
+  mkdirSync(join(repo, 'scratch'));
+  const planning = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
+  // the global layer is pinned out, so a developer's own surfaces answer can't decide the detector here
+  const env = { ...process.env, CADENCE_GLOBAL_CONFIG: join(repo, 'no-global.json') };
+  const call = (...a) => {
+    try { return JSON.parse(execFileSync('node', [planning, '--dir', dir, ...a], { encoding: 'utf8', cwd: repo, env })); }
+    catch (e) { return JSON.parse(e.stdout); }
+  };
+  call('trace', 'append', '--phase', '1', '--family', 'lifecycle', '--event', 'phase_start', '--sha', head.slice(0, 7));
+  const range = ['--phase', '1', '--plan', '1', '--base', base, '--head', head];
+  const ran = call('risk-check', 'run', ...range);
+  assert.equal(ran.ok, true, JSON.stringify(ran));
+  assert.ok(ran.matches.length > 0, 'the detector matched the range, so the trigger fires');
+
+  const seamArgs = ['workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', join(repo, 'scratch'), '--payload-ref', `${base}..${head}`];
+  const held = call(...seamArgs);
+  assert.equal(held.ok, true, JSON.stringify(held));
+  assert.equal(held.ready, false, 'a proved blocker with no fix holds the record back');
+  assert.deepEqual(held.needs_answer.map((n) => [n.voice, n.index, n.severity]), [['claude-subagent', 0, 'blocker']]);
+  const refused = call('risk-check', 'status', ...range);
+  assert.equal(refused.ok, false, 'the plan is not reported done while no receipt exists');
+
+  writeFileSync(join(repo, 'src', 'secrets', 'vault.ts'), 'export const K = guard(1);\n'); git('add', '-A'); git('commit', '-q', '-m', 'fix');
+  const answers = join(repo, 'answers.json');
+  writeFileSync(answers, JSON.stringify({ answers: [{ voice: 'claude-subagent', index: 0, fix_commit: git('rev-parse', 'HEAD') }] }));
+  const fixed = call(...seamArgs, '--answers-file', answers);
+  assert.equal(fixed.ready, true, fixed.not_ready);
+  const disc = `${git('rev-parse', '--short', base)}-${git('rev-parse', '--short', head)}`;
+  const adj = call('adjudication', '--phase', '1', '--trigger', 'risk_surface', '--discriminator', disc, '--base', base, '--head', head, '--payload', fixed.payload);
+  assert.equal(adj.ok, true, JSON.stringify(adj));
+  assert.deepEqual(adj.counts, { raised: 1, survived: 1, downgraded: 0, refuted: 0 });
+  const receipt = call('trace', 'append', '--phase', '1', '--family', 'outcome', '--event', 'adjudication', '--trigger', 'risk_surface',
+    '--plan', '1', '--base', base, '--sha', head, '--survivors', '1', '--downgraded', '0', '--refuted', '0');
+  assert.equal(receipt.ok, true, JSON.stringify(receipt));
+  const done = call('risk-check', 'status', ...range);
+  assert.equal(done.ok, true, JSON.stringify(done));
+  assert.equal(done.plans[0].state, 'recorded');
+});
+
+const flat = (rel) => readFileSync(join(ROOT, ...rel.split('/')), 'utf8').replace(/\s+/g, ' ');
+
+test('step 4 of review-triggers.md sends a risk_surface fire at blocking onto the workflow path, on the both-layer answer', () => {
+  const doc = flat('cadence-core/references/review-triggers.md');
+  const step4 = doc.slice(doc.indexOf('### 4. Run the reviewers'), doc.indexOf('### 5. Combine'));
+  assert.match(step4, /or the trigger is `risk_surface` and its gate resolved `blocking`/);
+  assert.ok(step4.includes('workflow-layers'), 'the both-layer read still gates it');
+});
+
+test('each site that fires risk_surface says the workflow notice resumes its step, pointing at review-workflow.md', () => {
+  const RESUME = /the launch end(?:s|ing) the turn and the notice resum(?:es|ing) this step, with nothing else dispatched in between/g;
+  const between = (text, from, to) => { const i = text.indexOf(from); return i < 0 ? '' : text.slice(i, text.indexOf(to, i + from.length)); };
+  const sites = [
+    // execute.md's step already carries the sentence once for the diff fire, so the risk fire makes two
+    ['cadence-core/workflows/execute.md', (t) => between(t, '<step name="execute_sequential">', '</step>'), 2],
+    ['cadence-core/references/execute-workflow.md', (t) => between(t, '- **Step 5, the suite and the risk sequence.**', '### A wave of one plan'), 1],
+    ['cadence-core/workflows/task.md', (t) => between(t, '<step name="risk_check">', '</step>'), 1],
+    ['cadence-core/workflows/debug.md', (t) => between(t, '## Resolve', '## Consult'), 1],
+    ['cadence-core/workflows/verify.md', (t) => between(t, '<step name="route_failures">', '</step>'), 1],
+  ];
+  const missing = sites.filter(([rel, part, want]) => {
+    const text = part(flat(rel));
+    return !text.includes('review-workflow.md') || (text.match(RESUME) || []).length < want;
+  }).map(([rel]) => rel);
+  assert.deepEqual(missing, [], 'these fire sites name no resume point on the notice');
+});
+
 test('review-workflow.md composes the string artifact the script requires, from the refs object', () => {
   const doc = readFileSync(join(ROOT, 'cadence-core', 'references', 'review-workflow.md'), 'utf8');
   const bullet = doc.split('\n').find((l) => l.startsWith('- `artifact`'));
