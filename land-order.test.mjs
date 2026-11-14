@@ -77,3 +77,15 @@ test('cad-land step 1: a refused base withholds the git commands and the tracker
   assert.match(s, /run NO git command that takes it/, 'a refusal runs no git command on the base');
   assert.match(s, /skip the commits-ahead count and the tracker call/, 'a refusal skips the count and the tracker call');
 });
+
+// D-13: old names keep the round rule, range names pair on the range alone; either half lost leaves a review unruled forever
+test('cad-land and risk-surface.md: a review pairs with its record under both grammars', () => {
+  const RISK = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'references', 'risk-surface.md');
+  for (const [name, body] of [['skills/cad-land/SKILL.md', text], ['risk-surface.md', readFileSync(RISK, 'utf8')]]) {
+    const flat = body.replace(/\s+/g, ' ');
+    assert.match(flat, /`plan-<k>(\[-rN\]|`, `plan-<k>-rN)`/, `${name} no longer names the legacy plan-<k> with its -rN round`);
+    assert.match(flat, /a LATER round's record (does )?rules? an earlier review/, `${name} lost the later-round asymmetry`);
+    assert.match(flat, /range-named review.{0,200}?is ruled only by the record with the same trigger and the same range/,
+      `${name} states no range pairing`);
+  }
+});

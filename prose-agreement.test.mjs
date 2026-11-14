@@ -1224,8 +1224,8 @@ test('LND-02: cad-land 3(b) unions the RULINGS from both roots, not the review f
     assert.ok(bullet.includes(needle),
       `cad-land's gate bullet no longer names \`${needle}\` (${why})`);
   }
-  assert.match(bullet, /every round/i,
-    "the bullet no longer says EVERY round is unioned - round 2's record is not round 1's, "
+  assert.match(bullet, /every record/i,
+    "the bullet no longer says EVERY record is unioned - round 2's record is not round 1's, "
     + 'and taking the highest alone drops what only an earlier round stated');
   assert.match(bullet, /never parsed/,
     'the bullet dropped the sentence that the gate never reports "no surviving finding" '
