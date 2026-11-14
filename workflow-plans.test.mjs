@@ -156,9 +156,19 @@ function checkerStretchOf(text) {
   return { start, end };
 }
 
+// The review step's phase-input stretch: its opening sentence to the gate paragraph. Null when the opening is gone.
+const REVIEW_OPEN = 'With `planning.workflow_plans` read in `parse` as `true`, the payload is the PLAN file(s) plus the phase input';
+function reviewStretchOf(text) {
+  const start = text.indexOf(REVIEW_OPEN);
+  if (start === -1) return null;
+  const end = text.indexOf('\n\nThe gate comes from the routing bundle', start);
+  assert.notEqual(end, -1, 'the review stretch has no end');
+  return { start, end };
+}
+
 // Every vocabulary match outside the stretches, the brief step, the inline sentence and the key's line.
 function outside(text) {
-  const spans = [stretchOf(text), plannerStretchOf(text), checkerStretchOf(text), briefStepOf(text), inlineOf(text), keyLineOf(text)]
+  const spans = [stretchOf(text), plannerStretchOf(text), checkerStretchOf(text), reviewStretchOf(text), briefStepOf(text), inlineOf(text), keyLineOf(text)]
     .filter(Boolean);
   return [...text.matchAll(VOCAB), ...text.matchAll(MARKERS)]
     .filter((m) => !spans.some((s) => m.index >= s.start && m.index < s.end));
@@ -307,6 +317,54 @@ test('the checker stretch sits in check_gate before its prompt, brackets the pla
 // The key is this stretch's only vocabulary and it sits in the opening, so the sentence loses its anchor and keeps the key.
 test('the pin fails when the checker stretch loses its opening sentence', () => {
   assert.ok(outside(PLAN_MD.replace(CHECKER_OPEN, 'With `planning.workflow_plans` read in `parse` as `true`, x')).length > 0);
+});
+
+// --- /cad-plan: the plan review's phase input ------------------------------------------------------------------
+
+// Copied from 3f3f6a3e: with the switch off the plan fire's payload is exactly this.
+const REVIEW_PAYLOAD = `<step name="review">
+Fire the \`plan\` review trigger per references/review-triggers.md, payload = the
+PLAN file(s) PLUS the three artifacts the reviewer is asked to check them
+against: \`.planning/ROADMAP.md\`, \`.planning/REQUIREMENTS.md\` and
+\`.planning/phases/{N}/CONTEXT.md\`. All four are REFERENCE PATHS the reviewer
+resolves itself - never inlined text, which would keep every byte of them
+resident here for the rest of the run - and all four ride the fire's \`--read\`
+bracket list (review-triggers.md step 4). On the workflow path a fire over more
+than one PLAN file runs one reviewer per plan and one cross-plan reviewer, and
+today's path runs one reviewer over all of them.
+
+`;
+const REVIEW_STRETCH = (() => { const at = reviewStretchOf(PLAN_MD); return at ? PLAN_MD.slice(at.start, at.end) : ''; })();
+const reviewFlat = REVIEW_STRETCH.replace(/\s+/g, ' ');
+
+test('switch off: the review step\'s payload paragraph is as at 3f3f6a3e', () => {
+  assert.ok(PLAN_MD.includes(REVIEW_PAYLOAD), 'the review step\'s first paragraph changed');
+});
+
+test('the review stretch names the phase input in place of the three artifacts, names none of them, and spells no call', () => {
+  const at = reviewStretchOf(PLAN_MD);
+  assert.ok(at, 'no review stretch in plan.md');
+  assert.ok(PLAN_MD.indexOf('<step name="review">') < at.start);
+  assert.match(reviewFlat, /the payload is the PLAN file\(s\) plus the phase input in place of the three artifacts/);
+  assert.match(reviewFlat, /Name the phase input `spawn_planner`'s stretch composed/);
+  assert.match(reviewFlat, /rides the fire's `--read` bracket list in place of the three/);
+  assert.doesNotMatch(REVIEW_STRETCH, /ROADMAP\.md|REQUIREMENTS\.md|CONTEXT\.md/);
+  assert.doesNotMatch(REVIEW_STRETCH, /node "/, 'the compose call is spawn_planner\'s, referenced and never spelled again');
+});
+
+// As with the checker, the key is this stretch's only vocabulary, so the sentence loses its anchor and keeps the key.
+test('the pin fails when the review stretch loses its opening sentence', () => {
+  assert.ok(outside(PLAN_MD.replace(REVIEW_OPEN, 'With `planning.workflow_plans` read in `parse` as `true`, x')).length > 0);
+});
+
+test('review-triggers.md\'s plan row still names the three artifacts and states the switch-on replacement', () => {
+  const triggers = readFileSync(join(ROOT, 'cadence-core', 'references', 'review-triggers.md'), 'utf8');
+  const row = triggers.split('\n').find((l) => l.startsWith('| `plan` |')) ?? '';
+  assert.ok(row.includes('(c) the PLAN file path(s), plus `.planning/ROADMAP.md`, `.planning/REQUIREMENTS.md` and `.planning/phases/<N>/CONTEXT.md` (optional)'),
+    'the plan row no longer names today\'s three artifacts');
+  assert.match(row, /With `planning\.workflow_plans` `true` the three become one, the phase input `[^`]*brief --phase <N> --role phase --out-dir <dir>` composes, by its absolute path, the PLAN path\(s\) unchanged/);
+  assert.match(row, /else one `config\.mjs get planning\.workflow_plans`/);
+  assert.match(row, /A refused answer is named in one line and the fire takes the three/);
 });
 
 test('the plan checker contract reads the files its dispatch names and still names the CONTEXT decisions', () => {
