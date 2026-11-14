@@ -502,6 +502,55 @@ test('review-panel: its real return, with a local voice and a provider voice, pl
   assert.equal(file.split('\n').filter((l) => l === '### What breaks').length, 3, 'the answered survivor has its headings in the review file');
 });
 
+// The split's four voices must reach the record as four, each on the model its own agent row names.
+test('review-panel: its real return for a three-plan fire passes workflow-run, bills four reviewer brackets and records four voices, the cross-plan one on its own model', async () => {
+  const mild = (voice, n) => ({ file: 'f.js', line: 1, severity: 'medium', claim: `${voice} claim ${n}`, failure_scenario: `${voice} claim ${n} breaks` });
+  const raised = Object.fromEntries(SPLIT.map((v, i) => [`reviewer ${v}`, Array.from({ length: i < 3 ? 1 : 2 }, (_, n) => mild(v, n))]));
+  const h = host((label) => (label.startsWith('reviewer') ? { findings: raised[label] } : verdict('proved', { severity: 'medium' })));
+  const out = JSON.parse(JSON.stringify(await runScript(PANEL, h, { ...PLAN_ARGS, agent_type: 'cadence:cad-reviewer', model: null })));
+  assert.deepEqual(out.voices.map((v) => v.voice), SPLIT);
+
+  const repo = mkdtempSync(join(tmpdir(), 'cad-wfs-split-'));
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim();
+  git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T'); git('config', 'commit.gpgsign', 'false');
+  mkdirSync(join(repo, '.planning', 'phases', '1'), { recursive: true });
+  ensureRoadmap(join(repo, '.planning'));
+  writeFileSync(join(repo, 'f.js'), '1\n'); git('add', 'f.js'); git('commit', '-q', '-m', 'base');
+  const base = git('rev-parse', 'HEAD');
+  writeFileSync(join(repo, 'f.js'), '2\n'); git('add', 'f.js'); git('commit', '-q', '-m', 'head');
+  const head = git('rev-parse', 'HEAD');
+
+  // one agent row per call, as the host writes them, on real rung names: the plan reviewers on one model, the cross-plan one on a lower rung's
+  const fixture = JSON.parse(readFileSync(join(ROOT, 'tests', 'fixtures', 'workflow-run.completed.json'), 'utf8'));
+  const modelOf = (label) => (label === 'reviewer claude-subagent-cross-plan' ? 'claude-haiku-5-5' : 'claude-sonnet-5-5');
+  const rows = h.calls.map((c, i) => ({
+    type: 'workflow_agent', index: i + 1, label: c.opts.label, agentId: `agent-${i}`, agentType: c.opts.agentType,
+    model: modelOf(c.opts.label), state: 'done', tokens: 1000 + i, toolCalls: 2, durationMs: 500,
+  }));
+  const runFile = join(repo, 'session', 'workflows', `${fixture.runId}.json`);
+  const journalDir = join(repo, 'session', 'subagents', 'workflows', fixture.runId);
+  mkdirSync(dirname(runFile), { recursive: true });
+  mkdirSync(journalDir, { recursive: true });
+  writeFileSync(runFile, JSON.stringify({ ...fixture, result: out, agentCount: rows.length, workflowProgress: rows }));
+  writeFileSync(join(journalDir, 'journal.jsonl'), journalOf(h));
+  mkdirSync(join(repo, 'scratch'));
+  const planning = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
+  const call = (...a) => JSON.parse(execFileSync('node', [planning, '--dir', join(repo, '.planning'), ...a], { encoding: 'utf8', cwd: repo }));
+
+  const seam = call('workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', join(repo, 'scratch'), '--payload-ref', `${base}..${head}`);
+  assert.equal(seam.ok, true, JSON.stringify(seam));
+  assert.deepEqual(seam.voices, SPLIT);
+  assert.equal(seam.ready, true, seam.not_ready);
+  const events = call('trace', 'render', '--phase', '1', '--events').events.filter((e) => e.family === 'lifecycle' && e.event === 'dispatch');
+  assert.deepEqual(events.filter((e) => e.role === 'cad-reviewer').map((e) => e.reviewer).sort(), [...SPLIT].sort(), 'one reviewer bracket per voice');
+
+  const adj = call('adjudication', '--phase', '1', '--trigger', 'plan', '--discriminator', 'plan-1', '--base', base, '--head', head, '--payload', seam.payload);
+  assert.equal(adj.ok, true, JSON.stringify(adj));
+  const record = JSON.parse(readFileSync(join(repo, '.planning', adj.record), 'utf8'));
+  assert.deepEqual(record.voices.map((v) => [v.voice, v.model]), SPLIT.map((v) => [v, modelOf(`reviewer ${v}`)]));
+  assert.deepEqual(record.entries.map((e) => [e.voice, e.claim]), SPLIT.flatMap((v) => raised[`reviewer ${v}`].map((f) => [v, f.claim])));
+});
+
 test('review-panel: a blocking risk_surface run with a proved blocker holds the halt at both seams until a fix commit settles it', async () => {
   const claim = 'the vault key is read before the session guard runs';
   const blocker = { file: 'src/secrets/vault.ts', line: 1, severity: 'blocker', claim, failure_scenario: 'a caller with no session reads the key' };
