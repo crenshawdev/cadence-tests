@@ -947,3 +947,124 @@ test('brief reviewer input: a plan naming no decision points at CONTEXT.md; two 
   const again = reviewerInput(dir, '3', ['--out-dir', scratch()]);
   assert.deepEqual(readFileSync(again.path), readFileSync(three.path));
 });
+
+// --- narrowed role inputs: the verifier (D-02) ---
+
+const verifiedPlan = (n) => `---
+phase: 4
+plan: ${n}
+files:
+  - src/v${n}.mjs
+---
+
+# Phase 4: Thing - Plan ${n}: Part ${n}
+
+## Goal
+
+GOAL-SENTINEL-${n}
+
+## Must be true when done
+
+- TRUTH-${n}-A
+- TRUTH-${n}-B
+
+## Context
+
+CONTEXT-SENTINEL-${n}
+
+## Tasks
+
+### Task 1: Build
+
+- **Action:** TASKS-SENTINEL-${n}
+- **Verify:** v
+
+## Notes
+
+NOTES-SENTINEL-${n}
+`;
+
+const SUMMARY = `# Phase 4: Thing - Summary
+
+## What shipped
+
+SUMMARY-SHIPPED
+
+## Goal check
+
+SUMMARY-GOAL-CHECK
+`;
+
+const UAT = `---
+status: testing
+phase: 4
+---
+
+## Items
+
+### 1. First item
+expected: UAT-EXPECTED-ONE
+criterion: AC1
+status: pending
+
+### 2. Second item
+expected: UAT-EXPECTED-TWO
+status: pass
+
+## Summary
+
+total: 2
+`;
+
+function verifierProject({ uat = UAT, summary = SUMMARY } = {}) {
+  const p = phaseProject();
+  for (const n of [1, 2]) writeFileSync(join(p.pdir, `PLAN-${n}.md`), verifiedPlan(n));
+  if (uat !== null) writeFileSync(join(p.pdir, 'UAT.md'), uat);
+  if (summary !== null) writeFileSync(join(p.pdir, 'SUMMARY.md'), summary);
+  return p;
+}
+const verifierInput = (dir, extra = []) => brief(dir, ['--phase', '4', '--role', 'verifier', ...extra]);
+
+test('brief verifier input: criteria, UAT items, every plan truth and SUMMARY claim, and no plan Tasks, Goal or Context', () => {
+  const { dir } = verifierProject();
+  const r = verifierInput(dir, ['--out-dir', scratch()]);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.role, 'verifier');
+  const got = readFileSync(r.path, 'utf8');
+  for (const want of ['**Success Criteria:**\n1. CRITERION-ONE',
+    '### 1. First item\nexpected: UAT-EXPECTED-ONE\ncriterion: AC1\nstatus: pending', '### 2. Second item\nexpected: UAT-EXPECTED-TWO\nstatus: pass',
+    '# Phase 4: Thing - Plan 1: Part 1', '## Must be true when done\n\n- TRUTH-1-A\n- TRUTH-1-B', '- TRUTH-2-A\n- TRUTH-2-B',
+    '## What shipped\n\nSUMMARY-SHIPPED', '## Goal check\n\nSUMMARY-GOAL-CHECK']) {
+    assert.ok(got.includes(want), `holds ${want}`);
+  }
+  assert.ok(got.indexOf('TRUTH-1-A') < got.indexOf('TRUTH-2-A'), 'plans in plan order');
+  for (const gone of ['TASKS-SENTINEL', 'GOAL-SENTINEL', 'CONTEXT-SENTINEL', 'NOTES-SENTINEL', 'src/v1.mjs', '## Tasks', 'total: 2']) {
+    assert.ok(!got.includes(gone), `leaves out ${gone}`);
+  }
+  const again = verifierInput(dir, ['--out-dir', scratch()]);
+  assert.deepEqual(readFileSync(again.path), readFileSync(r.path));
+});
+
+test('brief verifier input: composes with no UAT.md and with no SUMMARY.md', () => {
+  const noUat = readFileSync(verifierInput(verifierProject({ uat: null }).dir, ['--out-dir', scratch()]).path, 'utf8');
+  assert.ok(!noUat.includes('UAT-EXPECTED') && !noUat.includes('## UAT items') && noUat.includes('SUMMARY-SHIPPED'));
+  const noSummary = readFileSync(verifierInput(verifierProject({ summary: null }).dir, ['--out-dir', scratch()]).path, 'utf8');
+  assert.ok(!noSummary.includes('SUMMARY-') && noSummary.includes('UAT-EXPECTED-ONE') && noSummary.includes('TRUTH-2-B'));
+});
+
+test('brief: with --main-root the phase, reviewer and verifier heads name their documents by absolute paths', () => {
+  const { root, dir } = verifierProject();
+  writeFileSync(join(dir, 'phases', '4', 'CONTEXT.md'), REVIEW_CONTEXT);
+  const heads = {
+    phase: { args: ['--role', 'phase'], docs: ['ROADMAP.md', 'REQUIREMENTS.md', 'PROJECT.md', 'phases/4/CONTEXT.md'] },
+    reviewer: { args: ['--role', 'reviewer', '--plan', '1'], docs: ['ROADMAP.md', 'REQUIREMENTS.md', 'phases/4/CONTEXT.md', 'phases/4/PLAN-1.md'] },
+    verifier: { args: ['--role', 'verifier'], docs: ['phases/4/PLAN-1.md', 'phases/4/PLAN-2.md', 'phases/4/SUMMARY.md', 'ROADMAP.md', 'REQUIREMENTS.md', 'phases/4/UAT.md'] },
+  };
+  for (const [role, { args, docs }] of Object.entries(heads)) {
+    const r = brief(dir, ['--phase', '4', ...args, '--main-root', root, '--out-dir', scratch()]);
+    assert.equal(r.ok, true, `${role}: ${JSON.stringify(r)}`);
+    const head = readFileSync(r.path, 'utf8').split('\n').slice(0, 4).join('\n');
+    for (const f of docs) assert.ok(head.includes(`\`${root}/.planning/${f}\``), `${role}: ${f} is absolute in the head`);
+    assert.ok(!head.replaceAll(`${root}/.planning/`, '').includes('.planning/'), `${role}: no relative .planning/ path in the head`);
+  }
+});
