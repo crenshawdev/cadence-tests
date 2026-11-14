@@ -2580,6 +2580,42 @@ test('D-12: the ask-user binding pushes once before both arms, one line under 20
     `${where}: the push rule sits after an arm it has to come before`);
 });
 
+// --- D-12: every skill that asks carries the push rule itself ----------------
+//
+// The asking session has the skill and its workflow loaded and never opens the
+// seam file, so the rule has to ride in the skill. The list comes off the files,
+// so a new asking skill without the rule goes red here.
+
+test('D-12: every skill whose allowed-tools holds AskUserQuestion also holds PushNotification and the one push sentence', () => {
+  const skills = readdirSync(join(REPO, 'skills'), { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => `skills/${e.name}/SKILL.md`)
+    .filter((f) => { try { doc(f); return true; } catch { return false; } });
+
+  const sentences = new Map();
+  for (const f of skills) {
+    const text = doc(f);
+    const end = text.indexOf('\n---', 4);
+    assert.ok(text.startsWith('---\n') && end > 0, `${f}: no frontmatter block`);
+    const tools = (text.slice(0, end).split('allowed-tools:')[1] ?? '')
+      .split('\n').filter((l) => /^\s+- /.test(l)).map((l) => l.replace(/^\s+- /, '').trim());
+    if (!tools.includes('AskUserQuestion')) continue;
+
+    assert.ok(tools.includes('PushNotification'), `${f}: asks with AskUserQuestion but lists no PushNotification`);
+    // The sentence starts its paragraph and ends at the first line-ending period.
+    const found = text.slice(end + 4).match(/(?:^|\n\n)([^\n]*`PushNotification`[\s\S]*?\.)(?=\n)/);
+    assert.ok(found, `${f}: asks but its body carries no push sentence`);
+    sentences.set(f, found[1]);
+  }
+
+  assert.ok(sentences.size > 0, 'no skill lists AskUserQuestion, so this check reads nothing');
+  const [first, sentence] = [...sentences][0];
+  assert.match(sentence, /`references\/seam-ask-user\.md`/, `${first}: the push sentence never names the seam`);
+  for (const [f, s] of sentences) {
+    assert.equal(s, sentence, `${f}: the push sentence drifted from ${first}'s`);
+  }
+});
+
 // --- Two caps, two different reads, and neither one unified away ------------
 //
 // the triage-gate arm files state the one-round re-arm cap TWICE, on
