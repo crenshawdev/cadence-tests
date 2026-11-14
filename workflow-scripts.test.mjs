@@ -654,6 +654,18 @@ test('review-workflow.md composes the string artifact the script requires, from 
   assert.ok(bullet.includes('--cached') && bullet.includes('On a path fire'), 'a staged scope and a path fire are named too');
 });
 
+test('every args name review-workflow.md gives for the per-plan split is one review-panel.js reads', () => {
+  const doc = readFileSync(join(ROOT, 'cadence-core', 'references', 'review-workflow.md'), 'utf8');
+  const bullet = doc.split('\n').find((l) => l.startsWith('- `plans`'));
+  assert.ok(bullet, 'step 1 has the per-plan bullet');
+  const head = bullet.match(/^- `(\w+)` and `(\w+)`/);
+  const keys = bullet.match(/\{("\w+"(?:, "\w+")*)\}/);
+  assert.ok(head && keys, 'the bullet names its args and the shape of a plans entry');
+  const names = [head[1], head[2], ...keys[1].split(', ').map((k) => JSON.parse(k))];
+  assert.deepEqual(names, ['plans', 'cross_agent_type', 'plan', 'path']);
+  for (const n of names) assert.ok(PANEL.includes(`.${n}`), `review-panel.js reads ${n}`);
+});
+
 test('the analyzer is one agent: its script is gone, the seam has no --analyzer row, and /cad-context names no workflow', () => {
   assert.equal(existsSync(join(ROOT, 'workflows', 'analyzer.js')), false);
   const contract = readFileSync(join(ROOT, 'cadence-core', 'bin', 'lib', 'arg-contract.mjs'), 'utf8');
