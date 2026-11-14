@@ -320,7 +320,7 @@ test('the vocabulary pin fails when the workflow stretch loses its opening sente
 });
 
 test('the risk_surface fix pass paragraph is unchanged', () => {
-  const FIX = 'The dispatch prompt carries four things, nothing distilled by the coordinator: the plan file; the findings file\'s PATH, already persisted at `.planning/phases/<N>/records/REVIEW-risk_surface-plan-<k>.md` (references/risk-surface.md); the instruction to fix the blocker/high findings only; and the instruction NOT to rotate the plan\'s report but to append its fix row to the existing `<plandir>/records/reports/plan-<k>.md`';
+  const FIX = 'The dispatch prompt carries four things, nothing distilled by the coordinator: the plan file; the findings file\'s PATH, already persisted at `.planning/phases/<N>/records/REVIEW-risk_surface-<discriminator>.md` (references/risk-surface.md), the discriminator being that fire\'s range (references/review-triggers.md step 5); the instruction to fix the blocker/high findings only; and the instruction NOT to rotate the plan\'s report but to append its fix row to the existing `<plandir>/records/reports/plan-<k>.md`';
   assert.ok(flatExec(EXECUTE).includes(FIX));
 });
 
