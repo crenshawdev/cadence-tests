@@ -296,8 +296,8 @@ test('a clean fixture reports nothing', () => {
 /** D-15: review-triggers, review-workflow, triage-gate, review-record and risk-surface, read whole before plan 1-8 */
 const BEFORE_BYTES = 97588;
 // typed, never computed from the files, or growth could never trip it
-// heaviest arm: adjudicated on the workflow path for a risk_surface fire, 83,991 B on 2026-11-13, rounded up
-const ARM_BOUND = 85000;
+// heaviest arm: blocking on the workflow path for a risk_surface fire, 86,211 B on 2026-11-13, rounded up
+const ARM_BOUND = 90000;
 
 const ENTRY = ['review-triggers.md', 'triage-gate.md'];
 const GATE_FILES = ['triage-gate-deferred.md', 'triage-gate-blocking.md', 'triage-gate-adjudicated.md'];
@@ -314,6 +314,8 @@ const ARMS = [
     reads: ['review-inline.md', 'review-record.md', 'triage-gate-deferred.md', 'triage-gate-unfixed.md'] },
   { arm: 'blocking, inline, risk_surface', gate: 'blocking',
     reads: ['review-inline.md', 'review-record.md', 'risk-surface.md', 'triage-gate-blocking.md', 'triage-gate-unfixed.md'] },
+  { arm: 'blocking, workflow, risk_surface', gate: 'blocking',
+    reads: ['review-workflow.md', 'review-record.md', 'risk-surface.md', 'triage-gate-blocking.md', 'triage-gate-unfixed.md'] },
   { arm: 'blocking, inline, other trigger', gate: 'blocking',
     reads: ['review-inline.md', 'review-record.md', 'triage-gate-blocking.md', 'triage-gate-unfixed.md'] },
   { arm: 'adjudicated, inline, risk_surface', gate: 'adjudicated',
