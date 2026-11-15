@@ -176,6 +176,29 @@ test('workflow-run: proved, refuted, neither and a null checker map as stated an
   assert.deepEqual(readJson(split.review_input), review);
 });
 
+test('workflow-run: a journal from before one checker per voice, labelled `checker <voice> <n>`, still rules its findings, the same as one checker\'s numbered rulings', () => {
+  const t = tree();
+  const old = seam(t, JSON.stringify(SKELETON), undefined, JOURNAL);
+  assert.equal(old.ok, true, JSON.stringify(old));
+  assert.deepEqual(old.counts, { raised: 4, survived: 2, downgraded: 0, refuted: 1, unruled: 1 });
+  // the same rulings as one checker returns them, out of order, with the fourth finding left out
+  const voice = FIXTURE.result.voices[0];
+  const rulings = voice.rulings.filter((r) => r.ruling).map((r) => ({ finding: r.index + 1, ...r.ruling })).reverse();
+  const lines = [
+    { type: 'started', agentId: 'r', label: 'reviewer claude-subagent' },
+    { type: 'result', agentId: 'r', result: voice.result },
+    { type: 'started', agentId: 'c', label: 'checker claude-subagent' },
+    { type: 'result', agentId: 'c', result: { rulings } },
+  ];
+  const t2 = tree();
+  const now = seam(t2, JSON.stringify(SKELETON), undefined, lines.map((l) => JSON.stringify(l)).join('\n'));
+  assert.equal(now.ok, true, JSON.stringify(now));
+  assert.deepEqual(now.counts, old.counts);
+  assert.deepEqual(now.unruled, old.unruled);
+  assert.deepEqual(readJson(now.payload), readJson(old.payload));
+  assert.deepEqual(readJson(now.review_input), readJson(old.review_input));
+});
+
 // --- the journal: the findings and rulings are read from it and nowhere else (D-04) ---------------------------------
 
 test('workflow-run: findings left in the run file\'s result are not used, the journal\'s are, and an empty journal refuses', () => {
@@ -603,7 +626,10 @@ const P1 = ['.planning/phases/1/PLAN-1.md', '/tmp/cad-x/plan-1-reviewer.md'];
 const P2 = ['.planning/phases/1/PLAN-2.md', '/tmp/cad-x/plan-2-reviewer.md'];
 const PLAN_READS = `1=${P1.join(',')};2=${P2.join(',')}`;
 
-/** A three-plan split run: each plan's reviewer and two checkers, the cross-plan reviewer and its checker, a provider and its checker. */
+/**
+ * A three-plan split run: each plan's reviewer and two checker rows, the cross-plan reviewer and its checker, a provider and its checker.
+ * A voice's first checker row is labelled as the script labels it now, and the second as a run from before one checker per voice did.
+ */
 function splitRun() {
   const run = clone(FIXTURE);
   const voices = [1, 2, 3].map((k) => `claude-subagent-plan-${k}`).concat('claude-subagent-cross-plan');
@@ -612,11 +638,11 @@ function splitRun() {
     ...(agentType ? { agentType } : {}), state: 'done', tokens: 100, toolCalls: 1, durationMs: 10 });
   for (const v of voices) {
     row(`reviewer ${v}`, 'cadence:cad-reviewer-low');
-    row(`checker ${v} 1`, 'cadence:cad-reviewer-low');
+    row(`checker ${v}`, 'cadence:cad-reviewer-low');
     if (v !== 'claude-subagent-cross-plan') row(`checker ${v} 2`, 'cadence:cad-reviewer-low');
   }
   row('provider openai');
-  row('checker openai 1', 'cadence:cad-reviewer-low');
+  row('checker openai', 'cadence:cad-reviewer-low');
   run.workflowProgress = rows;
   run.result = { voices: voices.map((voice) => ({ voice, ran: true, result: { findings: [] }, rulings: [] })) };
   return run;
@@ -645,7 +671,8 @@ test('workflow-run --plan-reads: each mapped plan\'s reviewer and checkers read 
   for (const [lbl, read] of reads) assert.deepEqual(read, want(lbl), lbl);
   // the unmapped plan, the cross-plan reviewer and the provider stay on the payload, and no plan holds another's input
   for (const lbl of ['reviewer claude-subagent-plan-3', 'checker claude-subagent-plan-3 2', 'reviewer claude-subagent-cross-plan',
-    'checker claude-subagent-cross-plan 1', 'provider openai', 'checker openai 1']) assert.deepEqual(reads.get(lbl), [REF], lbl);
+    'checker claude-subagent-cross-plan', 'provider openai', 'checker openai']) assert.deepEqual(reads.get(lbl), [REF], lbl);
+  assert.deepEqual(reads.get('checker claude-subagent-plan-1'), P1);
   assert.deepEqual(reads.get('checker claude-subagent-plan-1 2'), P1);
   assert.deepEqual(reads.get('reviewer claude-subagent-plan-2'), P2);
   assert.equal([...reads.values()].filter((x) => x.includes(P1[1])).length, 3);
