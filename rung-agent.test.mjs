@@ -695,7 +695,7 @@ const CONTRACT_SURFACE_DIGESTS = {
   'skills/cad-assumptions-analyzer-contract/SKILL.md': 'ee690d7178a35d274d8c895367f6476df2160baf1e65889b92d55af3e94233bc',
   'skills/cad-executor-contract/SKILL.md': '22b8541a9d53ba16fd3a67dab1e3fb24ae561aea22cee436f752797f1e4115ab',
   'skills/cad-plan-checker-contract/SKILL.md': 'e7cb7328fe60c3e6fe0347498161b221cc1d045f83a9ba24ed8188ac4bdf73e4',
-  'skills/cad-planner-contract/SKILL.md': 'c4c818c153fc559843f1a964b8a0c0af24d541279249a768b70832e88da6beb4',
+  'skills/cad-planner-contract/SKILL.md': 'dd57f2e1ce75bde69df86fed07a45673aeea28ce5cd712ad8cb99395cddd4a3f',
   'skills/cad-reviewer-contract/SKILL.md': '4a400deacee7dd963bf0eab8d5f5dae638dda8b2250ef43e06e5394046a392e2',
   'skills/cad-verifier-contract/SKILL.md': 'e22b789cc1685b667d0a3eeb6dea6858a0b0cdb49dd8d7e0d91928f151a70b62',
 };
