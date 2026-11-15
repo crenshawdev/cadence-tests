@@ -68,8 +68,8 @@ test('plan-graph.md puts anchors on Reads and not Files, and a task with nothing
   assert.match(GRAPH, /leaves that field out and never writes `none`/);
 });
 
-test('plan-graph.md holds the shared-file rule and the one-last-plan rule', () => {
-  assert.match(GRAPH, /"more plans, sequential where they share files" wins over "if two slices touch the same file, they are one plan"/);
+test('plan-graph.md holds the one-last-plan rule and overrides no shared-file rule', () => {
+  assert.doesNotMatch(GRAPH, /wins over/);
   assert.match(GRAPH, /in one last plan/);
 });
 
