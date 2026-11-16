@@ -341,8 +341,8 @@ test('placeholder keys expand: <t> prose covers every trigger key', () => {
     '`roles.<role>.model` `roles.<role>.effort`\n' +
     '`workflow.research` `workflow.plan_check` `workflow.verifier` `workflow.skip_discuss`\n' +
     '`workflow.inline_plan_threshold` `workflow.test_command`\n' +
-    '`workflow.lint_command` `workflow.max_plan_tasks` `workflow.max_plan_bytes` `workflow.config_menu` `planning.code_map` `planning.workflow_plans`\n' +
-    '`workflow.max_dispatch_tokens` `workflow.use_workflows` `workflow.multi_workflow` `workflow.execute_workflows`\n' +
+    '`workflow.lint_command` `workflow.max_plan_tasks` `workflow.max_plan_bytes` `workflow.config_menu` `planning.code_map`\n' +
+    '`workflow.max_dispatch_tokens`\n' +
     '`parallelization.enabled` `parallelization.max_concurrent_agents`\n' +
     '`parallelization.min_plans_for_parallel` `parallelization.use_worktrees`\n' +
     '`git.protected_branches` `git.on_protected` `git.integration_branch`\n' +

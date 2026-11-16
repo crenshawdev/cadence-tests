@@ -727,11 +727,11 @@ test('review-panel: a blocking risk_surface run with a proved blocker holds the 
 
 const flat = (rel) => readFileSync(join(ROOT, ...rel.split('/')), 'utf8').replace(/\s+/g, ' ');
 
-test('step 4 of review-triggers.md sends a risk_surface fire at blocking onto the workflow path, on the both-layer answer', () => {
+test('step 4 of review-triggers.md sends a risk_surface fire at blocking onto the workflow path', () => {
   const doc = flat('cadence-core/references/review-triggers.md');
   const step4 = doc.slice(doc.indexOf('### 4. Run the reviewers'), doc.indexOf('### 5. Combine'));
   assert.match(step4, /or the trigger is `risk_surface` and its gate resolved `blocking`/);
-  assert.ok(step4.includes('workflow-layers'), 'the both-layer read still gates it');
+  assert.ok(step4.includes("and the `Workflow` tool is in this session's tool list"), 'the tool check still gates it');
 });
 
 test('each site that fires risk_surface says the workflow notice resumes its step, pointing at review-workflow.md', () => {
@@ -782,19 +782,11 @@ test('the analyzer is one agent: its script is gone, the seam has no --analyzer 
   }
 });
 
-test('the setting, the permissions pages, the run record page and INTERNALS name only reviews, never the analyzer', () => {
-  const schema = JSON.parse(readFileSync(join(ROOT, 'cadence-core', 'config.schema.json'), 'utf8'));
-  const key = schema.keys['workflow.use_workflows'];
-  assert.ok(key, 'the key is in the schema');
-  assert.doesNotMatch(key.question, /analyzer/i, 'question');
-  assert.doesNotMatch(key.purpose, /analyzer/i, 'purpose');
+test('the permissions pages, the run record page and INTERNALS name only reviews, never the analyzer', () => {
   const read = (...p) => readFileSync(join(ROOT, ...p), 'utf8');
   for (const f of [['docs', 'guide', 'reference', 'permissions.md'], ['docs', 'PERMISSIONS.md'], ['docs', 'guide', 'how-it-works', 'records.md']]) {
     assert.doesNotMatch(read(...f), /analyzer/i, f.join('/'));
   }
-  const section = read('docs', 'guide', 'configuration', 'execution.md').split(/^### `workflow\.use_workflows`$/m)[1]?.split(/^### /m)[0];
-  assert.ok(section, 'execution.md has the key section');
-  assert.doesNotMatch(section, /analyzer/i, 'execution.md section');
   const para = read('INTERNALS.md').split('\n').find((l) => l.startsWith('The plugin root has a `workflows/` directory'));
   assert.ok(para, 'INTERNALS.md has the workflows/ paragraph');
   assert.doesNotMatch(para, /analyzer/i, 'INTERNALS.md workflows/ paragraph');

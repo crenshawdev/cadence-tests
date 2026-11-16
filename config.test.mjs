@@ -897,7 +897,7 @@ test('keys --walk returns only question-bearing keys in position order, typed en
 });
 
 test('keys --walk on the shipped schema holds every walk key, in position order, under 25,000 bytes', () => {
-  const NOT_ASKED = ['workflow.config_menu', 'planning.code_map', 'planning.workflow_plans', 'workflow.execute_workflows', 'roles.cad-mapper.', 'workflow.max_plan_bytes', 'review.triggers.diff.when', 'workflow.max_dispatch_tokens.', 'review.providers.', 'review.decision_review.'];
+  const NOT_ASKED = ['workflow.config_menu', 'planning.code_map', 'roles.cad-mapper.', 'workflow.max_plan_bytes', 'review.triggers.diff.when', 'workflow.max_dispatch_tokens.', 'review.providers.', 'review.decision_review.'];
   const shipped = JSON.parse(readFileSync(join(dirname(CONFIG), '..', 'config.schema.json'), 'utf8')).keys;
   const expected = Object.keys(shipped).filter((k) => !NOT_ASKED.some((p) => k.startsWith(p)));
   assert.ok(expected.length < Object.keys(shipped).length && expected.length > 0, 'the exclusion list names real keys');
@@ -1004,11 +1004,11 @@ test('SCP-01: the SHIPPED keys carrying the marker are the ones that authorize, 
     assert.equal(shipped[k].repo_only, undefined, `${k} carries no repo_only marker`);
   }
 
-  // `src: "repo"` means "settable in either layer" and 29 keys carry it -
+  // `src: "repo"` means "settable in either layer" and 26 keys carry it -
   // `granularity` and `review.mode` among them, keys a user legitimately pins
   // machine-wide - so no key may inherit the refusal from it.
   const srcRepo = Object.keys(shipped).filter((k) => shipped[k].src === 'repo');
-  assert.equal(srcRepo.length, 29, JSON.stringify(srcRepo));
+  assert.equal(srcRepo.length, 26, JSON.stringify(srcRepo));
   for (const k of ['granularity', 'review.mode', 'git.auto_close']) {
     assert.ok(srcRepo.includes(k), `${k} carries src:"repo"`);
   }
@@ -2267,79 +2267,6 @@ test('set refuses a retired model.* key at either layer with one text, while set
     const ug = run(['unset', '--global', key], gpath);
     assert.equal(ug.ok, true, JSON.stringify(ug));
     assert.deepEqual(ug.removed, [key]);
-  }
-});
-
-// --- the two workflow switches: on only when both layers say so ----------------
-
-const WORKFLOW_SWITCHES = ['workflow.use_workflows', 'workflow.multi_workflow', 'workflow.execute_workflows'];
-
-// Runs `workflow-layers` in a temporary repo. repo/global are objects (written as JSON), raw strings (written as
-// is, to make a torn layer) or undefined (no file). 'self' points the global path at the repo's own config.
-function workflowLayersFor(key, repo, global) {
-  const root = mkdtempSync(join(tmpdir(), 'cad-wf-'));
-  mkdirSync(join(root, '.planning'));
-  const repoFile = join(root, '.planning', 'config.json');
-  const put = (file, v) => { if (v !== undefined) writeFileSync(file, typeof v === 'string' ? v : JSON.stringify(v)); };
-  put(repoFile, repo);
-  const globalFile = global === 'self' ? repoFile : join(root, 'global.json');
-  if (global !== 'self') put(globalFile, global);
-  const env = { ...process.env, CADENCE_GLOBAL_CONFIG: globalFile };
-  const stdout = execFileSync('node', [CONFIG, 'workflow-layers'], { encoding: 'utf8', env, cwd: root });
-  const r = JSON.parse(stdout);
-  return { r, state: r.keys[key], root, repoFile, globalFile };
-}
-
-test('a workflow switch is on only when both layers set an explicit true', () => {
-  for (const key of WORKFLOW_SWITCHES) {
-    const on = {}; key.split('.').reduce((o, p, i, a) => (o[p] = i === a.length - 1 ? true : {}), on);
-    const str = {}; key.split('.').reduce((o, p, i, a) => (o[p] = i === a.length - 1 ? 'true' : {}), str);
-    const cases = [
-      ['neither', undefined, undefined, false],
-      ['repo only', on, undefined, false],
-      ['global only', undefined, on, false],
-      ['both', on, on, true],
-      ['truthy string in both', str, str, false],
-      ['global resolves to the repo config', on, 'self', false],
-      ['repo layer unreadable', '{ torn', on, false],
-      ['global layer unreadable', on, '[1]', false],
-    ];
-    for (const [label, repo, global, want] of cases) {
-      const { r, state, repoFile, globalFile } = workflowLayersFor(key, repo, global);
-      assert.equal(r.ok, true, `${key} ${label}`);
-      assert.equal(state.on, want, `${key} ${label}: ${JSON.stringify(state)}`);
-      if (label === 'repo layer unreadable') { assert.equal(state.repo, 'unreadable'); assert.deepEqual(r.unreadable, [repoFile]); }
-      if (label === 'global layer unreadable') { assert.equal(state.global, 'unreadable'); assert.deepEqual(r.unreadable, [globalFile]); }
-      if (label === 'global resolves to the repo config') assert.equal(r.shared, true);
-    }
-    // the merged read is why nothing decides on it: a repo-only true still reads true there
-    const { root } = workflowLayersFor(key, on, undefined);
-    const merged = JSON.parse(execFileSync('node', [CONFIG, 'get', '--file', join(root, '.planning', 'config.json'), key],
-      { encoding: 'utf8', env: { ...process.env, CADENCE_GLOBAL_CONFIG: join(root, 'none.json') } }));
-    assert.equal(merged.values[key], true);
-  }
-});
-
-test('the workflow switches default false, refuse a non-boolean, and warn in the walk', () => {
-  // --file pins the repo layer, or a machine whose own .planning/config.json turns a switch on reads true
-  const emptyRepo = join(dir, 'wf-empty-repo.json');
-  writeFileSync(emptyRepo, '{}');
-  const got = run(['get', '--file', emptyRepo, ...WORKFLOW_SWITCHES], join(dir, 'no-wf-global.json'));
-  for (const key of WORKFLOW_SWITCHES) {
-    assert.equal(got.values[key], false);
-    const bad = run(['set', '--file', join(dir, 'wf-bad.json'), `${key}=yes`], join(dir, 'no-wf-global.json'));
-    assert.equal(bad.ok, false);
-    assert.equal(bad.reason, 'invalid');
-  }
-  const walkAll = JSON.parse(run_raw(['keys', '--walk'])).walk.flatMap((g) => g.keys);
-  // execute_workflows has no question, so it sits under Advanced and no walk asks it
-  assert.equal(walkAll.some((row) => row.key === 'workflow.execute_workflows'), false);
-  const walk = walkAll.filter((row) => WORKFLOW_SWITCHES.includes(row.key));
-  assert.equal(walk.length, 2);
-  for (const row of walk) {
-    const text = JSON.stringify(row);
-    assert.match(text, /usage/i, `${row.key} warns about usage`);
-    assert.match(text, /both set it/, `${row.key} says both layers are needed`);
   }
 });
 

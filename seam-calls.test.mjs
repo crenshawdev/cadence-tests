@@ -56,11 +56,10 @@
 //                        adds a KEY and no call (0), and the gaps and revision modes reuse the prompt and so scan
 //                        nothing a second time.
 //   plan.md    16 -> 17  the brief check's `brief --phase {N} --plan <k>` at check_brief is a NEW invocation (+1), written
-//                        once and run once per plan file, only when `planning.workflow_plans` is true. The key rode parse's
-//                        wrapped `config.mjs get` already (0), and the `--inline` path never reaches the step, so it adds
+//                        once and run once per plan file. The `--inline` path never reaches the step, so it adds
 //                        nothing.
 //   plan.md    17 -> 18  the planner's phase input `brief --phase {N} --role phase --out-dir` at spawn_planner is a NEW
-//                        invocation (+1), made once per run and only when `planning.workflow_plans` is true. Every later
+//                        invocation (+1), made once per run. Every later
 //                        site that names the input - check_gate, review, the revision re-dispatch - references that call
 //                        and never spells it again, so it adds nothing.
 //   context.md  6 -> 8   the workflow branch of `analyze` (v3.12, D-01) spells two NEW invocations (+2): `config.mjs
@@ -151,8 +150,8 @@ const CENSUS = [
       + 'The sixteenth is the code map\'s `codemap scan` at spawn_planner (+1; '
       + 'its `planning.code_map` key rides the existing config.mjs get, and a '
       + 'gaps or revision dispatch scans nothing a second time). '
-      + 'The seventeenth is the brief check\'s `brief` at check_brief (+1; its '
-      + '`planning.workflow_plans` key rides the existing config.mjs get, and the inline path never reaches the step). '
+      + 'The seventeenth is the brief check\'s `brief` at check_brief (+1; '
+      + 'the inline path never reaches the step). '
       + 'The eighteenth is the phase input\'s `brief --role phase` at spawn_planner (+1; every later site that names '
       + 'the input references that call and never spells it again). '
       + 'A nineteenth means a call came back - most likely a restated count or '

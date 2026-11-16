@@ -94,7 +94,13 @@ const RETIRED_KEYS_FILE = fileURLToPath(new URL('../cadence-core/bin/lib/retired
 // `review.triggers.risk_surface.waive_routing_floor` waiver landed, so they were corrected to name that key and each
 // row's own surface. The eight rows are still retired, with the same `since` and a null `replacement`, and they now
 // come from one builder.
-const RETIRED_KEYS_SHA256 = 'e3f752398fac87565376d1e58fd058b63954a1330681d416af80384a3969eae4';
+//
+// An ELEVENTH time, off
+// `e3f752398fac87565376d1e58fd058b63954a1330681d416af80384a3969eae4`, by decision: the four workflow switches,
+// `planning.workflow_plans`, `workflow.use_workflows`, `workflow.multi_workflow` and `workflow.execute_workflows`, left
+// the schema when each one's on path became the only path. Their rows joined this map in the same commit and share one
+// builder, so a config that still sets one meets a message saying what runs now and both `config.mjs unset` commands.
+const RETIRED_KEYS_SHA256 = '777402a5ef0e35860bb505ec06e6be633e1a2d6e58129c12d90b02eb2215c219';
 
 test('lib/retired-keys.mjs is byte-identical - the eight risk.override.* keys stay retired', () => {
   // WHAT THIS PROTECTS. D-03 keeps the retired family retired because a key
