@@ -645,3 +645,9 @@ test('the verifier contract\'s step 1 names the stand-in input, which carries th
   assert.ok(!step1.includes('carries no CONTEXT.md'));
   assert.ok(step1.includes('- Acceptance criteria: `.planning/phases/<N>/CONTEXT.md` if present.'));
 });
+
+// with the switch on, the four document lines go, so this line is the prompt's only phase path and a phase-gate hook reads it
+test('the planner prompt names the phase folder it writes to', () => {
+  const prompt = PLAN_MD.slice(PLAN_MD.indexOf('<planning_context>\nPhase:'), PLAN_MD.indexOf('</planning_context>'));
+  assert.ok(prompt.includes('Write the plan files in .planning/phases/{N}/.'));
+});
