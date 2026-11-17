@@ -22,7 +22,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { ensureRoadmap } from './planning.test.mjs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -804,9 +804,10 @@ test('a refusal names the entry it is about', () => {
 // figures, from the record alone - no third source, and nothing stored on the
 // record that a tamperer could edit to agree with itself.
 
-/** A scratch git repo with `.planning/phases/2/` and two commits. */
-function scratchRepo() {
+/** A scratch git repo with `.planning/phases/2/` and two commits, gone when `t`'s test ends. */
+function scratchRepo(t) {
   const repo = mkdtempSync(join(tmpdir(), 'cad-recount-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', ['-C', repo, ...args],
     { encoding: 'utf8', stdio: 'pipe' }).trim();
   git('init', '-q');
@@ -829,8 +830,8 @@ function scratchRepo() {
  * says, and answer `{file, record, envelope}` - the bytes that landed plus the
  * counts the seam derived, which are the figures a receipt copies.
  */
-function seamRecord(rulings) {
-  const { repo, dir } = scratchRepo();
+function seamRecord(t, rulings) {
+  const { repo, dir } = scratchRepo(t);
   const findings = rulings.map((_r, i) => finding({
     line: i + 1,
     claim: `The ${i}th call writes before it validates.`,
@@ -872,8 +873,8 @@ const outcomeEvent = (envelope) => ({
   refuted: envelope.counts.refuted,
 });
 
-test('AC4: counting a written record\'s rulings reproduces the figures on its trace event', () => {
-  const { record, envelope } = seamRecord(['survived', 'refuted', 'downgraded', 'refuted']);
+test('AC4: counting a written record\'s rulings reproduces the figures on its trace event', (t) => {
+  const { record, envelope } = seamRecord(t, ['survived', 'refuted', 'downgraded', 'refuted']);
   const event = outcomeEvent(envelope);
   // The RECORD stores no count of its own, so this is a recount and not a read.
   assert.equal(record.counts, undefined);
@@ -884,8 +885,8 @@ test('AC4: counting a written record\'s rulings reproduces the figures on its tr
   assert.equal(counted.raised, record.entries.length);
 });
 
-test('AC4: flipping ONE entry\'s ruling makes the record and its event disagree', () => {
-  const { record, envelope } = seamRecord(['survived', 'refuted', 'downgraded', 'refuted']);
+test('AC4: flipping ONE entry\'s ruling makes the record and its event disagree', (t) => {
+  const { record, envelope } = seamRecord(t, ['survived', 'refuted', 'downgraded', 'refuted']);
   const event = outcomeEvent(envelope);
   const before = deriveCounts(record.entries);
 
@@ -912,8 +913,8 @@ test('AC4: flipping ONE entry\'s ruling makes the record and its event disagree'
   assert.equal(after.raised, before.raised);
 });
 
-test('AC4: the recount reads the STORED entries, so an edited record answers differently', () => {
-  const { file, record, envelope } = seamRecord(['refuted', 'refuted']);
+test('AC4: the recount reads the STORED entries, so an edited record answers differently', (t) => {
+  const { file, record, envelope } = seamRecord(t, ['refuted', 'refuted']);
   assert.deepEqual(envelope.counts, { raised: 2, survived: 0, downgraded: 0, refuted: 2 });
   // Written back to disk and re-read, because the claim is about the file an
   // auditor opens rather than an object this test happens to hold.
