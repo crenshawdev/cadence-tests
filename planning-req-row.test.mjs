@@ -20,18 +20,18 @@ const stateBytes = (dir) => readFileSync(statePath(dir), 'utf8');
 const rowOf = (dir, id) => readState(dir).state.requirements.find((r) => r.id === id);
 
 /** Three phases, with a Pending, a Complete and a Deferred row; stamped, so "nothing written" has a state to measure. */
-function reqTree() {
+function reqTree(t) {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }, { n: 3, name: 'Three' }],
     phases: { 1: { plan: true }, 2: { plan: true }, 3: { plan: true } },
     reqs: [['REQ-1', 1, 'Pending'], ['REQ-2', 2, 'Complete'], ['REQ-3', 2, 'Deferred'], ['REQ-4', 1, 'Pending']],
-  });
+  }, t);
   assert.equal(run(['status'], dir).ok, true);
   return dir;
 }
 
-test('req-row --phase re-points a row in the state, Complete included, and the regenerated row agrees', () => {
-  const dir = reqTree();
+test('req-row --phase re-points a row in the state, Complete included, and the regenerated row agrees', (t) => {
+  const dir = reqTree(t);
   const r = run(['req-row', '--id', 'REQ-1', '--phase', '3'], dir);
   assert.deepEqual([r.ok, r.id, r.phase, r.status], [true, 'REQ-1', 3, 'Pending']);
   assert.deepEqual(rowOf(dir, 'REQ-1'), { id: 'REQ-1', phase: 3, status: 'Pending' });
@@ -42,8 +42,8 @@ test('req-row --phase re-points a row in the state, Complete included, and the r
   assert.match(reqsOf(dir), /^\| REQ-4 \| Phase 1 \| Pending \|$/m, 'the other rows stay');
 });
 
-test('req-row --phase gives an orphan renumber remove blanked a phase, and audit stops reporting it no-phase', () => {
-  const dir = renumberTree();
+test('req-row --phase gives an orphan renumber remove blanked a phase, and audit stops reporting it no-phase', (t) => {
+  const dir = renumberTree(t);
   assert.deepEqual(run(['renumber', 'remove', '--n', '2'], dir).orphaned_reqs, ['REQ-2']);
   const breakOf = () => run(['audit'], dir).requirements.find((q) => q.id === 'REQ-2').break;
   assert.equal(breakOf(), 'no-phase');
@@ -53,8 +53,8 @@ test('req-row --phase gives an orphan renumber remove blanked a phase, and audit
   assert.match(reqsOf(dir), /^\| REQ-2 \| Phase 1 \| Pending \|$/m);
 });
 
-test('req-row --defer sets a Pending row Deferred, and phase-done then leaves it Deferred', () => {
-  const dir = reqTree();
+test('req-row --defer sets a Pending row Deferred, and phase-done then leaves it Deferred', (t) => {
+  const dir = reqTree(t);
   const r = run(['req-row', '--id', 'REQ-1', '--defer'], dir);
   assert.deepEqual([r.ok, r.phase, r.status], [true, 1, 'Deferred']);
   assert.match(reqsOf(dir), /^\| REQ-1 \| Phase 1 \| Deferred \|$/m);
@@ -65,8 +65,8 @@ test('req-row --defer sets a Pending row Deferred, and phase-done then leaves it
   assert.equal(rowOf(dir, 'REQ-4').status, 'Complete');
 });
 
-test('req-row refuses, leaving the state and REQUIREMENTS.md byte-identical', () => {
-  const dir = reqTree();
+test('req-row refuses, leaving the state and REQUIREMENTS.md byte-identical', (t) => {
+  const dir = reqTree(t);
   const state = stateBytes(dir);
   const reqs = reqsOf(dir);
   const cases = [
@@ -87,8 +87,8 @@ test('req-row refuses, leaving the state and REQUIREMENTS.md byte-identical', ()
   }
 });
 
-test('req-row refuses no-traceability-table, as seed-reqs does, when REQUIREMENTS.md has no table to render into', () => {
-  const dir = reqTree();
+test('req-row refuses no-traceability-table, as seed-reqs does, when REQUIREMENTS.md has no table to render into', (t) => {
+  const dir = reqTree(t);
   writeFileSync(join(dir, 'REQUIREMENTS.md'), '# Requirements: Fixture\n\n## Active\n\n- **REQ-1**: desc\n');
   const state = stateBytes(dir);
   const reqs = reqsOf(dir);

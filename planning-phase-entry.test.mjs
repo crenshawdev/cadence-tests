@@ -6,7 +6,7 @@
 // in planning.test.mjs and is imported, never copied.
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseReachTable } from '../cadence-core/bin/lib/config-reach.mjs';
@@ -14,7 +14,7 @@ import { parseRoadmapPhases } from '../cadence-core/bin/lib/planning-files.mjs';
 import { readState, statePath, writeState } from '../cadence-core/bin/lib/project-state.mjs';
 import { renderStateMd } from '../cadence-core/bin/lib/state-views.mjs';
 import { CYCLE, appendEvent, tracePath } from '../cadence-core/bin/lib/trace.mjs';
-import { makeTree, run, isEntryFile, today, verifyChecked } from './planning.test.mjs';
+import { makeTree, run, isEntryFile, today, verifyChecked, scratch } from './planning.test.mjs';
 import { renumberTree } from './planning-renumber.test.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported. */
@@ -25,15 +25,15 @@ const stateBytes = (dir) => readFileSync(statePath(dir), 'utf8');
 const listOf = (dir) => parseRoadmapPhases(roadmapOf(dir)).map((p) => [p.n, p.name, p.desc]);
 
 /** A stamped three-phase project, so a refusal's "nothing written" is measured against a state that exists. */
-function threePhases() {
-  const dir = renumberTree();
+function threePhases(t) {
+  const dir = renumberTree(t);
   assert.equal(run(['status'], dir).ok, true);
   return dir;
 }
 
-test('phase-entry add: the phase lands in the state as unplanned, and its generated line reads back as sent, name by file', () => {
-  const dir = threePhases();
-  const nameFile = join(mkdtempSync(join(tmpdir(), 'cad-entry-')), 'name.txt');
+test('phase-entry add: the phase lands in the state as unplanned, and its generated line reads back as sent, name by file', (t) => {
+  const dir = threePhases(t);
+  const nameFile = join(scratch('cad-entry-', t), 'name.txt');
   writeFileSync(nameFile, 'Reports & exports\n');
   const r = run(['phase-entry', 'add', '--phase', '4', '--name-file', nameFile, '--description', 'CSV and PDF out'], dir);
   assert.equal(r.ok, true);
@@ -45,8 +45,8 @@ test('phase-entry add: the phase lands in the state as unplanned, and its genera
   assert.doesNotMatch(roadmapOf(dir), /### Phase 4/, 'no detail section is invented');
 });
 
-test('phase-entry add: a held number, a newline, an unreadable line and a bad phase spelling are refused, state and roadmap byte-identical', () => {
-  const dir = threePhases();
+test('phase-entry add: a held number, a newline, an unreadable line and a bad phase spelling are refused, state and roadmap byte-identical', (t) => {
+  const dir = threePhases(t);
   const state = stateBytes(dir);
   const roadmap = roadmapOf(dir);
   const cases = [
@@ -65,8 +65,8 @@ test('phase-entry add: a held number, a newline, an unreadable line and a bad ph
   }
 });
 
-test('phase-entry add refuses 0, 0.5 and 1.05, which no phase directory carries, while edit still reaches a held phase 0', () => {
-  const dir = threePhases();
+test('phase-entry add refuses 0, 0.5 and 1.05, which no phase directory carries, while edit still reaches a held phase 0', (t) => {
+  const dir = threePhases(t);
   const state = stateBytes(dir);
   const roadmap = roadmapOf(dir);
   for (const n of ['0', '0.5', '1.05']) {
@@ -84,8 +84,8 @@ test('phase-entry add refuses 0, 0.5 and 1.05, which no phase directory carries,
   assert.deepEqual([edit.ok, edit.phase, edit.name], [true, 0, 'Groundwork']);
 });
 
-test('phase-entry add fills the slot renumber insert freed, and the list reads 1 to 4 in order', () => {
-  const dir = threePhases();
+test('phase-entry add fills the slot renumber insert freed, and the list reads 1 to 4 in order', (t) => {
+  const dir = threePhases(t);
   assert.equal(run(['renumber', 'insert', '--at', '2'], dir).ok, true);
   const r = run(['phase-entry', 'add', '--phase', '2', '--name', 'Inserted', '--description', 'new work'], dir);
   assert.equal(r.ok, true);
@@ -93,8 +93,8 @@ test('phase-entry add fills the slot renumber insert freed, and the list reads 1
   assert.deepEqual(readState(dir).state.phases.map((p) => p.n), [1, 2, 3, 4]);
 });
 
-test('phase-entry add: the first phase into a state with no cycle open opens it, and status stops answering cycle: none', () => {
-  const dir = makeTree({ roadmap: [] });
+test('phase-entry add: the first phase into a state with no cycle open opens it, and status stops answering cycle: none', (t) => {
+  const dir = makeTree({ roadmap: [] }, t);
   assert.equal(run(['status'], dir).cycle, 'none');
   const r = run(['phase-entry', 'add', '--phase', '1', '--name', 'Start', '--description', 'the first phase'], dir);
   assert.deepEqual([r.ok, r.opened_cycle], [true, true]);
@@ -105,8 +105,8 @@ test('phase-entry add: the first phase into a state with no cycle open opens it,
   assert.deepEqual(listOf(dir), [[1, 'Start', 'the first phase']]);
 });
 
-test('phase-entry add on an open cycle renders STATE.md from the state, so its total follows the list', () => {
-  const dir = threePhases();
+test('phase-entry add on an open cycle renders STATE.md from the state, so its total follows the list', (t) => {
+  const dir = threePhases(t);
   assert.equal(run(['phase-entry', 'add', '--phase', '4', '--name', 'Four', '--description', 'd'], dir).ok, true);
   const stateMd = readFileSync(join(dir, 'STATE.md'), 'utf8');
   assert.equal(stateMd, renderStateMd(readState(dir).state));
@@ -125,38 +125,38 @@ const cursorDrift = (dir) => {
 };
 
 /** An open cycle whose two phases are both complete, the cursor at `status`. */
-function allComplete(status) {
+function allComplete(t, status) {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One', checked: true }, { n: 2, name: 'Two', checked: true }],
     phases: { 1: { plan: true, summary: true }, 2: { plan: true, summary: true } },
     cursor: { phase: 2, total: 2, name: 'Two', status, next: '/cad-milestone', updated: '2026-01-01' },
-  });
+  }, t);
   verifyChecked(dir);
   return dir;
 }
 
-test('phase-entry add with no cycle open points the cursor at the new phase, ready to plan, and status finds no cursor drift', () => {
-  const dir = makeTree({ roadmap: [] });
+test('phase-entry add with no cycle open points the cursor at the new phase, ready to plan, and status finds no cursor drift', (t) => {
+  const dir = makeTree({ roadmap: [] }, t);
   assert.equal(add(dir, 1).ok, true);
   assert.deepEqual(readState(dir).state.cursor, { phase: 1, status: 'ready to plan', next: '/cad-context 1', updated: today() });
   assert.deepEqual(cursorDrift(dir), []);
 });
 
-test('phase-entry add with workflow.skip_discuss true names /cad-plan N as the next step', () => {
-  const dir = makeTree({ roadmap: [], config: { workflow: { skip_discuss: true } } });
+test('phase-entry add with workflow.skip_discuss true names /cad-plan N as the next step', (t) => {
+  const dir = makeTree({ roadmap: [], config: { workflow: { skip_discuss: true } } }, t);
   assert.equal(add(dir, 1).ok, true);
   assert.deepEqual(readState(dir).state.cursor, { phase: 1, status: 'ready to plan', next: '/cad-plan 1', updated: today() });
 });
 
-test('phase-entry add into an open cycle whose phases are all complete moves the cursor to the new phase, no drift', () => {
-  const dir = allComplete('phase complete');
+test('phase-entry add into an open cycle whose phases are all complete moves the cursor to the new phase, no drift', (t) => {
+  const dir = allComplete(t, 'phase complete');
   assert.equal(add(dir, 3).ok, true);
   assert.deepEqual(readState(dir).state.cursor, { phase: 3, status: 'ready to plan', next: '/cad-context 3', updated: today() });
   assert.deepEqual(cursorDrift(dir), []);
 });
 
-test('phase-entry add leaves the cursor as it was beside an unfinished phase, and on a paused cursor', () => {
-  for (const dir of [threePhases(), allComplete('paused')]) {
+test('phase-entry add leaves the cursor as it was beside an unfinished phase, and on a paused cursor', (t) => {
+  for (const dir of [threePhases(t), allComplete(t, 'paused')]) {
     const before = readState(dir).state.cursor;
     assert.ok(before, 'the fixture has a cursor to keep');
     assert.equal(add(dir, 4).ok, true);
@@ -171,8 +171,8 @@ test('the reach table names phase-entry.mjs as a reader of workflow.skip_discuss
   assert.match(row.honouredBy, /bin\/planning\/phase-entry\.mjs/);
 });
 
-test('phase-entry edit changes the phase\'s line and nothing else in ROADMAP.md', () => {
-  const dir = threePhases();
+test('phase-entry edit changes the phase\'s line and nothing else in ROADMAP.md', (t) => {
+  const dir = threePhases(t);
   const before = roadmapOf(dir).split('\n');
   const r = run(['phase-entry', 'edit', '--phase', '2', '--description', 'rewritten'], dir);
   assert.deepEqual([r.ok, r.name, r.description], [true, 'Two', 'rewritten']);
@@ -187,8 +187,8 @@ test('phase-entry edit changes the phase\'s line and nothing else in ROADMAP.md'
   assert.match(roadmapOf(dir), /^### Phase 2: Two$/m, 'the detail section stays hand-written');
 });
 
-test('phase-entry edit refuses a phase the state does not hold, and an edit naming nothing', () => {
-  const dir = threePhases();
+test('phase-entry edit refuses a phase the state does not hold, and an edit naming nothing', (t) => {
+  const dir = threePhases(t);
   const state = stateBytes(dir);
   const unknown = run(['phase-entry', 'edit', '--phase', '9', '--name', 'Nine'], dir);
   assert.deepEqual([unknown.ok, unknown.reason], [false, 'unknown-phase']);
@@ -197,8 +197,8 @@ test('phase-entry edit refuses a phase the state does not hold, and an edit nami
   assert.equal(stateBytes(dir), state);
 });
 
-test('phase-entry add and edit refuse, writing nothing, when ROADMAP.md has no ## Phases heading', () => {
-  const dir = threePhases();
+test('phase-entry add and edit refuse, writing nothing, when ROADMAP.md has no ## Phases heading', (t) => {
+  const dir = threePhases(t);
   writeFileSync(join(dir, 'ROADMAP.md'), roadmapOf(dir).replace('## Phases\n', '## Plan\n'));
   const state = stateBytes(dir);
   const roadmap = roadmapOf(dir);
@@ -215,8 +215,8 @@ const markers = (dir) => (existsSync(tracePath(dir)) ? readFileSync(tracePath(di
   .filter(Boolean).filter((l) => JSON.parse(l).event === CYCLE).length;
 const prune = (dir) => run(['milestone-prune', '--label', 'v1', '--mode', 'delete'], dir, undefined, NO_GLOBAL);
 
-test('cycle marker: a close, a phase-less event, then the cycle-opening add leave exactly one', () => {
-  const dir = allComplete('phase complete');
+test('cycle marker: a close, a phase-less event, then the cycle-opening add leave exactly one', (t) => {
+  const dir = allComplete(t, 'phase complete');
   const closed = prune(dir);
   assert.deepEqual([closed.ok, closed.action], [true, 'pruned']);
   assert.deepEqual((closed.warnings ?? []).filter((w) => /cycle boundary/.test(w)), []);
@@ -227,14 +227,14 @@ test('cycle marker: a close, a phase-less event, then the cycle-opening add leav
   assert.equal(markers(dir), 1);
 });
 
-test('cycle marker: a cycle-opening add writes one onto a record with none, and a second when a phase event follows the last', () => {
-  const bare = makeTree({ roadmap: [] });
+test('cycle marker: a cycle-opening add writes one onto a record with none, and a second when a phase event follows the last', (t) => {
+  const bare = makeTree({ roadmap: [] }, t);
   assert.equal(run(['status'], bare).ok, true);
   assert.equal(appendEvent(bare, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'aaa1111' }).written, true);
   assert.equal(add(bare, 1).opened_cycle, true);
   assert.equal(markers(bare), 1);
 
-  const followed = makeTree({ roadmap: [] });
+  const followed = makeTree({ roadmap: [] }, t);
   assert.equal(run(['status'], followed).ok, true);
   assert.equal(appendEvent(followed, { family: 'lifecycle', event: CYCLE }).written, true);
   assert.equal(appendEvent(followed, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'aaa1111' }).written, true);
@@ -242,8 +242,8 @@ test('cycle marker: a cycle-opening add writes one onto a record with none, and 
   assert.equal(markers(followed), 2);
 });
 
-test('cycle marker: an add into an open cycle writes none, the every-phase-complete form included', () => {
-  for (const [dir, n] of [[threePhases(), 4], [allComplete('phase complete'), 3]]) {
+test('cycle marker: an add into an open cycle writes none, the every-phase-complete form included', (t) => {
+  for (const [dir, n] of [[threePhases(t), 4], [allComplete(t, 'phase complete'), 3]]) {
     assert.equal(appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'aaa1111' }).written, true);
     const r = add(dir, n);
     assert.deepEqual([r.ok, 'opened_cycle' in r], [true, false]);
@@ -251,8 +251,8 @@ test('cycle marker: an add into an open cycle writes none, the every-phase-compl
   }
 });
 
-test('cycle marker: two cycles\' phase 1 through real adds and a close, and trace render --phase 1 counts the second alone', () => {
-  const dir = makeTree({ roadmap: [] });
+test('cycle marker: two cycles\' phase 1 through real adds and a close, and trace render --phase 1 counts the second alone', (t) => {
+  const dir = makeTree({ roadmap: [] }, t);
   assert.equal(run(['status'], dir).ok, true);
   const cycle = (sha, role) => {
     assert.equal(add(dir, 1).opened_cycle, true);
