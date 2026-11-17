@@ -1803,6 +1803,9 @@ test('risk-check run: an UNANSWERED project is refused rather than detected on a
   assert.equal(r.reason, 'surfaces-unanswered');
   assert.equal(r._exit, 1);
   assert.match(r.detail, /detect-surfaces/, 'the refusal does not name what settles it');
+  // D-20: the surface question lives in risk-surface.md, so the hint can't send the caller to review-triggers.md
+  assert.match(r.detail, /references\/risk-surface\.md/, 'the refusal does not name the file that holds the question');
+  assert.doesNotMatch(r.detail, /references\/review-triggers\.md/, 'the refusal still points at the old file');
   assert.deepEqual(traceLines(dir), [],
     'a refused call recorded a detection that never happened');
 });

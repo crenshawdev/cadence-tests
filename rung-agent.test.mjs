@@ -658,6 +658,8 @@ test('agentFileText: a stem the table does not name renders nothing', () => {
 // requirement IDs and CONTEXT decisions from the files its dispatch names (D-07) - a deliberate change, approved with the phase.
 // The executor and verifier contracts were re-pinned when Plan 4 of that phase had each read what its dispatch names,
 // a brief or one composed input in place of the full documents (D-07) - a deliberate change, approved with the phase.
+// The planner, verifier, assumptions-analyzer and reviewer contracts were re-pinned when the prose-walk phase made the
+// prose agree with itself and wrote three rulings into it (D-01, D-07) - a deliberate change, approved with the phase.
 
 const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-assumptions-analyzer-high.md': '28de11d2f99891fda6a35f57e8cf9b60e28493fa29d05b51fc76791c4ead6c8d',
@@ -692,12 +694,12 @@ const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-verifier.md': '8db2621ba6f5a811ac11f50a1d5a94b6ea43e2b3a56a266b4c298329c98179b8',
   'cadence-core/references/reviewer-brief.md': '5c4998a37a4e89a95c2b9cd09d7408e7d79a73e0c76a499ffbfb400a8f937585',
   'cadence-core/templates/PLAN.md': 'a59f5a282a9b98fff322ccdd0ce76e2266235ac55c968a1735b9609d39446a71',
-  'skills/cad-assumptions-analyzer-contract/SKILL.md': 'ee690d7178a35d274d8c895367f6476df2160baf1e65889b92d55af3e94233bc',
+  'skills/cad-assumptions-analyzer-contract/SKILL.md': '637c7940cc7b645e762843a2b597fcc8fb4776824ef9d4183007ebab21368f0c',
   'skills/cad-executor-contract/SKILL.md': 'a6796931c5c6d6105cfb744842c597c777e0fb8efef1ace3a37583d94ded1d5b',
   'skills/cad-plan-checker-contract/SKILL.md': 'e7cb7328fe60c3e6fe0347498161b221cc1d045f83a9ba24ed8188ac4bdf73e4',
-  'skills/cad-planner-contract/SKILL.md': '80f937baa41669f796228138394341cfd9f1afd06ba9d8193fcc9995208e9e51',
-  'skills/cad-reviewer-contract/SKILL.md': '4a400deacee7dd963bf0eab8d5f5dae638dda8b2250ef43e06e5394046a392e2',
-  'skills/cad-verifier-contract/SKILL.md': 'e22b789cc1685b667d0a3eeb6dea6858a0b0cdb49dd8d7e0d91928f151a70b62',
+  'skills/cad-planner-contract/SKILL.md': '233174ee1c1fc5d627df408e7f5c9af21f2a0930068a367214717096b3391618',
+  'skills/cad-reviewer-contract/SKILL.md': '9755d622f39c2d4e4ed2a7ca068eb2761a526fb95da496d23e7355daaa5f5aae',
+  'skills/cad-verifier-contract/SKILL.md': 'df602d06ebda57b2f861c715e48b945c7c182542ce8cce3c0d3d6f79017e31b3',
 };
 
 test('a switch\'s text written into a contract surface changes its 3.8.6 digest', () => {

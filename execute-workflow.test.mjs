@@ -181,7 +181,7 @@ test('execute.md\'s writers guardrail names workflow-run, and execute-parallel.m
   const guard = flat(EXEC.slice(EXEC.indexOf('<guardrails>')));
   assert.match(guard, /THREE writers[^]*for a wave's executors `workflow-run`'s close/);
   assert.match(flat(readFileSync(join(REPO, 'cadence-core', 'references', 'execute-parallel.md'), 'utf8')), /and a second time by `references\/execute-workflow\.md`/);
-  assert.match(flat(EXEC), /ALL worktree ceremony exists inside the two opt-in branches, the parallel one and the workflow one, and nowhere else/);
+  assert.match(flat(EXEC), /ALL worktree ceremony exists inside `choose_path`'s parallel and workflow paths, and nowhere else/);
 });
 
 // --- the stops -------------------------------------------------------------------------------------------------
