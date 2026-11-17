@@ -11,10 +11,9 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, renameSync, existsSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, renameSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { PLANNING, ensureRoadmap, seamSource, run, isEntryFile, stampState } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap, seamSource, run, isEntryFile, stampState, scratch } from './planning.test.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
@@ -37,10 +36,11 @@ function writeCadenceManifest(root, name = 'cadence') {
  * `files`. Returns {repo, dir} - the seam is run with cwd inside the repo,
  * because it resolves the staged set from `git rev-parse --show-toplevel`.
  * `cadence: true` writes the manifest naming Cadence at the repo root, which
- * turns the census table on.
+ * turns the census table on. `t`, the calling test's context, removes the repo
+ * when that test ends.
  */
-export function leaseRepo({ phase = 1, plan = 'PLAN.md', files = ['a.txt'], body = '', cadence = false } = {}) {
-  const repo = mkdtempSync(join(tmpdir(), 'cad-lease-'));
+export function leaseRepo({ phase = 1, plan = 'PLAN.md', files = ['a.txt'], body = '', cadence = false } = {}, t) {
+  const repo = scratch('cad-lease-', t);
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: repo });
   execFileSync('git', ['config', 'user.name', 'T'], { cwd: repo });
@@ -74,8 +74,8 @@ export const stage = (repo, name, body = 'x') => {
   execFileSync('git', ['add', '--', name], { cwd: repo });
 };
 
-test('lease-check: a clean lease is ok:true', () => {
-  const { repo, dir } = leaseRepo({ files: ['a.txt', 'src/b.js'] });
+test('lease-check: a clean lease is ok:true', (t) => {
+  const { repo, dir } = leaseRepo({ files: ['a.txt', 'src/b.js'] }, t);
   stage(repo, 'a.txt');
   stage(repo, 'src/b.js');
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
@@ -85,8 +85,8 @@ test('lease-check: a clean lease is ok:true', () => {
   assert.equal(r._exit, 0);
 });
 
-test('lease-check: an undeclared staged path is refused and NAMED', () => {
-  const { repo, dir } = leaseRepo({ files: ['a.txt'] });
+test('lease-check: an undeclared staged path is refused and NAMED', (t) => {
+  const { repo, dir } = leaseRepo({ files: ['a.txt'] }, t);
   stage(repo, 'a.txt');
   stage(repo, 'b.txt');
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
@@ -97,8 +97,8 @@ test('lease-check: an undeclared staged path is refused and NAMED', () => {
   assert.equal(r._exit, 1);
 });
 
-test('lease-check: the plan\'s OWN report file is the one exemption', () => {
-  const { repo, dir } = leaseRepo({ files: ['a.txt'] });
+test('lease-check: the plan\'s OWN report file is the one exemption', (t) => {
+  const { repo, dir } = leaseRepo({ files: ['a.txt'] }, t);
   stage(repo, '.planning/phases/1/records/reports/plan-1.md');
   assert.equal(leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']).ok, true);
   // ...and nothing else under reports/ is: another plan's report is undeclared.
@@ -108,22 +108,22 @@ test('lease-check: the plan\'s OWN report file is the one exemption', () => {
   assert.deepEqual(r.undeclared, ['.planning/phases/1/records/reports/plan-2.md']);
 });
 
-test('lease-check: a report at the old reports/ path is no longer exempt', () => {
-  const { repo, dir } = leaseRepo({ files: ['a.txt'] });
+test('lease-check: a report at the old reports/ path is no longer exempt', (t) => {
+  const { repo, dir } = leaseRepo({ files: ['a.txt'] }, t);
   stage(repo, '.planning/phases/1/reports/plan-1.md');
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
   assert.equal(r.ok, false);
   assert.deepEqual(r.undeclared, ['.planning/phases/1/reports/plan-1.md']);
 });
 
-test('lease-check: the ROTATED report is exempt too, beside the canonical one', () => {
+test('lease-check: the ROTATED report is exempt too, beside the canonical one', (t) => {
   // AC5. Since #195 an executor rotates the previous run's report aside before
   // its first write, so a re-run holds `plan-1.md` and `plan-1.1.md` at once and
   // stages both on the same task commit. Under byte equality the rotated
   // sibling read as an undeclared file, blocking the executor for obeying its
   // own contract - the one place SUMMARY.md named the two halves as able to
   // collide.
-  const { repo, dir } = leaseRepo({ files: ['a.txt'] });
+  const { repo, dir } = leaseRepo({ files: ['a.txt'] }, t);
   stage(repo, '.planning/phases/1/records/reports/plan-1.md');
   stage(repo, '.planning/phases/1/records/reports/plan-1.1.md');
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
@@ -140,7 +140,7 @@ test('lease-check: the ROTATED report is exempt too, beside the canonical one', 
   assert.equal(leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']).ok, true);
 });
 
-test('lease-check: the widened exemption is still THIS plan\'s, not the directory\'s', () => {
+test('lease-check: the widened exemption is still THIS plan\'s, not the directory\'s', (t) => {
   // AC5's second half and AC6. `plan-2.md` is another plan's record and
   // `plan-11.md` is plan eleven's, neither of them plan 1 rotated; the two risk
   // diffs live in this same directory and a `risk_surface` checkpoint
@@ -150,7 +150,7 @@ test('lease-check: the widened exemption is still THIS plan\'s, not the director
   // not directly in the directory the exemption names.
   for (const name of ['plan-2.md', 'plan-11.md', 'plan-1-risk.diff',
     'plan-1-risk-task-2.diff', 'PLAN-1.1.MD', 'old/plan-1.1.md']) {
-    const { repo, dir } = leaseRepo({ files: ['a.txt'] });
+    const { repo, dir } = leaseRepo({ files: ['a.txt'] }, t);
     stage(repo, '.planning/phases/1/records/reports/plan-1.md');
     stage(repo, `.planning/phases/1/records/reports/${name}`);
     const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
@@ -161,12 +161,12 @@ test('lease-check: the widened exemption is still THIS plan\'s, not the director
   }
 });
 
-test('lease-check: a declared directory ends in / and matches by PREFIX', () => {
-  const { repo, dir } = leaseRepo({ files: ['src/auth/'] });
+test('lease-check: a declared directory ends in / and matches by PREFIX', (t) => {
+  const { repo, dir } = leaseRepo({ files: ['src/auth/'] }, t);
   stage(repo, 'src/auth/session.js');
   assert.equal(leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']).ok, true);
   // A non-slashed declaration never licenses a sibling by substring.
-  const b = leaseRepo({ files: ['src/auth'] });
+  const b = leaseRepo({ files: ['src/auth'] }, t);
   stage(b.repo, 'src/authority.js');
   assert.equal(leaseCheck(b.repo, b.dir, ['--phase', '1', '--plan', '1']).ok, false);
 });
@@ -176,8 +176,8 @@ test('lease-check: a declared directory ends in / and matches by PREFIX', () => 
 // unambiguous, the verdict and both counts are what they were before the
 // shared predicate existed, and an empty lease still licenses nothing.
 
-test('lease-check: a two-file clean lease still reports staged: 2, declared: 2 through the shared predicate', () => {
-  const { repo, dir } = leaseRepo({ files: ['a.txt', 'src/b.js'] });
+test('lease-check: a two-file clean lease still reports staged: 2, declared: 2 through the shared predicate', (t) => {
+  const { repo, dir } = leaseRepo({ files: ['a.txt', 'src/b.js'] }, t);
   stage(repo, 'a.txt');
   stage(repo, 'src/b.js');
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
@@ -188,8 +188,8 @@ test('lease-check: a two-file clean lease still reports staged: 2, declared: 2 t
   assert.equal(r._exit, 0);
 });
 
-test('lease-check: a plan whose files: list is empty is still refused as undeclared-files, exit 1', () => {
-  const { repo, dir } = leaseRepo({ files: [] });
+test('lease-check: a plan whose files: list is empty is still refused as undeclared-files, exit 1', (t) => {
+  const { repo, dir } = leaseRepo({ files: [] }, t);
   stage(repo, 'a.txt');
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -199,8 +199,8 @@ test('lease-check: a plan whose files: list is empty is still refused as undecla
   assert.equal(r._exit, 1);
 });
 
-test('lease-check: PLAN-<k>.md is selected by --plan', () => {
-  const { repo, dir, pdir } = leaseRepo({ plan: 'PLAN-1.md', files: ['a.txt'] });
+test('lease-check: PLAN-<k>.md is selected by --plan', (t) => {
+  const { repo, dir, pdir } = leaseRepo({ plan: 'PLAN-1.md', files: ['a.txt'] }, t);
   writeFileSync(join(pdir, 'PLAN-2.md'), '---\nphase: 1\nfiles:\n  - b.txt\n---\n# Plan 2\n');
   stage(repo, 'b.txt');
   assert.equal(leaseCheck(repo, dir, ['--phase', '1', '--plan', '2']).ok, true);
@@ -224,8 +224,8 @@ test('lease-check: PLAN-<k>.md is selected by --plan', () => {
 // `lease-check: a clean lease is ok:true` already proves; what has to be shown
 // is that the AMENDMENT is what changed the answer.
 
-test('lease-check: widening the plan\'s files: is what clears the fix commit', () => {
-  const { repo, dir, pdir } = leaseRepo({ phase: 1, plan: 'PLAN-2.md', files: ['a.txt'] });
+test('lease-check: widening the plan\'s files: is what clears the fix commit', (t) => {
+  const { repo, dir, pdir } = leaseRepo({ phase: 1, plan: 'PLAN-2.md', files: ['a.txt'] }, t);
 
   // The fix commit's staged set: the plan's own declared file, plus the file a
   // blocker/high finding named, which sits outside the lease.
@@ -255,12 +255,12 @@ test('lease-check: widening the plan\'s files: is what clears the fix commit', (
 });
 
 
-test('lease-check: a sole declaration of ./a.txt licenses nothing - the spelling reached neither reader', () => {
+test('lease-check: a sole declaration of ./a.txt licenses nothing - the spelling reached neither reader', (t) => {
   // The other half of the two-door refusal, at the enforcement end: the
   // declaration is dropped before this seam sees it, so staging the file it
   // MEANT is undeclared, and the named diagnostic rides the same envelope that
   // tells the author why.
-  const { repo, dir } = leaseRepo({ files: ['./a.txt'] });
+  const { repo, dir } = leaseRepo({ files: ['./a.txt'] }, t);
   stage(repo, 'a.txt');
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -272,8 +272,8 @@ test('lease-check: a sole declaration of ./a.txt licenses nothing - the spelling
   assert.equal(r._exit, 1);
 });
 
-test('lease-check: a missing plan is ok:false, never an empty-lease pass', () => {
-  const { repo, dir } = leaseRepo({ files: ['a.txt'] });
+test('lease-check: a missing plan is ok:false, never an empty-lease pass', (t) => {
+  const { repo, dir } = leaseRepo({ files: ['a.txt'] }, t);
   stage(repo, 'a.txt');
   const r = leaseCheck(repo, dir, ['--phase', '9', '--plan', '1']);
   assert.equal(r.ok, false);
@@ -281,10 +281,10 @@ test('lease-check: a missing plan is ok:false, never an empty-lease pass', () =>
   assert.equal(r._exit, 1);
 });
 
-test('lease-check: an unreadable staged set is ok:false, never a pass', () => {
+test('lease-check: an unreadable staged set is ok:false, never a pass', (t) => {
   // Outside any git repo `rev-parse --show-toplevel` fails, and an unprovable
   // lease must refuse rather than report a clean one.
-  const outside = mkdtempSync(join(tmpdir(), 'cad-lease-nogit-'));
+  const outside = scratch('cad-lease-nogit-', t);
   const dir = join(outside, '.planning');
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
   ensureRoadmap(dir);
@@ -294,14 +294,14 @@ test('lease-check: an unreadable staged set is ok:false, never a pass', () => {
   assert.equal(r.reason, 'no-staged-set');
 });
 
-test('lease-check: the no-staged-set detail names the failure without a credential', () => {
+test('lease-check: the no-staged-set detail names the failure without a credential', (t) => {
   // The fourth emit site EXP-01 covers, end to end rather than by source read:
   // `GIT_DIR` at an unreadable path makes the seam's own `git rev-parse
   // --show-toplevel` fail with `fatal: not a git repository: '<path>'`, and git
   // quotes the path back verbatim - so a path carrying userinfo puts a
   // credential straight into `detail`. Measured 2026-08-13 on git 2.55.0. No
   // network: the path does not exist and `.invalid` is reserved.
-  const outside = mkdtempSync(join(tmpdir(), 'cad-lease-leak-'));
+  const outside = scratch('cad-lease-leak-', t);
   const dir = join(outside, '.planning');
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
   ensureRoadmap(dir);
@@ -382,23 +382,23 @@ test('source: planning.mjs\'s no-staged-set detail goes through redactUrl', () =
   assert.match(src, /could not read the staged set: \$\{redactUrl\(/);
 });
 
-test('lease-check: nothing staged is a clean lease, not a refusal', () => {
-  const { repo, dir } = leaseRepo({ files: ['a.txt'] });
+test('lease-check: nothing staged is a clean lease, not a refusal', (t) => {
+  const { repo, dir } = leaseRepo({ files: ['a.txt'] }, t);
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
   assert.equal(r.ok, true);
   assert.equal(r.staged, 0);
 });
 
-test('lease-check: a plan declaring nothing licenses nothing', () => {
-  const { repo, dir } = leaseRepo({ files: [] });
+test('lease-check: a plan declaring nothing licenses nothing', (t) => {
+  const { repo, dir } = leaseRepo({ files: [] }, t);
   stage(repo, 'a.txt');
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
   assert.equal(r.ok, false);
   assert.deepEqual(r.undeclared, ['a.txt']);
 });
 
-test('lease-check: bad flags are refused before any read', () => {
-  const { repo, dir } = leaseRepo({});
+test('lease-check: bad flags are refused before any read', (t) => {
+  const { repo, dir } = leaseRepo({}, t);
   assert.equal(leaseCheck(repo, dir, ['--plan', '1']).reason, 'bad-args');
   assert.equal(leaseCheck(repo, dir, ['--phase', '1']).reason, 'bad-args');
   assert.equal(leaseCheck(repo, dir, ['--phase', '1', '--plan', 'x']).reason, 'bad-args');
@@ -415,11 +415,11 @@ const leaseGit = (repo, args) => execFileSync('git', args, {
   env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
 });
 
-test('lease-check: a rename is checked on BOTH sides, so another plan\'s file is not renamed away', () => {
+test('lease-check: a rename is checked on BOTH sides, so another plan\'s file is not renamed away', (t) => {
   // src/other.js belongs to some OTHER plan: committed, and NOT declared here.
   // Renaming it onto this plan's declared `a.txt` destroys it, and a
   // destination-only read reports a clean lease.
-  const { repo, dir } = leaseRepo({ files: ['a.txt'] });
+  const { repo, dir } = leaseRepo({ files: ['a.txt'] }, t);
   const src = join(repo, 'src', 'other.js');
   mkdirSync(dirname(src), { recursive: true });
   writeFileSync(src, 'module.exports = 1;\n');
@@ -434,10 +434,10 @@ test('lease-check: a rename is checked on BOTH sides, so another plan\'s file is
     `the rename SOURCE must be named: ${JSON.stringify(r)}`);
 });
 
-test('lease-check: a declared non-ASCII path is admitted, not refused for its bytes', () => {
+test('lease-check: a declared non-ASCII path is admitted, not refused for its bytes', (t) => {
   // At default `core.quotePath` git returns `"src/caf\303\251.js"` - quoted and
   // octal-escaped - and the lease refuses a path it was itself handed.
-  const { repo, dir } = leaseRepo({ files: ['src/café.js'] });
+  const { repo, dir } = leaseRepo({ files: ['src/café.js'] }, t);
   stage(repo, 'src/café.js');
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -460,13 +460,13 @@ const rawPlan = (pdir, byte) => writeFileSync(join(pdir, 'PLAN.md'), Buffer.conc
   Buffer.from('.js\n---\n# Plan\n'),
 ]));
 
-test('lease-check: a rename between two un-decodable paths is never a clean lease', () => {
+test('lease-check: a rename between two un-decodable paths is never a clean lease', (t) => {
   // `git mv src/caf<0xE9>.js src/caf<0xFF>.js` with only the DESTINATION
   // declared destroys another plan's file. git reports it correctly
   // (`R100\0src/caf\351.js\0src/caf\377.js\0`), but reading that stream as a
   // utf8 STRING maps both invalid bytes to U+FFFD, the two paths collapse to
   // one, and the source is licensed by the destination's declaration.
-  const { repo, dir, pdir } = leaseRepo({ files: [] });
+  const { repo, dir, pdir } = leaseRepo({ files: [] }, t);
   rawPlan(pdir, 0xFF);
   const src = rawLeasePath(repo, 0xE9);
   const dst = rawLeasePath(repo, 0xFF);
@@ -484,12 +484,12 @@ test('lease-check: a rename between two un-decodable paths is never a clean leas
   assert.deepEqual(r.unrepresentable, ['"src/caf\\351.js"', '"src/caf\\377.js"']);
 });
 
-test('lease-check: a staged path that is not valid UTF-8 is refused BY NAME, never guessed at', () => {
+test('lease-check: a staged path that is not valid UTF-8 is refused BY NAME, never guessed at', (t) => {
   // The declared side is read from a utf8 plan file, so it cannot represent
   // this path either. Neither side of the comparison can be honest about it and
   // the gate says so, rather than matching two replacement characters and
   // licensing every sibling that differs only in its invalid bytes.
-  const { repo, dir, pdir } = leaseRepo({ files: [] });
+  const { repo, dir, pdir } = leaseRepo({ files: [] }, t);
   rawPlan(pdir, 0xE9);
   leaseGit(repo, ['add', '-A']);
   leaseGit(repo, ['commit', '-qm', 'seed']);
@@ -514,8 +514,8 @@ test('lease-check: a staged path that is not valid UTF-8 is refused BY NAME, nev
 // identity - so the pair below asserts each half is where it belongs and not in
 // the other.
 
-test('lease-check: a staged census FILE is refused by a reason of its own, and leaves a record', () => {
-  const { repo, dir } = leaseRepo({ files: ['a.txt'], cadence: true });
+test('lease-check: a staged census FILE is refused by a reason of its own, and leaves a record', (t) => {
+  const { repo, dir } = leaseRepo({ files: ['a.txt'], cadence: true }, t);
   stage(repo, 'tests/trace.test.mjs');
 
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
@@ -538,11 +538,11 @@ test('lease-check: a staged census FILE is refused by a reason of its own, and l
   assert.equal(ev.undeclared, undefined, 'the offending file list belongs to the envelope');
 });
 
-test('lease-check: an undeclared path holding no count keeps the old reason, and writes nothing', () => {
+test('lease-check: an undeclared path holding no count keeps the old reason, and writes nothing', (t) => {
   // The append IS the distinguishing signal. Widening it to every refusal would
   // destroy the distinction criterion 6 asks for, so this arm asserts the trace
   // file was never created at all - not merely that it holds no census line.
-  const { repo, dir } = leaseRepo({ files: ['a.txt'], cadence: true });
+  const { repo, dir } = leaseRepo({ files: ['a.txt'], cadence: true }, t);
   stage(repo, 'src/other.js');
 
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
@@ -555,11 +555,11 @@ test('lease-check: an undeclared path holding no count keeps the old reason, and
   assert.equal(r._exit, 1);
 });
 
-test('lease-check: outside Cadence\'s own repository a holder-named path is only undeclared-files (D-20)', () => {
+test('lease-check: outside Cadence\'s own repository a holder-named path is only undeclared-files (D-20)', (t) => {
   // `CENSUSES` is Cadence's own hand-maintained table. A user's `tests/` is an
   // ordinary path there, so no manifest naming `cadence` means no census
   // refusal and no `census_undeclared` event.
-  const { repo, dir } = leaseRepo({ files: ['a.txt'] });
+  const { repo, dir } = leaseRepo({ files: ['a.txt'] }, t);
   stage(repo, 'tests/trace.test.mjs');
 
   const r = leaseCheck(repo, dir, ['--phase', '1', '--plan', '1']);
@@ -595,8 +595,8 @@ test('lease-check: outside Cadence\'s own repository a holder-named path is only
  * Cadence at the project root (D-20), which turns the census table on; it is
  * off by default and `writePlanTimePlan` ignores it.
  */
-function planTimeTree(files, body = '', how) {
-  const cwd = mkdtempSync(join(tmpdir(), 'cad-plantime-'));
+function planTimeTree(t, files, body = '', how) {
+  const cwd = scratch('cad-plantime-', t);
   const dir = join(cwd, '.planning');
   const pdir = join(dir, 'phases', '1');
   mkdirSync(pdir, { recursive: true });
@@ -679,8 +679,8 @@ const PHASE5_AT_RISK = [
 
 const missingFiles = (r) => (r.censuses_at_risk || []).map((c) => c.missing).sort();
 
-test('lease-check --plan-time: phase 5\'s own lease names every census its work would move', () => {
-  const { cwd, dir } = planTimeTree(PHASE5_LEASE, '', { cadence: true });
+test('lease-check --plan-time: phase 5\'s own lease names every census its work would move', (t) => {
+  const { cwd, dir } = planTimeTree(t, PHASE5_LEASE, '', { cadence: true });
 
   const r = planTime(cwd, dir);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -697,14 +697,14 @@ test('lease-check --plan-time: phase 5\'s own lease names every census its work 
   assert.match(r.hint, /files:/);
 });
 
-test('lease-check --plan-time: the answer needs no repository, and spawns no git', () => {
+test('lease-check --plan-time: the answer needs no repository, and spawns no git', (t) => {
   // The commit-time arm cannot answer at all outside a repository - it refuses
   // `no-staged-set` - so a census refusal here settles that this arm read none.
   // The stub is the belt to that suspenders: it shadows `git` on the child's
   // PATH and records every argv it is handed, so a call would leave a file
   // behind even if its output changed nothing.
-  const { cwd, dir } = planTimeTree(PHASE5_LEASE, '', { cadence: true });
-  const stubDir = mkdtempSync(join(tmpdir(), 'cad-plantime-bin-'));
+  const { cwd, dir } = planTimeTree(t, PHASE5_LEASE, '', { cadence: true });
+  const stubDir = scratch('cad-plantime-bin-', t);
   const argvLog = join(stubDir, 'argv.log');
   writeFileSync(join(stubDir, 'git'),
     `#!/bin/sh\necho "git $*" >> '${argvLog}'\nexit 0\n`, { mode: 0o755 });
@@ -717,12 +717,12 @@ test('lease-check --plan-time: the answer needs no repository, and spawns no git
     `the plan-time arm spawned git: ${existsSync(argvLog) ? readFileSync(argvLog, 'utf8') : ''}`);
 });
 
-test('lease-check --plan-time: the arm reads declared PATHS, never the plan\'s instructions', () => {
+test('lease-check --plan-time: the arm reads declared PATHS, never the plan\'s instructions', (t) => {
   // Same tree, same plan file, two different bodies: byte-identical stdout is
   // what proves the Action prose reached nothing. `- **Files:**` appears in
   // neither body on purpose - that IS a path declaration to `parsePlanFiles`,
   // and a body carrying one would be testing the union rather than the prose.
-  const { cwd, dir, pdir } = planTimeTree(PHASE5_LEASE,
+  const { cwd, dir, pdir } = planTimeTree(t, PHASE5_LEASE,
     '### Task 1: split the seam\n\n- **Action:** re-pin every census in the tree'
     + ' and delete the registry row that watches it.\n', { cadence: true });
   const first = planTimeRaw(cwd, dir);
@@ -735,8 +735,8 @@ test('lease-check --plan-time: the arm reads declared PATHS, never the plan\'s i
   assert.equal(JSON.parse(first.stdout).reason, 'census-at-risk');
 });
 
-test('lease-check --plan-time: a lease declaring the holding files is a PASS, not a silence', () => {
-  const { cwd, dir } = planTimeTree([...PHASE5_LEASE, ...PHASE5_AT_RISK], '', { cadence: true });
+test('lease-check --plan-time: a lease declaring the holding files is a PASS, not a silence', (t) => {
+  const { cwd, dir } = planTimeTree(t, [...PHASE5_LEASE, ...PHASE5_AT_RISK], '', { cadence: true });
 
   const r = planTime(cwd, dir);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -745,16 +745,16 @@ test('lease-check --plan-time: a lease declaring the holding files is a PASS, no
   assert.equal(r._exit, 0);
 });
 
-test('lease-check --plan-time: outside Cadence\'s own repository no census applies (D-20)', () => {
+test('lease-check --plan-time: outside Cadence\'s own repository no census applies (D-20)', (t) => {
   // The same lease that is census-at-risk above, in a tree with no manifest and
   // in one whose manifest names another plugin: both answer ok:true.
-  const bare = planTimeTree(PHASE5_LEASE);
+  const bare = planTimeTree(t, PHASE5_LEASE);
   const a = planTime(bare.cwd, bare.dir);
   assert.equal(a.ok, true, JSON.stringify(a));
   assert.equal(a.censuses_at_risk, undefined);
   assert.equal(a._exit, 0);
 
-  const other = planTimeTree(PHASE5_LEASE);
+  const other = planTimeTree(t, PHASE5_LEASE);
   writeCadenceManifest(other.cwd, 'someone-elses-plugin');
   const b = planTime(other.cwd, other.dir);
   assert.equal(b.ok, true, JSON.stringify(b));
@@ -762,10 +762,10 @@ test('lease-check --plan-time: outside Cadence\'s own repository no census appli
   assert.equal(b._exit, 0);
 });
 
-test('lease-check --plan-time: a phase with no plan file is still no-plan on this arm', () => {
+test('lease-check --plan-time: a phase with no plan file is still no-plan on this arm', (t) => {
   // The plan resolution is SHARED with the commit-time arm and stays above the
   // branch: an unreadable lease is never a plan-time pass either.
-  const cwd = mkdtempSync(join(tmpdir(), 'cad-plantime-'));
+  const cwd = scratch('cad-plantime-', t);
   mkdirSync(join(cwd, '.planning', 'phases', '1'), { recursive: true });
   ensureRoadmap(join(cwd, '.planning'));
 
@@ -795,8 +795,8 @@ test('lease-check --plan-time: a phase with no plan file is still no-plan on thi
 /** A frontmatter line the grammar cannot read, above a `files:` key it can. */
 const UNREADABLE_LINE = '%% not a key line\n';
 
-test('lease-check --plan-time and plan-overlap read ONE two-plan fixture the same way', () => {
-  const { cwd, dir, pdir } = planTimeTree(['src/a.mjs'], '',
+test('lease-check --plan-time and plan-overlap read ONE two-plan fixture the same way', (t) => {
+  const { cwd, dir, pdir } = planTimeTree(t, ['src/a.mjs'], '',
     { name: 'PLAN-1.md', extra: UNREADABLE_LINE });
   writePlanTimePlan(pdir, ['src/b.mjs'], '', { name: 'PLAN-2.md', key: 'filez' });
 
@@ -825,8 +825,8 @@ test('lease-check --plan-time and plan-overlap read ONE two-plan fixture the sam
   assert.equal(second._exit, 1);
 });
 
-test('lease-check --plan-time refuses a plan whose depends_on cannot be read', () => {
-  const { cwd, dir } = planTimeTree(['src/a.mjs'], '',
+test('lease-check --plan-time refuses a plan whose depends_on cannot be read', (t) => {
+  const { cwd, dir } = planTimeTree(t, ['src/a.mjs'], '',
     { name: 'PLAN-1.md', extra: 'depends_on: "1\n' });
   const r = planTime(cwd, dir, undefined, 1);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -835,11 +835,11 @@ test('lease-check --plan-time refuses a plan whose depends_on cannot be read', (
   assert.equal(r._exit, 1);
 });
 
-test('lease-check --plan-time: two plans that declare real paths are a PASS on both', () => {
+test('lease-check --plan-time: two plans that declare real paths are a PASS on both', (t) => {
   // The other half of the pair above, on the same builder: this is a fail-closed
   // rule and not a blanket refusal, so a two-plan fixture whose leases read
   // cleanly and put no census at risk still answers ok:true on each plan number.
-  const { cwd, dir, pdir } = planTimeTree(['src/a.mjs'], '', { name: 'PLAN-1.md' });
+  const { cwd, dir, pdir } = planTimeTree(t, ['src/a.mjs'], '', { name: 'PLAN-1.md' });
   writePlanTimePlan(pdir, ['src/b.mjs'], '', { name: 'PLAN-2.md' });
 
   for (const k of [1, 2]) {
@@ -851,9 +851,9 @@ test('lease-check --plan-time: two plans that declare real paths are a PASS on b
   }
 });
 
-test('lease-check: a staged set over 1 MiB is read, not refused as no-staged-set', () => {
+test('lease-check: a staged set over 1 MiB is read, not refused as no-staged-set', (t) => {
   // one blob and many index entries, no working files: the staged list alone passes git's 1 MiB default read buffer
-  const { repo, dir } = leaseRepo({ files: ['big/'] });
+  const { repo, dir } = leaseRepo({ files: ['big/'] }, t);
   const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: repo, input: 'x', encoding: 'utf8' }).trim();
   const pad = 'p'.repeat(180);
   const entries = [];

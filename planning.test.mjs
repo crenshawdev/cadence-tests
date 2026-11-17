@@ -89,12 +89,12 @@ export function treeOf(dir) {
 }
 
 /** An unstamped v4.0 project, its logs still at the top: what a hook meets before the main session converts it. */
-export function v40Project() {
+export function v40Project(t) {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Base', checked: true }, { n: 2, name: 'Auth' }],
     phases: { 1: { plan: true, summary: true }, 2: { plan: ['PLAN-1.md'] } },
     cursor: { phase: 2, total: 2, name: 'Auth', status: 'planned', next: '/cad-execute 2', updated: '2026-02-03' },
-  });
+  }, t);
   writeFileSync(join(dir, 'trace.jsonl'), '{"old":"trace"}\n');
   writeFileSync(join(dir, 'reads.jsonl'), '{"old":"reads"}\n');
   return dir;
@@ -114,6 +114,16 @@ export function verifyChecked(dir) {
   if (wrote.ok !== true) throw new Error(`verifyChecked: ${wrote.reason} ${wrote.detail}`);
 }
 
+/**
+ * A fresh mkdtemp root, removed when `t` - the calling test's context - ends. A function declaration, so the siblings
+ * this file and they import in a cycle can call it before either finishes loading. No `t`, no removal.
+ */
+export function scratch(prefix, t) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  t?.after(() => rmSync(root, { recursive: true, force: true }));
+  return root;
+}
+
 // ---------------------------------------------------------------------------
 // Fixture builder: fabricate a .planning tree from a compact spec.
 //   makeTree({
@@ -123,10 +133,12 @@ export function verifyChecked(dir) {
 //     reqs:    [['REQ-1', 1, 'Complete'], ['REQ-9', 2, 'Deferred']],
 //     cursor:  {phase:2, total:3, name:'Auth', status:'planned',
 //               next:'/cad-execute 2', updated:'2026-01-01'},
-//   }) -> absolute path of the .planning dir
+//   }, t) -> absolute path of the .planning dir
+// `t` is the calling test's context: given one, the mkdtemp root above the
+// .planning dir goes when that test ends. Left out, the tree stays, as before.
 // ---------------------------------------------------------------------------
-export function makeTree(spec) {
-  const dir = join(mkdtempSync(join(tmpdir(), 'cad-planning-')), '.planning');
+export function makeTree(spec, t) {
+  const dir = join(scratch('cad-planning-', t), '.planning');
   mkdirSync(dir, { recursive: true });
 
   if (spec.roadmap) {
@@ -269,8 +281,8 @@ const reEncode = (dir, nl) => {
   writeFileSync(f, readFileSync(f, 'utf8').replace(/\n/g, nl));
 };
 
-test('renumber remove: a CRLF roadmap renumbers correctly and stays CRLF', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
+test('renumber remove: a CRLF roadmap renumbers correctly and stays CRLF', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] }, t);
   reEncode(dir, '\r\n');
 
   const r = run(['renumber', 'remove', '--n', '1'], dir);
@@ -282,8 +294,8 @@ test('renumber remove: a CRLF roadmap renumbers correctly and stays CRLF', () =>
   assert.equal(/[^\r]\n/.test(after), false);               // every LF still CRLF
 });
 
-test('renumber remove: a lone-CR roadmap is refused, not silently corrupted', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
+test('renumber remove: a lone-CR roadmap is refused, not silently corrupted', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] }, t);
   reEncode(dir, '\r');
   const before = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
 
@@ -296,8 +308,8 @@ test('renumber remove: a lone-CR roadmap is refused, not silently corrupted', ()
   assert.equal((before.match(/### Phase \d/g) || []).length, 2);
 });
 
-test('status: a lone-CR roadmap refuses rather than reporting a closed milestone', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+test('status: a lone-CR roadmap refuses rather than reporting a closed milestone', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   reEncode(dir, '\r');
   const r = run(['status'], dir);
   assert.equal(r.ok, false);
@@ -305,8 +317,8 @@ test('status: a lone-CR roadmap refuses rather than reporting a closed milestone
   assert.equal(r.cycle, undefined); // never mistaken for a pruned roadmap
 });
 
-test('renumber: refuses to operate ON a decimal phase', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
+test('renumber: refuses to operate ON a decimal phase', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] }, t);
   assert.equal(run(['renumber', 'remove', '--n', '1.5'], dir).reason, 'bad-args');
   assert.equal(run(['renumber', 'insert', '--at', '1.5'], dir).reason, 'bad-args');
 });
@@ -314,8 +326,8 @@ test('renumber: refuses to operate ON a decimal phase', () => {
 // The decimal answer and the missing-value answer are different repairs, so
 // the decimal one keeps its own wording rather than collapsing into requireInt's.
 // Insert names the seam a decimal goes in through; remove has none to name (#394).
-test('renumber: the decimal refusal names decimals, not a missing flag', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
+test('renumber: the decimal refusal names decimals, not a missing flag', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] }, t);
   const ins = run(['renumber', 'insert', '--at', '2.1'], dir).detail;
   const rem = run(['renumber', 'remove', '--n', '2.1'], dir).detail;
   assert.match(ins, /integer phases/);
@@ -329,8 +341,8 @@ test('renumber: the decimal refusal names decimals, not a missing flag', () => {
 // `renumber remove --n` with no value used to pass the NaN screen as 1 and
 // delete phase 1 - its roadmap line, its detail section and its directory.
 for (const [sub, flag] of [['remove', 'n'], ['insert', 'at']]) {
-  test(`renumber ${sub}: a valueless --${flag} refuses; roadmap and dirs untouched`, () => {
-    const dir = renumberTree();
+  test(`renumber ${sub}: a valueless --${flag} refuses; roadmap and dirs untouched`, (t) => {
+    const dir = renumberTree(t);
     const before = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
     const dirsBefore = readdirSync(join(dir, 'phases')).sort();
     const r = run(['renumber', sub, `--${flag}`], dir);
@@ -341,8 +353,8 @@ for (const [sub, flag] of [['remove', 'n'], ['insert', 'at']]) {
     assert.deepEqual(readdirSync(join(dir, 'phases')).sort(), dirsBefore);
   });
 
-  test(`renumber ${sub}: a non-numeric --${flag} refuses the same way`, () => {
-    const dir = renumberTree();
+  test(`renumber ${sub}: a non-numeric --${flag} refuses the same way`, (t) => {
+    const dir = renumberTree(t);
     const before = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
     const r = run(['renumber', sub, `--${flag}`, 'abc'], dir);
     assert.equal(r.ok, false);
@@ -354,12 +366,12 @@ for (const [sub, flag] of [['remove', 'n'], ['insert', 'at']]) {
 // A tree with an out-of-roadmap decimal Phase 2.1 and a cursor parked on it -
 // mirrors the decimal test above rather than passing n:2.1 to makeTree, whose
 // `**Depends on:** Phase ${p.n - 1}` line would render a float artifact.
-function decimalCursorTree() {
+function decimalCursorTree(t) {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }, { n: 3, name: 'Three' }],
     phases: { 1: { plan: true }, 2: { plan: true }, 3: { plan: true } },
     cursor: { phase: 2.1, total: 4, name: 'Patch', status: 'planned', next: '/cad-execute 2.1', updated: '2026-01-01' },
-  });
+  }, t);
   const roadmap = readFileSync(join(dir, 'ROADMAP.md'), 'utf8').replace(
     '- [ ] **Phase 3: Three**',
     '- [ ] **Phase 2.1: Patch** - see phases/2.1/ notes\n- [ ] **Phase 3: Three**');
@@ -368,8 +380,8 @@ function decimalCursorTree() {
   return dir;
 }
 
-test('renumber: a decimal cursor is warned about, never shifted (#37)', () => {
-  const dir1 = decimalCursorTree();
+test('renumber: a decimal cursor is warned about, never shifted (#37)', (t) => {
+  const dir1 = decimalCursorTree(t);
   const r1 = run(['renumber', 'remove', '--n', '1'], dir1);
   assert.equal(r1.ok, true);
   assert.match(r1.warn, /2\.1/);
@@ -380,7 +392,7 @@ test('renumber: a decimal cursor is warned about, never shifted (#37)', () => {
   assert.match(readFileSync(join(dir1, 'ROADMAP.md'), 'utf8'), /\*\*Phase 2\.1: Patch\*\*/);
   assert.ok(existsSync(join(dir1, 'phases', '2.1')));
 
-  const dir2 = decimalCursorTree();
+  const dir2 = decimalCursorTree(t);
   const r2 = run(['renumber', 'insert', '--at', '2'], dir2);
   assert.equal(r2.ok, true);
   const cursor2 = run(['cursor', 'get'], dir2);
@@ -388,7 +400,7 @@ test('renumber: a decimal cursor is warned about, never shifted (#37)', () => {
   assert.equal(cursor2.total, 4); // the list's length: the inserted phase's line is added afterwards
   assert.ok(r2.warn);
 
-  const dir3 = decimalCursorTree();
+  const dir3 = decimalCursorTree(t);
   const r3 = run(['renumber', 'remove', '--n', '3'], dir3);
   assert.equal(r3.ok, true);
   assert.equal(r3.warn, undefined); // shift point sits above the cursor - nothing moved (D-10)
@@ -396,11 +408,11 @@ test('renumber: a decimal cursor is warned about, never shifted (#37)', () => {
   assert.equal(cursor3.phase, 2.1);
 });
 
-test('phase-done: a decimal phase flips its own line, dot not a wildcard', () => {
+test('phase-done: a decimal phase flips its own line, dot not a wildcard', (t) => {
   // Phase 291 must NOT be flipped by --n 2.1 (the unescaped-regex bug).
   const dir = makeTree({
     roadmap: [{ n: 2.1, name: 'Insert' }, { n: 291, name: 'Big' }],
-  });
+  }, t);
   const r = run(['phase-done', '--n', '2.1'], dir);
   assert.equal(r.ok, true);
   const after = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
@@ -439,10 +451,10 @@ for (const row of BLANK_DIRS) {
   });
 }
 
-test('status: a genuinely ABSENT --dir still defaults to ./.planning', () => {
+test('status: a genuinely ABSENT --dir still defaults to ./.planning', (t) => {
   // The other half of the refusal: absent and present-with-nothing-usable are
   // different inputs, and only the second one refuses.
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One', checked: false }] });
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One', checked: false }] }, t);
   const r = spawnSync('node', [PLANNING, 'status'], { encoding: 'utf8', cwd: dirname(dir) });
   const body = JSON.parse(r.stdout);
   assert.equal(body.ok, true, r.stdout);
@@ -467,16 +479,16 @@ test('status: a genuinely ABSENT --dir still defaults to ./.planning', () => {
 // which is where the capability `lib/require-int.mjs` built still lives, and
 // the tree that holds both is now a `bad-args` row naming both spellings.
 
-test('lease-check: --phase 1.10 leases against phases/1.10 when no phases/1.1 exists', () => {
-  const { repo, dir } = leaseRepo({ phase: '1.10', files: ['one-ten.txt'] });
+test('lease-check: --phase 1.10 leases against phases/1.10 when no phases/1.1 exists', (t) => {
+  const { repo, dir } = leaseRepo({ phase: '1.10', files: ['one-ten.txt'] }, t);
   stage(repo, 'one-ten.txt');
   const r = leaseCheck(repo, dir, ['--phase', '1.10', '--plan', '1']);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.plan_file, '.planning/phases/1.10/PLAN.md');
 });
 
-test('lease-check: --phase 1.10 refuses when phases/1.1 is also on the tree', () => {
-  const { repo, dir } = leaseRepo({ phase: '1.1', files: ['one-one.txt'] });
+test('lease-check: --phase 1.10 refuses when phases/1.1 is also on the tree', (t) => {
+  const { repo, dir } = leaseRepo({ phase: '1.1', files: ['one-one.txt'] }, t);
   const pdir = join(dir, 'phases', '1.10');
   mkdirSync(pdir, { recursive: true });
   writeFileSync(join(pdir, 'PLAN.md'), '---\nphase: 1.10\nfiles:\n  - one-ten.txt\n---\n# Plan\n');
@@ -493,8 +505,8 @@ test('lease-check: --phase 1.10 refuses when phases/1.1 is also on the tree', ()
   assert.deepEqual(other.undeclared, ['one-ten.txt']);
 });
 
-test('lease-check: --phase 08 names phases/08 when no phases/8 exists', () => {
-  const { repo, dir } = leaseRepo({ phase: 8, files: ['a.txt'] });
+test('lease-check: --phase 08 names phases/08 when no phases/8 exists', (t) => {
+  const { repo, dir } = leaseRepo({ phase: 8, files: ['a.txt'] }, t);
   // The tree carries phases/8, so `08` is the colliding spelling. Drop the
   // legal directory and `08` is addressed verbatim again, exactly as before.
   rmSync(join(dir, 'phases', '8'), { recursive: true });
@@ -506,8 +518,8 @@ test('lease-check: --phase 08 names phases/08 when no phases/8 exists', () => {
   assert.equal(r.hint, '/cad-plan 08');
 });
 
-test('lease-check: --phase 08 beside a legal phases/8 is refused, naming both', () => {
-  const { repo, dir } = leaseRepo({ phase: 8, files: ['a.txt'] });
+test('lease-check: --phase 08 beside a legal phases/8 is refused, naming both', (t) => {
+  const { repo, dir } = leaseRepo({ phase: 8, files: ['a.txt'] }, t);
   stage(repo, 'a.txt');
   const r = leaseCheck(repo, dir, ['--phase', '08', '--plan', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -516,16 +528,16 @@ test('lease-check: --phase 08 beside a legal phases/8 is refused, naming both', 
   assert.match(r.detail, /phases[/\\]8[/\\]/);
 });
 
-test('plan-overlap: --phase 08 reports no-phase-dir naming phases/08 when no phases/8 exists', () => {
-  const dir = makeTree({ roadmap: [{ n: 8, name: 'Eight' }], phases: { 9: { plan: true } } });
+test('plan-overlap: --phase 08 reports no-phase-dir naming phases/08 when no phases/8 exists', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 8, name: 'Eight' }], phases: { 9: { plan: true } } }, t);
   const r = run(['plan-overlap', '--phase', '08'], dir);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'no-phase-dir');
   assert.match(r.detail, /phases[/\\]08 not found$/);
 });
 
-test('plan-overlap: --phase 08 beside a legal phases/8 is refused, naming both', () => {
-  const dir = makeTree({ roadmap: [{ n: 8, name: 'Eight' }], phases: { 8: { plan: true } } });
+test('plan-overlap: --phase 08 beside a legal phases/8 is refused, naming both', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 8, name: 'Eight' }], phases: { 8: { plan: true } } }, t);
   const r = run(['plan-overlap', '--phase', '08'], dir);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'bad-args');
@@ -535,8 +547,8 @@ test('plan-overlap: --phase 08 beside a legal phases/8 is refused, naming both',
   assert.equal(run(['plan-overlap', '--phase', '8'], dir).ok, true);
 });
 
-test('plan-overlap: --phase 1.10 intersects phases/1.10\'s plans when no phases/1.1 exists', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+test('plan-overlap: --phase 1.10 intersects phases/1.10\'s plans when no phases/1.1 exists', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   // A normalizing reader would look in `phases/1.1/` and answer "fewer than two
   // plans - nothing to intersect"; this one reads the caller's own spelling.
   const ten = join(dir, 'phases', '1.10');
@@ -552,8 +564,8 @@ test('plan-overlap: --phase 1.10 intersects phases/1.10\'s plans when no phases/
   assert.equal(r.phase, 1.1);
 });
 
-test('plan-overlap: --phase 1.10 is refused once phases/1.1 is on the tree too', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+test('plan-overlap: --phase 1.10 is refused once phases/1.1 is on the tree too', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   const one = join(dir, 'phases', '1.1');
   mkdirSync(one, { recursive: true });
   writeFileSync(join(one, 'PLAN.md'), '---\nphase: 1.1\nfiles:\n  - a.txt\n---\n# Plan\n');
@@ -568,8 +580,8 @@ test('plan-overlap: --phase 1.10 is refused once phases/1.1 is on the tree too',
   assert.equal(r.phase, undefined);
 });
 
-test('uat: --phase 1.10 reads phases/1.10/UAT.md when no phase 1.1 directory exists', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { uat: [{ status: 'pass' }] } } });
+test('uat: --phase 1.10 reads phases/1.10/UAT.md when no phase 1.1 directory exists', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { uat: [{ status: 'pass' }] } } }, t);
   const r = run(['uat', 'status', '--phase', '1.10'], dir);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'no-uat');
@@ -584,8 +596,8 @@ test('uat: --phase 1.10 reads phases/1.10/UAT.md when no phase 1.1 directory exi
   assert.match(readFileSync(join(dir, 'phases', '1.10', 'UAT.md'), 'utf8'), /^phase: 1\.10$/m);
 });
 
-test('uat: --phase 1.10 is refused on a tree holding phase 1.1, leaving its checklist alone', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { '1.1': { uat: [{ status: 'pass' }] } } });
+test('uat: --phase 1.10 is refused on a tree holding phase 1.1, leaving its checklist alone', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { '1.1': { uat: [{ status: 'pass' }] } } }, t);
   const before = readFileSync(join(dir, 'phases', '1.1', 'UAT.md'), 'utf8');
   const r = run(['uat', 'status', '--phase', '1.10'], dir);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -601,8 +613,8 @@ test('uat: --phase 1.10 is refused on a tree holding phase 1.1, leaving its chec
   assert.equal(existsSync(join(dir, 'phases', '1.10')), false);
 });
 
-test('uat: a malformed --phase is refused in the shared wording, before any read', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { uat: [{ status: 'pass' }] } } });
+test('uat: a malformed --phase is refused in the shared wording, before any read', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { uat: [{ status: 'pass' }] } } }, t);
   for (const bad of ['-1', '1e21', 'abc']) {
     const r = run(['uat', 'status', '--phase', bad], dir);
     assert.equal(r.ok, false, bad);
@@ -610,7 +622,7 @@ test('uat: a malformed --phase is refused in the shared wording, before any read
   }
 });
 
-test('seed-reqs: --phase 08 is refused outright, never answering about phases/8', () => {
+test('seed-reqs: --phase 08 is refused outright, never answering about phases/8', (t) => {
   // The claim this row has always made is that `08` never becomes `8` at this
   // face. It used to hold that by reading `phases/08` and reporting
   // `no-phase-dir`; since D-07 the spelling is refused at the door instead,
@@ -626,7 +638,7 @@ test('seed-reqs: --phase 08 is refused outright, never answering about phases/8'
     roadmap: [{ n: 8, name: 'Eight' }],
     phases: { 8: { plan: true, planReqs: ['FLD-01'] } },
     reqs: [],
-  });
+  }, t);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements\n\n## Active\n\n- **FLD-01**: x\n\n## Traceability\n\n'
     + '| Requirement | Phase | Status |\n|---|---|---|\n');
