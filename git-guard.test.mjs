@@ -329,7 +329,7 @@ test('shapes the anchored reader declines to see (stated cost, not an oversight)
 
 // --- Failure posture: a broken or overloaded guard never blocks work. -------
 
-test('malformed stdin exits 0 with no output (guard never blocks work)', (t) => {
+test('malformed stdin exits 0 with no output (guard never blocks work)', () => {
   assert.equal(guardRaw('not json {'), '');
 });
 
@@ -528,7 +528,7 @@ test('a torn repo layer never CANCELS a deny the global layer configured', (t) =
 
 const GUARD_SRC = readFileSync(GUARD, 'utf8');
 
-test('census: no gate value reaches the protected-branch guard (D-11)', (t) => {
+test('census: no gate value reaches the protected-branch guard (D-11)', () => {
   // The five names `review.triggers.<t>.gate` accepts. Matched as STRING
   // LITERALS, not as English: the source comments legitimately say "taken off
   // the call" and "the old deny gate", and a gate a hook could act on is a
