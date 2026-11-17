@@ -11,10 +11,9 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { PLANNING, run, isEntryFile } from './planning.test.mjs';
+import { PLANNING, run, isEntryFile, scratch } from './planning.test.mjs';
 import { GIT_FIXTURE_ENV } from './planning-audit.test.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
@@ -31,10 +30,11 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 /**
  * A scratch git repository holding `commits`, each a `{file, text, subject}`,
  * plus a `.planning` directory unless `planning` is false. Returns
- * `{root, dir, shas}` - `shas` in the order the commits were made.
+ * `{root, dir, shas}` - `shas` in the order the commits were made. `t`, the
+ * calling test's context, removes the repository when that test ends.
  */
-export function taskRepo(commits, { planning = true } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'cad-task-record-'));
+export function taskRepo(commits, { planning = true } = {}, t) {
+  const root = scratch('cad-task-record-', t);
   const git = (...args) => execFileSync('git', ['-C', root, ...args],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: GIT_FIXTURE_ENV }).trim();
   git('init', '-q');
@@ -79,8 +79,8 @@ export const TASK_COMMITS = [
   { file: 'beta.txt', text: 'b\n', subject: 'fix: the second | thing' },
 ];
 
-test('task-record: writes the record, with the range\'s own commits and files', () => {
-  const { root, dir, shas } = taskRepo(TASK_COMMITS);
+test('task-record: writes the record, with the range\'s own commits and files', (t) => {
+  const { root, dir, shas } = taskRepo(TASK_COMMITS, {}, t);
   const r = runIn(root, ['task-record', '--slug', 'bound-plan-size',
     '--base', `${shas[0]}^`, '--head', shas[1], '--text', 'What this task shipped.'], dir);
   assert.equal(r.ok, true);
@@ -103,11 +103,11 @@ test('task-record: writes the record, with the range\'s own commits and files', 
   assert.match(text, /^- What this task shipped\.$/m);
 });
 
-test('task-record: a second identical run leaves the file byte-identical', () => {
+test('task-record: a second identical run leaves the file byte-identical', (t) => {
   // The record is DERIVED from the range and the text, so a re-run rewrites the
   // same bytes rather than accumulating - no Date and no randomness anywhere in
   // the renderer.
-  const { root, dir, shas } = taskRepo(TASK_COMMITS);
+  const { root, dir, shas } = taskRepo(TASK_COMMITS, {}, t);
   const args = ['task-record', '--slug', 'again', '--base', `${shas[0]}^`,
     '--head', shas[1], '--text', 'Ran twice.'];
   const first = runIn(root, args, dir);
@@ -119,8 +119,8 @@ test('task-record: a second identical run leaves the file byte-identical', () =>
   assert.deepEqual(second, first);
 });
 
-test('task-record: no planning root means nothing is created and written:false says why', () => {
-  const { root, dir, shas } = taskRepo(TASK_COMMITS, { planning: false });
+test('task-record: no planning root means nothing is created and written:false says why', (t) => {
+  const { root, dir, shas } = taskRepo(TASK_COMMITS, { planning: false }, t);
   const r = runIn(root, ['task-record', '--slug', 'no-root', '--base', `${shas[0]}^`,
     '--head', shas[1], '--text', 'Nothing to write into.'], dir);
   assert.equal(r.ok, true);
@@ -132,7 +132,7 @@ test('task-record: no planning root means nothing is created and written:false s
   assert.equal(existsSync(join(root, 'tasks')), false);
 });
 
-test('treeless run: every seam /cad-task calls answers written:false, and nothing is created', () => {
+test('treeless run: every seam /cad-task calls answers written:false, and nothing is created', (t) => {
   // RSK-11. The mechanical half of "a treeless task can finish honestly": the
   // FOUR seams `workflows/task.md` calls on a repository with no `.planning/`,
   // in the order that workflow calls them, each answering `ok:true` with
@@ -148,7 +148,7 @@ test('treeless run: every seam /cad-task calls answers written:false, and nothin
   // directory and `appendEvent` swallows the stat's own ENOENT as an ordinary
   // first write, so the only ENOENT an append can return is `appendFileSync`'s
   // - the planning root itself.
-  const { root, dir, shas } = taskRepo(TASK_COMMITS, { planning: false });
+  const { root, dir, shas } = taskRepo(TASK_COMMITS, { planning: false }, t);
   // The refusal below must be the SEAM's, not this machine's: a user-global
   // config that answered the surface question would clear the gate here and the
   // row would prove nothing.
@@ -206,8 +206,8 @@ test('treeless run: every seam /cad-task calls answers written:false, and nothin
   assert.equal(existsSync(join(root, 'tasks')), false);
 });
 
-test('task-record: a slug that is not one path segment is refused, nothing written', () => {
-  const { root, dir, shas } = taskRepo(TASK_COMMITS);
+test('task-record: a slug that is not one path segment is refused, nothing written', (t) => {
+  const { root, dir, shas } = taskRepo(TASK_COMMITS, {}, t);
   for (const slug of ['../escape', 'a/b', '/abs', 'Upper', '']) {
     const r = runIn(root, ['task-record', '--slug', slug, '--base', `${shas[0]}^`,
       '--head', shas[1], '--text', 'x'], dir);
@@ -221,15 +221,15 @@ test('task-record: a slug that is not one path segment is refused, nothing writt
   assert.equal(existsSync(join(dirname(root), 'escape')), false);
 });
 
-test('task-record: a tasks/<slug> that is a symlink OUT is refused, nothing written', () => {
+test('task-record: a tasks/<slug> that is a symlink OUT is refused, nothing written', (t) => {
   // The slug is a legal one path segment, so `isTaskSlug` passes it - lexical
   // validation cannot see a link that already exists on disk. A cloned planning
   // tree ships symlinks, `mkdirSync(recursive)` follows one without complaint,
   // and `atomicWrite` lstats its own TEMP path so it refuses a symlinked
   // destination FILE and is silent about a symlinked parent DIRECTORY. Without
   // the writer's containment check this writes RECORD.md into `outside`.
-  const { root, dir, shas } = taskRepo(TASK_COMMITS);
-  const outside = mkdtempSync(join(tmpdir(), 'cad-task-outside-'));
+  const { root, dir, shas } = taskRepo(TASK_COMMITS, {}, t);
+  const outside = scratch('cad-task-outside-', t);
   mkdirSync(join(dir, 'tasks'), { recursive: true });
   symlinkSync(outside, join(dir, 'tasks', 'escaped'));
   const r = runIn(root, ['task-record', '--slug', 'escaped', '--base', `${shas[0]}^`,
@@ -242,8 +242,8 @@ test('task-record: a tasks/<slug> that is a symlink OUT is refused, nothing writ
   assert.equal(existsSync(join(outside, 'RECORD.md')), false);
 });
 
-test('task-record: a --base that does not resolve is ok:false with nothing written', () => {
-  const { root, dir, shas } = taskRepo(TASK_COMMITS);
+test('task-record: a --base that does not resolve is ok:false with nothing written', (t) => {
+  const { root, dir, shas } = taskRepo(TASK_COMMITS, {}, t);
   const r = runIn(root, ['task-record', '--slug', 'unresolvable',
     '--base', 'no-such-ref-anywhere', '--head', shas[1], '--text', 'x'], dir);
   assert.equal(r.ok, false);
@@ -265,8 +265,8 @@ test('task-record: a --base that does not resolve is ok:false with nothing writt
   assert.equal('tokens' in events[0], false);
 });
 
-test('task-record: --text and --text-file together are refused, and neither is guessed', () => {
-  const { root, dir, shas } = taskRepo(TASK_COMMITS);
+test('task-record: --text and --text-file together are refused, and neither is guessed', (t) => {
+  const { root, dir, shas } = taskRepo(TASK_COMMITS, {}, t);
   const textFile = join(root, 'shipped.md');
   writeFileSync(textFile, 'From a file.\n');
   const both = runIn(root, ['task-record', '--slug', 'both', '--base', `${shas[0]}^`,

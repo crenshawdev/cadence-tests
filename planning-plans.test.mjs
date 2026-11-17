@@ -25,13 +25,14 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 // criteria ceilings in planning-criteria-size.test.mjs. Imported by name,
 // never copied: a second copy is how two fixtures drift apart.
 // A one-phase tree whose PLAN.md frontmatter is written raw, plus REQUIREMENTS
-// rows for #41/#46. `frontmatter` is spliced between the --- fences.
-export function blockPlanTree(frontmatter, body = '') {
+// rows for #41/#46. `frontmatter` is spliced between the --- fences. `t`, the
+// calling test's context, removes the tree when that test ends.
+export function blockPlanTree(frontmatter, body = '', t) {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true } },
     reqs: [['#41', 1, 'Pending'], ['#46', 1, 'Pending']],
-  });
+  }, t);
   writeFileSync(join(dir, 'phases', '1', 'PLAN.md'),
     `---\nphase: 1\nplan: 1\n${frontmatter}\n---\n\n# Plan 1\n${body}`);
   verifyChecked(dir);
@@ -47,12 +48,12 @@ export function blockPlanTree(frontmatter, body = '') {
 // (counts.broken: 1) - a Pending row against an unchecked box would be
 // `not-verified` (also broken:1) whether or not the id was ever dropped,
 // which would make every fixture indistinguishable from the twin.
-export function oneIdPlanTree(frontmatter, body = '') {
+export function oneIdPlanTree(frontmatter, body = '', t) {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One', checked: true }],
     phases: { 1: { plan: true } },
     reqs: [['#41', 1, 'Complete']],
-  });
+  }, t);
   writeFileSync(join(dir, 'phases', '1', 'PLAN.md'),
     `---\nphase: 1\nplan: 1\n${frontmatter}\n---\n\n# Plan 1\n${body}`);
   verifyChecked(dir);
@@ -62,8 +63,8 @@ export function oneIdPlanTree(frontmatter, body = '') {
 // --- plan-size: the two counts that were soft until v2.7.0 --------------------
 
 /** A phase whose ROADMAP detail block names `ids`, plus `plans` of N tasks. */
-function sizeTree(ids, plans) {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+function sizeTree(t, ids, plans) {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   if (ids) {
     const rm = readFileSync(join(dir, 'ROADMAP.md'), 'utf8')
       .replace('**Goal:** goal 1\n', `**Goal:** goal 1\n**Requirements:** ${ids.join(', ')}\n`);
@@ -79,16 +80,16 @@ function sizeTree(ids, plans) {
   return dir;
 }
 
-test('plan-size: counts the requirements a ROADMAP detail block names, deduped', () => {
-  const dir = sizeTree(['STOR-01', 'STOR-02', 'STOR-02', 'IDENT-01'], {});
+test('plan-size: counts the requirements a ROADMAP detail block names, deduped', (t) => {
+  const dir = sizeTree(t, ['STOR-01', 'STOR-02', 'STOR-02', 'IDENT-01'], {});
   const r = run(['plan-size', '--phase', '1'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.requirements_found, true);
   assert.equal(r.requirements, 3, JSON.stringify(r.requirement_ids));
 });
 
-test('plan-size: a phase over --max-reqs is phase-too-big, naming both numbers', () => {
-  const dir = sizeTree(['STOR-01', 'STOR-02', 'STOR-03', 'STOR-04'], {});
+test('plan-size: a phase over --max-reqs is phase-too-big, naming both numbers', (t) => {
+  const dir = sizeTree(t, ['STOR-01', 'STOR-02', 'STOR-03', 'STOR-04'], {});
   const r = run(['plan-size', '--phase', '1', '--max-reqs', '3'], dir);
   assert.equal(r.within, false);
   const hit = r.over.find((o) => o.kind === 'phase-too-big');
@@ -97,10 +98,10 @@ test('plan-size: a phase over --max-reqs is phase-too-big, naming both numbers',
   assert.equal(hit.ceiling, 3);
 });
 
-test('plan-size: NO detail block is unmeasured, never zero - it is not compared', () => {
+test('plan-size: NO detail block is unmeasured, never zero - it is not compared', (t) => {
   // The whole point of `requirements_found`. A count of 0 is under every
   // ceiling, so an unwritten roadmap would otherwise read as a small phase.
-  const dir = sizeTree(null, {});
+  const dir = sizeTree(t, null, {});
   const r = run(['plan-size', '--phase', '1', '--max-reqs', '3'], dir);
   assert.equal(r.requirements_found, false);
   assert.equal(r.requirements, 0);
@@ -111,19 +112,19 @@ test('plan-size: NO detail block is unmeasured, never zero - it is not compared'
   assert.equal(r.within, null);
 });
 
-test('plan-size: the task ceiling is PER PLAN - 4+4+4 against a ceiling of 4 is within', () => {
+test('plan-size: the task ceiling is PER PLAN - 4+4+4 against a ceiling of 4 is within', (t) => {
   // The ambiguity this seam settled: `max_plan_tasks` is named per plan while
   // the workflow said "delivering this phase". A phase splitting into three
   // conforming plans is the move the ceiling is meant to produce.
-  const dir = sizeTree(['STOR-01'], { 'PLAN-1.md': 4, 'PLAN-2.md': 4, 'PLAN-3.md': 4 });
+  const dir = sizeTree(t, ['STOR-01'], { 'PLAN-1.md': 4, 'PLAN-2.md': 4, 'PLAN-3.md': 4 });
   const r = run(['plan-size', '--phase', '1', '--max-tasks', '4'], dir);
   assert.equal(r.tasks, 12);
   assert.deepEqual(r.over, []);
   assert.equal(r.within, true);
 });
 
-test('plan-size: ONE plan over the ceiling is flagged, naming the plan file', () => {
-  const dir = sizeTree(['STOR-01'], { 'PLAN-1.md': 3, 'PLAN-2.md': 8 });
+test('plan-size: ONE plan over the ceiling is flagged, naming the plan file', (t) => {
+  const dir = sizeTree(t, ['STOR-01'], { 'PLAN-1.md': 3, 'PLAN-2.md': 8 });
   const r = run(['plan-size', '--phase', '1', '--max-tasks', '4'], dir);
   const hit = r.over.find((o) => o.kind === 'plan-too-many-tasks');
   assert.ok(hit, JSON.stringify(r.over));
@@ -132,16 +133,16 @@ test('plan-size: ONE plan over the ceiling is flagged, naming the plan file', ()
   assert.equal(r.over.filter((o) => o.kind === 'plan-too-many-tasks').length, 1);
 });
 
-test('plan-size: an unwritten plan is never over its ceiling', () => {
-  const dir = sizeTree(['STOR-01'], {});
+test('plan-size: an unwritten plan is never over its ceiling', (t) => {
+  const dir = sizeTree(t, ['STOR-01'], {});
   const r = run(['plan-size', '--phase', '1', '--max-tasks', '1'], dir);
   assert.equal(r.tasks, 0);
   assert.deepEqual(r.plans, []);
   assert.deepEqual(r.over, []);
 });
 
-test('plan-size: no ceiling flags nothing but still reports the counts', () => {
-  const dir = sizeTree(['STOR-01', 'STOR-02'], { 'PLAN.md': 9 });
+test('plan-size: no ceiling flags nothing but still reports the counts', (t) => {
+  const dir = sizeTree(t, ['STOR-01', 'STOR-02'], { 'PLAN.md': 9 });
   const r = run(['plan-size', '--phase', '1'], dir);
   assert.equal(r.requirements, 2);
   assert.equal(r.tasks, 9);
@@ -149,8 +150,8 @@ test('plan-size: no ceiling flags nothing but still reports the counts', () => {
   assert.equal(r.max_tasks, undefined);
 });
 
-test('plan-size: a missing --phase is bad-args, never the cursor', () => {
-  const dir = sizeTree(['STOR-01'], {});
+test('plan-size: a missing --phase is bad-args, never the cursor', (t) => {
+  const dir = sizeTree(t, ['STOR-01'], {});
   assert.equal(run(['plan-size'], dir).reason, 'bad-args');
   assert.equal(run(['plan-size', '--phase', 'x'], dir).reason, 'bad-args');
 });
@@ -164,8 +165,8 @@ test('plan-size: a missing --phase is bad-args, never the cursor', () => {
  * resolves. Returns the planning dir, so `run` addresses it like every other
  * arm here.
  */
-function bytesTree(frontmatter, files = {}) {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: {} } });
+function bytesTree(t, frontmatter, files = {}) {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: {} } }, t);
   const repoRoot = dirname(dir);
   for (const [rel, body] of Object.entries(files)) {
     const abs = join(repoRoot, rel);
@@ -177,8 +178,8 @@ function bytesTree(frontmatter, files = {}) {
   return dir;
 }
 
-test('plan-size: a plan reports the summed on-disk bytes its files: frontmatter declares', () => {
-  const dir = bytesTree('files:\n  - src/a.rs\n  - src/b.rs',
+test('plan-size: a plan reports the summed on-disk bytes its files: frontmatter declares', (t) => {
+  const dir = bytesTree(t, 'files:\n  - src/a.rs\n  - src/b.rs',
     { 'src/a.rs': 'x'.repeat(1200), 'src/b.rs': 'y'.repeat(345) });
   const r = run(['plan-size', '--phase', '1'], dir);
   assert.equal(r.ok, true);
@@ -187,29 +188,29 @@ test('plan-size: a plan reports the summed on-disk bytes its files: frontmatter 
   assert.equal(r.plans[0].absent, 0);
 });
 
-test('plan-size: a declared path that is not on disk counts zero bytes and one absent', () => {
+test('plan-size: a declared path that is not on disk counts zero bytes and one absent', (t) => {
   // The creation-heavy plan D-10 exists for: without the count beside it, 1200
   // reads as "comfortably under the ceiling" while measuring one file of two.
-  const dir = bytesTree('files:\n  - src/a.rs\n  - src/not-yet.rs',
+  const dir = bytesTree(t, 'files:\n  - src/a.rs\n  - src/not-yet.rs',
     { 'src/a.rs': 'x'.repeat(1200) });
   const r = run(['plan-size', '--phase', '1'], dir);
   assert.equal(r.plans[0].bytes, 1200);
   assert.equal(r.plans[0].absent, 1);
 });
 
-test('plan-size: a declared DIRECTORY and a path climbing out both land on absent, unread', () => {
+test('plan-size: a declared DIRECTORY and a path climbing out both land on absent, unread', (t) => {
   // Neither is stat'd for its size: the escape is refused by SPELLING before any
   // stat, and a directory is refused by what the path IS. Both make the total
   // measure less than what was declared, which is the count's whole job.
-  const dir = bytesTree('files:\n  - src\n  - ../outside.rs\n  - /etc/passwd\n  - src/a.rs',
+  const dir = bytesTree(t, 'files:\n  - src\n  - ../outside.rs\n  - /etc/passwd\n  - src/a.rs',
     { 'src/a.rs': 'x'.repeat(10) });
   const r = run(['plan-size', '--phase', '1'], dir);
   assert.equal(r.plans[0].bytes, 10);
   assert.equal(r.plans[0].absent, 3);
 });
 
-test('plan-size: a plan over --max-bytes is plan-too-many-bytes, naming the plan and both numbers', () => {
-  const dir = bytesTree('files:\n  - src/a.rs\n  - src/b.rs',
+test('plan-size: a plan over --max-bytes is plan-too-many-bytes, naming the plan and both numbers', (t) => {
+  const dir = bytesTree(t, 'files:\n  - src/a.rs\n  - src/b.rs',
     { 'src/a.rs': 'x'.repeat(1200), 'src/b.rs': 'y'.repeat(345) });
   const r = run(['plan-size', '--phase', '1', '--max-bytes', '1000'], dir);
   assert.equal(r.max_bytes, 1000);
@@ -225,8 +226,8 @@ test('plan-size: a plan over --max-bytes is plan-too-many-bytes, naming the plan
   assert.equal(r.within, false);
 });
 
-test('plan-size: the same plan under a higher --max-bytes yields no byte entry and within: true', () => {
-  const dir = bytesTree('files:\n  - src/a.rs\n  - src/b.rs',
+test('plan-size: the same plan under a higher --max-bytes yields no byte entry and within: true', (t) => {
+  const dir = bytesTree(t, 'files:\n  - src/a.rs\n  - src/b.rs',
     { 'src/a.rs': 'x'.repeat(1200), 'src/b.rs': 'y'.repeat(345) });
   const r = run(['plan-size', '--phase', '1', '--max-bytes', '2000'], dir);
   assert.deepEqual(r.over, []);
@@ -234,10 +235,10 @@ test('plan-size: the same plan under a higher --max-bytes yields no byte entry a
   assert.equal(r.within, true);
 });
 
-test('plan-size: an out-of-grammar files: list is never compared against --max-bytes', () => {
+test('plan-size: an out-of-grammar files: list is never compared against --max-bytes', (t) => {
   // Not "under the ceiling" - not comparable at all, the arm
   // `requirements_found: false` already follows one question over.
-  const dir = bytesTree('files:\n  - src/a.rs\n  this line is not an item',
+  const dir = bytesTree(t, 'files:\n  - src/a.rs\n  this line is not an item',
     { 'src/a.rs': 'x'.repeat(1200) });
   const r = run(['plan-size', '--phase', '1', '--max-bytes', '1'], dir);
   assert.deepEqual(r.over, []);
@@ -245,8 +246,8 @@ test('plan-size: an out-of-grammar files: list is never compared against --max-b
   assert.equal(r.within, null);
 });
 
-test('plan-size: a bare or non-integer --max-bytes is bad-args naming the flag', () => {
-  const dir = bytesTree('files: []');
+test('plan-size: a bare or non-integer --max-bytes is bad-args naming the flag', (t) => {
+  const dir = bytesTree(t, 'files: []');
   for (const argv of [['plan-size', '--phase', '1', '--max-bytes'],
     ['plan-size', '--phase', '1', '--max-bytes', 'lots']]) {
     const r = run(argv, dir);
@@ -256,10 +257,10 @@ test('plan-size: a bare or non-integer --max-bytes is bad-args naming the flag',
   }
 });
 
-test('plan-size: a files: list out of grammar reports null bytes, never 0', () => {
+test('plan-size: a files: list out of grammar reports null bytes, never 0', (t) => {
   // No-salvage, `readOnePlan`'s rule: 0 would state that the plan declares
   // nothing, which is absence of evidence reported as absence of surface.
-  const dir = bytesTree('files:\n  - src/a.rs\n  this line is not an item',
+  const dir = bytesTree(t, 'files:\n  - src/a.rs\n  this line is not an item',
     { 'src/a.rs': 'x'.repeat(1200) });
   const r = run(['plan-size', '--phase', '1'], dir);
   assert.equal(r.ok, true);
@@ -269,7 +270,7 @@ test('plan-size: a files: list out of grammar reports null bytes, never 0', () =
 
 // --- frontmatter grammar: normalization + the diagnostic's both envelopes ---
 
-test('audit + plan-overlap: a CRLF-checked-out PLAN.md reads identically to its LF twin', () => {
+test('audit + plan-overlap: a CRLF-checked-out PLAN.md reads identically to its LF twin', (t) => {
   const build = (dir) => {
     const pdir = join(dir, 'phases', '1');
     writeFileSync(join(pdir, 'PLAN-1.md'),
@@ -282,9 +283,9 @@ test('audit + plan-overlap: a CRLF-checked-out PLAN.md reads identically to its 
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
     reqs: [['#41', 1, 'Pending'], ['#46', 1, 'Pending']],
   };
-  const lf = makeTree(spec);
+  const lf = makeTree(spec, t);
   build(lf);
-  const crlf = makeTree(spec);
+  const crlf = makeTree(spec, t);
   build(crlf);
   // Only PLAN-1.md is checked out CRLF - the sibling parsers stay out (D-10).
   const plan1 = join(crlf, 'phases', '1', 'PLAN-1.md');
@@ -307,9 +308,9 @@ test('audit + plan-overlap: a CRLF-checked-out PLAN.md reads identically to its 
   assert.equal(crlfOverlap.frontmatter_issues, undefined);
 });
 
-test('audit: a BOM + leading blank line PLAN.md reads identically to its plain twin', () => {
-  const plain = blockPlanTree('requirements: ["#41", "#46"]\nfiles: []');
-  const bomDir = blockPlanTree('requirements: ["#41", "#46"]\nfiles: []');
+test('audit: a BOM + leading blank line PLAN.md reads identically to its plain twin', (t) => {
+  const plain = blockPlanTree('requirements: ["#41", "#46"]\nfiles: []', '', t);
+  const bomDir = blockPlanTree('requirements: ["#41", "#46"]\nfiles: []', '', t);
   const planPath = join(bomDir, 'phases', '1', 'PLAN.md');
   // The BOM must be the file's actual first byte; the leading blank line
   // follows it.
@@ -323,12 +324,12 @@ test('audit: a BOM + leading blank line PLAN.md reads identically to its plain t
   assert.equal(bomAudit.frontmatter_issues, undefined);
 });
 
-test('audit + plan-overlap: an unterminated frontmatter fence reports on both envelopes, audit stays ok:true', () => {
+test('audit + plan-overlap: an unterminated frontmatter fence reports on both envelopes, audit stays ok:true', (t) => {
   // blockPlanTree writes exactly one PLAN.md, so plan-overlap hits its
   // fewer-than-two-plans early return - deliberately, since that envelope
   // must carry the diagnostic too. Overwrite it with a fence that never
   // closes.
-  const dir = blockPlanTree('requirements: ["#41", "#46"]\nfiles: []');
+  const dir = blockPlanTree('requirements: ["#41", "#46"]\nfiles: []', '', t);
   writeFileSync(join(dir, 'phases', '1', 'PLAN.md'),
     '---\nphase: 1\nplan: 1\nrequirements: ["#41", "#46"]\nfiles: []\n\n# Plan 1 (fence never closes)\n');
   const a = run(['audit'], dir);
@@ -346,8 +347,8 @@ test('audit + plan-overlap: an unterminated frontmatter fence reports on both en
 // at the audit seam - not a reading of the prose. Every fixture and the twin
 // declare the SAME single id (#41) so a delta in counts.broken is
 // attributable only to the code under test (see oneIdPlanTree).
-test('audit: the per-code payload table is falsifiable - each dropping code moves counts.broken, each preserving code does not', () => {
-  const twin = run(['audit'], oneIdPlanTree('requirements:\n  - "#41"\nfiles: []'));
+test('audit: the per-code payload table is falsifiable - each dropping code moves counts.broken, each preserving code does not', (t) => {
+  const twin = run(['audit'], oneIdPlanTree('requirements:\n  - "#41"\nfiles: []', '', t));
   assert.equal(twin.ok, true);
   assert.equal(twin.frontmatter_issues, undefined);
 
@@ -358,7 +359,7 @@ test('audit: the per-code payload table is falsifiable - each dropping code move
     'item-without-key': 'requirements: []\n  - "#41"\nfiles: []',
   };
   for (const [code, frontmatter] of Object.entries(dropping)) {
-    const r = run(['audit'], oneIdPlanTree(frontmatter));
+    const r = run(['audit'], oneIdPlanTree(frontmatter, '', t));
     assert.equal(r.ok, true, code);
     assert.ok(r.frontmatter_issues[0].issues.some((i) => i.code === code), `${code}: missing from frontmatter_issues`);
     assert.ok(r.counts.broken > twin.counts.broken, `${code}: expected counts.broken > twin (payload dropped)`);
@@ -370,7 +371,7 @@ test('audit: the per-code payload table is falsifiable - each dropping code move
     'residual-quote': 'requirements:\n  - "#41"\nfiles: ["a\\"]',
   };
   for (const [code, frontmatter] of Object.entries(preserving)) {
-    const r = run(['audit'], oneIdPlanTree(frontmatter));
+    const r = run(['audit'], oneIdPlanTree(frontmatter, '', t));
     assert.equal(r.ok, true, code);
     assert.ok(r.frontmatter_issues[0].issues.some((i) => i.code === code), `${code}: missing from frontmatter_issues`);
     assert.equal(r.counts.broken, twin.counts.broken, `${code}: expected counts.broken === twin (payload preserved)`);
@@ -379,14 +380,14 @@ test('audit: the per-code payload table is falsifiable - each dropping code move
   // commented-key-line drops nothing itself, but does not terminate the open
   // block, so the id still folds through - equal broken, and the folded
   // orphan (D-14's stated, accepted over-read) is provably present.
-  const commented = run(['audit'], oneIdPlanTree('requirements:\n- "#41"\n# files:\n  - src/shared.rs'));
+  const commented = run(['audit'], oneIdPlanTree('requirements:\n- "#41"\n# files:\n  - src/shared.rs', '', t));
   assert.equal(commented.ok, true);
   assert.ok(commented.frontmatter_issues[0].issues.some((i) => i.code === 'commented-key-line'));
   assert.equal(commented.counts.broken, twin.counts.broken);
   assert.ok(commented.orphans.plan_ids.some((p) => p.ids.includes('src/shared.rs')));
 
   // unterminated-frontmatter drops the WHOLE block.
-  const unterminatedDir = oneIdPlanTree('requirements: ["#41"]\nfiles: []');
+  const unterminatedDir = oneIdPlanTree('requirements: ["#41"]\nfiles: []', '', t);
   writeFileSync(join(unterminatedDir, 'phases', '1', 'PLAN.md'),
     '---\nphase: 1\nplan: 1\nrequirements: ["#41"]\nfiles: []\n\n# Plan 1 (fence never closes)\n');
   const unterminated = run(['audit'], unterminatedDir);
@@ -397,14 +398,14 @@ test('audit: the per-code payload table is falsifiable - each dropping code move
   // unknown-line is the one CONDITIONAL code (D-15) - two rows, since one
   // row of either shape would pin half the behavior and read as the whole
   // of it: a stray prose line drops nothing (equal to the twin) ...
-  const strayProse = run(['audit'], oneIdPlanTree('requirements:\n  - "#41"\n  this line is not an item\nfiles: []'));
+  const strayProse = run(['audit'], oneIdPlanTree('requirements:\n  - "#41"\n  this line is not an item\nfiles: []', '', t));
   assert.equal(strayProse.ok, true);
   assert.ok(strayProse.frontmatter_issues[0].issues.some((i) => i.code === 'unknown-line'));
   assert.equal(strayProse.counts.broken, twin.counts.broken);
 
   // ... but a data-carrying malformed line that falls through to unknown-line
   // (fails malformed-key-line's own `/^[A-Za-z_]/` start) drops a whole key.
-  const malformedData = run(['audit'], oneIdPlanTree('1requirements: ["#41"]\nfiles: []'));
+  const malformedData = run(['audit'], oneIdPlanTree('1requirements: ["#41"]\nfiles: []', '', t));
   assert.equal(malformedData.ok, true);
   assert.ok(malformedData.frontmatter_issues[0].issues.some((i) => i.code === 'unknown-line'));
   assert.ok(malformedData.counts.broken > twin.counts.broken);
@@ -413,7 +414,7 @@ test('audit: the per-code payload table is falsifiable - each dropping code move
   // reason than unknown-line: it always PRESERVES its bytes, but "preserves"
   // is a claim about bytes, not about tracing. On files: nothing traces, so
   // counts cannot move ...
-  const backtickFile = run(['audit'], oneIdPlanTree('requirements:\n  - "#41"\nfiles:\n  - `src/shared.rs`'));
+  const backtickFile = run(['audit'], oneIdPlanTree('requirements:\n  - "#41"\nfiles:\n  - `src/shared.rs`', '', t));
   assert.equal(backtickFile.ok, true);
   assert.ok(backtickFile.frontmatter_issues[0].issues.some((i) => i.code === 'backtick-wrapped-value'));
   assert.equal(backtickFile.counts.broken, twin.counts.broken);
@@ -423,18 +424,18 @@ test('audit: the per-code payload table is falsifiable - each dropping code move
   // twin-shaped (same single id, same key as the twin) so it can actually
   // fail - the files: row above cannot, which is why one row alone would be
   // a test that passes by construction.
-  const backtickId = run(['audit'], oneIdPlanTree('requirements:\n  - `#41`\nfiles: []'));
+  const backtickId = run(['audit'], oneIdPlanTree('requirements:\n  - `#41`\nfiles: []', '', t));
   assert.equal(backtickId.ok, true);
   assert.ok(backtickId.frontmatter_issues[0].issues.some((i) => i.code === 'backtick-wrapped-value'));
   assert.ok(backtickId.counts.broken > twin.counts.broken,
     'backtick-wrapped-value on requirements: must move counts.broken - a preserved `#41` is not the id #41');
 });
 
-test('plan-overlap: a trailing-annotated block item still overlaps, with the diagnostic naming which plan (UAT-9)', () => {
+test('plan-overlap: a trailing-annotated block item still overlaps, with the diagnostic naming which plan (UAT-9)', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
-  });
+  }, t);
   const pdir = join(dir, 'phases', '1');
   writeFileSync(join(pdir, 'PLAN-1.md'),
     '---\nphase: 1\nplan: 1\nrequirements: []\nfiles:\n  - "src/shared.rs" (new)\n---\n# Plan 1\n');
@@ -449,11 +450,11 @@ test('plan-overlap: a trailing-annotated block item still overlaps, with the dia
   }]);
 });
 
-test('plan-overlap: a backtick-wrapped path does not silently miss a real collision (UAT-21)', () => {
+test('plan-overlap: a backtick-wrapped path does not silently miss a real collision (UAT-21)', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
-  });
+  }, t);
   const pdir = join(dir, 'phases', '1');
   writeFileSync(join(pdir, 'PLAN-1.md'),
     '---\nphase: 1\nplan: 1\nrequirements: []\nfiles:\n  - `src/shared.rs`\n---\n# Plan 1\n');
@@ -471,11 +472,11 @@ test('plan-overlap: a backtick-wrapped path does not silently miss a real collis
   }]);
 });
 
-test('plan-overlap: a markdown-decorated path does not silently miss a real collision (FRM-02)', () => {
+test('plan-overlap: a markdown-decorated path does not silently miss a real collision (FRM-02)', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
-  });
+  }, t);
   const pdir = join(dir, 'phases', '1');
   writeFileSync(join(pdir, 'PLAN-1.md'),
     '---\nphase: 1\nplan: 1\nrequirements: []\nfiles:\n  - **src/shared.rs**\n---\n# Plan 1\n');
@@ -496,11 +497,11 @@ test('plan-overlap: a markdown-decorated path does not silently miss a real coll
   }]);
 });
 
-test('plan-overlap: a block item under an inline files: key is diagnosed and dropped on both plans, not overlapped (D-13)', () => {
+test('plan-overlap: a block item under an inline files: key is diagnosed and dropped on both plans, not overlapped (D-13)', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
-  });
+  }, t);
   const pdir = join(dir, 'phases', '1');
   writeFileSync(join(pdir, 'PLAN-1.md'),
     '---\nphase: 1\nplan: 1\nrequirements: []\nfiles: [src/a.rs]  # comment\n  - src/shared.rs\n---\n# Plan 1\n');
@@ -524,11 +525,11 @@ test('plan-overlap: a block item under an inline files: key is diagnosed and dro
 // --- plan-overlap: the parallel-safety gate ------------------------------------
 
 /** A two-plan phase whose PLAN files declare the given file lists. */
-function overlapTree(filesA, filesB, taskLineB) {
+function overlapTree(t, filesA, filesB, taskLineB) {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
-  });
+  }, t);
   const pdir = join(dir, 'phases', '1');
   writeFileSync(join(pdir, 'PLAN-1.md'),
     `---\nphase: 1\nplan: 1\nrequirements: [REQ-1]\nfiles: [${filesA.join(', ')}]\n---\n# Plan 1\n`);
@@ -538,18 +539,18 @@ function overlapTree(filesA, filesB, taskLineB) {
   return dir;
 }
 
-test('plan-overlap: disjoint declared lists come back clean', () => {
+test('plan-overlap: disjoint declared lists come back clean', (t) => {
   const r = run(['plan-overlap', '--phase', '1'],
-    overlapTree(['src/a.rs', 'src/b.rs'], ['src/c.rs']));
+    overlapTree(t, ['src/a.rs', 'src/b.rs'], ['src/c.rs']));
   assert.equal(r.ok, true);
   assert.deepEqual(r.overlaps, []);
   assert.deepEqual(r.plans, [{ plan: 'PLAN-1.md', files: 2 }, { plan: 'PLAN-2.md', files: 1 }]);
   assert.equal(r.undeclared, undefined);
 });
 
-test('plan-overlap: a shared file is reported with both plan names', () => {
+test('plan-overlap: a shared file is reported with both plan names', (t) => {
   const r = run(['plan-overlap', '--phase', '1'],
-    overlapTree(['src/a.rs', 'src/shared.rs'], ['src/shared.rs', 'src/c.rs']));
+    overlapTree(t, ['src/a.rs', 'src/shared.rs'], ['src/shared.rs', 'src/c.rs']));
   assert.equal(r.ok, true);
   assert.deepEqual(r.overlaps, [{ plans: ['PLAN-1.md', 'PLAN-2.md'], files: ['src/shared.rs'] }]);
 });
@@ -562,8 +563,8 @@ test('plan-overlap: a shared file is reported with both plan names', () => {
 // Both spellings ride `overlaps[].files` as separate strings (D-06); the ORDER
 // is not pinned here, because it is not this pair's subject.
 
-test('plan-overlap: a directory lease src/ overlaps the file src/auth.js the other plan declares', () => {
-  const r = run(['plan-overlap', '--phase', '1'], overlapTree(['src/'], ['src/auth.js']));
+test('plan-overlap: a directory lease src/ overlaps the file src/auth.js the other plan declares', (t) => {
+  const r = run(['plan-overlap', '--phase', '1'], overlapTree(t, ['src/'], ['src/auth.js']));
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.overlaps.length, 1, JSON.stringify(r));
   assert.deepEqual(r.overlaps[0].plans, ['PLAN-1.md', 'PLAN-2.md']);
@@ -572,8 +573,8 @@ test('plan-overlap: a directory lease src/ overlaps the file src/auth.js the oth
   assert.equal(r.overlaps[0].files.length, 2, JSON.stringify(r.overlaps[0]));
 });
 
-test('plan-overlap: a directory lease src/ overlaps the nested directory lease src/auth/', () => {
-  const r = run(['plan-overlap', '--phase', '1'], overlapTree(['src/'], ['src/auth/']));
+test('plan-overlap: a directory lease src/ overlaps the nested directory lease src/auth/', (t) => {
+  const r = run(['plan-overlap', '--phase', '1'], overlapTree(t, ['src/'], ['src/auth/']));
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.overlaps.length, 1, JSON.stringify(r));
   assert.deepEqual(r.overlaps[0].plans, ['PLAN-1.md', 'PLAN-2.md']);
@@ -582,29 +583,29 @@ test('plan-overlap: a directory lease src/ overlaps the nested directory lease s
   assert.equal(r.overlaps[0].files.length, 2, JSON.stringify(r.overlaps[0]));
 });
 
-test('plan-overlap: task **Files:** lines count even when frontmatter omits them', () => {
+test('plan-overlap: task **Files:** lines count even when frontmatter omits them', (t) => {
   // PLAN-2 frontmatter declares nothing, but its task line touches src/a.rs.
   const r = run(['plan-overlap', '--phase', '1'],
-    overlapTree(['src/a.rs'], [], 'src/a.rs (edit), src/d.rs'));
+    overlapTree(t, ['src/a.rs'], [], 'src/a.rs (edit), src/d.rs'));
   assert.equal(r.overlaps.length, 1);
   assert.deepEqual(r.overlaps[0].files, ['src/a.rs']);
 });
 
-test('plan-overlap: a task **Files:** annotation still normalizes to the bare path - the frontmatter narrowing is scoped to one arm (D-19)', () => {
+test('plan-overlap: a task **Files:** annotation still normalizes to the bare path - the frontmatter narrowing is scoped to one arm (D-19)', (t) => {
   // PLAN-1's frontmatter declares the bare path; PLAN-2 declares it only on
   // an annotated task line. No frontmatter twin exists for the raw
   // "src/a.rs (edit)" form, so only the normalized path overlaps.
   const r = run(['plan-overlap', '--phase', '1'],
-    overlapTree(['src/a.rs'], [], 'src/a.rs (edit)'));
+    overlapTree(t, ['src/a.rs'], [], 'src/a.rs (edit)'));
   assert.equal(r.ok, true);
   assert.deepEqual(r.overlaps, [{ plans: ['PLAN-1.md', 'PLAN-2.md'], files: ['src/a.rs'] }]);
 });
 
-test('plan-overlap: frontmatter-declared paths with parens or a backtick overlap byte-exact, unmangled by add() (acceptance criterion 5)', () => {
+test('plan-overlap: frontmatter-declared paths with parens or a backtick overlap byte-exact, unmangled by add() (acceptance criterion 5)', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
-  });
+  }, t);
   const pdir = join(dir, 'phases', '1');
   const body = (p) => `---\nphase: 1\nplan: ${p}\nrequirements: []\nfiles:\n  - src/x(1)\n  - lib/a\`b.mjs\n---\n# Plan ${p}\n`;
   writeFileSync(join(pdir, 'PLAN-1.md'), body(1));
@@ -616,11 +617,11 @@ test('plan-overlap: frontmatter-declared paths with parens or a backtick overlap
   assert.equal(r.frontmatter_issues, undefined);
 });
 
-test('plan-overlap: a frontmatter path with parens overlaps its raw twin declared only on a task line (the cross-arm bridge)', () => {
+test('plan-overlap: a frontmatter path with parens overlaps its raw twin declared only on a task line (the cross-arm bridge)', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
-  });
+  }, t);
   const pdir = join(dir, 'phases', '1');
   writeFileSync(join(pdir, 'PLAN-1.md'),
     '---\nphase: 1\nplan: 1\nrequirements: []\nfiles:\n  - src/x(1)\n---\n# Plan 1\n');
@@ -632,11 +633,11 @@ test('plan-overlap: a frontmatter path with parens overlaps its raw twin declare
   assert.deepEqual(r.overlaps, [{ plans: ['PLAN-1.md', 'PLAN-2.md'], files: ['src/x(1)'] }]);
 });
 
-test('plan-overlap: a frontmatter backtick-bearing path overlaps its raw twin declared only on a task line (the cross-arm bridge, other direction)', () => {
+test('plan-overlap: a frontmatter backtick-bearing path overlaps its raw twin declared only on a task line (the cross-arm bridge, other direction)', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
-  });
+  }, t);
   const pdir = join(dir, 'phases', '1');
   writeFileSync(join(pdir, 'PLAN-1.md'),
     '---\nphase: 1\nplan: 1\nrequirements: []\nfiles: []\n---\n# Plan 1\n\n' +
@@ -664,11 +665,11 @@ test('plan-overlap: a frontmatter backtick-bearing path overlaps its raw twin de
  * declaration is absent from it. Returns the tree and the line `bad` is
  * declared on.
  */
-function refusalTree(bad, plain, door) {
+function refusalTree(t, bad, plain, door) {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
-  });
+  }, t);
   const pdir = join(dir, 'phases', '1');
   const one = door === 'frontmatter'
     ? `---\nphase: 1\nplan: 1\nrequirements: []\nfiles:\n  - ${bad}\n  - keep.txt\n---\n# Plan 1\n`
@@ -682,8 +683,8 @@ function refusalTree(bad, plain, door) {
 
 for (const [bad, plain] of [['./a.txt', 'a.txt'], ['src//a.txt', 'src/a.txt']]) {
   for (const door of ['frontmatter', 'task line']) {
-    test(`plan-overlap: ${bad} declared on the ${door} is refused as redundant-path-segment and reaches neither reader`, () => {
-      const { dir, line } = refusalTree(bad, plain, door);
+    test(`plan-overlap: ${bad} declared on the ${door} is refused as redundant-path-segment and reaches neither reader`, (t) => {
+      const { dir, line } = refusalTree(t, bad, plain, door);
       const r = run(['plan-overlap', '--phase', '1'], dir);
       assert.equal(r.ok, true, JSON.stringify(r));
       assert.deepEqual(r.frontmatter_issues,
@@ -699,13 +700,13 @@ for (const [bad, plain] of [['./a.txt', 'a.txt'], ['src//a.txt', 'src/a.txt']]) 
   }
 }
 
-test('plan-overlap: the same refused spelling twice in one files: list reports two issues on their OWN lines', () => {
+test('plan-overlap: the same refused spelling twice in one files: list reports two issues on their OWN lines', (t) => {
   // A cursor advances past each match, so the second diagnostic does not point
   // back at the first occurrence's line.
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
-  });
+  }, t);
   const pdir = join(dir, 'phases', '1');
   writeFileSync(join(pdir, 'PLAN-1.md'),
     '---\nphase: 1\nplan: 1\nrequirements: ["#41"]\nfiles:\n  - ./a.txt\n  - keep.txt\n  - ./a.txt\n---\n# Plan 1\n');
@@ -719,14 +720,14 @@ test('plan-overlap: the same refused spelling twice in one files: list reports t
   assert.deepEqual(r.overlaps, [{ plans: ['PLAN-1.md', 'PLAN-2.md'], files: ['keep.txt'] }]);
 });
 
-test('plan-overlap: a plan with no declared files is flagged undeclared', () => {
-  const r = run(['plan-overlap', '--phase', '1'], overlapTree(['src/a.rs'], []));
+test('plan-overlap: a plan with no declared files is flagged undeclared', (t) => {
+  const r = run(['plan-overlap', '--phase', '1'], overlapTree(t, ['src/a.rs'], []));
   assert.deepEqual(r.overlaps, []);
   assert.deepEqual(r.undeclared, ['PLAN-2.md']);
 });
 
-test('plan-overlap: single plan and missing phase degrade predictably', () => {
-  const single = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true } } });
+test('plan-overlap: single plan and missing phase degrade predictably', (t) => {
+  const single = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true } } }, t);
   const r = run(['plan-overlap', '--phase', '1'], single);
   assert.equal(r.ok, true);
   assert.deepEqual(r.overlaps, []);
@@ -738,9 +739,9 @@ test('plan-overlap: single plan and missing phase degrade predictably', () => {
 // --- plan-overlap: waves ---------------------------------------------------------
 
 /** A phase 1 with one PLAN file per key of `plans`: `{ name: [files] }`, or `{ name: { files, extra } }` with `extra` spliced into the frontmatter. */
-function wavesTree(plans) {
+function wavesTree(t, plans) {
   const names = Object.keys(plans);
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: names } } });
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: names } } }, t);
   for (const name of names) {
     const spec = Array.isArray(plans[name]) ? { files: plans[name] } : plans[name];
     writeFileSync(join(dir, 'phases', '1', name),
@@ -759,8 +760,8 @@ const SIX_PLANS = {
   'PLAN-6.md': ['src/six.rs'],
 };
 
-test('plan-overlap waves: plans wait only for the earlier plans they share a file with', () => {
-  const r = run(['plan-overlap', '--phase', '1'], wavesTree(SIX_PLANS));
+test('plan-overlap waves: plans wait only for the earlier plans they share a file with', (t) => {
+  const r = run(['plan-overlap', '--phase', '1'], wavesTree(t, SIX_PLANS));
   assert.equal(r.ok, true);
   assert.deepEqual(r.waves,
     [['PLAN-1.md', 'PLAN-2.md', 'PLAN-5.md', 'PLAN-6.md'], ['PLAN-3.md', 'PLAN-4.md']]);
@@ -768,28 +769,28 @@ test('plan-overlap waves: plans wait only for the earlier plans they share a fil
     [['PLAN-1.md', 'PLAN-4.md'], ['PLAN-2.md', 'PLAN-3.md']]);
 });
 
-test('plan-overlap waves: two plans sharing only .github/tests-pin land in different waves', () => {
-  const r = run(['plan-overlap', '--phase', '1'], wavesTree({
+test('plan-overlap waves: two plans sharing only .github/tests-pin land in different waves', (t) => {
+  const r = run(['plan-overlap', '--phase', '1'], wavesTree(t, {
     'PLAN-1.md': ['src/a.rs', '.github/tests-pin'],
     'PLAN-2.md': ['src/b.rs', '.github/tests-pin'],
   }));
   assert.deepEqual(r.waves, [['PLAN-1.md'], ['PLAN-2.md']]);
 });
 
-test('plan-overlap waves: plan numbers compare as numbers, so PLAN-10.md follows PLAN-2.md', () => {
+test('plan-overlap waves: plan numbers compare as numbers, so PLAN-10.md follows PLAN-2.md', (t) => {
   const r = run(['plan-overlap', '--phase', '1'],
-    wavesTree({ 'PLAN-2.md': ['src/s.rs'], 'PLAN-10.md': ['src/s.rs'] }));
+    wavesTree(t, { 'PLAN-2.md': ['src/s.rs'], 'PLAN-10.md': ['src/s.rs'] }));
   assert.deepEqual(r.waves, [['PLAN-2.md'], ['PLAN-10.md']]);
 });
 
-test('plan-overlap waves: a directory lease and a file under it land in different waves', () => {
+test('plan-overlap waves: a directory lease and a file under it land in different waves', (t) => {
   const r = run(['plan-overlap', '--phase', '1'],
-    wavesTree({ 'PLAN-1.md': ['src/'], 'PLAN-2.md': ['src/a.rs'] }));
+    wavesTree(t, { 'PLAN-1.md': ['src/'], 'PLAN-2.md': ['src/a.rs'] }));
   assert.deepEqual(r.waves, [['PLAN-1.md'], ['PLAN-2.md']]);
 });
 
-test('plan-overlap waves: a one-plan phase is one wave beside the unchanged note', () => {
-  const single = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true } } });
+test('plan-overlap waves: a one-plan phase is one wave beside the unchanged note', (t) => {
+  const single = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true } } }, t);
   const r = run(['plan-overlap', '--phase', '1'], single);
   assert.deepEqual(r.waves, [['PLAN.md']]);
   assert.deepEqual(r.plans, []);
@@ -797,27 +798,27 @@ test('plan-overlap waves: a one-plan phase is one wave beside the unchanged note
   assert.match(r.note, /fewer than two/);
 });
 
-test('plan-overlap waves: a phase directory with no plan gives no waves', () => {
-  const empty = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: {} } });
+test('plan-overlap waves: a phase directory with no plan gives no waves', (t) => {
+  const empty = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: {} } }, t);
   const r = run(['plan-overlap', '--phase', '1'], empty);
   assert.equal(r.ok, true);
   assert.deepEqual(r.waves, []);
 });
 
 /** SIX_PLANS with `depends_on: <value>` spliced into PLAN-2.md's frontmatter. */
-const sixWithDeps = (value) => wavesTree({
+const sixWithDeps = (t, value) => wavesTree(t, {
   ...SIX_PLANS, 'PLAN-2.md': { files: SIX_PLANS['PLAN-2.md'], extra: `depends_on: ${value}\n` },
 });
 
-test('plan-overlap waves: depends_on orders a plan after the earlier plan it names', () => {
-  const r = run(['plan-overlap', '--phase', '1'], sixWithDeps('[1]'));
+test('plan-overlap waves: depends_on orders a plan after the earlier plan it names', (t) => {
+  const r = run(['plan-overlap', '--phase', '1'], sixWithDeps(t, '[1]'));
   assert.deepEqual(r.waves,
     [['PLAN-1.md', 'PLAN-5.md', 'PLAN-6.md'], ['PLAN-2.md', 'PLAN-4.md'], ['PLAN-3.md']]);
   assert.equal(r.frontmatter_issues, undefined);
 });
 
-test('plan-overlap waves: a block-form depends_on holding 1 orders the plan', () => {
-  const r = run(['plan-overlap', '--phase', '1'], wavesTree({
+test('plan-overlap waves: a block-form depends_on holding 1 orders the plan', (t) => {
+  const r = run(['plan-overlap', '--phase', '1'], wavesTree(t, {
     'PLAN-1.md': ['src/a.rs'],
     'PLAN-2.md': { files: ['src/b.rs'], extra: 'depends_on:\n  - 1\n' },
   }));
@@ -827,8 +828,8 @@ test('plan-overlap waves: a block-form depends_on holding 1 orders the plan', ()
 
 // [0] is below PLAN-2's number and names no plan, so only the numbers.has(k) half of the check rejects it
 for (const value of ['[9]', '[3]', '[2]', '[x]', '[0]']) {
-  test(`plan-overlap waves: depends_on ${value} on PLAN-2.md is one invalid-depends-on at the key line`, () => {
-    const r = run(['plan-overlap', '--phase', '1'], sixWithDeps(value));
+  test(`plan-overlap waves: depends_on ${value} on PLAN-2.md is one invalid-depends-on at the key line`, (t) => {
+    const r = run(['plan-overlap', '--phase', '1'], sixWithDeps(t, value));
     assert.deepEqual(r.frontmatter_issues, [{
       plan: 'PLAN-2.md',
       issues: [{ line: 5, code: 'invalid-depends-on', text: `depends_on: ${value}` }],
@@ -836,15 +837,15 @@ for (const value of ['[9]', '[3]', '[2]', '[x]', '[0]']) {
   });
 }
 
-test('plan-overlap waves: an empty or absent depends_on declares nothing and raises nothing', () => {
-  for (const dir of [sixWithDeps('[]'), wavesTree(SIX_PLANS)]) {
+test('plan-overlap waves: an empty or absent depends_on declares nothing and raises nothing', (t) => {
+  for (const dir of [sixWithDeps(t, '[]'), wavesTree(t, SIX_PLANS)]) {
     assert.equal(run(['plan-overlap', '--phase', '1'], dir).frontmatter_issues, undefined);
   }
 });
 
 // choose_path reads a second wave with no overlap and no issue as a valid depends_on, and routes sequential
-test('plan-overlap waves: a valid depends_on with no shared file gives empty overlaps and two waves', () => {
-  const r = run(['plan-overlap', '--phase', '1'], wavesTree({
+test('plan-overlap waves: a valid depends_on with no shared file gives empty overlaps and two waves', (t) => {
+  const r = run(['plan-overlap', '--phase', '1'], wavesTree(t, {
     'PLAN-1.md': ['src/a.rs'],
     'PLAN-2.md': { files: ['src/b.rs'], extra: 'depends_on: [1]\n' },
   }));
@@ -853,8 +854,8 @@ test('plan-overlap waves: a valid depends_on with no shared file gives empty ove
   assert.deepEqual(r.waves, [['PLAN-1.md'], ['PLAN-2.md']]);
 });
 
-test('plan-overlap waves: depends_on on a one-plan phase comes back in the early return', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true } } });
+test('plan-overlap waves: depends_on on a one-plan phase comes back in the early return', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true } } }, t);
   writeFileSync(join(dir, 'phases', '1', 'PLAN.md'),
     '---\nphase: 1\nrequirements: [REQ-1]\nfiles: [src/a.rs]\ndepends_on: [1]\n---\n# Plan\n');
   const r = run(['plan-overlap', '--phase', '1'], dir);
@@ -869,9 +870,9 @@ test('plan-overlap waves: depends_on on a one-plan phase comes back in the early
 // The pinned figure is the sha256 of the seam's `overlaps` JSON on this fixture, taken before `waves` existed.
 const PHASE2_OVERLAPS_SHA256 = '1e5e7d11c99571eb75c4cee8e2ec79e33f8a75b475ca944dd093dc7adcdff013';
 
-test("plan-overlap waves: a copy of Phase 2's plans gives 8 waves and leaves overlaps byte-identical", () => {
+test("plan-overlap waves: a copy of Phase 2's plans gives 8 waves and leaves overlaps byte-identical", (t) => {
   const from = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'phase-2-plans');
-  const dir = makeTree({ roadmap: [{ n: 2, name: 'Two' }], phases: { 2: {} } });
+  const dir = makeTree({ roadmap: [{ n: 2, name: 'Two' }], phases: { 2: {} } }, t);
   for (const f of readdirSync(from)) copyFileSync(join(from, f), join(dir, 'phases', '2', f));
   const r = run(['plan-overlap', '--phase', '2'], dir);
   assert.equal(r.waves.length, 8);
