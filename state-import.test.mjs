@@ -41,13 +41,13 @@ function assertMatchesStatus(dir, state, { skipOutstanding = false } = {}) {
   }
 }
 
-test('a mid-plan project: finished plans come from reports, the open ones are outstanding', () => {
+test('a mid-plan project: finished plans come from reports, the open ones are outstanding', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Base', checked: true, desc: 'lay it' }, { n: 2, name: 'Auth', desc: 'sign in' }],
     phases: { 1: { plan: true, summary: true, uat: [{ status: 'pass' }] }, 2: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
     reqs: [['REQ-1', 1, 'Complete'], ['REQ-2', 2, 'Pending'], ['REQ-3', null, 'Deferred']],
     cursor: cursor(2, 2, 'Auth', 'planned', '/cad-execute 2'),
-  });
+  }, t);
   report(dir, 1, 1, 'PLAN COMPLETE');
   report(dir, 2, 1, 'PLAN COMPLETE');
   const state = imported(dir);
@@ -62,12 +62,12 @@ test('a mid-plan project: finished plans come from reports, the open ones are ou
   assertMatchesStatus(dir, state);
 });
 
-test('a mid-phase project: executed and unplanned phases carry their derived status', () => {
+test('a mid-phase project: executed and unplanned phases carry their derived status', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Base' }, { n: 2, name: 'Auth' }],
     phases: { 1: { plan: true, summary: true } },
     cursor: cursor(1, 2, 'Base', 'executed', '/cad-verify 1'),
-  });
+  }, t);
   report(dir, 1, 1, 'PLAN COMPLETE');
   const state = imported(dir);
   assert.deepEqual(state.phases.map((p) => p.status), ['executed', 'unplanned']);
@@ -77,11 +77,11 @@ test('a mid-phase project: executed and unplanned phases carry their derived sta
   assertMatchesStatus(dir, state);
 });
 
-test('a plan whose report says PARTIAL or is missing is not finished, and only the first line counts', () => {
+test('a plan whose report says PARTIAL or is missing is not finished, and only the first line counts', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Base' }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'] } },
-  });
+  }, t);
   report(dir, 1, 1, 'PLAN PARTIAL');
   report(dir, 1, 2, 'PLAN COMPLETE');
   writeFileSync(join(phaseReportsDir(join(dir, 'phases', '1')), 'plan-3.md'), 'Tasks 3 of 3\nPLAN COMPLETE\n');
@@ -90,11 +90,11 @@ test('a plan whose report says PARTIAL or is missing is not finished, and only t
   assertMatchesStatus(dir, state);
 });
 
-test('every plan of a phase derived complete is finished, even with no report, and status (which reads the state) lists none as outstanding', () => {
+test('every plan of a phase derived complete is finished, even with no report, and status (which reads the state) lists none as outstanding', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Base', checked: true }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'], summary: true, uat: [{ status: 'pass' }] } },
-  });
+  }, t);
   const state = imported(dir);
   assert.equal(state.phases[0].status, 'complete');
   assert.deepEqual(state.phases[0].plans.map((p) => p.finished), [true, true]);
@@ -103,18 +103,18 @@ test('every plan of a phase derived complete is finished, even with no report, a
   assert.deepEqual(run(['status'], dir).outstanding, []);
 });
 
-test('a workflow run file never decides whether a plan finished', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Base' }], phases: { 1: { plan: true } } });
+test('a workflow run file never decides whether a plan finished', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Base' }], phases: { 1: { plan: true } } }, t);
   mkdirSync(join(dir, 'records', 'workflow-runs'), { recursive: true });
   writeFileSync(join(dir, 'records', 'workflow-runs', 'run.json'), JSON.stringify({ state: 'complete', plan: 'PLAN.md' }));
   assert.deepEqual(imported(dir).phases[0].plans, [{ file: 'PLAN.md', finished: false }]);
 });
 
-test('a closed roadmap imports as no cycle open, with its requirements and cursor kept', () => {
+test('a closed roadmap imports as no cycle open, with its requirements and cursor kept', (t) => {
   const dir = makeTree({
     reqs: [['REQ-1', 1, 'Complete']],
     cursor: cursor(0, 0, 'no active cycle', 'phase complete', '/cad-new-milestone'),
-  });
+  }, t);
   writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap\n\n## Phases\n\n');
   const state = imported(dir);
   assert.equal(state.cycleOpen, false);
@@ -124,35 +124,35 @@ test('a closed roadmap imports as no cycle open, with its requirements and curso
   assertMatchesStatus(dir, state);
 });
 
-test('a roadmap status refuses is refused with the same reason, detail and issues', () => {
-  const dir = makeTree({});
+test('a roadmap status refuses is refused with the same reason, detail and issues', (t) => {
+  const dir = makeTree({}, t);
   writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap\n\n## Phases\n\n- Phase 1: Ship auth\n');
   const r = importState(dir);
   const s = run(['status'], dir);
   assert.equal(r.ok, false);
   assert.deepEqual([r.reason, r.detail, r.issues], [s.reason, s.detail, s.issues]);
   assert.ok(r.hint);
-  const noSection = makeTree({});
+  const noSection = makeTree({}, t);
   writeFileSync(join(noSection, 'ROADMAP.md'), '# Roadmap\n\nnothing here\n');
   const n = importState(noSection);
   assert.deepEqual([n.ok, n.reason, n.detail], [false, 'unparseable-roadmap', run(['status'], noSection).detail]);
 });
 
-test('no ROADMAP.md: a planning directory with nothing in it is a project not set up, with an empty state and no cycle open', () => {
-  const empty = makeTree({});
+test('no ROADMAP.md: a planning directory with nothing in it is a project not set up, with an empty state and no cycle open', (t) => {
+  const empty = makeTree({}, t);
   assert.deepEqual(imported(empty), { cycleOpen: false, cursor: null, phases: [], requirements: [] });
   // config and records alone are not work
-  const setup = makeTree({ config: { memory: { backend: 'none' } } });
+  const setup = makeTree({ config: { memory: { backend: 'none' } } }, t);
   mkdirSync(join(setup, 'records'));
   mkdirSync(join(setup, 'phases'));
   assert.equal(importState(setup).ok, true);
 });
 
-test('no ROADMAP.md beside a phases entry, an archive folder or STATE.md is a refusal', () => {
-  const withPhase = makeTree({ phases: { 1: { plan: true } }, roadmap: false });
-  const withArchive = makeTree({});
+test('no ROADMAP.md beside a phases entry, an archive folder or STATE.md is a refusal', (t) => {
+  const withPhase = makeTree({ phases: { 1: { plan: true } }, roadmap: false }, t);
+  const withArchive = makeTree({}, t);
   mkdirSync(join(withArchive, '_archive-v1.0.0'));
-  const withState = makeTree({ cursor: cursor(1, 1, 'Base', 'planned', 'x') });
+  const withState = makeTree({ cursor: cursor(1, 1, 'Base', 'planned', 'x') }, t);
   for (const dir of [withPhase, withArchive, withState]) {
     const r = importState(dir);
     assert.equal(r.ok, false);
@@ -161,30 +161,30 @@ test('no ROADMAP.md beside a phases entry, an archive folder or STATE.md is a re
   }
 });
 
-test('a cursor status outside the six lifecycle words is left out; the rest of the state is intact', () => {
+test('a cursor status outside the six lifecycle words is left out; the rest of the state is intact', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Base' }], phases: { 1: { plan: true } },
     cursor: cursor(1, 1, 'Base', 'in progress', '/cad-execute 1'),
-  });
+  }, t);
   const state = imported(dir);
   assert.equal(state.cursor, null);
   assert.equal(state.phases.length, 1);
 });
 
-test('a paused cursor carries its Next text word for word at any length', () => {
+test('a paused cursor carries its Next text word for word at any length', (t) => {
   const long = `${'wait for the vendor to answer, then pick it up again. '.repeat(12)}done.`;
   assert.ok(long.length > 500);
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Base' }], phases: { 1: { plan: true } },
     cursor: cursor(1, 1, 'Base', 'paused', long),
-  });
+  }, t);
   const state = imported(dir);
   assert.equal(state.cursor.status, 'paused');
   assert.equal(state.cursor.next, long);
 });
 
-test('the importer writes nothing and never opens .planning/state.json', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Base' }], phases: { 1: { plan: true } } });
+test('the importer writes nothing and never opens .planning/state.json', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Base' }], phases: { 1: { plan: true } } }, t);
   const rust = '{"version":1,"generation":2}';
   writeFileSync(join(dir, 'state.json'), rust);
   const before = readdirSync(dir).sort();
@@ -193,11 +193,11 @@ test('the importer writes nothing and never opens .planning/state.json', () => {
   assert.equal(readFileSync(join(dir, 'state.json'), 'utf8'), rust);
 });
 
-test('a `Plan: 0 of 2` line is dropped from the cursor, and what is imported is a state the writer accepts', () => {
+test('a `Plan: 0 of 2` line is dropped from the cursor, and what is imported is a state the writer accepts', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Base' }], phases: { 1: { plan: ['PLAN-0.md', 'PLAN-1.md'] } },
     cursor: cursor(1, 1, 'Base', 'planned', '/cad-execute 1'),
-  });
+  }, t);
   appendFileSync(join(dir, 'STATE.md'), 'Plan: 0 of 2\n');
   assert.equal(run(['status'], dir).ok, true);
   const state = imported(dir);
@@ -208,8 +208,8 @@ test('a `Plan: 0 of 2` line is dropped from the cursor, and what is imported is 
   assert.equal(run(['cursor', 'get'], dir).ok, true);
 });
 
-test('a phase whose name parses blank is named by its number, and the state is one the writer accepts', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: ' ' }], phases: { 1: { plan: true } } });
+test('a phase whose name parses blank is named by its number, and the state is one the writer accepts', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: ' ' }], phases: { 1: { plan: true } } }, t);
   const state = imported(dir);
   assert.equal(state.phases[0].name, 'Phase 1');
   assert.equal(writeState(dir, state).ok, true);

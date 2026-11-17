@@ -865,8 +865,8 @@ test('hook process: a non-Cadence stop and malformed stdin exit 0 silently and a
   }
 });
 
-test('hook process: run against an unstamped v4.0 project it leaves .planning byte-identical and exits 0', () => {
-  const dir = v40Project();
+test('hook process: run against an unstamped v4.0 project it leaves .planning byte-identical and exits 0', (t) => {
+  const dir = v40Project(t);
   // an open dispatch where the hook reads, so the old hook had a bracket to close and wrote into the unstamped project
   mkdirSync(recordsDir(dir));
   writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${JSON.stringify({ phase: '1', family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor', corr: '1-abc1234', ts: T(1) })}\n`);
