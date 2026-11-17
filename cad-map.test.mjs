@@ -1,5 +1,5 @@
 // Pins for /cad-map (Phase 3, plan 7). The workflow file is prose a model follows, so these hold what a rewrite could
-// quietly lose: the order of the steps, the stops, and the releases. The seams themselves are proved in plans 4 and 6, and
+// quietly lose: the order of the steps and the stops. The seams themselves are proved in plans 4 and 6, and
 // the live run is checked at /cad-verify.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -66,28 +66,21 @@ test('a refresh asks too, and only a typed yes goes on', () => {
   assert.match(MAP, /Only a typed yes in the next message goes on\. Any other reply starts nothing/);
 });
 
-test('it reads no workflow switch and names no layered-workflow reader', () => {
-  assert.ok(!/use_workflows|workflow-layers/.test(RAW + SKILL));
-});
-
 // --- the launch --------------------------------------------------------------
 
-test('the steps appear in order: claim, resolve, status --out-dir, launch, end of turn, codemap write, release', () => {
+test('the steps appear in order: resolve, status --out-dir, launch, end of turn, codemap write', () => {
   const after = MAP.indexOf('## 3. After a yes');
   inOrder(MAP, [
-    'workflow-claim take --fire code-map-',
     'route.mjs" resolve --role cad-mapper --attempt 1',
     'codemap status --out-dir',
     'Launch the `Workflow` tool by its named entry `cadence:code-map`',
     'Otherwise end the turn',
     'codemap write --run-file',
-    'Release the claim right after the call returns any other answer, whether it succeeded or refused',
   ], after);
 });
 
-test('the claim is first after the yes, and the scratch directory carries the guard', () => {
+test('the scratch directory made after the yes carries the guard', () => {
   const step = RAW.slice(RAW.indexOf('## 3. After a yes'));
-  assert.ok(step.indexOf('mktemp -d') < step.indexOf('workflow-claim take'));
   assert.match(step, /mktemp -d "\$\{TMPDIR:-\/tmp\}\/cad-XXXXXX"\)" && case "\$D" in \(\*\[!A-Za-z0-9\._\/-\]\*\) echo "scratch-unsafe: \$D" >&2; exit 1;; esac && echo "scratch dir: \$D"/);
 });
 
@@ -115,27 +108,17 @@ test('scriptPath names a file that exists', () => {
   assert.ok(existsSync(join(ROOT, m[1])));
 });
 
-test('the claim is released on a refused compose, zero items, a refused launch and a launch never issued', () => {
-  assert.match(MAP, /From here a claim is held, so every stop below releases it at once/);
-  assert.match(MAP, /A refusal is named in one line and the claim released/);
-  assert.match(MAP, /With `items` 0 the map went current since the question: say so, release the claim and start nothing/);
-  assert.match(MAP, /A launch the host refuses: name it in one line and release the claim at once, since no notice will come and nothing was spent/);
-  assert.match(MAP, /A launch call that never issues: name it and release the claim the same way, without saying nothing was spent/);
-});
-
-test('a take that prints no id has nothing to release', () => {
-  assert.match(MAP, /With `workflow\.multi_workflow` on a take prints no id and holds nothing, so there is nothing to release/);
-});
-
-test('a held claim names its holder and age, and the release line for a holder that may be dead', () => {
-  assert.match(MAP, /On `launch: false`, name the `holder` and its `age_seconds`[^.]*`workflow-claim release --fire <holder> --id <holder_id>`/);
+test('a refused compose, zero items, a refused launch and a launch never issued each stop the run', () => {
+  assert.match(MAP, /A refusal is named in one line\./);
+  assert.match(MAP, /With `items` 0 the map went current since the question: say so and start nothing/);
+  assert.match(MAP, /A launch the host refuses: name it in one line, and say nothing was spent/);
+  assert.match(MAP, /A launch call that never issues: name it in one line, without saying nothing was spent/);
 });
 
 // --- the notice --------------------------------------------------------------
 
-test('codemap write carries --launch-file and the notice\'s totals, and the claim is released whether it succeeded or refused', () => {
+test('codemap write carries --launch-file and the notice\'s totals', () => {
   assert.match(MAP, /codemap write --run-file <run file> --launch-file <the launch file status printed> \[--notice-tokens <n> --notice-turns <n> --notice-duration-ms <n>\]/);
-  assert.match(MAP, /Release the claim right after the call returns any other answer, whether it succeeded or refused/);
 });
 
 test('the end names what was written, each refused module, each dead reader, and that only those rebuild', () => {
@@ -144,15 +127,14 @@ test('the end names what was written, each refused module, each dead reader, and
   assert.match(MAP, /A refusal of the call is named in one line\. One carrying `brackets` has billed its agents, and a `bad-args` one has billed nothing/);
 });
 
-test('a bad-args refusal is corrected and the same call run again before the release', () => {
+test('a bad-args refusal is corrected and the same call run again before the run stops', () => {
   const i = MAP.indexOf('A `bad-args` refusal has billed and written nothing');
   assert.ok(i > 0, 'the bad-args arm is not stated');
   assert.match(MAP, /A `bad-args` refusal has billed and written nothing and the run file is still good, so correct the flag it names and run the same call again before you stop/);
-  assert.ok(i < MAP.indexOf('Release the claim right after the call returns any other answer'), 'the retry comes before the release rule');
 });
 
-test('a partial view of the launch file is read whole, or the run stops released and never launches from it', () => {
-  assert.match(MAP, /If `Read` answers a partial view, follow its instruction to read the whole file; if the whole file can't be had, name that in one line, release the claim and start nothing, and never launch from a partial view/);
+test('a partial view of the launch file is read whole, or the run stops and never launches from it', () => {
+  assert.match(MAP, /If `Read` answers a partial view, follow its instruction to read the whole file; if the whole file can't be had, name that in one line and start nothing, and never launch from a partial view/);
   assert.ok(!/allow_large/.test(MAP), 'a host parameter is named');
 });
 

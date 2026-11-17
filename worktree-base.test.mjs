@@ -3,20 +3,29 @@
 // managed and user layers are relocated onto temp paths so the dev's real
 // settings can never decide a test's verdict, and fixtures are plain temp
 // dirs (no git repo), so the seam falls back to --dir as the root.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'worktree-base.mjs');
-const ABSENT = join(mkdtempSync(join(tmpdir(), 'cad-wb-')), 'absent.json');
+const ABSENT_ROOT = mkdtempSync(join(tmpdir(), 'cad-wb-'));
+const ABSENT = join(ABSENT_ROOT, 'absent.json');
+after(() => rmSync(ABSENT_ROOT, { recursive: true, force: true }));
+
+/** A mkdtemp root that goes when test `t` ends. */
+function tmp(t, prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
 
 /** A project fixture; `files` maps a .claude/<name> to its raw contents. */
-function fixture(files = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'cad-wb-repo-'));
+function fixture(t, files = {}) {
+  const dir = tmp(t, 'cad-wb-repo-');
   mkdirSync(join(dir, '.claude'), { recursive: true });
   for (const [name, body] of Object.entries(files)) {
     writeFileSync(join(dir, '.claude', name), body);
@@ -41,14 +50,14 @@ function resolveIn(dir, { managed = ABSENT, user = ABSENT } = {}) {
 }
 
 /** A standalone settings file at <tmp>/<label>.json. */
-function loose(label, v) {
-  const file = join(mkdtempSync(join(tmpdir(), 'cad-wb-layer-')), `${label}.json`);
+function loose(t, label, v) {
+  const file = join(tmp(t, 'cad-wb-layer-'), `${label}.json`);
   writeFileSync(file, settings(v));
   return file;
 }
 
-test('unset everywhere: the fresh default applies and parallel is refused', () => {
-  const r = resolveIn(fixture());
+test('unset everywhere: the fresh default applies and parallel is refused', (t) => {
+  const r = resolveIn(fixture(t));
   assert.equal(r.ok, true);
   assert.equal(r.baseRef, 'fresh');
   assert.equal(r.source, 'default');
@@ -56,62 +65,62 @@ test('unset everywhere: the fresh default applies and parallel is refused', () =
   assert.match(r.reason, /unset everywhere/);
 });
 
-test('user layer head: parallel is safe, source names the file', () => {
-  const user = loose('user', 'head');
-  const r = resolveIn(fixture(), { user });
+test('user layer head: parallel is safe, source names the file', (t) => {
+  const user = loose(t, 'user', 'head');
+  const r = resolveIn(fixture(t), { user });
   assert.equal(r.baseRef, 'head');
   assert.equal(r.source, user);
   assert.equal(r.parallelSafe, true);
 });
 
-test('project settings.json beats the user layer', () => {
-  const r = resolveIn(fixture({ 'settings.json': settings('head') }), { user: loose('user', 'fresh') });
+test('project settings.json beats the user layer', (t) => {
+  const r = resolveIn(fixture(t, { 'settings.json': settings('head') }), { user: loose(t, 'user', 'fresh') });
   assert.equal(r.baseRef, 'head');
   assert.equal(r.parallelSafe, true);
   assert.match(r.source, /settings\.json$/);
 });
 
-test('settings.local.json beats project settings.json', () => {
-  const dir = fixture({ 'settings.json': settings('head'), 'settings.local.json': settings('fresh') });
+test('settings.local.json beats project settings.json', (t) => {
+  const dir = fixture(t, { 'settings.json': settings('head'), 'settings.local.json': settings('fresh') });
   const r = resolveIn(dir);
   assert.equal(r.baseRef, 'fresh');
   assert.equal(r.parallelSafe, false);
   assert.match(r.source, /settings\.local\.json$/);
 });
 
-test('managed policy wins over every lower layer', () => {
-  const dir = fixture({ 'settings.local.json': settings('head') });
-  const r = resolveIn(dir, { managed: loose('managed', 'fresh'), user: loose('user', 'head') });
+test('managed policy wins over every lower layer', (t) => {
+  const dir = fixture(t, { 'settings.local.json': settings('head') });
+  const r = resolveIn(dir, { managed: loose(t, 'managed', 'fresh'), user: loose(t, 'user', 'head') });
   assert.equal(r.baseRef, 'fresh');
   assert.equal(r.parallelSafe, false);
   assert.match(r.source, /managed\.json$/);
 });
 
-test('a malformed layer is skipped, not fatal - the cascade below it answers', () => {
-  const dir = fixture({ 'settings.local.json': '{ not json at all', 'settings.json': settings('head') });
+test('a malformed layer is skipped, not fatal - the cascade below it answers', (t) => {
+  const dir = fixture(t, { 'settings.local.json': '{ not json at all', 'settings.json': settings('head') });
   const r = resolveIn(dir);
   assert.equal(r.ok, true);
   assert.equal(r.baseRef, 'head');
   assert.match(r.source, /settings\.json$/);
 });
 
-test('a layer without the key falls through to the next one', () => {
-  const dir = fixture({ 'settings.local.json': JSON.stringify({ model: 'opus' }) });
-  const r = resolveIn(dir, { user: loose('user', 'head') });
+test('a layer without the key falls through to the next one', (t) => {
+  const dir = fixture(t, { 'settings.local.json': JSON.stringify({ model: 'opus' }) });
+  const r = resolveIn(dir, { user: loose(t, 'user', 'head') });
   assert.equal(r.baseRef, 'head');
   assert.match(r.source, /user\.json$/);
 });
 
-test('an unrecognized value refuses parallel and says the setting takes two values', () => {
-  const r = resolveIn(fixture({ 'settings.json': settings('main') }));
+test('an unrecognized value refuses parallel and says the setting takes two values', (t) => {
+  const r = resolveIn(fixture(t, { 'settings.json': settings('main') }));
   assert.equal(r.ok, true);
   assert.equal(r.baseRef, 'main');
   assert.equal(r.parallelSafe, false);
   assert.match(r.reason, /only "fresh" or "head"/);
 });
 
-test('a non-string baseRef is ignored like an absent one', () => {
-  const dir = fixture({ 'settings.json': JSON.stringify({ worktree: { baseRef: true } }) });
+test('a non-string baseRef is ignored like an absent one', (t) => {
+  const dir = fixture(t, { 'settings.json': JSON.stringify({ worktree: { baseRef: true } }) });
   const r = resolveIn(dir);
   assert.equal(r.baseRef, 'fresh');
   assert.equal(r.source, 'default');

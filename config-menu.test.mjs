@@ -12,6 +12,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG_MD = readFileSync(join(ROOT, 'cadence-core', 'workflows', 'config.md'), 'utf8');
 const CONFIG_MJS = join(ROOT, 'cadence-core', 'bin', 'config.mjs');
 const MENU_MD = readFileSync(join(ROOT, 'cadence-core', 'workflows', 'config-menu.md'), 'utf8');
+const TESTING_MD = readFileSync(join(ROOT, 'cadence-core', 'workflows', 'config-testing.md'), 'utf8');
+const ROLES_MD = readFileSync(join(ROOT, 'cadence-core', 'workflows', 'config-roles.md'), 'utf8');
 
 // whitespace collapsed, so a re-wrap of the prose breaks no pin
 const flat = (text) => text.replace(/\s+/g, ' ');
@@ -79,10 +81,10 @@ test('a group ends its list turn without a box and names each guided setup again
   assert.match(s, /Git and landing and How work runs have none/);
 });
 
-test('a pick shows the three layers, compares five keys against the target file and states the file rules', () => {
+test('a pick shows the three layers, compares two keys against the target file and states the file rules', () => {
   const s = flat(section(MENU_MD, 'A group'));
   assert.match(s, /the default, global and repo values with who wins/);
-  for (const key of ['git.auto_close', 'workflow.use_workflows', 'workflow.multi_workflow', 'workflow.execute_workflows', 'review.reviewers']) {
+  for (const key of ['git.auto_close', 'review.reviewers']) {
     assert.ok(s.includes(`\`${key}\``), key);
   }
   assert.match(s, /equals what the target file stores/);
@@ -238,7 +240,8 @@ test('a sentence prints the same no-effect line a group pick does, for each pick
 
 test('every scratch directory step refuses an unsafe path before the path is used', () => {
   const guard = 'case "$D" in (*[!A-Za-z0-9._/-]*)';
-  for (const [name, text] of [['config-menu.md', MENU_MD], ['config.md', CONFIG_MD]]) {
+  for (const [name, text] of [['config-menu.md', MENU_MD], ['config.md', CONFIG_MD],
+    ['config-testing.md', TESTING_MD], ['config-roles.md', ROLES_MD]]) {
     const sites = text.split('\n').filter((l) => l.includes('mktemp -d'));
     assert.ok(sites.length > 0, `${name} makes no scratch directory`);
     for (const l of sites) {
@@ -309,7 +312,7 @@ test('a setting that needs both files offers the global write behind its own yes
 
 // the prose only helps if the seam takes the write it asks for, so prove the two writes really turn the setting on
 test('the repo write leaves each both-file key off, and the global write the menu offers turns it on', () => {
-  for (const key of ['git.auto_close', 'workflow.use_workflows', 'workflow.multi_workflow', 'workflow.execute_workflows']) {
+  for (const key of ['git.auto_close']) {
     const root = mkdtempSync(join(tmpdir(), 'cad-second-file-'));
     try {
       mkdirSync(join(root, '.planning'));

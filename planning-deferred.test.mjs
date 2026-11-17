@@ -65,8 +65,8 @@ const recordsOf = (dir, phase) => {
   return rdir;
 };
 
-test('deferred record: the member lands beside the sibling REVIEW discriminator', () => {
-  const { repo, dir, baseFull, headFull, base } = adjRepo();
+test('deferred record: the member lands beside the sibling REVIEW discriminator', (t) => {
+  const { repo, dir, baseFull, headFull, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, defPayload());
   const r = defRun(repo, dir, ['--phase', '2', '--trigger', 'diff',
     '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]);
@@ -96,8 +96,8 @@ test('deferred record: the member lands beside the sibling REVIEW discriminator'
   assert.deepEqual(rec.findings, defPayload().findings);
 });
 
-test('deferred record: a second call refuses instead of overwriting the queue member', () => {
-  const { repo, dir, base } = adjRepo();
+test('deferred record: a second call refuses instead of overwriting the queue member', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, defPayload());
   const args = ['--phase', '2', '--trigger', 'diff', '--discriminator', 'plan-1',
     '--base', base, '--head', 'HEAD', '--payload', payload];
@@ -115,12 +115,12 @@ test('deferred record: a second call refuses instead of overwriting the queue me
     ['DEFERRED-diff-plan-1-r2.json', 'DEFERRED-diff-plan-1.json']);
 });
 
-test('deferred record: --trigger and --discriminator are refused by the FILENAME rule', () => {
+test('deferred record: --trigger and --discriminator are refused by the FILENAME rule', (t) => {
   // Both reach a filename, and `milestone-prune --label` is the precedent for
   // refusing rather than sanitizing (VAL-01): a sanitized token writes a member
   // under a name the caller did not choose, which is the same class of answer
   // about something nobody asked for.
-  const { repo, dir, base } = adjRepo();
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, defPayload());
   for (const [flag, bad] of [['--trigger', '../../etc'], ['--discriminator', '.'],
     ['--trigger', '-rf'], ['--discriminator', 'plan 1']]) {
@@ -136,8 +136,8 @@ test('deferred record: --trigger and --discriminator are refused by the FILENAME
   }
 });
 
-test('deferred record: a malformed finding is refused in buildEntries own words', () => {
-  const { repo, dir, base } = adjRepo();
+test('deferred record: a malformed finding is refused in buildEntries own words', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   for (const [over, shape] of [[{ line: 0 }, /\.line must be an integer of at least 1$/],
     [{ nope: true }, /carries an unknown key: nope$/]]) {
     const payload = adjPayloadFile(repo, defPayload(over), `payload-${Object.keys(over)[0]}.json`);
@@ -150,8 +150,8 @@ test('deferred record: a malformed finding is refused in buildEntries own words'
   }
 });
 
-test('deferred record: an absent phase directory is refused, never minted', () => {
-  const { repo, dir, base } = adjRepo();
+test('deferred record: an absent phase directory is refused, never minted', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, defPayload());
   const r = defRun(repo, dir, ['--phase', '7', '--trigger', 'diff',
     '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]);
@@ -179,8 +179,8 @@ function defList(dir, args = []) {
   return { ...JSON.parse(stdout), _exit: code };
 }
 
-test('deferred list: a member is queued until its ADJUDICATION sibling is beside it', () => {
-  const { repo, dir, base } = adjRepo();
+test('deferred list: a member is queued until its ADJUDICATION sibling is beside it', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, defPayload());
   const fire = ['--phase', '2', '--trigger', 'diff', '--discriminator', 'plan-1',
     '--base', base, '--head', 'HEAD'];
@@ -205,10 +205,10 @@ test('deferred list: a member is queued until its ADJUDICATION sibling is beside
   assert.equal(settled.findings, 0);
 });
 
-test('deferred list: a round 2 member is superseded by round 2 and by nothing else', () => {
+test('deferred list: a round 2 member is superseded by round 2 and by nothing else', (t) => {
   // The whole reason the two names share one round rule. A re-arm cleared by
   // round one's record would drop the finding the re-arm was fired over.
-  const { repo, dir, base } = adjRepo();
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, defPayload());
   const fire = ['--phase', '2', '--trigger', 'diff', '--discriminator', 'plan-1',
     '--base', base, '--head', 'HEAD'];
@@ -223,8 +223,8 @@ test('deferred list: a round 2 member is superseded by round 2 and by nothing el
     'round one settled; round two is still queued');
 });
 
-test('deferred list: both homes are read, and --phase narrows to one', () => {
-  const { repo, dir, base } = adjRepo();
+test('deferred list: both homes are read, and --phase narrows to one', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, defPayload());
   assert.equal(defRun(repo, dir, ['--phase', '2', '--trigger', 'diff', '--discriminator',
     'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]).ok, true);
@@ -254,11 +254,11 @@ test('deferred list: an unreadable directory refuses instead of reporting an emp
     typeof process.getuid === 'function' && process.getuid() === 0
       ? 'root bypasses mode bits'
       : false,
-}, () => {
+}, (t) => {
   // An unprovable queue is not an empty one - the disposition `decideGateHalt`
   // already states for a findings payload it could not parse. Reporting zero
   // here is what would let a land publish over a queue it never read.
-  const { dir } = adjRepo();
+  const { dir } = adjRepo({}, t);
   // an unreadable phase folder refuses the conversion itself, so the project is converted first
   assert.equal(run(['status'], dir).ok, true);
   chmodSync(join(dir, 'phases', '2'), 0o000);
@@ -274,8 +274,8 @@ test('deferred list: an unreadable directory refuses instead of reporting an emp
   }
 });
 
-test('deferred list: a member that cannot be read lands on the same refusing list', () => {
-  const { dir } = adjRepo();
+test('deferred list: a member that cannot be read lands on the same refusing list', (t) => {
+  const { dir } = adjRepo({}, t);
   const pdir = recordsOf(dir, '2');
   // Three ways a member stops being provable, and none of them is "nothing
   // deferred": bytes that do not parse, fields that spell another filename, and
@@ -303,11 +303,11 @@ test('deferred list: a member that cannot be read lands on the same refusing lis
   assert.deepEqual(r.members, []);
 });
 
-test('deferred list: an ADJUDICATION symlink does not settle a member', () => {
+test('deferred list: an ADJUDICATION symlink does not settle a member', (t) => {
   // `recordForFire`s disposition, held on the read side: a symlink is not a
   // record, and accepting one would let a queue be cleared by a link to
   // anything at all.
-  const { repo, dir, base } = adjRepo();
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, defPayload());
   assert.equal(defRun(repo, dir, ['--phase', '2', '--trigger', 'diff', '--discriminator',
     'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]).ok, true);
@@ -320,12 +320,12 @@ test('deferred list: an ADJUDICATION symlink does not settle a member', () => {
   assert.deepEqual(r.members.map((m) => m.path), ['phases/2/records/DEFERRED-diff-plan-1.json']);
 });
 
-test('status: the deferred block is on EVERY envelope, off the same derivation', () => {
+test('status: the deferred block is on EVERY envelope, off the same derivation', (t) => {
   // ALWAYS present, unlike `cycle` and `drift`: this key is read by a refusal
   // surface, and a key absent in the empty state cannot tell "nothing is
   // deferred" from "this seam predates the queue" - which is the fail-open
   // answer on the one gate whose job is to refuse.
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Auth' }], phases: { 1: { plan: true } } });
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Auth' }], phases: { 1: { plan: true } } }, t);
   const empty = run(['status'], dir);
   assert.equal(empty.ok, true, JSON.stringify(empty));
   assert.deepEqual(empty.deferred, { members: [], findings: 0, unreadable: [] });
@@ -359,11 +359,11 @@ test('status: an unreadable queue rides the envelope without failing the status'
     typeof process.getuid === 'function' && process.getuid() === 0
       ? 'root bypasses mode bits'
       : false,
-}, () => {
+}, (t) => {
   // The status answers about the roadmap; the block carries its own evidence.
   // Degrading the whole envelope would take /cad-progress down over a queue it
   // was only reporting on, and the refusal reads `unreadable` for itself.
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Auth' }], phases: { 1: { plan: true } } });
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Auth' }], phases: { 1: { plan: true } } }, t);
   // an unreadable phase folder refuses the conversion itself, so the project is converted first
   assert.equal(run(['status'], dir).ok, true);
   chmodSync(join(dir, 'phases', '1'), 0o000);
@@ -403,8 +403,8 @@ function putMember(dir, phase, trigger, discriminator, round, findings, home = '
   return file;
 }
 
-test('deferred carry: the unadjudicated members move, the settled ones are pruned with the phase', () => {
-  const { dir } = adjRepo({ phase: 4 });
+test('deferred carry: the unadjudicated members move, the settled ones are pruned with the phase', (t) => {
+  const { dir } = adjRepo({ phase: 4 }, t);
   putMember(dir, 4, 'diff', 'plan-1', 1, 2);
   putMember(dir, 4, 'plan', 'plan-2', 1, 1);
   writeFileSync(join(recordsOf(dir, '4'), 'ADJUDICATION-plan-plan-2.json'), '{}\n');
@@ -430,10 +430,10 @@ test('deferred carry: the unadjudicated members move, the settled ones are prune
   assert.equal(listed.findings, 2);
 });
 
-test('deferred carry: a destination that already exists refuses, and moves NOTHING', () => {
+test('deferred carry: a destination that already exists refuses, and moves NOTHING', (t) => {
   // All destinations are checked before the first rename, so a collision leaves
   // the queue in one home rather than half in each.
-  const { dir } = adjRepo({ phase: 4 });
+  const { dir } = adjRepo({ phase: 4 }, t);
   putMember(dir, 4, 'diff', 'plan-1', 1, 1);
   assert.equal(defCarry(dir, ['--phase', '4']).ok, true);
   putMember(dir, 4, 'diff', 'plan-1', 1, 1);
@@ -459,12 +459,12 @@ test('deferred carry: an unreadable phase refuses BEFORE the prune deletes it', 
     typeof process.getuid === 'function' && process.getuid() === 0
       ? 'root bypasses mode bits'
       : false,
-}, () => {
+}, (t) => {
   // Sharper than the reader's refusal, and for a sharper reason: this call is
   // the last thing that runs before milestone-prune deletes the directory, so
   // carrying what was provable and saying nothing about the rest would destroy
   // exactly the members it could not read.
-  const { dir } = adjRepo({ phase: 4 });
+  const { dir } = adjRepo({ phase: 4 }, t);
   putMember(dir, 4, 'diff', 'plan-1', 1, 1);
   writeFileSync(join(recordsOf(dir, '4'), 'DEFERRED-plan-plan-2.json'), '{not json\n');
 
@@ -477,11 +477,11 @@ test('deferred carry: an unreadable phase refuses BEFORE the prune deletes it', 
     'a refused carry created the destination anyway');
 });
 
-test('deferred carry: a symlink squatting the destination is refused, never followed', () => {
+test('deferred carry: a symlink squatting the destination is refused, never followed', (t) => {
   // milestone-prune --mode archive states the same rail for its archive root:
   // renameSync FOLLOWS a symlink, and would deposit committed artifacts
   // wherever it points.
-  const { dir } = adjRepo({ phase: 4 });
+  const { dir } = adjRepo({ phase: 4 }, t);
   putMember(dir, 4, 'diff', 'plan-1', 1, 1);
   mkdirSync(join(dir, 'records', 'deferred'), { recursive: true });
   mkdirSync(join(dir, 'elsewhere'));
@@ -494,8 +494,8 @@ test('deferred carry: a symlink squatting the destination is refused, never foll
   assert.deepEqual(readdirSync(join(dir, 'elsewhere')), []);
 });
 
-test('deferred list and carry: a phase records folder that is a link is refused, never followed', () => {
-  const { dir } = adjRepo({ phase: 4 });
+test('deferred list and carry: a phase records folder that is a link is refused, never followed', (t) => {
+  const { dir } = adjRepo({ phase: 4 }, t);
   const outside = join(dir, 'elsewhere');
   mkdirSync(outside);
   const member = join(outside, 'DEFERRED-diff-plan-1.json');
@@ -513,9 +513,9 @@ test('deferred list and carry: a phase records folder that is a link is refused,
   assert.equal(existsSync(member), true, 'the file outside the tree was moved');
 });
 
-test('deferred carry: a symlinked records folder is refused and nothing moves', () => {
+test('deferred carry: a symlinked records folder is refused and nothing moves', (t) => {
   // one more path component is one more place a link could redirect the rename
-  const { dir } = adjRepo({ phase: 4 });
+  const { dir } = adjRepo({ phase: 4 }, t);
   putMember(dir, 4, 'diff', 'plan-1', 1, 1);
   // a seam call stamps the project first, and a link where the records folder belongs is refused at that door, so
   // the project is stamped and its records folder then moved behind the link, state file and all
@@ -532,13 +532,13 @@ test('deferred carry: a symlinked records folder is refused and nothing moves', 
     'the member left its phase directory');
 });
 
-test('deferred carry: a symlink squatting the PARENT is refused too', () => {
+test('deferred carry: a symlink squatting the PARENT is refused too', (t) => {
   // The sibling above pins the final component. `lstatSync` does not follow the
   // final component and follows every one before it, so a check aimed at
   // `deferred/<N>` alone answers "absent, go ahead" while `deferred/` is
   // already a link out of the tree - and the mkdir then builds the phase
   // directory THERE and the rename fills it. Two levels down takes two checks.
-  const { dir } = adjRepo({ phase: 4 });
+  const { dir } = adjRepo({ phase: 4 }, t);
   putMember(dir, 4, 'diff', 'plan-1', 1, 1);
   mkdirSync(join(dir, 'elsewhere'));
   mkdirSync(join(dir, 'records'));
@@ -555,8 +555,8 @@ test('deferred carry: a symlink squatting the PARENT is refused too', () => {
     'the queue member left the phase directory on a refused carry');
 });
 
-test('deferred carry: a phase with nothing queued is an answer, not a refusal', () => {
-  const { dir } = adjRepo({ phase: 4 });
+test('deferred carry: a phase with nothing queued is an answer, not a refusal', (t) => {
+  const { dir } = adjRepo({ phase: 4 }, t);
   const r = defCarry(dir, ['--phase', '4']);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(r.moved, []);
@@ -567,12 +567,12 @@ test('deferred carry: a phase with nothing queued is an answer, not a refusal', 
 
 // --- a carried member stays adjudicable AND re-armable (D-10) ---------------
 
-test('adjudication + deferred record: a carried fire resolves its home in deferred/<N>/', () => {
+test('adjudication + deferred record: a carried fire resolves its home in deferred/<N>/', (t) => {
   // The failure this closes: `deferred carry` moves the member out of
   // `phases/<N>/` so it survives the prune, and both write faces refused on
   // that now-deleted directory - leaving the finding that stops the land
   // permanently unclearable. An unclearable gate is one that gets bypassed.
-  const { repo, dir, base } = adjRepo({ phase: 4 });
+  const { repo, dir, base } = adjRepo({ phase: 4 }, t);
   putMember(dir, 4, 'diff', 'plan-1', 1, 1);
   assert.equal(defCarry(dir, ['--phase', '4']).ok, true);
   rmSync(join(dir, 'phases', '4'), { recursive: true });
@@ -598,10 +598,10 @@ test('adjudication + deferred record: a carried fire resolves its home in deferr
     'round two is queued again; round one stays settled');
 });
 
-test('adjudication + deferred record: the live phase directory still wins', () => {
+test('adjudication + deferred record: the live phase directory still wins', (t) => {
   // ORDER, not either-or. A live phase is where a fire's REVIEW sibling is, and
   // a stale `deferred/<N>/` left by an earlier close must not capture it.
-  const { repo, dir, base } = adjRepo({ phase: 4 });
+  const { repo, dir, base } = adjRepo({ phase: 4 }, t);
   mkdirSync(join(dir, 'records', 'deferred', '4'), { recursive: true });
   const fire = ['--phase', '4', '--trigger', 'diff', '--discriminator', 'plan-1',
     '--base', base, '--head', 'HEAD'];
@@ -611,8 +611,8 @@ test('adjudication + deferred record: the live phase directory still wins', () =
     'phases/4/records/ADJUDICATION-diff-plan-1.json');
 });
 
-test('adjudication + deferred record: with NEITHER home present the refusal names both', () => {
-  const { repo, dir, base } = adjRepo({ phase: 4 });
+test('adjudication + deferred record: with NEITHER home present the refusal names both', (t) => {
+  const { repo, dir, base } = adjRepo({ phase: 4 }, t);
   const fire = ['--phase', '9', '--trigger', 'diff', '--discriminator', 'plan-1',
     '--base', base, '--head', 'HEAD'];
   for (const [face, r] of [
@@ -628,11 +628,11 @@ test('adjudication + deferred record: with NEITHER home present the refusal name
   }
 });
 
-test('adjudication + deferred record: a symlink at the carried home is refused, never followed', () => {
+test('adjudication + deferred record: a symlink at the carried home is refused, never followed', (t) => {
   // The lstatSync check moved WITH the resolution, so the second home gets the
   // same rail the first has: a symlink there is followed straight out of the
   // planning root by every writer after it.
-  const { repo, dir, base } = adjRepo({ phase: 4 });
+  const { repo, dir, base } = adjRepo({ phase: 4 }, t);
   rmSync(join(dir, 'phases', '4'), { recursive: true });
   mkdirSync(join(dir, 'records', 'deferred'), { recursive: true });
   mkdirSync(join(dir, 'elsewhere'));

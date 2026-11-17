@@ -25,8 +25,8 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 // `## Active` section (bullets) plus an empty `## Traceability` table -
 // `active: null` omits the heading entirely (the no_active_section case),
 // makeTree's `reqs` shape cannot express either.
-function seedTree({ roadmap, phases, active }) {
-  const dir = makeTree({ roadmap, phases });
+function seedTree({ roadmap, phases, active }, t) {
+  const dir = makeTree({ roadmap, phases }, t);
   const activeSection = active === null ? ''
     : `## Active\n\n${active.map((id) => `- **${id}**: desc\n`).join('')}\n`;
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
@@ -35,12 +35,12 @@ function seedTree({ roadmap, phases, active }) {
   return dir;
 }
 
-test('seed-reqs: a declared id with an ## Active bullet is seeded at Pending; a second run reports it skipped, file byte-identical', () => {
+test('seed-reqs: a declared id with an ## Active bullet is seeded at Pending; a second run reports it skipped, file byte-identical', (t) => {
   const dir = seedTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true, planReqs: ['X'] } },
     active: ['X'],
-  });
+  }, t);
   const r1 = run(['seed-reqs', '--phase', '1'], dir);
   assert.equal(r1.ok, true);
   assert.deepEqual(r1.seeded, ['X']);
@@ -55,12 +55,12 @@ test('seed-reqs: a declared id with an ## Active bullet is seeded at Pending; a 
   assert.equal(readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8'), after1);
 });
 
-test('seed-reqs: an id with no ## Active bullet is reported under orphan_ids, no row written, and audit still lists it under orphans.plan_ids', () => {
+test('seed-reqs: an id with no ## Active bullet is reported under orphan_ids, no row written, and audit still lists it under orphans.plan_ids', (t) => {
   const dir = seedTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true, planReqs: ['Y'] } },
     active: [],
-  });
+  }, t);
   const r = run(['seed-reqs', '--phase', '1'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.seeded, []);
@@ -71,24 +71,24 @@ test('seed-reqs: an id with no ## Active bullet is reported under orphan_ids, no
   assert.deepEqual(audit.orphans.plan_ids, [{ file: 'phases/1/PLAN.md', ids: ['Y'] }]);
 });
 
-test('seed-reqs: a missing ## Active heading returns no_active_section: true', () => {
+test('seed-reqs: a missing ## Active heading returns no_active_section: true', (t) => {
   const dir = seedTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true, planReqs: ['Z'] } },
     active: null,
-  });
+  }, t);
   const r = run(['seed-reqs', '--phase', '1'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.no_active_section, true);
   assert.deepEqual(r.orphan_ids, ['Z']);
 });
 
-test('seed-reqs: --phase absent/non-numeric/negative all return bad-args, nothing written', () => {
+test('seed-reqs: --phase absent/non-numeric/negative all return bad-args, nothing written', (t) => {
   const dir = seedTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true, planReqs: ['X'] } },
     active: ['X'],
-  });
+  }, t);
   const before = readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8');
   for (const args of [['seed-reqs'], ['seed-reqs', '--phase', 'abc'], ['seed-reqs', '--phase', '-1']]) {
     assert.equal(run(args, dir).reason, 'bad-args');
@@ -96,7 +96,7 @@ test('seed-reqs: --phase absent/non-numeric/negative all return bad-args, nothin
   assert.equal(readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8'), before);
 });
 
-test('seed-reqs: a --phase spelling that cannot round-trip is refused before any read (D-07)', () => {
+test('seed-reqs: a --phase spelling that cannot round-trip is refused before any read (D-07)', (t) => {
   // The fixture holds BOTH sub-phases, which is what makes the old answer
   // wrong rather than merely odd: `--phase 1.10` used to seed `| B | Phase 1.1
   // | Pending |` - the OTHER phase's row - with ok:true.
@@ -109,7 +109,7 @@ test('seed-reqs: a --phase spelling that cannot round-trip is refused before any
       '2.1': { plan: true, planReqs: ['D'] },
     },
     active: ['A', 'B', 'C', 'D'],
-  });
+  }, t);
   const before = readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8');
   for (const bad of ['1.10', '1.0', '01']) {
     const r = run(['seed-reqs', '--phase', bad], dir);
@@ -130,12 +130,12 @@ test('seed-reqs: a --phase spelling that cannot round-trip is refused before any
   }
 });
 
-test('seed-reqs: a malformed requirements: line surfaces frontmatter_issues', () => {
+test('seed-reqs: a malformed requirements: line surfaces frontmatter_issues', (t) => {
   const dir = seedTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true } },
     active: ['X'],
-  });
+  }, t);
   writeFileSync(join(dir, 'phases', '1', 'PLAN.md'),
     '---\nphase: 1\nrequirements:["X"]\nfiles: []\n---\n# Plan 1\n');
   const r = run(['seed-reqs', '--phase', '1'], dir);
@@ -146,26 +146,26 @@ test('seed-reqs: a malformed requirements: line surfaces frontmatter_issues', ()
   }]);
 });
 
-test('seed-reqs: absent REQUIREMENTS.md / absent phase dir / no conforming plan file degrade with named reasons', () => {
-  const noReqs = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true } } });
+test('seed-reqs: absent REQUIREMENTS.md / absent phase dir / no conforming plan file degrade with named reasons', (t) => {
+  const noReqs = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true } } }, t);
   assert.equal(run(['seed-reqs', '--phase', '1'], noReqs).reason, 'no-requirements');
 
-  const noPhaseDir = seedTree({ roadmap: [{ n: 1, name: 'One' }], active: ['X'] });
+  const noPhaseDir = seedTree({ roadmap: [{ n: 1, name: 'One' }], active: ['X'] }, t);
   assert.equal(run(['seed-reqs', '--phase', '1'], noPhaseDir).reason, 'no-phase-dir');
 
-  const noPlans = seedTree({ roadmap: [{ n: 1, name: 'One' }], active: ['X'] });
+  const noPlans = seedTree({ roadmap: [{ n: 1, name: 'One' }], active: ['X'] }, t);
   mkdirSync(join(noPlans, 'phases', '1'), { recursive: true });
   const rNoPlans = run(['seed-reqs', '--phase', '1'], noPlans);
   assert.equal(rNoPlans.reason, 'no-plans');
   assert.equal(rNoPlans.hint, '/cad-plan 1');
 });
 
-test('seed-reqs: a seeded row survives renumber insert, reading Phase 2', () => {
+test('seed-reqs: a seeded row survives renumber insert, reading Phase 2', (t) => {
   const dir = seedTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true, planReqs: ['X'] } },
     active: ['X'],
-  });
+  }, t);
   assert.equal(run(['seed-reqs', '--phase', '1'], dir).ok, true);
   assert.equal(run(['renumber', 'insert', '--at', '1'], dir).ok, true);
   const after = readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8');
@@ -174,12 +174,12 @@ test('seed-reqs: a seeded row survives renumber insert, reading Phase 2', () => 
 
 // --- the table is output the state renders ------------------------------------------------------------
 
-test('seed-reqs: the rows land in the state, the table agrees, a hand edit changes nothing reported and the next write undoes it', () => {
+test('seed-reqs: the rows land in the state, the table agrees, a hand edit changes nothing reported and the next write undoes it', (t) => {
   const dir = seedTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true, planReqs: ['X', 'Y'] } },
     active: ['X', 'Y'],
-  });
+  }, t);
   assert.deepEqual(run(['seed-reqs', '--phase', '1'], dir).seeded, ['X', 'Y']);
   assert.deepEqual(readState(dir).state.requirements, [
     { id: 'X', phase: 1, status: 'Pending' }, { id: 'Y', phase: 1, status: 'Pending' }]);
@@ -199,8 +199,8 @@ test('seed-reqs: the rows land in the state, the table agrees, a hand edit chang
   assert.equal(readFileSync(file, 'utf8'), generated, 'the next state-writing seam puts the generated rows back');
 });
 
-test('seed-reqs: a missing traceability table is still refused and nothing is written', () => {
-  const dir = seedTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true, planReqs: ['X'] } }, active: ['X'] });
+test('seed-reqs: a missing traceability table is still refused and nothing is written', (t) => {
+  const dir = seedTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true, planReqs: ['X'] } }, active: ['X'] }, t);
   assert.equal(run(['status'], dir).ok, true);
   writeFileSync(join(dir, 'REQUIREMENTS.md'), '# Requirements\n\n## Active\n\n- **X**: desc\n');
   const before = readState(dir).state;
@@ -209,8 +209,8 @@ test('seed-reqs: a missing traceability table is still refused and nothing is wr
   assert.deepEqual(readState(dir).state, before);
 });
 
-test('seed-reqs: an id another seed adds while this one waits on the lock is skipped, not stored twice', async () => {
-  const dir = seedTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true, planReqs: ['X'] } }, active: ['X'] });
+test('seed-reqs: an id another seed adds while this one waits on the lock is skipped, not stored twice', async (t) => {
+  const dir = seedTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true, planReqs: ['X'] } }, active: ['X'] }, t);
   assert.equal(run(['status'], dir).ok, true);
   const lock = `${statePath(dir)}.lock`;
   writeFileSync(lock, ''); // the other seed holds the state file

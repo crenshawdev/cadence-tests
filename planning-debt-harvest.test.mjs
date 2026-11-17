@@ -11,11 +11,10 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { DEBT_TOKEN } from '../cadence-core/bin/lib/debt-markers.mjs';
-import { PLANNING, isEntryFile } from './planning.test.mjs';
+import { PLANNING, isEntryFile, scratch } from './planning.test.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -33,9 +32,9 @@ const debtLine = (text, ceiling, trigger) => {
   return `${DEBT_TOKEN}:${fields.join(' |')}`;
 };
 
-/** A scratch PROJECT root that is a git repo, with `.planning/` present. */
-function debtRepo() {
-  const root = mkdtempSync(join(tmpdir(), 'cad-debt-'));
+/** A scratch PROJECT root that is a git repo, with `.planning/` present, gone when test `t` ends. */
+function debtRepo(t) {
+  const root = scratch('cad-debt-', t);
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'T'], { cwd: root });
@@ -64,8 +63,8 @@ function harvest(root, extra = []) {
 
 const captureOf = (root) => readFileSync(join(root, '.planning', 'CAPTURE.md'), 'utf8');
 
-test('debt-harvest: a planted marker is collected with its ceiling and trigger', () => {
-  const root = debtRepo();
+test('debt-harvest: a planted marker is collected with its ceiling and trigger', (t) => {
+  const root = debtRepo(t);
   debtAdd(root, 'src/a.js', `// ${debtLine('single-tenant only', 'no tenant column', 'tenant two')}\n`);
   const r = harvest(root);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -76,8 +75,8 @@ test('debt-harvest: a planted marker is collected with its ceiling and trigger',
   assert.match(body, /- `src\/a\.js:1` single-tenant only - ceiling: no tenant column - trigger: tenant two/);
 });
 
-test('debt-harvest: the 19 conventional markers contribute NOTHING (AC5)', () => {
-  const root = debtRepo();
+test('debt-harvest: the 19 conventional markers contribute NOTHING (AC5)', (t) => {
+  const root = debtRepo(t);
   debtAdd(root, 'src/b.js', ['// TODO: fix this', '// FIXME: broken', '// XXX: careful',
     '// HACK: works for now', '// NOTE: read me', '// placeholder', '// not implemented',
     '// SHORTCUT: nope', '// DEBT: nope', '// CORNER: nope', '// TRIPWIRE: nope',
@@ -89,8 +88,8 @@ test('debt-harvest: the 19 conventional markers contribute NOTHING (AC5)', () =>
   assert.match(captureOf(root), /## Debt markers\n\n- None\.\n/);
 });
 
-test('debt-harvest: an untracked file and an ignored node_modules contribute nothing (AC5)', () => {
-  const root = debtRepo();
+test('debt-harvest: an untracked file and an ignored node_modules contribute nothing (AC5)', (t) => {
+  const root = debtRepo(t);
   debtAdd(root, 'src/a.js', `// ${debtLine('tracked cut', 'c', 't')}\n`);
   // Untracked: `git ls-files` never lists it.
   mkdirSync(join(root, 'src'), { recursive: true });
@@ -106,12 +105,12 @@ test('debt-harvest: an untracked file and an ignored node_modules contribute not
   assert.doesNotMatch(captureOf(root), /untracked cut|vendor cut/);
 });
 
-test('debt-harvest: a FORCE-ADDED node_modules file is enumerated and still skipped', () => {
+test('debt-harvest: a FORCE-ADDED node_modules file is enumerated and still skipped', (t) => {
   // The claim `git ls-files` does NOT support: an ignore rule does not remove an
   // already-tracked path, so `ls-files` lists a force-added node_modules file.
   // The explicit segment skip is what keeps third-party markers out, and this is
   // the fixture that fails without it.
-  const root = debtRepo();
+  const root = debtRepo(t);
   writeFileSync(join(root, '.gitignore'), 'node_modules/\n');
   execFileSync('git', ['add', '--', '.gitignore'], { cwd: root });
   debtAdd(root, 'node_modules/pkg/y.js', `// ${debtLine('vendor cut', 'c', 't')}\n`, true);
@@ -122,8 +121,8 @@ test('debt-harvest: a FORCE-ADDED node_modules file is enumerated and still skip
   assert.equal(r.markers, 0, JSON.stringify(r));
 });
 
-test('debt-harvest: running twice leaves CAPTURE.md byte-identical (AC6)', () => {
-  const root = debtRepo();
+test('debt-harvest: running twice leaves CAPTURE.md byte-identical (AC6)', (t) => {
+  const root = debtRepo(t);
   debtAdd(root, 'src/a.js', `// ${debtLine('a cut', 'c', 't')}\n`);
   const first = harvest(root);
   assert.equal(first.written, true);
@@ -134,8 +133,8 @@ test('debt-harvest: running twice leaves CAPTURE.md byte-identical (AC6)', () =>
   assert.equal(captureOf(root), after);
 });
 
-test('debt-harvest: ## Todos is never touched, and a deleted marker disappears (AC6)', () => {
-  const root = debtRepo();
+test('debt-harvest: ## Todos is never touched, and a deleted marker disappears (AC6)', (t) => {
+  const root = debtRepo(t);
   const todos = '## Todos\n\n- [ ] (phase 1) a hand-written item\n\n## Seeds\n\n- a seed\n';
   writeFileSync(join(root, '.planning', 'CAPTURE.md'), todos);
   debtAdd(root, 'src/a.js', `// ${debtLine('a cut', 'c', 't')}\n`);
@@ -153,12 +152,12 @@ test('debt-harvest: ## Todos is never touched, and a deleted marker disappears (
   assert.ok(captureOf(root).startsWith(todos.split('\n')[0]));
 });
 
-test('debt-harvest: a fenced ## line in someone else\'s bullet is never touched (D-12)', () => {
+test('debt-harvest: a fenced ## line in someone else\'s bullet is never touched (D-12)', (t) => {
   // The harvest rewrites ONE section, so a `## ` line fenced inside a `## Todos`
   // bullet sits in the untouched prefix and survives whatever the bound does.
   // This row pins that the rewrite does not reach it; the row BELOW is the one
   // that proves the bound itself.
-  const root = debtRepo();
+  const root = debtRepo(t);
   const fenced = '## Todos\n\n- [ ] keep this bullet:\n\n  ```sh\n  ## build output\n  make dist\n  ```\n\n'
     + '## Debt markers\n\n- None.\n';
   writeFileSync(join(root, '.planning', 'CAPTURE.md'), fenced);
@@ -171,7 +170,7 @@ test('debt-harvest: a fenced ## line in someone else\'s bullet is never touched 
   assert.match(body, /a cut/);
 });
 
-test('debt-harvest: the section bound reads a fence, so stale debris cannot survive (D-12)', () => {
+test('debt-harvest: the section bound reads a fence, so stale debris cannot survive (D-12)', (t) => {
   // The fixture where the bound actually DECIDES: `## Debt markers` comes FIRST
   // and holds a stale fenced block whose content has a `## ` line. A bare
   // `/^## /` boundary test stops INSIDE that fence, so everything from
@@ -179,7 +178,7 @@ test('debt-harvest: the section bound reads a fence, so stale debris cannot surv
   // tail and re-emitted after the new body, leaving an odd fence count and
   // rendering the rest of the queue as code. `sectionBound` skips fenced lines,
   // so the whole stale section is replaced and `## Todos` is the real boundary.
-  const root = debtRepo();
+  const root = debtRepo(t);
   // The `## ` line must be at column 0 INSIDE the fence: `sectionBound`'s own
   // heading test is `/^## /`, so an INDENTED `  ## build output` is invisible to
   // both readers and would make this row pass either way.
@@ -196,7 +195,7 @@ test('debt-harvest: the section bound reads a fence, so stale debris cannot surv
   assert.equal((body.match(/```/g) || []).length, 0, 'an unclosed fence was left behind');
 });
 
-test('debt-harvest: a FENCED example of the owned heading is not mistaken for it', () => {
+test('debt-harvest: a FENCED example of the owned heading is not mistaken for it', (t) => {
   // The START boundary, which `sectionBound` never covered: the two rows above
   // both hand `replaceSection` a heading it finds in the right place, and a bare
   // `lines.findIndex((l) => l.trim() === heading)` passes them. Here the document
@@ -206,7 +205,7 @@ test('debt-harvest: a FENCED example of the owned heading is not mistaken for it
   // opener, finds no boundary at all, and every later section is replaced by the
   // new body: `## Seeds` and `## Notes` disappear outright. The correct answer is
   // to leave the example alone and APPEND a real section at the end.
-  const root = debtRepo();
+  const root = debtRepo(t);
   writeFileSync(join(root, '.planning', 'CAPTURE.md'),
     '## Todos\n\n- [ ] document the marker grammar, like:\n\n```md\n## Debt markers\n'
     + '- `src/x.js:1` an example bullet\n```\n\n'
@@ -226,10 +225,10 @@ test('debt-harvest: a FENCED example of the owned heading is not mistaken for it
     'the real section must be appended AFTER the existing content');
 });
 
-test('debt-harvest: a TRACKED CAPTURE.md already holding a section stays idempotent', () => {
+test('debt-harvest: a TRACKED CAPTURE.md already holding a section stays idempotent', (t) => {
   // The self-ingestion guard: `.planning/` is skipped, so the harvest's own
   // output is never read back as a marker even where the queue is tracked.
-  const root = debtRepo();
+  const root = debtRepo(t);
   debtAdd(root, 'src/a.js', `// ${debtLine('a cut', 'c', 't')}\n`);
   harvest(root);
   execFileSync('git', ['add', '--', '.planning/CAPTURE.md'], { cwd: root });
@@ -240,8 +239,8 @@ test('debt-harvest: a TRACKED CAPTURE.md already holding a section stays idempot
   assert.equal(captureOf(root), after);
 });
 
-test('debt-harvest: a malformed marker is reported, never dropped', () => {
-  const root = debtRepo();
+test('debt-harvest: a malformed marker is reported, never dropped', (t) => {
+  const root = debtRepo(t);
   debtAdd(root, 'src/a.js', `// ${debtLine('no trigger stated', 'a ceiling', null)}\n`);
   const r = harvest(root);
   assert.equal(r.markers, 1);
@@ -249,14 +248,14 @@ test('debt-harvest: a malformed marker is reported, never dropped', () => {
   assert.match(captureOf(root), /trigger: \(unstated\)/);
 });
 
-test('debt-harvest: a tracked SYMLINK out of the tree contributes nothing', () => {
+test('debt-harvest: a tracked SYMLINK out of the tree contributes nothing', (t) => {
   // `statSync`/`readFileSync` both follow a link, so the harvest read a file the
   // project does not contain and filed its marker under the in-tree path - a
   // corner-cut reported at a line that holds no marker. A tracked link's target is
   // either in the tree (enumerated on its own path) or outside it, so skipping
   // links loses nothing that belongs here.
-  const root = debtRepo();
-  const outside = join(mkdtempSync(join(tmpdir(), 'cad-debt-out-')), 'outside.js');
+  const root = debtRepo(t);
+  const outside = join(scratch('cad-debt-out-', t), 'outside.js');
   writeFileSync(outside, `// ${debtLine('external cut', 'cx', 'tx')}\n`);
   mkdirSync(join(root, 'src'), { recursive: true });
   symlinkSync(outside, join(root, 'src', 'link.js'));
@@ -270,8 +269,8 @@ test('debt-harvest: a tracked SYMLINK out of the tree contributes nothing', () =
   assert.doesNotMatch(body, /link\.js/);
 });
 
-test('debt-harvest: a non-git root is ok:false, never a zero-marker answer', () => {
-  const root = mkdtempSync(join(tmpdir(), 'cad-debt-nogit-'));
+test('debt-harvest: a non-git root is ok:false, never a zero-marker answer', (t) => {
+  const root = scratch('cad-debt-nogit-', t);
   mkdirSync(join(root, '.planning'), { recursive: true });
   const r = harvest(root);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -288,8 +287,8 @@ test('debt-harvest: a --root present with nothing usable is refused, never the c
   assert.equal(empty.reason, 'bad-args');
 });
 
-test('debt-harvest: an absent CAPTURE.md is created with the /cad-capture headings', () => {
-  const root = debtRepo();
+test('debt-harvest: an absent CAPTURE.md is created with the /cad-capture headings', (t) => {
+  const root = debtRepo(t);
   debtAdd(root, 'src/a.js', `// ${debtLine('a cut', 'c', 't')}\n`);
   harvest(root);
   const body = captureOf(root);
@@ -298,7 +297,7 @@ test('debt-harvest: an absent CAPTURE.md is created with the /cad-capture headin
   }
 });
 
-test('debt-harvest: a planning doc QUOTING a literal marker is not harvested', () => {
+test('debt-harvest: a planning doc QUOTING a literal marker is not harvested', (t) => {
   // The fixture the `.planning/` skip actually needs. Removing the skip does NOT
   // redden the tracked-CAPTURE.md row above - the rendered section carries no
   // token, so the harvest cannot re-ingest its own output through it. What the
@@ -306,7 +305,7 @@ test('debt-harvest: a planning doc QUOTING a literal marker is not harvested', (
   // while describing one: a PLAN, a CONTEXT or a SUMMARY quoting the grammar
   // would otherwise land in the queue as a real corner-cut, on a phase that cut
   // nothing.
-  const root = debtRepo();
+  const root = debtRepo(t);
   debtAdd(root, 'src/a.js', `// ${debtLine('a real cut', 'c', 't')}\n`);
   debtAdd(root, '.planning/phases/1/PLAN.md',
     `# Plan\n\nMark it like this: \`${debtLine('example only', 'nothing', 'never')}\`\n`);

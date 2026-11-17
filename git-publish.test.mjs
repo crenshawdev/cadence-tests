@@ -2,10 +2,10 @@
 // node --test 'tests/*.test.mjs'. Hermetic: a local bare origin, no
 // network, and GIT_CONFIG_GLOBAL/SYSTEM=/dev/null so the dev's git config never
 // leaks into the fixtures (same discipline as git-guard.test.mjs).
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,13 +21,26 @@ import { stub } from './issue-check.test.mjs';
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'git-publish.mjs');
-const NO_GLOBAL = join(mkdtempSync(join(tmpdir(), 'cad-pub-')), 'no-global.json');
+const NO_GLOBAL_ROOT = mkdtempSync(join(tmpdir(), 'cad-pub-'));
+const NO_GLOBAL = join(NO_GLOBAL_ROOT, 'no-global.json');
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
 // The user-global half of the opt-in (D-02). Every arm that expects a push or
 // `repo-authorized`, and every refusal arm that has to get PAST gate 1 to reach
 // its own gate, passes it beside the repo's `auto_close: true`.
-const GLOBAL_ON_FILE = join(mkdtempSync(join(tmpdir(), 'cad-pub-on-')), 'global.json');
+const GLOBAL_ON_ROOT = mkdtempSync(join(tmpdir(), 'cad-pub-on-'));
+const GLOBAL_ON_FILE = join(GLOBAL_ON_ROOT, 'global.json');
 writeFileSync(GLOBAL_ON_FILE, '{"git":{"auto_close":true}}');
+after(() => {
+  rmSync(NO_GLOBAL_ROOT, { recursive: true, force: true });
+  rmSync(GLOBAL_ON_ROOT, { recursive: true, force: true });
+});
+
+/** A mkdtemp root that goes when test `t` ends. */
+function tmp(t, prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
 
 /** Run a git command against a fixture dir, hermetically. */
 function git(args, opts = {}) {
@@ -57,15 +70,15 @@ function refExists(bare, ref) {
  *   origin   - add a bare origin remote (default true); returns { dir, bare }.
  *   config   - repo .planning/config.json contents (default {git:{auto_close:true}}).
  */
-function repo({ branch = 'cadence/v1.1.0-rc.2', origin = true, config = { git: { auto_close: true } } } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'cad-pub-repo-'));
+function repo(t, { branch = 'cadence/v1.1.0-rc.2', origin = true, config = { git: { auto_close: true } } } = {}) {
+  const dir = tmp(t, 'cad-pub-repo-');
   git(['-C', dir, 'init', '-q', '-b', 'main']);
   writeFileSync(join(dir, 'f.txt'), 'x');
   git(['-C', dir, 'add', '.']);
   git(['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'init']);
   let bare = null;
   if (origin) {
-    bare = mkdtempSync(join(tmpdir(), 'cad-pub-bare-'));
+    bare = tmp(t, 'cad-pub-bare-');
     git(['-C', bare, 'init', '-q', '--bare']);
     git(['-C', dir, 'remote', 'add', 'origin', bare]);
   }
@@ -83,8 +96,8 @@ const INT_REF = 'refs/heads/cadence/v1.1.0-rc.2';
 
 // --- the publish path -------------------------------------------------------
 
-test('publish: auto_close true in BOTH layers on a non-protected branch pushes exactly that ref', () => {
-  const { dir, bare } = repo();
+test('publish: auto_close true in BOTH layers on a non-protected branch pushes exactly that ref', (t) => {
+  const { dir, bare } = repo(t);
   const d = seam(['publish', '--dir', dir], GLOBAL_ON_FILE);
   assert.equal(d.ok, true);
   assert.equal(d.action, 'published');
@@ -98,53 +111,53 @@ test('publish: auto_close true in BOTH layers on a non-protected branch pushes e
 
 // --- refuse paths: each pushes nothing --------------------------------------
 
-test('refuse: auto_close false -> auto-close-off, bare gains no branch', () => {
-  const { dir, bare } = repo({ config: { git: { auto_close: false } } });
+test('refuse: auto_close false -> auto-close-off, bare gains no branch', (t) => {
+  const { dir, bare } = repo(t, { config: { git: { auto_close: false } } });
   const d = seam(['publish', '--dir', dir]);
   assert.equal(d.ok, false);
   assert.equal(d.reason, 'auto-close-off');
   assert.equal(refExists(bare, INT_REF), false);
 });
 
-test('refuse: HEAD on a protected branch -> protected-branch, no push', () => {
-  const { dir, bare } = repo({ branch: 'main' });
+test('refuse: HEAD on a protected branch -> protected-branch, no push', (t) => {
+  const { dir, bare } = repo(t, { branch: 'main' });
   const d = seam(['publish', '--dir', dir], GLOBAL_ON_FILE);
   assert.equal(d.ok, false);
   assert.equal(d.reason, 'protected-branch');
   assert.equal(refExists(bare, 'refs/heads/main'), false);
 });
 
-test('refuse: a STRING protected_branches protects that branch too (#38, COR-01)', () => {
+test('refuse: a STRING protected_branches protects that branch too (#38, COR-01)', (t) => {
   // The seam's own per-consumer proof of the shared coercion
   // (lib/protected-branches.mjs): before it, this file had no string-form arm
   // at all. On the array-only code `"release"` resolved to ['main','master'],
   // so the ONE mutating seam pushed off a branch the user had named.
-  const { dir, bare } = repo({ branch: 'release', config: { git: { auto_close: true, protected_branches: 'release' } } });
+  const { dir, bare } = repo(t, { branch: 'release', config: { git: { auto_close: true, protected_branches: 'release' } } });
   const d = seam(['publish', '--dir', dir], GLOBAL_ON_FILE);
   assert.equal(d.ok, false);
   assert.equal(d.reason, 'protected-branch');
   assert.equal(refExists(bare, 'refs/heads/release'), false, 'nothing was pushed');
 });
 
-test('refuse: no origin remote configured -> remote-not-configured', () => {
-  const { dir } = repo({ origin: false });
+test('refuse: no origin remote configured -> remote-not-configured', (t) => {
+  const { dir } = repo(t, { origin: false });
   const d = seam(['publish', '--dir', dir], GLOBAL_ON_FILE);
   assert.equal(d.ok, false);
   assert.equal(d.reason, 'remote-not-configured');
 });
 
-test('refuse: detached HEAD -> no-branch, no push', () => {
-  const { dir, bare } = repo({ branch: null });
+test('refuse: detached HEAD -> no-branch, no push', (t) => {
+  const { dir, bare } = repo(t, { branch: null });
   const d = seam(['publish', '--dir', dir], GLOBAL_ON_FILE);
   assert.equal(d.ok, false);
   assert.equal(d.reason, 'no-branch');
   assert.equal(refExists(bare, INT_REF), false);
 });
 
-test('refuse: auto_close ONLY in the global layer (repo omits) -> auto-close-off (D-08)', () => {
+test('refuse: auto_close ONLY in the global layer (repo omits) -> auto-close-off (D-08)', (t) => {
   // Repo config has no auto_close; a global auto_close must never enable a
   // publish in an unrelated project. The detail names the repo's own file.
-  const { dir, bare } = repo({ config: { git: {} } });
+  const { dir, bare } = repo(t, { config: { git: {} } });
   const d = seam(['publish', '--dir', dir], GLOBAL_ON_FILE);
   assert.equal(d.ok, false);
   assert.equal(d.reason, 'auto-close-off');
@@ -152,10 +165,10 @@ test('refuse: auto_close ONLY in the global layer (repo omits) -> auto-close-off
   assert.equal(refExists(bare, INT_REF), false);
 });
 
-test('refuse: auto_close ONLY in the repo layer -> auto-close-off, detail names the user-global file (D-02)', () => {
+test('refuse: auto_close ONLY in the repo layer -> auto-close-off, detail names the user-global file (D-02)', (t) => {
   // The cloned-repository case: a committed config cannot turn on an
   // unattended push on a machine whose user never opted in.
-  const { dir, bare } = repo();
+  const { dir, bare } = repo(t);
   const d = seam(['publish', '--dir', dir]);
   assert.equal(d.ok, false);
   assert.equal(d.reason, 'auto-close-off');
@@ -164,9 +177,9 @@ test('refuse: auto_close ONLY in the repo layer -> auto-close-off, detail names 
   assert.equal(refExists(bare, INT_REF), false, 'the bare origin gained no branch');
 });
 
-test('auto-close-off hint: one remedy for every off-state, naming no config.mjs command', () => {
-  const repoOnly = seam(['publish', '--dir', repo().dir]);
-  const globalOnly = seam(['publish', '--dir', repo({ config: { git: {} } }).dir], GLOBAL_ON_FILE);
+test('auto-close-off hint: one remedy for every off-state, naming no config.mjs command', (t) => {
+  const repoOnly = seam(['publish', '--dir', repo(t).dir]);
+  const globalOnly = seam(['publish', '--dir', repo(t, { config: { git: {} } }).dir], GLOBAL_ON_FILE);
   for (const d of [repoOnly, globalOnly]) {
     assert.equal(d.reason, 'auto-close-off');
     assert.match(d.hint, /BOTH/);
@@ -195,8 +208,8 @@ function seamStatus(args, globalCfg = NO_GLOBAL) {
   catch (e) { return { d: JSON.parse(String(e.stdout).trim()), status: e.status }; }
 }
 
-test('reap: a merged integration branch is actually deleted', () => {
-  const { dir } = repo({ branch: 'main' });
+test('reap: a merged integration branch is actually deleted', (t) => {
+  const { dir } = repo(t, { branch: 'main' });
   git(['-C', dir, 'branch', 'cadence/v2.2.0']);
   assert.equal(refExists(dir, REAP_REF), true);
   const { d, status } = seamStatus(['reap', '--dir', dir, '--branch', 'cadence/v2.2.0']);
@@ -207,11 +220,11 @@ test('reap: a merged integration branch is actually deleted', () => {
   assert.equal(refExists(dir, REAP_REF), false, 'the local branch is gone');
 });
 
-test('reap: an UNMERGED branch is deleted too - land-cleanup owns the merged verdict', () => {
+test('reap: an UNMERGED branch is deleted too - land-cleanup owns the merged verdict', (t) => {
   // Deliberate: the auto_close arm's merge lands on the PLATFORM, so a local
   // merged check would refuse exactly the case the seam exists for. Pinned so
   // the omission reads as a decision rather than a missing gate.
-  const { dir } = repo({ branch: 'main' });
+  const { dir } = repo(t, { branch: 'main' });
   git(['-C', dir, 'checkout', '-q', '-b', 'cadence/v2.2.0']);
   writeFileSync(join(dir, 'g.txt'), 'y');
   git(['-C', dir, 'add', '.']);
@@ -223,8 +236,8 @@ test('reap: an UNMERGED branch is deleted too - land-cleanup owns the merged ver
   assert.equal(refExists(dir, REAP_REF), false);
 });
 
-test('reap: an already-absent branch SKIPS with ok:true and exit 0 (idempotent close)', () => {
-  const { dir } = repo({ branch: 'main' });
+test('reap: an already-absent branch SKIPS with ok:true and exit 0 (idempotent close)', (t) => {
+  const { dir } = repo(t, { branch: 'main' });
   const { d, status } = seamStatus(['reap', '--dir', dir, '--branch', 'cadence/v2.2.0']);
   assert.equal(d.ok, true);
   assert.equal(d.action, 'already-absent');
@@ -232,8 +245,8 @@ test('reap: an already-absent branch SKIPS with ok:true and exit 0 (idempotent c
   assert.equal(status, 0, 'ok:true must exit 0 - the platform may already have deleted it');
 });
 
-test('reap refuse: a protected branch, and it is still there afterwards', () => {
-  const { dir } = repo({ branch: 'cadence/v2.2.0' });
+test('reap refuse: a protected branch, and it is still there afterwards', (t) => {
+  const { dir } = repo(t, { branch: 'cadence/v2.2.0' });
   const { d, status } = seamStatus(['reap', '--dir', dir, '--branch', 'main']);
   assert.equal(d.ok, false);
   assert.equal(d.reason, 'protected-branch');
@@ -241,15 +254,15 @@ test('reap refuse: a protected branch, and it is still there afterwards', () => 
   assert.equal(refExists(dir, 'refs/heads/main'), true, 'main survives');
 });
 
-test('reap refuse: the CHECKED-OUT branch, named rather than left to a git error', () => {
-  const { dir } = repo({ branch: 'cadence/v2.2.0' });
+test('reap refuse: the CHECKED-OUT branch, named rather than left to a git error', (t) => {
+  const { dir } = repo(t, { branch: 'cadence/v2.2.0' });
   const d = seam(['reap', '--dir', dir, '--branch', 'cadence/v2.2.0']);
   assert.equal(d.ok, false);
   assert.equal(d.reason, 'current-branch');
   assert.equal(refExists(dir, REAP_REF), true);
 });
 
-test('reap refuse: an option-shaped branch name never reaches git', () => {
+test('reap refuse: an option-shaped branch name never reaches git', (t) => {
   // `--branch` declares the `fallback` disposition (D-12), so a value that is
   // itself a flag reads as ABSENT and the refusal is `no-branch` - one layer
   // EARLIER than it used to be. The old answer was `bad-branch`, because the
@@ -260,7 +273,7 @@ test('reap refuse: an option-shaped branch name never reaches git', () => {
   // publish-decision.test.mjs pins `'--force'` (and eight more) at `bad-branch`
   // against decideReap directly. What changed is the seam-level ROUTE into the
   // decision, not the decision.
-  const { dir } = repo({ branch: 'main' });
+  const { dir } = repo(t, { branch: 'main' });
   git(['-C', dir, 'branch', 'cadence/v2.2.0']);
   const { d, status } = seamStatus(['reap', '--dir', dir, '--branch', '--force']);
   assert.equal(d.ok, false);
@@ -269,8 +282,8 @@ test('reap refuse: an option-shaped branch name never reaches git', () => {
   assert.equal(refExists(dir, REAP_REF), true, 'nothing else was deleted');
 });
 
-test('reap refuse: no --branch at all -> no-branch, and no git ran', () => {
-  const { dir } = repo({ branch: 'main' });
+test('reap refuse: no --branch at all -> no-branch, and no git ran', (t) => {
+  const { dir } = repo(t, { branch: 'main' });
   git(['-C', dir, 'branch', 'cadence/v2.2.0']);
   const d = seam(['reap', '--dir', dir]);
   assert.equal(d.ok, false);
@@ -278,10 +291,10 @@ test('reap refuse: no --branch at all -> no-branch, and no git ran', () => {
   assert.equal(refExists(dir, REAP_REF), true);
 });
 
-test('reap needs no auto_close: a close-off repo still reaps its local branch', () => {
+test('reap needs no auto_close: a close-off repo still reaps its local branch', (t) => {
   // Deleting a local branch publishes nothing, so unlike publish it carries no
   // authorization gate.
-  const { dir } = repo({ branch: 'main', config: { git: { auto_close: false } } });
+  const { dir } = repo(t, { branch: 'main', config: { git: { auto_close: false } } });
   git(['-C', dir, 'branch', 'cadence/v2.2.0']);
   const d = seam(['reap', '--dir', dir, '--branch', 'cadence/v2.2.0']);
   assert.equal(d.ok, true);
@@ -302,8 +315,8 @@ test('usage: the detail names all three subcommands', () => {
 /** Set cadence.publishForVerification=true in the work repo's own .git/config. */
 const authorizeLocally = (dir) => git(['-C', dir, 'config', '--local', 'cadence.publishForVerification', 'true']);
 
-test('verify-publish: a local true pushes a non-protected branch, whatever git.auto_close says', () => {
-  const { dir, bare } = repo({ config: { git: { auto_close: false } } });
+test('verify-publish: a local true pushes a non-protected branch, whatever git.auto_close says', (t) => {
+  const { dir, bare } = repo(t, { config: { git: { auto_close: false } } });
   authorizeLocally(dir);
   const d = seam(['verify-publish', '--dir', dir]);
   assert.equal(d.ok, true);
@@ -311,8 +324,8 @@ test('verify-publish: a local true pushes a non-protected branch, whatever git.a
   assert.equal(refExists(bare, INT_REF), true);
 });
 
-test('verify-publish: unset pushes nothing even with git.auto_close true in both layers', () => {
-  const { dir, bare } = repo();
+test('verify-publish: unset pushes nothing even with git.auto_close true in both layers', (t) => {
+  const { dir, bare } = repo(t);
   const d = seam(['verify-publish', '--dir', dir], GLOBAL_ON_FILE);
   assert.equal(d.ok, false);
   assert.equal(d.reason, 'publish-not-authorized');
@@ -321,8 +334,8 @@ test('verify-publish: unset pushes nothing even with git.auto_close true in both
   assert.equal(refExists(bare, INT_REF), false);
 });
 
-test('verify-publish: a protected branch is refused even when authorized', () => {
-  const { dir, bare } = repo({ branch: 'main' });
+test('verify-publish: a protected branch is refused even when authorized', (t) => {
+  const { dir, bare } = repo(t, { branch: 'main' });
   authorizeLocally(dir);
   const d = seam(['verify-publish', '--dir', dir]);
   assert.equal(d.ok, false);
@@ -330,9 +343,9 @@ test('verify-publish: a protected branch is refused even when authorized', () =>
   assert.equal(refExists(bare, 'refs/heads/main'), false);
 });
 
-test('verify-publish: GIT_DIR naming a repository that holds true authorizes nothing here', () => {
-  const unset = repo();
-  const holder = repo();
+test('verify-publish: GIT_DIR naming a repository that holds true authorizes nothing here', (t) => {
+  const unset = repo(t);
+  const holder = repo(t);
   authorizeLocally(holder.dir);
   const d = seam(['verify-publish', '--dir', unset.dir], NO_GLOBAL, { GIT_DIR: join(holder.dir, '.git') });
   assert.equal(d.ok, false);
@@ -344,18 +357,18 @@ test('verify-publish: GIT_DIR naming a repository that holds true authorizes not
 // --- the two halves of the opt-in, and the sentence that names the missing one (D-02)
 
 /** A user-global layer file holding `obj`. */
-function globalJson(obj) { return globalText(JSON.stringify(obj)); }
+function globalJson(t, obj) { return globalText(t, JSON.stringify(obj)); }
 
 /** The config pair this phase exists for: `git.auto_close` true in the user's
  * own home directory, and this repository never setting it. */
 const GLOBAL_ON = { git: { auto_close: true } };
 
-test('publish refuse: off-everywhere and requested-globally read DIFFERENTLY', () => {
+test('publish refuse: off-everywhere and requested-globally read DIFFERENTLY', (t) => {
   // Same `reason` token on both - it is asserted by equality across this file
   // and config-seams.test.mjs - so the state the user has to act on can only
   // reach them through the detail.
-  const off = seam(['publish', '--dir', repo({ config: { git: { auto_close: false } } }).dir]);
-  const requested = seam(['publish', '--dir', repo({ config: { git: {} } }).dir], globalJson(GLOBAL_ON));
+  const off = seam(['publish', '--dir', repo(t, { config: { git: { auto_close: false } } }).dir]);
+  const requested = seam(['publish', '--dir', repo(t, { config: { git: {} } }).dir], globalJson(t, GLOBAL_ON));
   assert.equal(off.reason, 'auto-close-off');
   assert.equal(requested.reason, 'auto-close-off');
   assert.match(requested.detail, /user-global setting cannot authorize/);
@@ -364,13 +377,13 @@ test('publish refuse: off-everywhere and requested-globally read DIFFERENTLY', (
   assert.ok(off.detail, 'the off-everywhere arm says which authorization was missing too');
 });
 
-test('authorized: a user-global true is refused - the repository never opted in', () => {
+test('authorized: a user-global true is refused - the repository never opted in', (t) => {
   // The GitLab arm's gate. On GitHub/Forgejo the chain dies at `publish`
   // because the branch has to reach the remote through it; `glab mr create`
   // pushes the source branch itself, so this is the only thing between a
   // user-global setting and an unattended merge.
-  const { dir, bare } = repo({ config: { git: {} } });
-  const { d, status } = seamStatus(['authorized', '--dir', dir], globalJson(GLOBAL_ON));
+  const { dir, bare } = repo(t, { config: { git: {} } });
+  const { d, status } = seamStatus(['authorized', '--dir', dir], globalJson(t, GLOBAL_ON));
   assert.equal(status, 1);
   assert.equal(d.ok, false);
   assert.equal(d.reason, 'auto-close-off');
@@ -380,8 +393,8 @@ test('authorized: a user-global true is refused - the repository never opted in'
   assert.equal(refExists(bare, INT_REF), false, 'the read-only arm published nothing');
 });
 
-test('authorized: both layers opting in answers ok:true, and needs no git', () => {
-  const { d, status } = seamStatus(['authorized', '--dir', repo().dir], GLOBAL_ON_FILE);
+test('authorized: both layers opting in answers ok:true, and needs no git', (t) => {
+  const { d, status } = seamStatus(['authorized', '--dir', repo(t).dir], GLOBAL_ON_FILE);
   assert.equal(status, 0);
   assert.equal(d.ok, true);
   assert.equal(d.action, 'repo-authorized');
@@ -390,7 +403,7 @@ test('authorized: both layers opting in answers ok:true, and needs no git', () =
   // A directory that is not a git repository at all still gets an answer: this
   // arm reads config layers and runs no git (the marker-file proof that it
   // spawns nothing lives beside the forge-CLI stubs).
-  const plain = mkdtempSync(join(tmpdir(), 'cad-pub-plain-'));
+  const plain = tmp(t, 'cad-pub-plain-');
   mkdirSync(join(plain, '.planning'));
   writeFileSync(join(plain, '.planning', 'config.json'), JSON.stringify(GLOBAL_ON));
   const bare = seamStatus(['authorized', '--dir', plain], GLOBAL_ON_FILE);
@@ -398,7 +411,7 @@ test('authorized: both layers opting in answers ok:true, and needs no git', () =
   assert.equal(bare.d.ok, true);
 });
 
-test('authorized: the GitLab arm refuses with NO forge CLI spawned at all', () => {
+test('authorized: the GitLab arm refuses with NO forge CLI spawned at all', (t) => {
   // AC3. On GitLab `glab mr create` publishes the source branch itself, so the
   // publish seam is never called and this answer is the only thing between a
   // user-global setting and an unattended merge. Two things are proved here:
@@ -406,12 +419,12 @@ test('authorized: the GitLab arm refuses with NO forge CLI spawned at all', () =
   // out to `glab` would put a network CLI's failure modes on the same envelope
   // as a merge authorization. `glab` is not installed on this machine, so a
   // stub on PATH is the only way the arm is provable either way.
-  const stubDir = mkdtempSync(join(tmpdir(), 'cad-pub-stub-'));
+  const stubDir = tmp(t, 'cad-pub-stub-');
   for (const name of ['gh', 'glab', 'tea']) stub(stubDir, name, { body: '[]' });
-  const marker = join(mkdtempSync(join(tmpdir(), 'cad-pub-mark-')), 'spawned.txt');
-  const { dir } = repo({ config: { git: {} } });
+  const marker = join(tmp(t, 'cad-pub-mark-'), 'spawned.txt');
+  const { dir } = repo(t, { config: { git: {} } });
 
-  const env = { ...GIT_ENV, CADENCE_GLOBAL_CONFIG: globalJson(GLOBAL_ON),
+  const env = { ...GIT_ENV, CADENCE_GLOBAL_CONFIG: globalJson(t, GLOBAL_ON),
     PATH: `${stubDir}:${process.env.PATH}`, CAD_SPAWN_MARKER: marker };
   let out; let status = 0;
   try { out = execFileSync('node', [SEAM, 'authorized', '--dir', dir], { encoding: 'utf8', env }); }
@@ -429,19 +442,19 @@ test('authorized: the GitLab arm refuses with NO forge CLI spawned at all', () =
   assert.equal(readFileSync(marker, 'utf8').trim(), 'glab');
 });
 
-test('authorized: off in BOTH layers refuses with the other sentence', () => {
-  const d = seam(['authorized', '--dir', repo({ config: { git: { auto_close: false } } }).dir]);
+test('authorized: off in BOTH layers refuses with the other sentence', (t) => {
+  const d = seam(['authorized', '--dir', repo(t, { config: { git: { auto_close: false } } }).dir]);
   assert.equal(d.ok, false);
   assert.equal(d.reason, 'auto-close-off');
   assert.equal(d.requested, false);
   assert.match(d.detail, /set in neither layer/);
 });
 
-test('authorized: repo true with a TORN user-global file names that file as unreadable', () => {
+test('authorized: repo true with a TORN user-global file names that file as unreadable', (t) => {
   // Fails closed - the torn file cannot prove the user's opt-in - but the
   // detail names the real cause rather than calling it the missing half.
-  const torn = globalText(TORN_GLOBAL);
-  const { d, status } = seamStatus(['authorized', '--dir', repo().dir], torn);
+  const torn = globalText(t, TORN_GLOBAL);
+  const { d, status } = seamStatus(['authorized', '--dir', repo(t).dir], torn);
   assert.equal(status, 1);
   assert.equal(d.reason, 'auto-close-off');
   assert.ok(d.detail.includes(torn), d.detail);
@@ -453,8 +466,8 @@ test('authorized: repo true with a TORN user-global file names that file as unre
 
 /** A user-global layer file holding raw TEXT - so a truncated JSON body can be
  * written verbatim and the merge reports the parse failure the gate keys on. */
-function globalText(text) {
-  const file = join(mkdtempSync(join(tmpdir(), 'cad-pub-glob-')), 'g.json');
+function globalText(t, text) {
+  const file = join(tmp(t, 'cad-pub-glob-'), 'g.json');
   writeFileSync(file, text);
   return file;
 }
@@ -462,12 +475,12 @@ function globalText(text) {
 // A global layer that WOULD have protected the branch, truncated mid-array.
 const TORN_GLOBAL = '{"git":{"protected_branches":["cadence/v1.1.0-rc.2","cadence/v2.2.0"]';
 
-test('publish refuse: a TORN layer that could carry protected_branches pushes NOTHING', () => {
+test('publish refuse: a TORN layer that could carry protected_branches pushes NOTHING', (t) => {
   // The list `decidePublish` refused with fell back to ["main","master"] because
   // the layer holding the user's did not parse, so the protected-branch gate ran
   // on the wrong list. No push while that is unprovable.
-  const { dir, bare } = repo();
-  const { d, status } = seamStatus(['publish', '--dir', dir], globalText(TORN_GLOBAL));
+  const { dir, bare } = repo(t);
+  const { d, status } = seamStatus(['publish', '--dir', dir], globalText(t, TORN_GLOBAL));
   assert.equal(d.ok, false);
   assert.equal(d.reason, 'config-parse-failed');
   assert.match(d.detail, /failed to parse/);
@@ -476,14 +489,14 @@ test('publish refuse: a TORN layer that could carry protected_branches pushes NO
   assert.equal(refExists(bare, INT_REF), false, 'the ref never reached the remote');
 });
 
-test('reap refuse: a TORN layer leaves the branch it would have protected in place', () => {
+test('reap refuse: a TORN layer leaves the branch it would have protected in place', (t) => {
   // The reproduction: with the layer intact this same command answers
   // {"ok":false,"reason":"protected-branch"}; torn, it used to answer
   // {"ok":true,"action":"reaped"} and the branch was already gone.
-  const { dir } = repo({ branch: 'main' });
+  const { dir } = repo(t, { branch: 'main' });
   git(['-C', dir, 'branch', 'cadence/v2.2.0']);
   const { d, status } = seamStatus(['reap', '--dir', dir, '--branch', 'cadence/v2.2.0'],
-    globalText(TORN_GLOBAL));
+    globalText(t, TORN_GLOBAL));
   assert.equal(d.ok, false);
   assert.equal(d.reason, 'config-parse-failed');
   assert.match(d.detail, /failed to parse/);
@@ -491,10 +504,10 @@ test('reap refuse: a TORN layer leaves the branch it would have protected in pla
   assert.equal(refExists(dir, REAP_REF), true, 'the branch survives the torn layer');
 });
 
-test('warnings[] rides the git-publish envelope on the acting AND the skip arms', () => {
+test('warnings[] rides the git-publish envelope on the acting AND the skip arms', (t) => {
   // Pins the emission itself: stripping `, warnings })` off the emits leaves the
   // gate above passing on its refusals but fails here.
-  const { dir } = repo({ branch: 'main' });
+  const { dir } = repo(t, { branch: 'main' });
   git(['-C', dir, 'branch', 'cadence/v2.2.0']);
   const clean = seam(['reap', '--dir', dir, '--branch', 'cadence/v2.2.0']);
   assert.equal(clean.action, 'reaped');
@@ -502,7 +515,7 @@ test('warnings[] rides the git-publish envelope on the acting AND the skip arms'
   // The idempotent skip stays ok:true under a torn layer - it mutates nothing -
   // and carries the diagnostic rather than swallowing it.
   const skipped = seamStatus(['reap', '--dir', dir, '--branch', 'cadence/v2.2.0'],
-    globalText(TORN_GLOBAL));
+    globalText(t, TORN_GLOBAL));
   assert.equal(skipped.d.ok, true);
   assert.equal(skipped.d.action, 'already-absent');
   assert.equal(skipped.status, 0);
@@ -533,9 +546,9 @@ const LEAK_SECRET = 's3cr3t-tok';
  * carries.
  * @param {string} url
  */
-function leakyOrigin(url) {
+function leakyOrigin(t, url) {
   const fx = gitLayers({ branch: 'cadence/v9.9.9', repo: { git: { auto_close: true } },
-    global: { git: { auto_close: true } } });
+    global: { git: { auto_close: true } } }, t);
   git(['-C', fx.root, 'remote', 'add', 'origin', url]);
   return fx;
 }
@@ -550,27 +563,27 @@ function assertNoCredential(d, label) {
   assert.ok(d.detail.includes('host.invalid'), `${label}: the host was lost too: ${d.detail}`);
 }
 
-test('publish: a git:// remote carrying userinfo fails without leaking it', () => {
+test('publish: a git:// remote carrying userinfo fails without leaking it', (t) => {
   // Measured leak: `fatal: unable to look up cad:s3cr3t-tok@host.invalid (port
   // 9418)`. No network - `.invalid` is reserved and never resolves.
-  const fx = leakyOrigin(`git://${LEAK_USER}:${LEAK_SECRET}@host.invalid/r.git`);
+  const fx = leakyOrigin(t, `git://${LEAK_USER}:${LEAK_SECRET}@host.invalid/r.git`);
   assertNoCredential(seam(['publish', '--dir', fx.root], fx.globalFile), 'git://');
 });
 
-test('publish: a PATH-shaped remote carrying userinfo fails without leaking it', () => {
+test('publish: a PATH-shaped remote carrying userinfo fails without leaking it', (t) => {
   // The second transport measured to leak, and the one AC8 names beside git://:
   // git quotes the whole path back (`fatal: '/nonexistent/cad:s3cr3t-tok@
   // host.invalid/r.git' does not appear to be a git repository`). An scp-shaped
   // remote is NOT usable here - git hands it straight to ssh, whose stderr
   // names neither the URL nor the host, so there is nothing for this arm to
   // assert and the ssh it spawns would read the developer's own ~/.ssh/config.
-  const fx = leakyOrigin(`/nonexistent/${LEAK_USER}:${LEAK_SECRET}@host.invalid/r.git`);
+  const fx = leakyOrigin(t, `/nonexistent/${LEAK_USER}:${LEAK_SECRET}@host.invalid/r.git`);
   const d = seam(['publish', '--dir', fx.root], fx.globalFile);
   assertNoCredential(d, 'path-shaped');
   assert.ok(d.detail.includes('/nonexistent/'), d.detail);
 });
 
-test('publish: a credential-named pair in a path-shaped remote is redacted and the detail capped at 1024 bytes', () => {
+test('publish: a credential-named pair in a path-shaped remote is redacted and the detail capped at 1024 bytes', (t) => {
   // D-13, gap 13. `redactUrl` reads URL POSITION only, so a `token=<value>` pair
   // in a path-shaped origin passed through it untouched and git's push error
   // carried the value into the envelope - and uncapped, since the remote path
@@ -578,7 +591,7 @@ test('publish: a credential-named pair in a path-shaped remote is redacted and t
   // is what the cap has to cut (a pair running to the tail would be redacted
   // down to under the cap, and the cap would go unexercised).
   const tail = Array.from({ length: 6 }, () => 'p'.repeat(200)).join('/');
-  const fx = leakyOrigin(`/nonexistent/token=${LEAK_SECRET} dir/${tail}/r.git`);
+  const fx = leakyOrigin(t, `/nonexistent/token=${LEAK_SECRET} dir/${tail}/r.git`);
   const d = seam(['publish', '--dir', fx.root], fx.globalFile);
   assert.equal(d.ok, false, JSON.stringify(d));
   assert.equal(d.reason, 'push-failed', JSON.stringify(d));

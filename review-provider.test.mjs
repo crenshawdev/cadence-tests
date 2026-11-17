@@ -14,11 +14,11 @@
 // reference (`__setTransportForTests`), so these tests open no socket, resolve
 // no hostname and speak no TLS. Nothing in this file reaches the network, and
 // `references/provider-api.md` remains the pin for the wire FORMAT.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, symlinkSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, symlinkSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,6 +55,7 @@ const MAX_TEXT_CHARS = F_PROPS.claim?.maxLength;
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'review-provider.mjs');
 const dir = mkdtempSync(join(tmpdir(), 'cad-provider-'));
+after(() => rmSync(dir, { recursive: true, force: true }));
 
 /**
  * Run the CLI without provider keys in the environment; parse the JSON line.
@@ -868,9 +869,11 @@ function stateCursor(planning, cursor) {
  * A cwd holding a `.planning` the seam will look for, optionally unwritable.
  * `config` is the repo config layer, so a fixture can lower a bound (the prompt
  * cap) that is memoized per process and cannot be moved in the shared one.
+ * It goes when `t` ends.
  */
-function providerCwd(name, breakTrace, config = {}) {
+function providerCwd(t, name, breakTrace, config = {}) {
   const cwd = mkdtempSync(join(tmpdir(), `cad-provider-${name}-`));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
   const planning = join(cwd, '.planning');
   mkdirSync(planning);
   writeFileSync(join(planning, 'config.json'), JSON.stringify(config));
@@ -902,13 +905,13 @@ function runRawIn(cwd, args, stdin) {
   }
 }
 
-test('provider trace: a command that issues no request is STILL recorded, naming its reason', () => {
+test('provider trace: a command that issues no request is STILL recorded, naming its reason', (t) => {
   // The reversal stated in this section's header: `no-key` degrades before the
   // transport is ever reached, and it is the drop-out a real panel hits most -
   // a configured reviewer whose key is missing on this machine. The record
   // brackets the CALL, so the panel's actual composition is readable whether or
   // not a request was issued.
-  const cwd = providerCwd('nokey', false);
+  const cwd = providerCwd(t, 'nokey', false);
   const out = runRawIn(cwd, ['review', '--provider', 'openai', '--model', 'gpt-5',
     '--key-file', join(cwd, 'absent.env')], '{}');
   assert.equal(JSON.parse(out).reason, 'no-key');
@@ -928,7 +931,7 @@ test('provider trace: a command that issues no request is STILL recorded, naming
   assert.doesNotMatch(String(ev[0].detail), /HTTP/);
 });
 
-test('provider trace: --trigger rides the event, joining the call to its fire', () => {
+test('provider trace: --trigger rides the event, joining the call to its fire', (t) => {
   // RVW-02/D-06: the event already carried provider, model, effort, tier,
   // duration and outcome, and already derived the same phase-scoped `corr` the
   // fire's own events derive - what it could not say is WHICH trigger it was
@@ -936,7 +939,7 @@ test('provider trace: --trigger rides the event, joining the call to its fire', 
   // were indistinguishable. The join is this field on the EXISTING event, never
   // a second one: a duplicate would double-count every cross-model review in
   // renderTrace's `counts.provider`.
-  const cwd = providerCwd('trigger', false);
+  const cwd = providerCwd(t, 'trigger', false);
   runRawIn(cwd, ['review', '--provider', 'openai', '--model', 'gpt-5',
     '--trigger', 'risk_surface', '--key-file', join(cwd, 'absent.env')], '{}');
   const ev = providerEventsIn(join(recordsDir(join(cwd, '.planning')), 'trace.jsonl'));
@@ -945,10 +948,10 @@ test('provider trace: --trigger rides the event, joining the call to its fire', 
   assert.ok(ev[0].corr, 'the correlation id the fire joins on');
 });
 
-test('provider trace: a call without --trigger writes an event with no trigger key', () => {
+test('provider trace: a call without --trigger writes an event with no trigger key', (t) => {
   // Absent, never null or empty: the flag is optional, so a caller that names
   // no trigger writes exactly the shape this seam wrote before it existed.
-  const cwd = providerCwd('no-trigger', false);
+  const cwd = providerCwd(t, 'no-trigger', false);
   runRawIn(cwd, ['review', '--provider', 'openai', '--model', 'gpt-5',
     '--key-file', join(cwd, 'absent.env')], '{}');
   const ev = providerEventsIn(join(recordsDir(join(cwd, '.planning')), 'trace.jsonl'));
@@ -956,12 +959,12 @@ test('provider trace: a call without --trigger writes an event with no trigger k
   assert.equal('trigger' in ev[0], false, JSON.stringify(ev[0]));
 });
 
-test('provider trace: an over-cap refusal records itself, from its own process', () => {
+test('provider trace: an over-cap refusal records itself, from its own process', (t) => {
   // A SUBPROCESS with its own cwd, because `maxPromptTokens()` memoizes per
   // process: lowering the cap in the shared in-process fault fixture would push
   // every other case there over it. `over-cap` is the one drop-out that fires
   // AFTER the payload is read and still before any request.
-  const cwd = providerCwd('overcap', false, { review: { max_prompt_tokens: 1 } });
+  const cwd = providerCwd(t, 'overcap', false, { review: { max_prompt_tokens: 1 } });
   const keyFile = join(cwd, 'providers.env');
   writeFileSync(keyFile, 'OPENAI_API_KEY="test-not-a-real-key"\n');
   const out = runRawIn(cwd, ['review', '--provider', 'openai', '--model', 'gpt-5',
@@ -976,9 +979,9 @@ test('provider trace: an over-cap refusal records itself, from its own process',
   assert.equal(ev[0].command, 'review');
 });
 
-test('provider trace: an unwritable trace changes the envelope by not one byte', () => {
-  const good = providerCwd('trace-good', false);
-  const bad = providerCwd('trace-bad', true);
+test('provider trace: an unwritable trace changes the envelope by not one byte', (t) => {
+  const good = providerCwd(t, 'trace-good', false);
+  const bad = providerCwd(t, 'trace-bad', true);
   const args = ['review', '--provider', 'openai', '--model', 'gpt-5',
     '--key-file', '/nonexistent/providers.env'];
   assert.equal(runRawIn(bad, args, '{}'), runRawIn(good, args, '{}'));
@@ -1001,6 +1004,7 @@ test('provider trace: an unwritable trace changes the envelope by not one byte',
 // below is on the one JSON line and the exit code a caller actually sees.
 
 const faultCwd = mkdtempSync(join(tmpdir(), 'cad-provider-fault-'));
+after(() => rmSync(faultCwd, { recursive: true, force: true }));
 mkdirSync(join(faultCwd, '.planning'));
 // A small configured timeout, so the timeout mode can prove the CONFIGURED
 // value reached the transport rather than a default nobody set.
@@ -2424,9 +2428,10 @@ test('consult bound: a reply of 11 angles answers bad-shape, never a truncated l
 
 // --- the key file: a group- or world-readable providers.env warns (D-15) --------
 
-/** A providers.env under a fresh XDG_CONFIG_HOME holding the openai key, at `mode`. */
-function keyFileAt(mode) {
+/** A providers.env under a fresh XDG_CONFIG_HOME holding the openai key, at `mode`; it goes when `t` ends. */
+function keyFileAt(t, mode) {
   const xdg = mkdtempSync(join(tmpdir(), 'cad-keymode-'));
+  t.after(() => rmSync(xdg, { recursive: true, force: true }));
   mkdirSync(join(xdg, 'cadence'));
   const file = join(xdg, 'cadence', 'providers.env');
   writeFileSync(file, 'OPENAI_API_KEY=test-not-a-real-key\n');
@@ -2444,8 +2449,8 @@ const KEY_MODE_CASES = [
 ];
 
 test('key file: a 0644 providers.env warns on review, consult and detect-models, and still works',
-  { skip: process.platform === 'win32' }, async () => {
-    const { xdg, file } = keyFileAt(0o644);
+  { skip: process.platform === 'win32' }, async (t) => {
+    const { xdg, file } = keyFileAt(t, 0o644);
     for (const [cmd, argv, wire] of KEY_MODE_CASES) {
       const r = await runFaked(argv, wire, { OPENAI_API_KEY: '', XDG_CONFIG_HOME: xdg });
       assert.equal(r.envelope.ok, true, `${cmd}: ${r.line}`);
@@ -2459,8 +2464,8 @@ test('key file: a 0644 providers.env warns on review, consult and detect-models,
   });
 
 test('key file: a world-readable-only 0604 file also warns',
-  { skip: process.platform === 'win32' }, async () => {
-    const { xdg } = keyFileAt(0o604);
+  { skip: process.platform === 'win32' }, async (t) => {
+    const { xdg } = keyFileAt(t, 0o604);
     const r = await runFaked(REVIEW_ARGS, { status: 200, body: FENCE_OK_BODY },
       { OPENAI_API_KEY: '', XDG_CONFIG_HOME: xdg });
     assert.equal(r.envelope.ok, true, r.line);
@@ -2468,8 +2473,8 @@ test('key file: a world-readable-only 0604 file also warns',
   });
 
 test('key file: a 0600 providers.env adds no warning anywhere',
-  { skip: process.platform === 'win32' }, async () => {
-    const { xdg } = keyFileAt(0o600);
+  { skip: process.platform === 'win32' }, async (t) => {
+    const { xdg } = keyFileAt(t, 0o600);
     for (const [cmd, argv, wire] of KEY_MODE_CASES) {
       const r = await runFaked(argv, wire, { OPENAI_API_KEY: '', XDG_CONFIG_HOME: xdg });
       assert.equal(r.envelope.ok, true, `${cmd}: ${r.line}`);
@@ -2478,8 +2483,8 @@ test('key file: a 0600 providers.env adds no warning anywhere',
   });
 
 test('key file: a key from the environment never warns, whatever the file mode',
-  { skip: process.platform === 'win32' }, async () => {
-    const { xdg } = keyFileAt(0o644);
+  { skip: process.platform === 'win32' }, async (t) => {
+    const { xdg } = keyFileAt(t, 0o644);
     for (const [cmd, argv, wire] of KEY_MODE_CASES) {
       const r = await runFaked(argv, wire, { OPENAI_API_KEY: 'env-not-a-real-key', XDG_CONFIG_HOME: xdg });
       assert.equal(r.envelope.ok, true, `${cmd}: ${r.line}`);
@@ -2488,8 +2493,8 @@ test('key file: a key from the environment never warns, whatever the file mode',
   });
 
 test('key file: detect-models keeps its own warnings beside the mode warning',
-  { skip: process.platform === 'win32' }, async () => {
-    const { xdg, file } = keyFileAt(0o644);
+  { skip: process.platform === 'win32' }, async (t) => {
+    const { xdg, file } = keyFileAt(t, 0o644);
     const r = await runFaked(['detect-models', '--provider', 'openai'],
       { status: 200, body: JSON.stringify({ data: [{ id: 'gpt-6-astra' }, { id: 'a b' }] }) },
       { OPENAI_API_KEY: '', XDG_CONFIG_HOME: xdg });

@@ -16,7 +16,7 @@
 // (D-01), so spelling an arm with it no longer teaches the divergence either.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { flagValue, missingFlagValue, readText } from '../cadence-core/bin/lib/seam-input.mjs';
@@ -53,15 +53,17 @@ test('missingFlagValue: one construction, and both fields are on it', () => {
 
 // --- readText: '' on any failure ---------------------------------------------
 
-test('readText: a real file comes back verbatim', () => {
+test('readText: a real file comes back verbatim', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'cad-si-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, 'PROJECT.md');
   writeFileSync(file, '# Project\n');
   assert.equal(readText(file), '# Project\n');
 });
 
-test('readText: a missing path and a DIRECTORY are both "" (never a throw)', () => {
+test('readText: a missing path and a DIRECTORY are both "" (never a throw)', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'cad-si-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   assert.equal(readText(join(dir, 'absent.md')), '');
   assert.equal(readText(dir), '');
 });

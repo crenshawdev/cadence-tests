@@ -11,7 +11,7 @@
 // which is the whole reason the record is written in the corpus's own grammar.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -19,9 +19,16 @@ import {
 } from '../cadence-core/bin/lib/task-record.mjs';
 import { parseCommitRows, taskDeclaredFiles } from '../cadence-core/bin/lib/why-record.mjs';
 
-/** A fresh planning root holding a record per slug. */
-function planningRoot(records = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'cad-task-record-'));
+/** A temp directory under `prefix`, gone when test `t` ends. */
+function scratch(t, prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+/** A fresh planning root holding a record per slug, gone when test `t` ends. */
+function planningRoot(t, records = {}) {
+  const root = scratch(t, 'cad-task-record-');
   for (const [slug, text] of Object.entries(records)) {
     const dir = join(root, TASKS_DIR, slug);
     mkdirSync(dir, { recursive: true });
@@ -97,67 +104,67 @@ test('an absent planning root is an empty list, never a throw', () => {
   assert.deepEqual(taskRecordsIn(join(tmpdir(), 'cad-task-record-nope-does-not-exist')), []);
 });
 
-test('a planning root with no tasks/ at all is an empty list', () => {
-  assert.deepEqual(taskRecordsIn(planningRoot()), []);
+test('a planning root with no tasks/ at all is an empty list', (t) => {
+  assert.deepEqual(taskRecordsIn(planningRoot(t)), []);
 });
 
-test('a slug directory holding no RECORD.md contributes nothing', () => {
-  const root = planningRoot();
+test('a slug directory holding no RECORD.md contributes nothing', (t) => {
+  const root = planningRoot(t);
   mkdirSync(join(root, TASKS_DIR, 'planned-only'), { recursive: true });
   writeFileSync(join(root, TASKS_DIR, 'planned-only', 'PLAN.md'), '# Plan\n');
   assert.deepEqual(taskRecordsIn(root), []);
 });
 
-test('the records come back sorted by slug', () => {
-  const root = planningRoot({ zebra: rec(), alpha: rec(), middle: rec() });
+test('the records come back sorted by slug', (t) => {
+  const root = planningRoot(t, { zebra: rec(), alpha: rec(), middle: rec() });
   assert.deepEqual(taskRecordsIn(root).map((r) => r.slug), ['alpha', 'middle', 'zebra']);
   assert.equal(taskRecordsIn(root)[0].path, join(root, TASKS_DIR, 'alpha', RECORD_FILE));
 });
 
-test('a slug DIRECTORY that is a symlink out of the planning root is skipped', () => {
+test('a slug DIRECTORY that is a symlink out of the planning root is skipped', (t) => {
   // `readdirSync` FOLLOWS a symlinked directory, so this walk would otherwise
   // land in another tree entirely - `phaseDirsIn`'s case, one level out.
-  const outside = mkdtempSync(join(tmpdir(), 'cad-task-record-outside-'));
+  const outside = scratch(t, 'cad-task-record-outside-');
   mkdirSync(join(outside, 'stolen'), { recursive: true });
   writeFileSync(join(outside, 'stolen', RECORD_FILE), rec());
-  const root = planningRoot({ real: rec() });
+  const root = planningRoot(t, { real: rec() });
   symlinkSync(join(outside, 'stolen'), join(root, TASKS_DIR, 'linked'));
   assert.deepEqual(taskRecordsIn(root).map((r) => r.slug), ['real']);
 });
 
-test('an in-root slug directory whose RECORD.md is a symlink OUT is skipped', () => {
+test('an in-root slug directory whose RECORD.md is a symlink OUT is skipped', (t) => {
   // The directory case passing does not imply the file case does, and this is
   // the one the recall tier reads THROUGH: a cloned repository carrying such a
   // link would surface an arbitrary readable file through `planning.mjs recall`.
-  const outside = mkdtempSync(join(tmpdir(), 'cad-task-record-secret-'));
+  const outside = scratch(t, 'cad-task-record-secret-');
   const secret = join(outside, 'id_rsa');
   writeFileSync(secret, 'PRIVATE KEY\n');
-  const root = planningRoot({ real: rec() });
+  const root = planningRoot(t, { real: rec() });
   const dir = join(root, TASKS_DIR, 'leaky');
   mkdirSync(dir, { recursive: true });
   symlinkSync(secret, join(dir, RECORD_FILE));
   assert.deepEqual(taskRecordsIn(root).map((r) => r.slug), ['real']);
 });
 
-test('a RECORD.md symlink that stays INSIDE the planning root is still a record', () => {
-  const root = planningRoot({ real: rec() });
+test('a RECORD.md symlink that stays INSIDE the planning root is still a record', (t) => {
+  const root = planningRoot(t, { real: rec() });
   const dir = join(root, TASKS_DIR, 'aliased');
   mkdirSync(dir, { recursive: true });
   symlinkSync(join(root, TASKS_DIR, 'real', RECORD_FILE), join(dir, RECORD_FILE));
   assert.deepEqual(taskRecordsIn(root).map((r) => r.slug), ['aliased', 'real']);
 });
 
-test('a RECORD.md that is a DIRECTORY is not a record', () => {
-  const root = planningRoot();
+test('a RECORD.md that is a DIRECTORY is not a record', (t) => {
+  const root = planningRoot(t);
   mkdirSync(join(root, TASKS_DIR, 'odd', RECORD_FILE), { recursive: true });
   assert.deepEqual(taskRecordsIn(root), []);
 });
 
-test('an entry name the writer would refuse is not listed back', () => {
+test('an entry name the writer would refuse is not listed back', (t) => {
   // Containment passes on every one of these - they resolve inside the root -
   // so the slug grammar is the only thing that stops the name reaching
   // `/cad-why`'s rendered output and the recall index verbatim.
-  const root = planningRoot({ real: rec() });
+  const root = planningRoot(t, { real: rec() });
   for (const name of ['Upper', 'has space', 'trailing-', '-leading', 'double--hyphen', '.hidden']) {
     const dir = join(root, TASKS_DIR, name);
     mkdirSync(dir, { recursive: true });
@@ -166,10 +173,10 @@ test('an entry name the writer would refuse is not listed back', () => {
   assert.deepEqual(taskRecordsIn(root).map((r) => r.slug), ['real']);
 });
 
-test('an entry name carrying a newline or a terminal escape is not listed back', () => {
+test('an entry name carrying a newline or a terminal escape is not listed back', (t) => {
   // The forging shape: a name that closes one section and opens another, or
   // one that repaints the line, printed straight into a diagnostic.
-  const root = planningRoot({ real: rec() });
+  const root = planningRoot(t, { real: rec() });
   for (const name of ['a\n## Commits', 'a\u001b[31mred']) {
     const dir = join(root, TASKS_DIR, name);
     mkdirSync(dir, { recursive: true });
@@ -178,16 +185,16 @@ test('an entry name carrying a newline or a terminal escape is not listed back',
   assert.deepEqual(taskRecordsIn(root).map((r) => r.slug), ['real']);
 });
 
-test('a name longer than MAX_SLUG_LENGTH is not listed back', () => {
-  const root = planningRoot({ real: rec() });
+test('a name longer than MAX_SLUG_LENGTH is not listed back', (t) => {
+  const root = planningRoot(t, { real: rec() });
   const dir = join(root, TASKS_DIR, 'a'.repeat(MAX_SLUG_LENGTH + 1));
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, RECORD_FILE), rec());
   assert.deepEqual(taskRecordsIn(root).map((r) => r.slug), ['real']);
 });
 
-test('every slug the lister returns satisfies isTaskSlug', () => {
-  const root = planningRoot({ zebra: rec(), alpha: rec(), 'two-words': rec(), 'v2': rec() });
+test('every slug the lister returns satisfies isTaskSlug', (t) => {
+  const root = planningRoot(t, { zebra: rec(), alpha: rec(), 'two-words': rec(), 'v2': rec() });
   const slugs = taskRecordsIn(root).map((r) => r.slug);
   assert.deepEqual(slugs, ['alpha', 'two-words', 'v2', 'zebra']);
   for (const slug of slugs) assert.equal(isTaskSlug(slug), true);

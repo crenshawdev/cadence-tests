@@ -5,7 +5,7 @@
 // built in its own mkdtempSync directory so no row can see another's tree.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -13,9 +13,10 @@ import {
 } from '../cadence-core/bin/lib/phase-plans.mjs';
 import { writeState } from '../cadence-core/bin/lib/project-state.mjs';
 
-/** A fresh planning root. `plans` is keyed `<phase>/<filename>`. */
-function planningRoot(plans = {}, cursor = null) {
+/** A fresh planning root that goes when `t` ends. `plans` is keyed `<phase>/<filename>`. */
+function planningRoot(t, plans = {}, cursor = null) {
   const root = mkdtempSync(join(tmpdir(), 'cad-phase-plans-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const [rel, text] of Object.entries(plans)) {
     const file = join(root, 'phases', rel);
     mkdirSync(join(file, '..'), { recursive: true });
@@ -48,39 +49,39 @@ test('byPlanNumber keeps PLAN.md beside PLAN-1.md in one fixed order either way 
 
 // --- cursorPhase -------------------------------------------------------------
 
-test('cursorPhase returns the cursor phase', () => {
-  const root = planningRoot({}, { phase: 4, status: 'planned', next: '/cad-execute 4', updated: '2026-07-29' });
+test('cursorPhase returns the cursor phase', (t) => {
+  const root = planningRoot(t, {}, { phase: 4, status: 'planned', next: '/cad-execute 4', updated: '2026-07-29' });
   assert.equal(cursorPhase(root), 4);
 });
 
-test('cursorPhase returns a decimal phase as a Number', () => {
-  const root = planningRoot({}, { phase: 2.1, status: 'planned', next: '/cad-execute 2.1', updated: '2026-07-29' });
+test('cursorPhase returns a decimal phase as a Number', (t) => {
+  const root = planningRoot(t, {}, { phase: 2.1, status: 'planned', next: '/cad-execute 2.1', updated: '2026-07-29' });
   assert.equal(cursorPhase(root), 2.1);
 });
 
-test('a missing state file is null, silently - the ordinary pre-project state', () => {
-  assert.equal(cursorPhase(planningRoot({})), null);
+test('a missing state file is null, silently - the ordinary pre-project state', (t) => {
+  assert.equal(cursorPhase(planningRoot(t, {})), null);
   assert.equal(cursorPhase(join(tmpdir(), 'cad-no-such-root-67890')), null);
 });
 
-test('a garbled state file is null, never a throw', () => {
-  const root = planningRoot({});
+test('a garbled state file is null, never a throw', (t) => {
+  const root = planningRoot(t, {});
   mkdirSync(join(root, 'records'), { recursive: true });
   writeFileSync(join(root, 'records', 'state.json'), '{ not json');
   assert.equal(cursorPhase(root), null);
 });
 
-test('a hand-written STATE.md is never read: the state file answers', () => {
-  const root = planningRoot({}, { phase: 4, status: 'planned', next: '/cad-execute 4', updated: '2026-07-29' });
+test('a hand-written STATE.md is never read: the state file answers', (t) => {
+  const root = planningRoot(t, {}, { phase: 4, status: 'planned', next: '/cad-execute 4', updated: '2026-07-29' });
   writeFileSync(join(root, 'STATE.md'), 'Phase: 9 of 9 (Elsewhere)\nStatus: planned\nNext: x\nUpdated: 2026-07-29\n');
   assert.equal(cursorPhase(root), 4);
-  assert.equal(cursorPhase(planningRoot({})), null);
+  assert.equal(cursorPhase(planningRoot(t, {})), null);
 });
 
 // --- declaredPhaseFiles: the union face --------------------------------------
 
-test('two conforming plans both parse: the union, found 2, clean 2', () => {
-  const root = planningRoot({
+test('two conforming plans both parse: the union, found 2, clean 2', (t) => {
+  const root = planningRoot(t, {
     '7/PLAN-1.md': plan('README.md', 'src/a.mjs'),
     '7/PLAN-2.md': plan('src/b.mjs', 'README.md'),
   });
@@ -93,11 +94,11 @@ test('two conforming plans both parse: the union, found 2, clean 2', () => {
   assert.equal(r.clean, 2);
 });
 
-test('a plan out of grammar contributes NO path, warns, and leaves clean below found', () => {
+test('a plan out of grammar contributes NO path, warns, and leaves clean below found', (t) => {
   // The `files:` list here PARSES - `items` comes back holding `src/a.mjs` -
   // and is still dropped whole. Salvaging the half that parsed would floor a
   // phase off a path list the grammar already rejected.
-  const root = planningRoot({
+  const root = planningRoot(t, {
     '7/PLAN-1.md': plan('README.md'),
     '7/PLAN-2.md': '---\nphase: 7\nplan: 2\nfiles:\n  - src/a.mjs\n  a line that is not a key\n---\n\n# Plan\n',
   });
@@ -113,8 +114,8 @@ test('a plan out of grammar contributes NO path, warns, and leaves clean below f
 
 test('an unreadable plan does the same: no path, one warning, clean below found', {
   skip: typeof process.getuid === 'function' && process.getuid() === 0 ? 'root bypasses mode bits' : false,
-}, () => {
-  const root = planningRoot({
+}, (t) => {
+  const root = planningRoot(t, {
     '7/PLAN-1.md': plan('README.md'),
     '7/PLAN-2.md': plan('src/b.mjs'),
   });
@@ -128,16 +129,16 @@ test('an unreadable plan does the same: no path, one warning, clean below found'
   chmodSync(join(root, 'phases', '7', 'PLAN-2.md'), 0o644);
 });
 
-test('an absent phase directory is zero found and NO warning - the pre-plan state', () => {
+test('an absent phase directory is zero found and NO warning - the pre-plan state', (t) => {
   // Warning here would fire on every /cad-context dispatch of every project.
-  const empty = declaredPhaseFiles(planningRoot({}), 7);
+  const empty = declaredPhaseFiles(planningRoot(t, {}), 7);
   assert.deepEqual(empty, { files: [], warnings: [], found: 0, clean: 0, undeclared: [] });
   const noRoot = declaredPhaseFiles(join(tmpdir(), 'cad-no-such-root-13579'), 7);
   assert.deepEqual(noRoot, { files: [], warnings: [], found: 0, clean: 0, undeclared: [] });
 });
 
-test('a phase directory holding no PLAN file is zero found, no warning, no throw', () => {
-  const root = planningRoot({ '7/CONTEXT.md': '# Context\n', '7/PLAN-gaps.md': plan('src/x.mjs') });
+test('a phase directory holding no PLAN file is zero found, no warning, no throw', (t) => {
+  const root = planningRoot(t, { '7/CONTEXT.md': '# Context\n', '7/PLAN-gaps.md': plan('src/x.mjs') });
   const r = declaredPhaseFiles(root, 7);
   // `PLAN-gaps.md` is NON-CONFORMING and is invisible here exactly as it is to
   // listPlanFiles, status, audit and executor dispatch.
@@ -146,11 +147,11 @@ test('a phase directory holding no PLAN file is zero found, no warning, no throw
 
 // --- a plan that declared NOTHING --------------------------------------------
 
-test('a plan whose `files:` list is empty counts found and clean, and is named undeclared', () => {
+test('a plan whose `files:` list is empty counts found and clean, and is named undeclared', (t) => {
   // The shipped cadence-core/templates/PLAN.md ships `files:` with no items, so
   // this is the state a plan copied from the template is in until someone fills
   // it - and it parsed perfectly, which is why the counts alone cannot see it.
-  const root = planningRoot({ '7/PLAN-1.md': plan() });
+  const root = planningRoot(t, { '7/PLAN-1.md': plan() });
   const r = declaredPhaseFiles(root, 7);
   assert.deepEqual(r.files, []);
   assert.equal(r.found, 1);
@@ -159,11 +160,11 @@ test('a plan whose `files:` list is empty counts found and clean, and is named u
   assert.deepEqual(r.warnings, [], 'the judgement is the floor\'s, not this reader\'s');
 });
 
-test('a plan with no `files:` key at all takes the same arm as an empty list', () => {
+test('a plan with no `files:` key at all takes the same arm as an empty list', (t) => {
   // ./planning-files.mjs answers `items: []` for a missing block, a missing key
   // and an empty list alike, and all three mean the same thing here: nothing was
   // named, so nothing was scanned.
-  const root = planningRoot({
+  const root = planningRoot(t, {
     '7/PLAN-1.md': '---\nphase: 7\nplan: 1\n---\n\n# Plan\n',
     '7/PLAN-2.md': '# Plan\n\nno frontmatter at all\n',
   });
@@ -176,11 +177,11 @@ test('a plan with no `files:` key at all takes the same arm as an empty list', (
   ]);
 });
 
-test('a plan declaring one path is NOT undeclared, even when a sibling declared it first', () => {
+test('a plan declaring one path is NOT undeclared, even when a sibling declared it first', (t) => {
   // Judged before the dedup: a path PLAN-1 already contributed is still a
   // declaration by PLAN-2, and reading `files` after `seen` would report the
   // second plan as having named nothing.
-  const root = planningRoot({
+  const root = planningRoot(t, {
     '7/PLAN-1.md': plan('README.md'),
     '7/PLAN-2.md': plan('README.md'),
     '7/PLAN-3.md': plan(),
@@ -191,8 +192,8 @@ test('a plan declaring one path is NOT undeclared, even when a sibling declared 
   assert.deepEqual(r.undeclared, [join(root, 'phases', '7', 'PLAN-3.md')]);
 });
 
-test('the named-plan face reports undeclared for the plan its key names', () => {
-  const root = planningRoot({ '7/PLAN-1.md': plan(), '7/PLAN-2.md': plan('src/a.mjs') });
+test('the named-plan face reports undeclared for the plan its key names', (t) => {
+  const root = planningRoot(t, { '7/PLAN-1.md': plan(), '7/PLAN-2.md': plan('src/a.mjs') });
   const one = declaredPlanFiles(root, 7, '1');
   assert.equal(one.found, 1);
   assert.equal(one.clean, 1);
@@ -201,11 +202,11 @@ test('the named-plan face reports undeclared for the plan its key names', () => 
   assert.deepEqual(declaredPlanFiles(root, 7, '2').undeclared, []);
 });
 
-test('a plan that could not be read is NOT undeclared - it is unclean', () => {
+test('a plan that could not be read is NOT undeclared - it is unclean', (t) => {
   // The two states stay apart at this level too: an out-of-grammar plan
   // contributes no path and is not clean, so counting it as "declared nothing"
   // would let a later reader report an unreadable plan as an empty one.
-  const root = planningRoot({
+  const root = planningRoot(t, {
     '7/PLAN-1.md': '---\nphase: 7\nplan: 1\nfiles:\n  - src/a.mjs\n  not a key line\n---\n\n# Plan\n',
   });
   const r = declaredPhaseFiles(root, 7);
@@ -214,18 +215,18 @@ test('a plan that could not be read is NOT undeclared - it is unclean', () => {
   assert.deepEqual(r.undeclared, []);
 });
 
-test('a `- **Files:**` task line contributes nothing to either face (D-05)', () => {
+test('a `- **Files:**` task line contributes nothing to either face (D-05)', (t) => {
   const body = '---\nphase: 7\nplan: 1\nfiles:\n  - README.md\n---\n\n# Plan\n\n'
     + '### Task 1\n\n- **Files:** src/auth/session.rs, migrations/001.sql\n';
-  const root = planningRoot({ '7/PLAN-1.md': body });
+  const root = planningRoot(t, { '7/PLAN-1.md': body });
   assert.deepEqual(declaredPhaseFiles(root, 7).files, ['README.md']);
   assert.deepEqual(declaredPlanFiles(root, 7, '1').files, ['README.md']);
 });
 
 // --- declaredPlanFiles: the named-plan face ----------------------------------
 
-test('the named-plan face reads ONLY the file its key names', () => {
-  const root = planningRoot({
+test('the named-plan face reads ONLY the file its key names', (t) => {
+  const root = planningRoot(t, {
     '7/PLAN-1.md': plan('README.md'),
     '7/PLAN-2.md': plan('src/auth/session.rs'),
   });
@@ -239,16 +240,16 @@ test('the named-plan face reads ONLY the file its key names', () => {
   assert.equal(two.clean, 1);
 });
 
-test('key `1` reads PLAN.md when PLAN-1.md is absent, and PLAN-1.md when it is not', () => {
-  const bare = planningRoot({ '7/PLAN.md': plan('README.md') });
+test('key `1` reads PLAN.md when PLAN-1.md is absent, and PLAN-1.md when it is not', (t) => {
+  const bare = planningRoot(t, { '7/PLAN.md': plan('README.md') });
   assert.deepEqual(declaredPlanFiles(bare, 7, '1').files, ['README.md']);
   assert.equal(declaredPlanFiles(bare, 7, '1').found, 1);
-  const both = planningRoot({ '7/PLAN.md': plan('bare.md'), '7/PLAN-1.md': plan('numbered.md') });
+  const both = planningRoot(t, { '7/PLAN.md': plan('bare.md'), '7/PLAN-1.md': plan('numbered.md') });
   assert.deepEqual(declaredPlanFiles(both, 7, '1').files, ['numbered.md']);
 });
 
-test('a key naming no plan file is found 0 with a warning - a wrong dispatch, not a pre-plan state', () => {
-  const root = planningRoot({ '7/PLAN-1.md': plan('README.md') });
+test('a key naming no plan file is found 0 with a warning - a wrong dispatch, not a pre-plan state', (t) => {
+  const root = planningRoot(t, { '7/PLAN-1.md': plan('README.md') });
   const r = declaredPlanFiles(root, 7, '4');
   assert.deepEqual(r.files, []);
   assert.equal(r.found, 0);
@@ -260,13 +261,13 @@ test('a key naming no plan file is found 0 with a warning - a wrong dispatch, no
   assert.equal(declaredPlanFiles(root, 7, '1-fix').found, 0);
   // ...and so does an absent phase directory, which DOES warn here: the caller
   // named a plan and got nothing back.
-  const gone = declaredPlanFiles(planningRoot({}), 7, '1');
+  const gone = declaredPlanFiles(planningRoot(t, {}), 7, '1');
   assert.equal(gone.found, 0);
   assert.equal(gone.warnings.length, 1, JSON.stringify(gone.warnings));
 });
 
-test('the named face carries the same two failure arms as the union', () => {
-  const root = planningRoot({
+test('the named face carries the same two failure arms as the union', (t) => {
+  const root = planningRoot(t, {
     '7/PLAN-1.md': '---\nphase: 7\nplan: 1\nfiles:\n  - src/a.mjs\n  not a key line\n---\n\n# Plan\n',
   });
   const bad = declaredPlanFiles(root, 7, '1');
@@ -276,8 +277,8 @@ test('the named face carries the same two failure arms as the union', () => {
   assert.match(bad.warnings[0], /out of grammar/);
 });
 
-test('a plan whose depends_on is out of grammar warns and is not clean', () => {
-  const root = planningRoot({
+test('a plan whose depends_on is out of grammar warns and is not clean', (t) => {
+  const root = planningRoot(t, {
     '7/PLAN-1.md': '---\nphase: 7\nplan: 1\ndepends_on: "1\nfiles:\n  - src/a.mjs\n---\n\n# Plan\n',
   });
   const r = declaredFilesIn(join(root, 'phases', '7'));
@@ -289,11 +290,11 @@ test('a plan whose depends_on is out of grammar warns and is not clean', () => {
 
 // --- declaredFilesIn: the same reader, addressed by PATH ---------------------
 
-test('the by-path reader answers exactly what the phase-keyed face does', () => {
+test('the by-path reader answers exactly what the phase-keyed face does', (t) => {
   // The point of the split: `phases/<N>/` is one address this reader can be
   // given, and an archived `_archive-<label>/<N>/` is another. If these two ever
   // disagree there are two readers again, which is what the split removed.
-  const root = planningRoot({
+  const root = planningRoot(t, {
     '7/PLAN-1.md': plan('README.md', 'src/a.mjs'),
     '7/PLAN-2.md': plan('src/b.mjs'),
     '7/PLAN-3.md': plan(),
@@ -310,8 +311,8 @@ test('the by-path reader answers exactly what the phase-keyed face does', () => 
 
 test('the by-path reader carries the out-of-grammar and unreadable arms too', {
   skip: typeof process.getuid === 'function' && process.getuid() === 0 ? 'root bypasses mode bits' : false,
-}, () => {
-  const root = planningRoot({
+}, (t) => {
+  const root = planningRoot(t, {
     '7/PLAN-1.md': '---\nphase: 7\nplan: 1\nfiles:\n  - src/a.mjs\n  not a key line\n---\n\n# Plan\n',
     '7/PLAN-2.md': plan('src/b.mjs'),
   });
@@ -337,11 +338,11 @@ test('an unreadable directory is silent for the union face and warns for a named
 
 // --- phaseDirsIn: the locator ------------------------------------------------
 
-test('the locator finds live and archived phase directories, in a stable order', () => {
+test('the locator finds live and archived phase directories, in a stable order', (t) => {
   // `_archive-<label>/<N>/` is where `milestone-prune --mode archive` moves a
   // closed milestone's phases, and those are 27 of this repository's own 30 -
   // unreachable to a reader that joins `phases/<N>` and nothing else.
-  const root = planningRoot({
+  const root = planningRoot(t, {
     '1/PLAN.md': plan('README.md'),
     '2/PLAN-1.md': plan('src/a.mjs'),
     'notes/NOTES.md': '# not a phase\n',
@@ -366,28 +367,33 @@ test('the locator finds live and archived phase directories, in a stable order',
 
 test('an unreadable archive directory is skipped, never a throw', {
   skip: typeof process.getuid === 'function' && process.getuid() === 0 ? 'root bypasses mode bits' : false,
-}, () => {
-  const root = planningRoot({ '1/PLAN.md': plan('README.md') });
+}, (t) => {
+  const root = planningRoot(t, { '1/PLAN.md': plan('README.md') });
   mkdirSync(join(root, '_archive-v1.0.0', '1'), { recursive: true });
   writeFileSync(join(root, '_archive-v1.0.0', '1', 'PLAN.md'), plan('old.mjs'));
   chmodSync(join(root, '_archive-v1.0.0'), 0o000);
-  assert.deepEqual(phaseDirsIn(root).map((e) => e.label), ['phases/1'],
-    'fails OPEN: what could not be read contributes nothing and nothing throws');
-  chmodSync(join(root, '_archive-v1.0.0'), 0o755);
+  // finally, not t.after: hooks run in order, and the rm registered first can't open a 0o000 dir
+  try {
+    assert.deepEqual(phaseDirsIn(root).map((e) => e.label), ['phases/1'],
+      'fails OPEN: what could not be read contributes nothing and nothing throws');
+  } finally {
+    chmodSync(join(root, '_archive-v1.0.0'), 0o755);
+  }
 });
 
-test('an absent planning root is an empty list - the ordinary pre-project state', () => {
+test('an absent planning root is an empty list - the ordinary pre-project state', (t) => {
   assert.deepEqual(phaseDirsIn(join(tmpdir(), 'cad-no-such-root-97531')), []);
-  assert.deepEqual(phaseDirsIn(planningRoot({})), []);
+  assert.deepEqual(phaseDirsIn(planningRoot(t, {})), []);
 });
 
-test('the locator does not leave the planning root through a symlink', () => {
+test('the locator does not leave the planning root through a symlink', (t) => {
   // Raised by the blocking `risk_surface` review on this plan's own range:
   // `readdirSync` FOLLOWS a symlinked directory, so an archive group or a phase
   // entry that is a link puts the replay in another tree, reading PLAN files
   // that are not this project's and scanning what they declare.
-  const root = planningRoot({ '1/PLAN.md': plan('README.md') });
+  const root = planningRoot(t, { '1/PLAN.md': plan('README.md') });
   const outside = mkdtempSync(join(tmpdir(), 'cad-outside-'));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
   mkdirSync(join(outside, '1'), { recursive: true });
   writeFileSync(join(outside, '1', 'PLAN.md'), plan('secrets.mjs'));
 
@@ -401,11 +407,11 @@ test('the locator does not leave the planning root through a symlink', () => {
     'neither the linked group nor the linked entry is walked, and nothing throws');
 });
 
-test('a symlink that stays INSIDE the planning root is still a phase', () => {
+test('a symlink that stays INSIDE the planning root is still a phase', (t) => {
   // Containment is judged on what the path RESOLVES to, never on whether it is
   // a link - a project that keeps its archive behind an in-root link is a
   // legitimate layout and its phases still declare files a floor reads.
-  const root = planningRoot({ '1/PLAN.md': plan('README.md') });
+  const root = planningRoot(t, { '1/PLAN.md': plan('README.md') });
   mkdirSync(join(root, 'real-archive', '2'), { recursive: true });
   writeFileSync(join(root, 'real-archive', '2', 'PLAN.md'), plan('old.mjs'));
   symlinkSync(join(root, 'real-archive'), join(root, '_archive-v2.0.0'));

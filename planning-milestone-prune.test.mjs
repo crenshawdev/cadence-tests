@@ -26,19 +26,19 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 // Reproduced 2026-08-13: `--label '../../../outside-tree'` moved phases/1 clean
 // out of the planning root and answered {"ok":true,"action":"pruned"}.
 
-function pruneTree() {
+function pruneTree(t) {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One', checked: true }, { n: 2, name: 'Two' }],
     phases: { 1: { plan: true }, 2: { plan: true } },
     reqs: [['REQ-1', 1, 'Complete']],
-  });
+  }, t);
   verifyChecked(dir);
   return dir;
 }
 
 for (const mode of ['archive', 'delete']) {
-  test(`milestone-prune --mode ${mode}: a --label escaping the tree is refused before any mkdir or rename`, () => {
-    const dir = pruneTree();
+  test(`milestone-prune --mode ${mode}: a --label escaping the tree is refused before any mkdir or rename`, (t) => {
+    const dir = pruneTree(t);
     const escapee = resolve(dir, '_archive-../../../outside-tree');
     const roadmapBefore = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
     const r = run(['milestone-prune', '--label', '../../../outside-tree', '--mode', mode], dir);
@@ -55,8 +55,8 @@ for (const mode of ['archive', 'delete']) {
 // character silently rewrites the row it lands in.
 for (const [name, label] of [['a pipe', 'v2|Complete|'], ['a newline', 'v2\nrogue row'],
   ['a carriage return', 'v2\rrogue row']]) {
-  test(`milestone-prune: a --label containing ${name} is refused`, () => {
-    const dir = pruneTree();
+  test(`milestone-prune: a --label containing ${name} is refused`, (t) => {
+    const dir = pruneTree(t);
     const r = run(['milestone-prune', '--label', label, '--mode', 'archive'], dir);
     assert.equal(r.ok, false);
     assert.equal(r.reason, 'bad-args');
@@ -68,8 +68,8 @@ for (const [name, label] of [['a pipe', 'v2|Complete|'], ['a newline', 'v2\nrogu
 // The guard is NOT publish-decision.mjs's REMOTE_NAME shape (D-13): an untagged
 // close labels the archive with the milestone NAME from PROJECT.md, spaces and
 // all, so a no-spaces regex would refuse this very milestone.
-test('milestone-prune: a spaced milestone-name label still prunes normally', () => {
-  const dir = pruneTree();
+test('milestone-prune: a spaced milestone-name label still prunes normally', (t) => {
+  const dir = pruneTree(t);
   const label = 'the controls that reported success';
   const r = run(['milestone-prune', '--label', label, '--mode', 'archive'], dir);
   assert.equal(r.ok, true);
@@ -81,14 +81,14 @@ test('milestone-prune: a spaced milestone-name label still prunes normally', () 
 });
 
 // The phases a close removes are the state's: it drops them, and the list is rendered from what is left.
-test('milestone-prune: the pruned phases leave the state and the regenerated list, and an all-complete close empties both', () => {
-  const dir = pruneTree();
+test('milestone-prune: the pruned phases leave the state and the regenerated list, and an all-complete close empties both', (t) => {
+  const dir = pruneTree(t);
   const r = run(['milestone-prune', '--label', 'v1', '--mode', 'delete'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(readState(dir).state.phases.map((p) => p.n), [2]);
   assert.deepEqual(readFileSync(join(dir, 'ROADMAP.md'), 'utf8').match(/^- \[.\] \*\*Phase \d+/gm), ['- [ ] **Phase 2']);
 
-  const closing = makeTree({ roadmap: [{ n: 1, name: 'One', checked: true }], phases: { 1: { plan: true } } });
+  const closing = makeTree({ roadmap: [{ n: 1, name: 'One', checked: true }], phases: { 1: { plan: true } } }, t);
   verifyChecked(closing);
   assert.equal(run(['milestone-prune', '--label', 'v2', '--mode', 'delete'], closing).ok, true);
   const state = readState(closing).state;
@@ -97,8 +97,8 @@ test('milestone-prune: the pruned phases leave the state and the regenerated lis
   assert.match(readFileSync(join(closing, 'STATE.md'), 'utf8'), /^No cycle is open/m);
 });
 
-test('milestone-prune: a close leaves ## Shipped holding the rows with their summaries and the state holding none of them', () => {
-  const dir = pruneTree();
+test('milestone-prune: a close leaves ## Shipped holding the rows with their summaries and the state holding none of them', (t) => {
+  const dir = pruneTree(t);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements\n\n## Active\n\n- **REQ-1**: it ships\n- **REQ-2**: it waits\n\n## Traceability\n\n'
     + '| Requirement | Phase | Status |\n|---|---|---|\n| REQ-1 | Phase 1 | Complete |\n| REQ-2 | Phase 2 | Pending |\n\nNotes under the table.\n');
@@ -111,8 +111,8 @@ test('milestone-prune: a close leaves ## Shipped holding the rows with their sum
   assert.match(text, /Notes under the table\./);
 });
 
-test('milestone-prune: a re-run after a refused state write finishes the state and files each shipped row once', () => {
-  const dir = pruneTree();
+test('milestone-prune: a re-run after a refused state write finishes the state and files each shipped row once', (t) => {
+  const dir = pruneTree(t);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements\n\n## Active\n\n- **REQ-1**: it ships\n- **REQ-2**: it waits\n\n## Traceability\n\n'
     + '| Requirement | Phase | Status |\n|---|---|---|\n| REQ-1 | Phase 1 | Complete |\n| REQ-2 | Phase 2 | Pending |\n');

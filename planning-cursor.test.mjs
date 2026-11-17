@@ -21,22 +21,22 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 
 // --- cursor get / set --------------------------------------------------------
 
-test('cursor get: parses the canonical schema; missing file is no-cursor', () => {
+test('cursor get: parses the canonical schema; missing file is no-cursor', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Only' }],
     cursor: { phase: 1, total: 1, name: 'Only', status: 'planned', next: '/cad-execute 1', updated: '2026-01-01' },
-  });
+  }, t);
   const r = run(['cursor', 'get'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.phase, 1);
   assert.equal(r.name, 'Only');
 
-  const none = run(['cursor', 'get'], makeTree({}));
+  const none = run(['cursor', 'get'], makeTree({}, t));
   assert.equal(none.reason, 'no-cursor');
 });
 
-test('cursor get: a STATE.md that is not a cursor changes nothing, since it is output and never read', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+test('cursor get: a STATE.md that is not a cursor changes nothing, since it is output and never read', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   writeFileSync(join(dir, 'STATE.md'), '# State\n\nWorking on stuff, back soon\n');
   const r = run(['cursor', 'get'], dir);
   assert.equal(r.ok, false);
@@ -44,8 +44,8 @@ test('cursor get: a STATE.md that is not a cursor changes nothing, since it is o
   assert.equal(r._exit, 1);
 });
 
-test('cursor set then cursor get round-trips through the state file with STATE.md deleted in between', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
+test('cursor set then cursor get round-trips through the state file with STATE.md deleted in between', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] }, t);
   const set = run(['cursor', 'set', '--phase', '2', '--status', 'planned', '--next', '/cad-execute 2'], dir);
   assert.equal(set.ok, true);
   rmSync(join(dir, 'STATE.md'));
@@ -56,8 +56,8 @@ test('cursor set then cursor get round-trips through the state file with STATE.m
   assert.equal(existsSync(join(dir, 'STATE.md')), false, 'cursor get never writes it back');
 });
 
-test('cursor set: STATE.md is the renderer\'s output for the state, and a hand edit changes neither cursor get nor status and is overwritten', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
+test('cursor set: STATE.md is the renderer\'s output for the state, and a hand edit changes neither cursor get nor status and is overwritten', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] }, t);
   const args = ['cursor', 'set', '--phase', '1', '--status', 'planned', '--next', '/cad-execute 1'];
   const first = run(args, dir);
   const state = readState(dir);
@@ -77,8 +77,8 @@ test('cursor set: STATE.md is the renderer\'s output for the state, and a hand e
   assert.equal(readFileSync(join(dir, 'STATE.md'), 'utf8'), renderStateMd(readState(dir).state));
 });
 
-test('cursor set on a closed roadmap writes the no-cycle STATE.md, and cursor get still answers phase, total and name', () => {
-  const dir = makeTree({ roadmap: [] });
+test('cursor set on a closed roadmap writes the no-cycle STATE.md, and cursor get still answers phase, total and name', (t) => {
+  const dir = makeTree({ roadmap: [] }, t);
   const r = run(['cursor', 'set', '--phase', '1', '--status', 'ready to plan', '--next', '/cad-phase add'], dir);
   assert.equal(r.ok, true);
   const text = readFileSync(join(dir, 'STATE.md'), 'utf8');
@@ -89,8 +89,8 @@ test('cursor set on a closed roadmap writes the no-cycle STATE.md, and cursor ge
   assert.deepEqual([g.phase, g.total, g.name], [1, 0, 'no active cycle']);
 });
 
-test('cursor set: falls back to the state\'s phase list when ROADMAP is absent', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Solo' }, { n: 2, name: 'Duo' }, { n: 3, name: 'Trio' }] });
+test('cursor set: falls back to the state\'s phase list when ROADMAP is absent', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Solo' }, { n: 2, name: 'Duo' }, { n: 3, name: 'Trio' }] }, t);
   assert.equal(run(['cursor', 'set', '--phase', '1', '--status', 'planned', '--next', 'x'], dir).ok, true);
   rmSync(join(dir, 'ROADMAP.md'));
   const r = run(['cursor', 'set', '--phase', '1', '--status', 'executed', '--next', '/cad-verify 1'], dir);
@@ -100,11 +100,11 @@ test('cursor set: falls back to the state\'s phase list when ROADMAP is absent',
   assert.equal(r.cursor.status, 'executed');
 });
 
-test('cursor set: a --phase spelling that cannot round-trip is refused, STATE.md untouched (D-07)', () => {
+test('cursor set: a --phase spelling that cannot round-trip is refused, STATE.md untouched (D-07)', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }, { n: '2.1', name: 'Hotfix' }],
     cursor: { phase: 1, total: 3, name: 'One', status: 'planned', next: '/cad-plan 1', updated: '2026-01-01' },
-  });
+  }, t);
   const before = readFileSync(join(dir, 'STATE.md'), 'utf8');
   for (const bad of ['1.10', '1.0', '01']) {
     const r = run(['cursor', 'set', '--phase', bad, '--status', 'planned', '--next', '/cad-plan 1'], dir);
@@ -123,8 +123,8 @@ test('cursor set: a --phase spelling that cannot round-trip is refused, STATE.md
   }
 });
 
-test('cursor set: derives name/total from ROADMAP, stamps today, writes 4 lines', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }, { n: 2, name: 'Auth' }] });
+test('cursor set: derives name/total from ROADMAP, stamps today, writes 4 lines', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }, { n: 2, name: 'Auth' }] }, t);
   const before = today();
   const r = run(['cursor', 'set', '--phase', '2', '--status', 'planned', '--next', '/cad-execute 2'], dir);
   const after = today();
@@ -146,8 +146,8 @@ test('cursor set: derives name/total from ROADMAP, stamps today, writes 4 lines'
 
 // --- cursor set: the closed-milestone derivation (D-10) ---------------------
 
-test('cursor set: derives `of 0 (no active cycle)` from a pruned roadmap, with no --name/--total', () => {
-  const dir = makeTree({ roadmap: [] });
+test('cursor set: derives `of 0 (no active cycle)` from a pruned roadmap, with no --name/--total', (t) => {
+  const dir = makeTree({ roadmap: [] }, t);
   const r = run(['cursor', 'set', '--phase', '1', '--status', 'ready to plan',
     '--next', '/cad-phase add'], dir);
   assert.equal(r.ok, true);
@@ -158,8 +158,8 @@ test('cursor set: derives `of 0 (no active cycle)` from a pruned roadmap, with n
   assert.doesNotMatch(text, /^Phase: 1 of 0/m);
 });
 
-test('cursor set: the closed cursor it writes round-trips through cursor get, never unparseable-cursor', () => {
-  const dir = makeTree({ roadmap: [] });
+test('cursor set: the closed cursor it writes round-trips through cursor get, never unparseable-cursor', (t) => {
+  const dir = makeTree({ roadmap: [] }, t);
   assert.equal(run(['cursor', 'set', '--phase', '1', '--status', 'ready to plan',
     '--next', '/cad-phase add'], dir).ok, true);
   const g = run(['cursor', 'get'], dir);
@@ -169,11 +169,11 @@ test('cursor set: the closed cursor it writes round-trips through cursor get, ne
   assert.equal(g.phase, 1);
 });
 
-test('cursor set: the closed arm beats the prior cursor, so a stale total is not inherited', () => {
+test('cursor set: the closed arm beats the prior cursor, so a stale total is not inherited', (t) => {
   const dir = makeTree({
     roadmap: [],
     cursor: { phase: 5, total: 5, name: 'Old', status: 'phase complete', next: '/cad-milestone', updated: '2026-01-01' },
-  });
+  }, t);
   const r = run(['cursor', 'set', '--phase', '1', '--status', 'ready to plan',
     '--next', '/cad-phase add'], dir);
   assert.equal(r.ok, true);
@@ -181,10 +181,10 @@ test('cursor set: the closed arm beats the prior cursor, so a stale total is not
   assert.equal(r.cursor.name, 'no active cycle');
 });
 
-test('cursor set: --status paused on a closed cycle derives of 0 like any other status', () => {
+test('cursor set: --status paused on a closed cycle derives of 0 like any other status', (t) => {
   const dir = makeTree({
     roadmap: [1, 2, 3, 4, 5].map((n) => ({ n, name: n === 3 ? 'Billing' : `P${n}` })),
-  });
+  }, t);
   assert.equal(run(['cursor', 'set', '--phase', '3', '--status', 'executed', '--next', '/cad-verify 3'], dir).ok, true);
   // the close empties the state's phase list, so no total survives to be preserved
   const state = readState(dir);
@@ -194,23 +194,23 @@ test('cursor set: --status paused on a closed cycle derives of 0 like any other 
   assert.deepEqual([r.cursor.total, r.cursor.name], [0, 'no active cycle']);
 });
 
-test('cursor set: paused preserves nothing when the prior cursor names a different phase', () => {
+test('cursor set: paused preserves nothing when the prior cursor names a different phase', (t) => {
   const dir = makeTree({
     roadmap: [],
     cursor: { phase: 5, total: 5, name: 'Old', status: 'executed', next: '/cad-verify 5', updated: '2026-01-01' },
-  });
+  }, t);
   const r = run(['cursor', 'set', '--phase', '1', '--status', 'paused', '--next', 'x'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.cursor.total, 0);
   assert.equal(r.cursor.name, 'no active cycle');
 });
 
-test('cursor set: every non-paused status still derives of 0 against a stale prior cursor', () => {
+test('cursor set: every non-paused status still derives of 0 against a stale prior cursor', (t) => {
   for (const status of ['ready to plan', 'phase complete', 'planned', 'executed']) {
     const dir = makeTree({
       roadmap: [],
       cursor: { phase: 2, total: 5, name: 'Billing', status: 'executed', next: 'x', updated: '2026-01-01' },
-    });
+    }, t);
     const r = run(['cursor', 'set', '--phase', '2', '--status', status, '--next', 'x'], dir);
     assert.equal(r.ok, true, status);
     assert.equal(r.cursor.total, 0, status);
@@ -218,8 +218,8 @@ test('cursor set: every non-paused status still derives of 0 against a stale pri
   }
 });
 
-test('cursor set: hand edits to the phase list change nothing it derives, and the next write puts the list back', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
+test('cursor set: hand edits to the phase list change nothing it derives, and the next write puts the list back', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] }, t);
   const args = ['cursor', 'set', '--phase', '2', '--status', 'planned', '--next', '/cad-execute 2'];
   const before = run(args, dir);
   const listed = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
@@ -232,24 +232,24 @@ test('cursor set: hand edits to the phase list change nothing it derives, and th
   assert.equal(readFileSync(join(dir, 'ROADMAP.md'), 'utf8'), listed);
 });
 
-test('cursor set: a phase the state does not hold cannot derive its name', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+test('cursor set: a phase the state does not hold cannot derive its name', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   const r = run(['cursor', 'set', '--phase', '4', '--status', 'planned', '--next', 'x'], dir);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'cannot-derive');
   assert.equal(readdirSync(dir).includes('STATE.md'), false); // nothing written
 });
 
-test('cursor set: rejects a status outside the lifecycle', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }] });
+test('cursor set: rejects a status outside the lifecycle', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }] }, t);
   const r = run(['cursor', 'set', '--phase', '1', '--status', 'doing stuff', '--next', 'x'], dir);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-status');
   assert.equal(readdirSync(dir).includes('STATE.md'), false); // nothing written
 });
 
-test('cursor set: a non-integer --total is bad-args and writes nothing (#42)', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] });
+test('cursor set: a non-integer --total is bad-args and writes nothing (#42)', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] }, t);
   const before = readdirSync(dir).includes('STATE.md');
   const r = run(['cursor', 'set', '--phase', '1', '--status', 'planned',
     '--next', '/cad-execute 1', '--name', 'Foo', '--total', 'abc'], dir);
@@ -271,8 +271,8 @@ for (const [flag, value] of [
   ['--total', '-2'], ['--total', '1e21'], ['--total', '1.5'],
   ['--phase', '-1'], ['--phase', '1e21'],
 ]) {
-  test(`cursor set: ${flag} ${value} is bad-args and leaves a readable cursor`, () => {
-    const dir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] });
+  test(`cursor set: ${flag} ${value} is bad-args and leaves a readable cursor`, (t) => {
+    const dir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] }, t);
     const seed = run(['cursor', 'set', '--phase', '1', '--status', 'planned',
       '--next', '/cad-execute 1', '--name', 'Foo', '--total', '4'], dir);
     assert.equal(seed.ok, true);
@@ -290,8 +290,8 @@ for (const [flag, value] of [
   });
 }
 
-test('cursor set: a decimal phase insertion (2.1) is still accepted', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] });
+test('cursor set: a decimal phase insertion (2.1) is still accepted', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] }, t);
   const r = run(['cursor', 'set', '--phase', '2.1', '--status', 'planned',
     '--next', '/cad-execute 2.1', '--name', 'Insert', '--total', '4'], dir);
   assert.equal(r.ok, true);
@@ -299,8 +299,8 @@ test('cursor set: a decimal phase insertion (2.1) is still accepted', () => {
   assert.equal(run(['cursor', 'get'], dir).phase, 2.1);
 });
 
-test('cursor set: an empty project has no phase list, so it derives the closed cycle, not a failure', () => {
-  const dir = makeTree({});
+test('cursor set: an empty project has no phase list, so it derives the closed cycle, not a failure', (t) => {
+  const dir = makeTree({}, t);
   const r = run(['cursor', 'set', '--phase', '1', '--status', 'planned', '--next', 'x'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual([r.cursor.total, r.cursor.name], [0, 'no active cycle']);
@@ -312,9 +312,9 @@ test('cursor set: an empty project has no phase list, so it derives the closed c
 // which is agent-derived text; the seven sites passing a literal
 // `/cad-<command> N` keep the inline form, which is why nothing is deleted.
 
-test('cursor set: --next-file writes the STATE.md the inline value writes', () => {
-  const inlineDir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] });
-  const fileDir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] });
+test('cursor set: --next-file writes the STATE.md the inline value writes', (t) => {
+  const inlineDir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] }, t);
+  const fileDir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] }, t);
   const pointer = '/cad-execute 1 - resume at task 3, the reader is half-wired';
   const src = join(fileDir, 'next.txt');
   writeFileSync(src, `${pointer}\n`);
@@ -329,8 +329,8 @@ test('cursor set: --next-file writes the STATE.md the inline value writes', () =
   assert.equal(run(['cursor', 'get'], fileDir).next, pointer);
 });
 
-test('cursor set: a --next-file value no shell could expand lands verbatim', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] });
+test('cursor set: a --next-file value no shell could expand lands verbatim', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] }, t);
   const pointer = '/cad-execute 1 after $(touch /tmp/cad-cursor-should-not-exist) and `id`';
   const src = join(dir, 'next.txt');
   writeFileSync(src, pointer);
@@ -341,8 +341,8 @@ test('cursor set: a --next-file value no shell could expand lands verbatim', () 
   assert.equal(existsSync('/tmp/cad-cursor-should-not-exist'), false, 'the payload executed');
 });
 
-test('cursor set: a TWO-LINE --next-file is bad-args - the cursor is four lines', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] });
+test('cursor set: a TWO-LINE --next-file is bad-args - the cursor is four lines', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] }, t);
   const seed = run(['cursor', 'set', '--phase', '1', '--status', 'planned',
     '--next', '/cad-execute 1', '--total', '4'], dir);
   assert.equal(seed.ok, true);
@@ -360,8 +360,8 @@ test('cursor set: a TWO-LINE --next-file is bad-args - the cursor is four lines'
   assert.equal(run(['cursor', 'get'], dir).ok, true);
 });
 
-test('cursor set: every --next-file refusal is bad-args, STATE.md byte-unchanged', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] });
+test('cursor set: every --next-file refusal is bad-args, STATE.md byte-unchanged', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Foundation' }] }, t);
   run(['cursor', 'set', '--phase', '1', '--status', 'planned',
     '--next', '/cad-execute 1', '--total', '4'], dir);
   const before = readFileSync(join(dir, 'STATE.md'), 'utf8');
@@ -395,8 +395,8 @@ test('cursor set: every --next-file refusal is bad-args, STATE.md byte-unchanged
   }
 });
 
-test('usage: unknown subcommand degrades, never crashes', () => {
-  const r = run(['nonsense'], makeTree({}));
+test('usage: unknown subcommand degrades, never crashes', (t) => {
+  const r = run(['nonsense'], makeTree({}, t));
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'usage');
 });
@@ -405,8 +405,8 @@ test('usage: unknown subcommand degrades, never crashes', () => {
 
 /** A tree whose phase 2 holds the named plan files, each headed `# Phase 2: X - Plan K: <name>`.
  * `heads` maps a file to its full H1 line; a file not in it gets `Plan <k>: Name <k>`. */
-function planTree({ files, complete = [], heads = {} }) {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Auth' }] });
+function planTree({ files, complete = [], heads = {} }, t) {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Auth' }] }, t);
   const pdir = join(dir, 'phases', '2');
   mkdirSync(join(pdir, 'records', 'reports'), { recursive: true });
   for (const f of files) {
@@ -419,8 +419,8 @@ function planTree({ files, complete = [], heads = {} }) {
 const SET = ['cursor', 'set', '--phase', '2', '--status', 'planned', '--next', '/cad-execute 2'];
 const stateLines = (dir) => readFileSync(join(dir, 'STATE.md'), 'utf8').split('\n');
 
-test('cursor set: the Plan: line names the lowest plan not complete, after Phase:', () => {
-  const dir = planTree({ files: ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'] });
+test('cursor set: the Plan: line names the lowest plan not complete, after Phase:', (t) => {
+  const dir = planTree({ files: ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'] }, t);
   const r = run(SET, dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.cursor.plan, { k: 1, j: 3, name: 'Name 1' });
@@ -436,40 +436,40 @@ test('cursor set: the Plan: line names the lowest plan not complete, after Phase
   assert.deepEqual(run(['cursor', 'get'], dir).plan, r2.cursor.plan);
 });
 
-test('cursor set: every plan complete, or no plan files, writes the four 3.9.3 lines', () => {
-  const done = planTree({ files: ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'], complete: [1, 2, 3] });
+test('cursor set: every plan complete, or no plan files, writes the four 3.9.3 lines', (t) => {
+  const done = planTree({ files: ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'], complete: [1, 2, 3] }, t);
   const r = run(SET, done);
   assert.ok(!('plan' in r.cursor));
   assert.equal(readFileSync(join(done, 'STATE.md'), 'utf8'),
     `# State\n\nPhase: 2 of 2 (Auth)\nStatus: planned\nNext: /cad-execute 2\nUpdated: ${r.cursor.updated}\n`);
   assert.ok(!('plan' in run(['cursor', 'get'], done)));
 
-  const none = planTree({ files: [] });
+  const none = planTree({ files: [] }, t);
   const r2 = run(SET, none);
   assert.ok(!('plan' in r2.cursor));
   assert.equal(stateLines(none).length, 7);
 });
 
-test('cursor set: an unnamed plan writes Plan: K of J with no parentheses', () => {
+test('cursor set: an unnamed plan writes Plan: K of J with no parentheses', (t) => {
   const dir = planTree({
     files: ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'], complete: [1],
     heads: { 'PLAN-2.md': '# Phase 2: Auth - Plan 2' },
-  });
+  }, t);
   const r = run(SET, dir);
   assert.deepEqual(r.cursor.plan, { k: 2, j: 3 });
   assert.equal(stateLines(dir)[3], 'Plan: 2 of 3');
   assert.deepEqual(run(['cursor', 'get'], dir).plan, { k: 2, j: 3 });
 });
 
-test('cursor set: K is the numeric minimum, not the first of the lexical sort', () => {
+test('cursor set: K is the numeric minimum, not the first of the lexical sort', (t) => {
   const files = Array.from({ length: 10 }, (_, i) => `PLAN-${i + 1}.md`);
-  const dir = planTree({ files, complete: [1] });
+  const dir = planTree({ files, complete: [1] }, t);
   assert.deepEqual(run(SET, dir).cursor.plan, { k: 2, j: 10, name: 'Name 2' });
   assert.equal(stateLines(dir)[3], 'Plan: 2 of 10 (Name 2)');
 });
 
-test('cursor set: a bare PLAN.md is plan 1 beside PLAN-2.md', () => {
-  const dir = planTree({ files: ['PLAN.md', 'PLAN-2.md'] });
+test('cursor set: a bare PLAN.md is plan 1 beside PLAN-2.md', (t) => {
+  const dir = planTree({ files: ['PLAN.md', 'PLAN-2.md'] }, t);
   assert.deepEqual(run(SET, dir).cursor.plan, { k: 1, j: 2, name: 'Name 1' });
   writeFileSync(join(dir, 'phases', '2', 'records', 'reports', 'plan-1.md'), 'PLAN COMPLETE\n');
   assert.deepEqual(run(SET, dir).cursor.plan, { k: 2, j: 2, name: 'Name 2' });

@@ -1,11 +1,11 @@
 // Zero-dep tests for `config.mjs preview` and lib/config-preview.mjs: what a set would do, with nothing written (AC6).
 // The pure cases need no process. The CLI cases run the real command over temp repos with a phase cursor and a plan
 // declaring an auth file, so route's risk floor is raised on the real tree and a scratch copy would report false changes.
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +16,7 @@ import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG = join(ROOT, 'cadence-core', 'bin', 'config.mjs');
 const tmp = mkdtempSync(join(tmpdir(), 'cad-preview-test-'));
+after(() => rmSync(tmp, { recursive: true, force: true }));
 let n = 0;
 
 const AUTH = { review: { triggers: { risk_surface: { surfaces: ['auth'] } } } };
@@ -118,28 +119,15 @@ test('the diff gate to adjudicated names the repo file, the route change and the
   assert.deepEqual(r.stops, []);
 });
 
-test('use_workflows=true with no global names the global file and says it stays off; with global true it turns on', () => {
+test('auto_close=true with no global names the global file and says it stays off; with global true it turns on', () => {
   const alone = fixture({ repo: { ...AUTH } });
-  const r = preview(alone, 'workflow.use_workflows=true');
+  const r = preview(alone, 'git.auto_close=true');
   const pair = fileOf(r, 'repo').pairs[0];
   assert.deepEqual([pair.before, pair.after], [false, false]);
   assert.deepEqual(pair.second_file, { layer: 'global', file: alone.g });
   assert.equal(pair.stays_off, true);
-  const both = fixture({ repo: { ...AUTH }, global: { workflow: { use_workflows: true } } });
-  const on = fileOf(preview(both, 'workflow.use_workflows=true'), 'repo').pairs[0];
-  assert.deepEqual([on.before, on.after], [false, true]);
-  assert.equal('second_file' in on, false);
-  assert.equal('stays_off' in on, false);
-});
-
-test('execute_workflows=true with no global names the global file and says it stays off; with global true it turns on', () => {
-  const alone = fixture({ repo: { ...AUTH } });
-  const pair = fileOf(preview(alone, 'workflow.execute_workflows=true'), 'repo').pairs[0];
-  assert.deepEqual([pair.before, pair.after], [false, false]);
-  assert.deepEqual(pair.second_file, { layer: 'global', file: alone.g });
-  assert.equal(pair.stays_off, true);
-  const both = fixture({ repo: { ...AUTH }, global: { workflow: { execute_workflows: true } } });
-  const on = fileOf(preview(both, 'workflow.execute_workflows=true'), 'repo').pairs[0];
+  const both = fixture({ repo: { ...AUTH }, global: { git: { auto_close: true } } });
+  const on = fileOf(preview(both, 'git.auto_close=true'), 'repo').pairs[0];
   assert.deepEqual([on.before, on.after], [false, true]);
   assert.equal('second_file' in on, false);
   assert.equal('stays_off' in on, false);

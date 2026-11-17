@@ -11,10 +11,10 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { writeFileSync, readFileSync, symlinkSync, mkdtempSync, mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, symlinkSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PLANNING, makeTree, run, isEntryFile } from './planning.test.mjs';
+import { PLANNING, makeTree, run, isEntryFile, scratch } from './planning.test.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
@@ -61,16 +61,16 @@ function citePlanBody(dir, n, file, body) {
  * and a phase-QUALIFIED `phase 7 D-05`. Every tree is scratch; nothing here
  * reaches this repository's own .planning.
  */
-function citeTree() {
-  const dir = makeTree({ phases: { 2: { plan: ['PLAN-1.md'] } } });
+function citeTree(t) {
+  const dir = makeTree({ phases: { 2: { plan: ['PLAN-1.md'] } } }, t);
   citePlanBody(dir, 2, 'PLAN-1.md',
     '# Plan\n\n## Context\n\nThis plan carries D-03 forward unchanged, and it holds '
     + 'the boundary phase 7 D-05 drew.\n');
   return dir;
 }
 
-test('cite-count: the envelope names both sides per item, with the unjoinable arms marked', () => {
-  const dir = citeTree();
+test('cite-count: the envelope names both sides per item, with the unjoinable arms marked', (t) => {
+  const dir = citeTree(t);
   const payload = citePayload(dir, [
     // Cited: a bare mention scopes to the plan's own phase 2, and this archived
     // row's source phase IS 2 - the locked consequence of D-04 plus D-10.
@@ -123,11 +123,11 @@ test('cite-count: the envelope names both sides per item, with the unjoinable ar
   assert.equal(armed, r.json.surfaced.count);
 });
 
-test('cite-count: the queried phase\'s own rows are dropped and archived same-numbered ones are kept', () => {
+test('cite-count: the queried phase\'s own rows are dropped and archived same-numbered ones are kept', (t) => {
   // BOTH directions on ONE payload, so a rule that dropped both or kept both
   // fails here: the plan trivially cites its own CONTEXT (D-04), and an
   // archived phase 2 is a PRIOR phase 2 that the goal is asking about.
-  const dir = citeTree();
+  const dir = citeTree(t);
   const payload = citePayload(dir, [
     { score: 9, source: 'phases/2/CONTEXT.md', snippet: 'D-03 (area): the phase\'s own' },
     { score: 8, source: '_archive-v3.5.0/2/CONTEXT.md', snippet: 'D-03 (area): a retired cycle' },
@@ -145,8 +145,8 @@ test('cite-count: the queried phase\'s own rows are dropped and archived same-nu
   }
 });
 
-test('cite-count: two runs over an unchanged plan and payload are byte-identical', () => {
-  const dir = citeTree();
+test('cite-count: two runs over an unchanged plan and payload are byte-identical', (t) => {
+  const dir = citeTree(t);
   const payload = citePayload(dir, [
     { score: 9, source: 'v3.5.3/phases/2/CONTEXT.md', snippet: 'D-03 (area): cited' },
     { score: 8, source: 'phases/1/CAPTURE.md', snippet: 'a capture row' },
@@ -159,8 +159,8 @@ test('cite-count: two runs over an unchanged plan and payload are byte-identical
   assert.equal(a.json.ok, true, a.raw);
 });
 
-test('cite-count: the run records no lifecycle/dispatch - it is a reader, not a subagent', () => {
-  const dir = citeTree();
+test('cite-count: the run records no lifecycle/dispatch - it is a reader, not a subagent', (t) => {
+  const dir = citeTree(t);
   const payload = citePayload(dir, [
     { score: 9, source: 'phases/1/CONTEXT.md', snippet: 'D-01 (area): uncited' },
   ]);
@@ -177,10 +177,10 @@ test('cite-count: the run records no lifecycle/dispatch - it is a reader, not a 
     'the count is a deterministic read; a dispatch here would mean a model was asked');
 });
 
-test('cite-count: memory.backend none is a third state, and needs no payload', () => {
+test('cite-count: memory.backend none is a third state, and needs no payload', (t) => {
   // The off arm has to be CONSTRUCTED (D-06): this repository sets no
   // memory.backend and runs the `builtin` default, so nothing dogfoods it.
-  const off = makeTree({ phases: { 2: { plan: ['PLAN-1.md'] } }, config: { memory: { backend: 'none' } } });
+  const off = makeTree({ phases: { 2: { plan: ['PLAN-1.md'] } }, config: { memory: { backend: 'none' } } }, t);
   const r = citeCount(['--phase', '2'], off);
   assert.equal(r.json.ok, true, r.raw);
   assert.equal(r._exit, 0);
@@ -190,7 +190,7 @@ test('cite-count: memory.backend none is a third state, and needs no payload', (
   // State two: a live backend that surfaced nothing. Separable from the above
   // by the ABSENT `backend` field alone, which is why it is omitted rather than
   // spelled `builtin`.
-  const live = citeTree();
+  const live = citeTree(t);
   const empty = citeCount(['--phase', '2', '--payload', citePayload(live, [])], live);
   assert.equal(empty.json.ok, true, empty.raw);
   assert.equal(empty.json.backend, undefined);
@@ -205,14 +205,14 @@ test('cite-count: memory.backend none is a third state, and needs no payload', (
   assert.equal(missing._exit, 1);
 });
 
-test('cite-count: the count records itself, under the phase\'s own correlation id', () => {
+test('cite-count: the count records itself, under the phase\'s own correlation id', (t) => {
   // The seam appends its own `outcome` event rather than leaving /cad-plan to
   // issue a `trace append` and retype both figures onto flags (D-08), so the
   // legitimate-zero rate is readable across phases and not only in the session
   // that produced it. Anchored first: `correlationId` derives `<phase>-<sha>`
   // from the newest lifecycle/phase_start for that phase, so without an anchor
   // the id would take the phase-only form and prove nothing about joining.
-  const dir = citeTree();
+  const dir = citeTree(t);
   mkdirSync(recordsDir(dir), { recursive: true });
   const trace = join(recordsDir(dir), 'trace.jsonl');
   writeFileSync(trace,
@@ -251,7 +251,7 @@ test('cite-count: the count records itself, under the phase\'s own correlation i
   assert.equal('turns' in e, false);
 });
 
-test('cite-count: a record that refuses the write moves no figure', () => {
+test('cite-count: a record that refuses the write moves no figure', (t) => {
   // D-15: the envelope's `trace` field is the only place a caller could learn
   // the figures were dropped. A record of a decision may not change the
   // decision, so every other field must be byte-identical to the same run
@@ -262,13 +262,13 @@ test('cite-count: a record that refuses the write moves no figure', () => {
   // lands (TRC-08), so a full record is not a way for a write to fail. This
   // test's subject is unchanged - what a caller sees when the write does not
   // happen - only the reachable arm behind it is.
-  const capped = citeTree();
-  const clean = citeTree();
+  const capped = citeTree(t);
+  const clean = citeTree(t);
   const rows = [
     { score: 9, source: 'v3.5.3/phases/2/CONTEXT.md', snippet: 'D-03 (area): cited' },
     { score: 8, source: 'phases/1/CAPTURE.md', snippet: 'a capture row' },
   ];
-  const outside = join(mkdtempSync(join(tmpdir(), 'cad-cite-outside-')), 'elsewhere.jsonl');
+  const outside = join(scratch('cad-cite-outside-', t), 'elsewhere.jsonl');
   writeFileSync(outside, '');
   mkdirSync(recordsDir(capped), { recursive: true });
   symlinkSync(outside, join(recordsDir(capped), 'trace.jsonl'));
@@ -288,7 +288,7 @@ test('cite-count: a record that refuses the write moves no figure', () => {
   assert.equal(readFileSync(outside, 'utf8'), '');
 });
 
-test('cite-count: three runs are told apart by their records alone', () => {
+test('cite-count: three runs are told apart by their records alone', (t) => {
   // The whole point of D-06 in ONE test. Two of these three states count ZERO
   // surfaced rows, so a reader with only a count in front of them cannot tell
   // a memory backend that was switched off from a search that found nothing -
@@ -316,12 +316,12 @@ test('cite-count: three runs are told apart by their records alone', () => {
   const offTree = makeTree({
     phases: { 2: { plan: ['PLAN-1.md'] } },
     config: { memory: { backend: 'none' } },
-  });
+  }, t);
   const offRun = citeCount(['--phase', '2', '--point', 'planned'], offTree);
   assert.equal(offRun.json.ok, true, offRun.raw);
 
   // State two: a live backend that surfaced nothing.
-  const emptyTree = citeTree();
+  const emptyTree = citeTree(t);
   const emptyRun = citeCount(
     ['--phase', '2', '--point', 'planned', '--payload', citePayload(emptyTree, [])], emptyTree);
   assert.equal(emptyRun.json.ok, true, emptyRun.raw);
@@ -329,7 +329,7 @@ test('cite-count: three runs are told apart by their records alone', () => {
   // State three: a live backend that surfaced rows the plan cites none of.
   // citeTree's plan cites a bare `D-03` and a qualified `phase 7 D-05`, so
   // neither row below can match.
-  const zeroTree = citeTree();
+  const zeroTree = citeTree(t);
   const zeroRun = citeCount(['--phase', '2', '--point', 'planned', '--payload', citePayload(zeroTree, [
     { score: 9, source: 'phases/1/CONTEXT.md', snippet: 'D-09 (area): nobody cited this' },
     { score: 8, source: 'phases/1/CAPTURE.md', snippet: 'a capture row carries no id' },

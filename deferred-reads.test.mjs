@@ -12,7 +12,7 @@
 // has to keep true.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,9 +27,11 @@ const REPO = join(HERE, '..', '..');
 const readSentence = (ref) =>
   `Read \`\${CLAUDE_PLUGIN_ROOT}/cadence-core/${ref}\` at this step, not preloaded.`;
 
-/** An empty temp root. */
-function emptyRoot() {
-  return mkdtempSync(join(tmpdir(), 'cad-deferred-'));
+/** An empty temp root, gone when the test that made it ends. */
+function emptyRoot(t) {
+  const root = mkdtempSync(join(tmpdir(), 'cad-deferred-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  return root;
 }
 
 /**
@@ -55,78 +57,46 @@ function copyReal(root, rel, edit = (t) => t) {
 // row. A `git diff` cannot stand in for it: this file legitimately changes in
 // the same commits, and `git diff` exits 0 whether or not it prints anything.
 
-/** The register block as it must appear in the lib source, byte for byte. */
-const REGISTER_SOURCE = `export const DEFERRED_READS = Object.freeze([
-  Object.freeze({
-    // one consult site by seams.md's count, two anchors here: deleting either arm's Read loses that arm's rails
-    skill: 'cad-land',
-    reference: 'references/git-publish.md',
-    anchors: Object.freeze(['3(a)', '3(b)']),
-    read_paragraphs: 2,
-  }),
-  Object.freeze({
-    skill: 'cad-plan-review',
-    reference: 'references/review-triggers.md',
-    anchors: Object.freeze(['2']),
-    read_paragraphs: 1,
-  }),
-  Object.freeze({
-    skill: 'cad-context',
-    reference: 'templates/CONTEXT.md',
-    anchors: Object.freeze(['write_context']),
-    read_paragraphs: 1,
-    file: 'cadence-core/workflows/context.md',
-  }),
-  Object.freeze({
-    // two rows, one reference: seams.md's rule is per command and each of these reaches recall at one step,
-    // so they're two one-site deferrals and merging them loses a command's anchor
-    skill: 'cad-context',
-    reference: 'references/recall.md',
-    // spend_gate, not analyze: recall runs before the analyzer decision and the skip arm never enters analyze
-    anchors: Object.freeze(['spend_gate']),
-    read_paragraphs: 1,
-    file: 'cadence-core/workflows/context.md',
-  }),
-  Object.freeze({
-    skill: 'cad-debug',
-    reference: 'references/recall.md',
-    anchors: Object.freeze(['The method loop/1']),
-    read_paragraphs: 1,
-    file: 'cadence-core/workflows/debug.md',
-  }),
-  Object.freeze({
-    skill: 'cad-execute',
-    reference: 'references/execute-parallel.md',
-    anchors: Object.freeze(['execute_parallel']),
-    read_paragraphs: 1,
-    file: 'cadence-core/workflows/execute.md',
-  }),
-  Object.freeze({
-    skill: 'cad-execute',
-    reference: 'references/execute-workflow.md',
-    anchors: Object.freeze(['execute_workflow']),
-    read_paragraphs: 1,
-    file: 'cadence-core/workflows/execute.md',
-  }),
-  Object.freeze({
-    skill: 'cad-executor-contract',
-    reference: 'references/worktree-executor.md',
-    anchors: Object.freeze(['worktree_mode']),
-    read_paragraphs: 1,
-  }),
-  Object.freeze({
-    skill: 'cad-executor-contract',
-    reference: 'references/lean-build.md',
-    anchors: Object.freeze(['1']),
-    read_paragraphs: 1,
-  }),
-  Object.freeze({
-    skill: 'cad-plan',
-    reference: 'references/plan-revision.md',
-    anchors: Object.freeze(['check_gate']),
-    read_paragraphs: 1,
-    file: 'cadence-core/workflows/plan.md',
-  }),
+/** The register block and the row() builder that shapes every row, byte for byte as the lib source has them. */
+const REGISTER_SOURCE = `function row(skill, reference, anchors, read_paragraphs, file) {
+  return Object.freeze({ skill, reference, anchors: Object.freeze(anchors), read_paragraphs, ...(file ? { file } : {}) });
+}
+
+/**
+ * The register: one row per skill and reference a command consults but no
+ * longer \`@\`-includes. reference is root-relative from cadence-core/.
+ * anchors holds the region label (see regionLabels) of every arm that needs its own Read
+ * sentence. Each row writes out read_paragraphs beside it; nothing derives one from the other.
+ * file is optional: the surface the anchors resolve against, default skills/<skill>/SKILL.md.
+ * @type {ReadonlyArray<{skill: string, reference: string,
+ *   anchors: readonly string[], read_paragraphs: number, file?: string}>}
+ */
+export const DEFERRED_READS = Object.freeze([
+  // one consult site by seams.md's count, two anchors here: deleting either arm's Read loses that arm's rails
+  row('cad-land', 'references/git-publish.md', ['3(a)', '3(b)'], 2),
+  row('cad-plan-review', 'references/review-triggers.md', ['2'], 1),
+  row('cad-context', 'templates/CONTEXT.md', ['write_context'], 1, 'cadence-core/workflows/context.md'),
+  // two rows, one reference: seams.md's rule is per command and each of these reaches recall at one step,
+  // so they're two one-site deferrals and merging them loses a command's anchor
+  // spend_gate, not analyze: recall runs before the analyzer decision and the skip arm never enters analyze
+  row('cad-context', 'references/recall.md', ['spend_gate'], 1, 'cadence-core/workflows/context.md'),
+  row('cad-debug', 'references/recall.md', ['The method loop/1'], 1, 'cadence-core/workflows/debug.md'),
+  row('cad-execute', 'references/execute-parallel.md', ['execute_parallel'], 1, 'cadence-core/workflows/execute.md'),
+  row('cad-execute', 'references/execute-workflow.md', ['execute_workflow'], 1, 'cadence-core/workflows/execute.md'),
+  row('cad-executor-contract', 'references/worktree-executor.md', ['worktree_mode'], 1),
+  row('cad-executor-contract', 'references/lean-build.md', ['1'], 1),
+  row('cad-plan', 'references/plan-revision.md', ['check_gate'], 1, 'cadence-core/workflows/plan.md'),
+  // one site: the route, the walk's pick and the menu are three doors into the one section
+  row('cad-config', 'workflows/config-surfaces.md', ['Risk surfaces (\`--surfaces\`)'], 1, 'cadence-core/workflows/config.md'),
+  row('cad-config', 'workflows/config-testing.md', ['Testing policy (\`--testing\`)'], 1, 'cadence-core/workflows/config.md'),
+  // the front doors Read the arm's own file, so setup never opens config.md for it
+  row('cad-new-project', 'workflows/config-testing.md', ['testing_policy'], 1, 'cadence-core/workflows/new-project.md'),
+  row('cad-adopt', 'workflows/config-testing.md', ['testing_policy'], 1, 'cadence-core/workflows/adopt.md'),
+  // two arms, one file: each arm keeps its own Read so a deleted one fails on its own
+  row('cad-config', 'workflows/config-roles.md',
+    ['Roles interview (\`--roles\`)', 'Stakes migration (a retired routing key is still on disk)'], 2, 'cadence-core/workflows/config.md'),
+  row('cad-new-project', 'workflows/config-roles.md', ['setup(4)'], 1, 'cadence-core/workflows/new-project.md'),
+  row('cad-adopt', 'workflows/config-roles.md', ['setup(3)'], 1, 'cadence-core/workflows/adopt.md'),
 ]);`;
 
 test('register: the surviving cut rows are byte-identical, and the register is exactly the rows the cuts made', () => {
@@ -136,15 +106,20 @@ test('register: the surviving cut rows are byte-identical, and the register is e
   // alone passes an edited, reordered or retargeted row. Two `cad-land` rows
   // left in v3.2.0 with `pre_ship`: the skill fires no review and triages
   // nothing now, so review-triggers.md and triage-gate.md are consulted from
-  // it at no step at all.
+  // it at no step at all. Seven came in when config.md's Risk surfaces, Testing
+  // policy and Roles arms moved to cold files: /cad-config Reads each arm's file,
+  // and /cad-new-project and /cad-adopt Read the testing and roles files they reach.
   const src = readFileSync(join(HERE, 'lib', 'deferred-reads.mjs'), 'utf8');
-  const start = src.indexOf('export const DEFERRED_READS');
-  assert.ok(start >= 0, 'the register export must be findable by name');
-  const end = src.indexOf(']);', start);
-  assert.ok(end > start, 'the register export must close with `]);`');
+  // from row() on, since an edit to the builder changes every row while the table's own text stays put
+  const start = src.indexOf('function row(');
+  assert.ok(start >= 0, 'the row() builder must be findable by name');
+  const register = src.indexOf('export const DEFERRED_READS', start);
+  assert.ok(register > start, 'the register export must follow row()');
+  const end = src.indexOf(']);', register);
+  assert.ok(end > register, 'the register export must close with `]);`');
   assert.equal(src.slice(start, end + 3), REGISTER_SOURCE);
-  // CADENCE-CENSUS: deferred-reads-register | asserts: the register is exactly 10 rows, byte-identical to the export's own source
-  assert.equal(DEFERRED_READS.length, 10);
+  // CADENCE-CENSUS: deferred-reads-register | asserts: the register is exactly 17 rows, byte-identical to the export's own source
+  assert.equal(DEFERRED_READS.length, 17);
 });
 
 // --- AC3: a contract skill's own step ------------------------------------------
@@ -156,8 +131,8 @@ const STEP_4 = '4. Commit per the commit protocol below.';
 const SEAMS = 'references/seams.md';
 
 /** The contract copied in, with the Read sentence at the END of `<process>` step 3. */
-function contractRoot({ withRead }) {
-  const root = emptyRoot();
+function contractRoot(t, { withRead }) {
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT, (t) => (withRead
     ? t.replace(`\n${STEP_4}`, `\n${readSentence(SEAMS)}\n${STEP_4}`)
     : t));
@@ -172,17 +147,17 @@ const contractRow = (anchors) => ({
   read_paragraphs: anchors.length,
 });
 
-test('AC3: a contract skill anchor is clean while its Read sentence stands', () => {
+test('AC3: a contract skill anchor is clean while its Read sentence stands', (t) => {
   // Guard the fixture itself: if the insertion did not land, the "clean" arm
   // below would be measuring an unedited file.
-  const root = contractRoot({ withRead: true });
+  const root = contractRoot(t, { withRead: true });
   const text = readFileSync(join(root, ...CONTRACT.split('/')), 'utf8');
   assert.ok(text.includes(readSentence(SEAMS)), 'fixture must carry the inserted sentence');
   assert.deepEqual(deferredReadIssues(root, [contractRow(['3'])]), []);
 });
 
-test('AC3: deleting that one sentence reports exactly one deferred-read-unread', () => {
-  const root = contractRoot({ withRead: false });
+test('AC3: deleting that one sentence reports exactly one deferred-read-unread', (t) => {
+  const root = contractRoot(t, { withRead: false });
   const issues = deferredReadIssues(root, [contractRow(['3'])]);
   assert.deepEqual(issues.map((i) => i.kind), [CODES.unread]);
   assert.equal(issues[0].file, CONTRACT);
@@ -190,10 +165,10 @@ test('AC3: deleting that one sentence reports exactly one deferred-read-unread',
   assert.match(issues[0].detail, /references\/seams\.md/);
 });
 
-test('AC3: the sentence in the WRONG step of the contract does not answer for step 3', () => {
+test('AC3: the sentence in the WRONG step of the contract does not answer for step 3', (t) => {
   // Same file, same sentence, same count - only the region changed. That is the
   // whole rule, restated on a contract surface rather than a command one.
-  const root = emptyRoot();
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT, (t) =>
     t.replace('\n5. Record the short hash for your report.',
       `\n${readSentence(SEAMS)}\n5. Record the short hash for your report.`));
@@ -214,14 +189,14 @@ const workflowRow = {
   file: 'cadence-core/workflows/execute.md',
 };
 
-test('file: an absent PARENT directory is a partial fixture and reports nothing', () => {
-  const root = emptyRoot();
+test('file: an absent PARENT directory is a partial fixture and reports nothing', (t) => {
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT);
   assert.deepEqual(deferredReadIssues(root, [workflowRow]), []);
 });
 
-test('file: a present parent with the file absent is one deferred-read-missing-file', () => {
-  const root = emptyRoot();
+test('file: a present parent with the file absent is one deferred-read-missing-file', (t) => {
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT);
   mkdirSync(join(root, 'cadence-core', 'workflows'), { recursive: true });
   const issues = deferredReadIssues(root, [workflowRow]);
@@ -272,8 +247,8 @@ const GUARD_ITEM_2 = '\n2. "Commit them now';
  * numbered item), inside its item 1, or nowhere.
  * @param {'body'|'item1'|'none'} where
  */
-function executeRoot(where) {
-  const root = emptyRoot();
+function executeRoot(t, where) {
+  const root = emptyRoot(t);
   copyReal(root, 'skills/cad-execute/SKILL.md');
   copyReal(root, EXECUTE_WF, (t) => {
     if (where === 'body') {
@@ -296,25 +271,25 @@ const executeRow = (anchors) => ({
   file: EXECUTE_WF,
 });
 
-test('AC1: a <step name="..."> anchor is clean while its Read sentence stands', () => {
-  const root = executeRoot('body');
+test('AC1: a <step name="..."> anchor is clean while its Read sentence stands', (t) => {
+  const root = executeRoot(t, 'body');
   const text = readFileSync(join(root, ...EXECUTE_WF.split('/')), 'utf8');
   assert.ok(text.includes(readSentence(SEAMS)), 'fixture must carry the inserted sentence');
   assert.deepEqual(deferredReadIssues(root, [executeRow(['git_guard'])]), []);
 });
 
-test('AC1: deleting that sentence reports exactly one deferred-read-unread', () => {
-  const issues = deferredReadIssues(executeRoot('none'), [executeRow(['git_guard'])]);
+test('AC1: deleting that sentence reports exactly one deferred-read-unread', (t) => {
+  const issues = deferredReadIssues(executeRoot(t, 'none'), [executeRow(['git_guard'])]);
   assert.deepEqual(issues.map((i) => i.kind), [CODES.unread]);
   assert.equal(issues[0].file, EXECUTE_WF);
   assert.match(issues[0].detail, /git_guard/);
 });
 
-test('AC4: a Read in item 1 of a named step does not satisfy item 3 of the same step', () => {
+test('AC4: a Read in item 1 of a named step does not satisfy item 3 of the same step', (t) => {
   // The nested-label precedence rule. `git_guard` puts `1.`-`3.` at column 0
   // inside a named step; bare numbers there would let this sentence answer for
   // any `3` anywhere in the file - and `cad-land` really does anchor inside `3`.
-  const root = executeRoot('item1');
+  const root = executeRoot(t, 'item1');
   const issues = deferredReadIssues(root, [executeRow(['git_guard(3)'])]);
   assert.deepEqual(issues.map((i) => i.kind), [CODES.unread]);
   assert.match(issues[0].detail, /git_guard\(3\)/);
@@ -323,14 +298,14 @@ test('AC4: a Read in item 1 of a named step does not satisfy item 3 of the same 
   assert.deepEqual(deferredReadIssues(root, [executeRow(['git_guard(1)'])]), []);
 });
 
-test('AC4: the named step is not a PREFIX match for its own numbered items', () => {
+test('AC4: the named step is not a PREFIX match for its own numbered items', (t) => {
   // `git_guard` and `git_guard(1)` are distinct regions, the same way `3` and
   // `3(a)` always were.
-  const issues = deferredReadIssues(executeRoot('item1'), [executeRow(['git_guard'])]);
+  const issues = deferredReadIssues(executeRoot(t, 'item1'), [executeRow(['git_guard'])]);
   assert.deepEqual(issues.map((i) => i.kind), [CODES.unread]);
 });
 
-test('D-04: a <step name="..."> with NO <process> wrapper is still a region', () => {
+test('D-04: a <step name="..."> with NO <process> wrapper is still a region', (t) => {
   // `workflows/verify-deep.md` carries three `<step name=` tags and no wrapper.
   // Requiring the wrapper would leave a second unwatchable file behind.
   const wf = 'cadence-core/workflows/verify-deep.md';
@@ -338,7 +313,7 @@ test('D-04: a <step name="..."> with NO <process> wrapper is still a region', ()
     skill: 'cad-verify', reference: SEAMS, anchors, read_paragraphs: 1, file: wf,
   });
   const mk = (withRead) => {
-    const root = emptyRoot();
+    const root = emptyRoot(t);
     copyReal(root, 'skills/cad-verify/SKILL.md');
     copyReal(root, wf, (t) => (withRead
       ? t.replace('<step name="merge">', `<step name="merge">\n${readSentence(SEAMS)}`)
@@ -372,8 +347,8 @@ const WALK_ANCHOR = 'Interactive menu (no args)/The walk/2';
  * of its step 1, under `## Direct set`, or nowhere.
  * @param {'step2'|'step1'|'direct'|'none'} where
  */
-function configRoot(where) {
-  const root = emptyRoot();
+function configRoot(t, where) {
+  const root = emptyRoot(t);
   copyReal(root, 'skills/cad-config/SKILL.md');
   copyReal(root, CONFIG_WF, (t) => {
     const s = readSentence(SEAMS);
@@ -394,22 +369,22 @@ const configRow = (anchors) => ({
   file: CONFIG_WF,
 });
 
-test('AC2: a heading-scoped walk step is clean while its Read sentence stands', () => {
-  const root = configRoot('step2');
+test('AC2: a heading-scoped walk step is clean while its Read sentence stands', (t) => {
+  const root = configRoot(t, 'step2');
   const text = readFileSync(join(root, ...CONFIG_WF.split('/')), 'utf8');
   assert.ok(text.includes(readSentence(SEAMS)), 'fixture must carry the inserted sentence');
   assert.deepEqual(deferredReadIssues(root, [configRow([WALK_ANCHOR])]), []);
 });
 
-test('AC2: deleting it reports exactly one deferred-read-unread naming the walk step', () => {
-  const issues = deferredReadIssues(configRoot('none'), [configRow([WALK_ANCHOR])]);
+test('AC2: deleting it reports exactly one deferred-read-unread naming the walk step', (t) => {
+  const issues = deferredReadIssues(configRoot(t, 'none'), [configRow([WALK_ANCHOR])]);
   assert.deepEqual(issues.map((i) => i.kind), [CODES.unread]);
   assert.equal(issues[0].file, CONFIG_WF);
   assert.match(issues[0].detail, /Interactive menu \(no args\)\/The walk\/2/);
 });
 
-test('AC2: the same sentence in walk step 1 does not answer for walk step 2', () => {
-  const root = configRoot('step1');
+test('AC2: the same sentence in walk step 1 does not answer for walk step 2', (t) => {
+  const root = configRoot(t, 'step1');
   assert.deepEqual(deferredReadIssues(root, [configRow([WALK_ANCHOR])]).map((i) => i.kind),
     [CODES.unread]);
   // ... and it really did land in step 1, so the falsifier is about the region.
@@ -417,8 +392,8 @@ test('AC2: the same sentence in walk step 1 does not answer for walk step 2', ()
     deferredReadIssues(root, [configRow(['Interactive menu (no args)/The walk/1'])]), []);
 });
 
-test('AC2: the same sentence under another `##` heading does not answer either', () => {
-  const root = configRoot('direct');
+test('AC2: the same sentence under another `##` heading does not answer either', (t) => {
+  const root = configRoot(t, 'direct');
   assert.deepEqual(deferredReadIssues(root, [configRow([WALK_ANCHOR])]).map((i) => i.kind),
     [CODES.unread]);
   assert.deepEqual(deferredReadIssues(root, [configRow(['Direct set'])]), []);
@@ -461,26 +436,26 @@ test('grammar: a heading INSIDE an open block does not compete with the frame', 
 // moves exactly that block. A `<process>`-step pair alone would pass against an
 // implementation that never grew the plain-tag branch at all.
 
-test('D-07: a Read inside <worktree_mode> is anchorable at `worktree_mode`', () => {
-  const root = emptyRoot();
+test('D-07: a Read inside <worktree_mode> is anchorable at `worktree_mode`', (t) => {
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT, (t) =>
     t.replace('<worktree_mode>', `<worktree_mode>\n${readSentence(SEAMS)}`));
   assert.deepEqual(deferredReadIssues(root, [contractRow(['worktree_mode'])]), []);
 });
 
-test('D-07: deleting it reports one deferred-read-unread naming worktree_mode', () => {
-  const root = emptyRoot();
+test('D-07: deleting it reports one deferred-read-unread naming worktree_mode', (t) => {
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT);
   const issues = deferredReadIssues(root, [contractRow(['worktree_mode'])]);
   assert.deepEqual(issues.map((i) => i.kind), [CODES.unread]);
   assert.match(issues[0].detail, /worktree_mode/);
 });
 
-test('D-07: label EXACTNESS, not null-ness, is what blocks a relocation', () => {
+test('D-07: label EXACTNESS, not null-ness, is what blocks a relocation', (t) => {
   // The cost of labelling plain tags: `<guardrails>` stops being `null`. The
   // relocation attack the shipped tests pin still fails, because `guardrails`
   // is not `worktree_mode`.
-  const root = emptyRoot();
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT, (t) =>
     t.replace('<never>', `<never>\n${readSentence(SEAMS)}`));
   const issues = deferredReadIssues(root, [contractRow(['worktree_mode'])]);
@@ -550,8 +525,8 @@ function stripReadSentence(text, full) {
 }
 
 /** The real surfaces a shipped row needs, with its Read sentence kept or cut. */
-function rowRoot(row, { withRead }) {
-  const root = emptyRoot();
+function rowRoot(t, row, { withRead }) {
+  const root = emptyRoot(t);
   const skillRel = `skills/${row.skill}/SKILL.md`;
   const rel = row.file || skillRel;
   const full = `\${CLAUDE_PLUGIN_ROOT}/cadence-core/${row.reference}`;
@@ -565,58 +540,58 @@ function rowRoot(row, { withRead }) {
  * Both halves of one promoted row's falsifier: the real tree is clean, and the
  * same tree minus that one sentence is exactly one `deferred-read-unread`.
  */
-function assertPromotedRow(skill, reference, anchor) {
+function assertPromotedRow(t, skill, reference, anchor) {
   const row = shippedRow(skill, reference);
   const rel = row.file || `skills/${row.skill}/SKILL.md`;
-  assert.deepEqual(deferredReadIssues(rowRoot(row, { withRead: true }), [row]), [],
+  assert.deepEqual(deferredReadIssues(rowRoot(t, row, { withRead: true }), [row]), [],
     `${rel} must satisfy ${reference} as shipped`);
-  const issues = deferredReadIssues(rowRoot(row, { withRead: false }), [row]);
+  const issues = deferredReadIssues(rowRoot(t, row, { withRead: false }), [row]);
   assert.deepEqual(issues.map((i) => i.kind), [CODES.unread]);
   assert.equal(issues[0].file, rel);
   assert.match(issues[0].detail, new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 }
 
-test('AC4: cad-context / templates/CONTEXT.md is unread without its one sentence', () => {
-  assertPromotedRow('cad-context', 'templates/CONTEXT.md', 'write_context');
+test('AC4: cad-context / templates/CONTEXT.md is unread without its one sentence', (t) => {
+  assertPromotedRow(t, 'cad-context', 'templates/CONTEXT.md', 'write_context');
 });
 
-test('AC4: cad-context / references/recall.md is unread without its one sentence', () => {
-  assertPromotedRow('cad-context', 'references/recall.md', 'spend_gate');
+test('AC4: cad-context / references/recall.md is unread without its one sentence', (t) => {
+  assertPromotedRow(t, 'cad-context', 'references/recall.md', 'spend_gate');
 });
 
-test('AC4: cad-debug / references/recall.md is unread without its one sentence', () => {
+test('AC4: cad-debug / references/recall.md is unread without its one sentence', (t) => {
   // The other half of the per-COMMAND site rule: one reference, two rows, and
   // each command's anchor falsified on its own. If these were merged into one
   // row, deleting either sentence would still leave the other satisfying it.
-  assertPromotedRow('cad-debug', 'references/recall.md', 'The method loop/1');
+  assertPromotedRow(t, 'cad-debug', 'references/recall.md', 'The method loop/1');
 });
 
-test('AC4: cad-execute / references/execute-parallel.md is unread without its one sentence', () => {
-  assertPromotedRow('cad-execute', 'references/execute-parallel.md', 'execute_parallel');
+test('AC4: cad-execute / references/execute-parallel.md is unread without its one sentence', (t) => {
+  assertPromotedRow(t, 'cad-execute', 'references/execute-parallel.md', 'execute_parallel');
 });
 
-test('AC4: cad-execute / references/execute-workflow.md is unread without its one sentence', () => {
-  assertPromotedRow('cad-execute', 'references/execute-workflow.md', 'execute_workflow');
+test('AC4: cad-execute / references/execute-workflow.md is unread without its one sentence', (t) => {
+  assertPromotedRow(t, 'cad-execute', 'references/execute-workflow.md', 'execute_workflow');
 });
 
-test('AC4: cad-executor-contract / references/worktree-executor.md is unread without its one sentence', () => {
+test('AC4: cad-executor-contract / references/worktree-executor.md is unread without its one sentence', (t) => {
   // The first row on a `user-invocable: false` skill, anchored on the row's
   // DEFAULT `file` - the contract's own SKILL.md, no `file` field at all.
-  assertPromotedRow('cad-executor-contract', 'references/worktree-executor.md', 'worktree_mode');
+  assertPromotedRow(t, 'cad-executor-contract', 'references/worktree-executor.md', 'worktree_mode');
 });
 
-test('AC4: cad-plan / references/plan-revision.md is unread without its one sentence', () => {
+test('AC4: cad-plan / references/plan-revision.md is unread without its one sentence', (t) => {
   // Anchored at the WHOLE step `check_gate`: the revision's `1.`/`2.`/`3.` are
   // indented four spaces and take no item label, so `check_gate(1)` names no
   // region at all. Coarse, and stated as such in the phase's D-08.
-  assertPromotedRow('cad-plan', 'references/plan-revision.md', 'check_gate');
+  assertPromotedRow(t, 'cad-plan', 'references/plan-revision.md', 'check_gate');
 });
 
-test('file: still-eager watches the SKILL.md even when the anchor is a workflow', () => {
+test('file: still-eager watches the SKILL.md even when the anchor is a workflow', (t) => {
   // D-05. The `@`-include line always lives in the SKILL.md, so `skill` stays
   // the target of this arm whatever `file` says - a workflow-anchored row that
   // stopped watching for re-promotion would lose half of what check 13 does.
-  const root = emptyRoot();
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT, (t) =>
     `@\${CLAUDE_PLUGIN_ROOT}/cadence-core/${SEAMS}\n${t}`);
   mkdirSync(join(root, 'cadence-core', 'workflows'), { recursive: true });

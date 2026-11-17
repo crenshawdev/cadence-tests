@@ -30,8 +30,8 @@ test('status: missing .planning degrades with a recovery hint', () => {
   assert.equal(r._exit, 1);
 });
 
-test('status: missing ROADMAP.md is no-roadmap', () => {
-  const dir = makeTree({});
+test('status: missing ROADMAP.md is no-roadmap', (t) => {
+  const dir = makeTree({}, t);
   const r = run(['status'], dir);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'no-roadmap');
@@ -40,8 +40,8 @@ test('status: missing ROADMAP.md is no-roadmap', () => {
 // The phase-list grammar reaches the seam here; its breadth is pinned at
 // parser level in planning-files.test.mjs (each of these pays a node spawn).
 
-test('status: a ## Phases section holding no phase token is a closed milestone, not a parse failure', () => {
-  const dir = makeTree({});
+test('status: a ## Phases section holding no phase token is a closed milestone, not a parse failure', (t) => {
+  const dir = makeTree({}, t);
   writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap\n\n## Phases\n\n(nothing)\n');
   const r = run(['status'], dir);
   assert.equal(r.ok, true);
@@ -51,8 +51,8 @@ test('status: a ## Phases section holding no phase token is a closed milestone, 
   assert.equal(r._exit, 0);
 });
 
-test('status: a non-canonical phase-shaped line is unparseable-roadmap with a per-line diagnostic', () => {
-  const dir = makeTree({});
+test('status: a non-canonical phase-shaped line is unparseable-roadmap with a per-line diagnostic', (t) => {
+  const dir = makeTree({}, t);
   writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap\n\n## Phases\n\n- Phase 1: Ship auth\n');
   const r = run(['status'], dir);
   assert.equal(r.ok, false);
@@ -62,8 +62,8 @@ test('status: a non-canonical phase-shaped line is unparseable-roadmap with a pe
   assert.equal(r.detail, 'line 5: - Phase 1: Ship auth');
 });
 
-test('status: a wiped checkbox list whose ### Phase N: details survive is NOT a closed milestone', () => {
-  const dir = makeTree({});
+test('status: a wiped checkbox list whose ### Phase N: details survive is NOT a closed milestone', (t) => {
+  const dir = makeTree({}, t);
   writeFileSync(join(dir, 'ROADMAP.md'),
     '# Roadmap\n\n## Phases\n\n\n## Phase Details\n\n### Phase 1: Auth\n**Goal:** ship it\n');
   const r = run(['status'], dir);
@@ -73,8 +73,8 @@ test('status: a wiped checkbox list whose ### Phase N: details survive is NOT a 
   assert.equal(r.issues[0].text, '### Phase 1: Auth');
 });
 
-test('status: no ## Phases section at all is still unparseable-roadmap', () => {
-  const dir = makeTree({});
+test('status: no ## Phases section at all is still unparseable-roadmap', (t) => {
+  const dir = makeTree({}, t);
   writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap\n\n## Overview\n\nx\n');
   const r = run(['status'], dir);
   assert.equal(r.ok, false);
@@ -82,8 +82,8 @@ test('status: no ## Phases section at all is still unparseable-roadmap', () => {
   assert.equal(r.detail, 'no `## Phases` section in ROADMAP.md');
 });
 
-test('status: an interrupted close reports the closed state AND a phase-dir drift entry', () => {
-  const dir = makeTree({ roadmap: [], phases: { 2: { plan: true } } });
+test('status: an interrupted close reports the closed state AND a phase-dir drift entry', (t) => {
+  const dir = makeTree({ roadmap: [], phases: { 2: { plan: true } } }, t);
   const r = run(['status'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.cycle, 'none');
@@ -93,8 +93,8 @@ test('status: an interrupted close reports the closed state AND a phase-dir drif
   }]);
 });
 
-test('status: a closed cycle is the state having no phases, and a cursor of that cycle agrees', () => {
-  const dir = makeTree({ roadmap: [1, 2].map((n) => ({ n, name: `P${n}` })) });
+test('status: a closed cycle is the state having no phases, and a cursor of that cycle agrees', (t) => {
+  const dir = makeTree({ roadmap: [1, 2].map((n) => ({ n, name: `P${n}` })) }, t);
   assert.equal(run(['cursor', 'set', '--phase', '2', '--status', 'phase complete', '--next', '/cad-milestone'], dir).ok, true);
   const held = readState(dir).state;
   assert.equal(writeState(dir, { ...held, phases: [], cycleOpen: false }).ok, true);
@@ -105,11 +105,11 @@ test('status: a closed cycle is the state having no phases, and a cursor of that
   assert.equal(r.drift, undefined);
 });
 
-test('status: a finished close (cursor of 0) reports no drift at all', () => {
+test('status: a finished close (cursor of 0) reports no drift at all', (t) => {
   const dir = makeTree({
     roadmap: [],
     cursor: { phase: 1, total: 0, name: 'no active cycle', status: 'ready to plan', next: '/cad-phase add', updated: '2026-01-01' },
-  });
+  }, t);
   const r = run(['status'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.cycle, 'none');
@@ -129,11 +129,11 @@ const CLOSED_AGREEMENT = [
 ];
 
 for (const row of CLOSED_AGREEMENT) {
-  test(`status: closed milestone, cursor "${row.status}" agrees=${row.agrees}`, () => {
+  test(`status: closed milestone, cursor "${row.status}" agrees=${row.agrees}`, (t) => {
     const dir = makeTree({
       roadmap: [],
       cursor: { phase: 1, total: 0, name: 'no active cycle', status: row.status, next: '/cad-phase add', updated: '2026-01-01' },
-    });
+    }, t);
     const r = run(['status'], dir);
     assert.equal(r.ok, true);
     assert.equal(r.cycle, 'none');
@@ -147,11 +147,11 @@ for (const row of CLOSED_AGREEMENT) {
   });
 }
 
-test('status: a file at the reviews-area and returns-area paths leaves status ok with the same phases', () => {
+test('status: a file at the reviews-area and returns-area paths leaves status ok with the same phases', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true, summary: true } },
-  });
+  }, t);
   const before = run(['status'], dir);
   assert.equal(before.ok, true, JSON.stringify(before));
   const phaseDir = join(dir, 'phases', '1');
@@ -166,7 +166,7 @@ test('status: a file at the reviews-area and returns-area paths leaves status ok
 
 // --- status: derivation ------------------------------------------------------
 
-test('status: derives unplanned/planned/executed/complete from artifacts', () => {
+test('status: derives unplanned/planned/executed/complete from artifacts', (t) => {
   const dir = makeTree({
     roadmap: [
       { n: 1, name: 'Done', checked: true },
@@ -179,7 +179,7 @@ test('status: derives unplanned/planned/executed/complete from artifacts', () =>
       2: { plan: true, summary: true, uat: [{ status: 'pass' }, { status: 'fail' }, { status: 'pending' }] },
       3: { plan: true },
     },
-  });
+  }, t);
   verifyChecked(dir);
   const r = run(['status'], dir);
   assert.equal(r.ok, true);
@@ -191,42 +191,42 @@ test('status: derives unplanned/planned/executed/complete from artifacts', () =>
   assert.equal(r.drift, undefined); // boxes all agree with derivation - omitted
 });
 
-test('status: SUMMARY without UAT is executed, not complete', () => {
+test('status: SUMMARY without UAT is executed, not complete', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Only' }],
     phases: { 1: { plan: true, summary: true } },
-  });
+  }, t);
   const r = run(['status'], dir);
   assert.equal(r.phases[0].status, 'executed');
 });
 
-test('status: all complete -> current null; multi-plan files listed', () => {
+test('status: all complete -> current null; multi-plan files listed', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Only', checked: true }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'], summary: true, uat: [{ status: 'pass' }] } },
-  });
+  }, t);
   verifyChecked(dir);
   const r = run(['status'], dir);
   assert.equal(r.current, null);
   assert.deepEqual(r.phases[0].plans, ['PLAN-1.md', 'PLAN-2.md']);
 });
 
-test('status: skipped without a reason blocks completeness', () => {
+test('status: skipped without a reason blocks completeness', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Only' }],
     phases: { 1: { plan: true, summary: true, uat: [{ status: 'pass' }, { status: 'skipped' }] } },
-  });
+  }, t);
   const r = run(['status'], dir);
   assert.equal(r.phases[0].status, 'executed');
 });
 
 // --- status: drift -----------------------------------------------------------
 
-test('status: roadmap-box drift both directions, judged by the state against what the artifacts derive', () => {
+test('status: roadmap-box drift both directions, judged by the state against what the artifacts derive', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'DoneUnchecked' }, { n: 2, name: 'OpenChecked' }],
     phases: { 1: { plan: true }, 2: { plan: true } },
-  });
+  }, t);
   assert.equal(run(['status'], dir).drift, undefined, 'a freshly imported project agrees with its artifacts');
   // phase 1's artifacts now derive complete while the state says planned; phase 2 is recorded complete with no summary
   const p1 = join(dir, 'phases', '1');
@@ -241,8 +241,8 @@ test('status: roadmap-box drift both directions, judged by the state against wha
   assert.equal(r.phases.find((p) => p.n === 2).status, 'complete', 'the state\'s status is the one reported');
 });
 
-test('status: hand-checking a box, adding a phase line or breaking a line in the list changes nothing it answers', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }], phases: { 1: { plan: true } } });
+test('status: hand-checking a box, adding a phase line or breaking a line in the list changes nothing it answers', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }], phases: { 1: { plan: true } } }, t);
   run(['status'], dir); // converts the project; the answers compared are the ones after it
   const before = run(['status'], dir);
   const file = join(dir, 'ROADMAP.md');
@@ -259,8 +259,8 @@ test('status: hand-checking a box, adding a phase line or breaking a line in the
   }
 });
 
-test('status: a roadmap with no ## Phases heading is still refused', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+test('status: a roadmap with no ## Phases heading is still refused', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   assert.equal(run(['status'], dir).ok, true);
   writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap\n\nnothing listed\n');
   const r = run(['status'], dir);
@@ -268,7 +268,7 @@ test('status: a roadmap with no ## Phases heading is still refused', () => {
   assert.equal(r.reason, 'unparseable-roadmap');
 });
 
-test('status: req-status drift; Deferred and unmapped rows exempt', () => {
+test('status: req-status drift; Deferred and unmapped rows exempt', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Done', checked: true }, { n: 2, name: 'Open' }],
     phases: {
@@ -281,7 +281,7 @@ test('status: req-status drift; Deferred and unmapped rows exempt', () => {
       ['REQ-3', 2, 'Deferred'],  // exempt
       ['REQ-4', null, 'Pending'],// unmapped: audit's concern, not drift
     ],
-  });
+  }, t);
   verifyChecked(dir);
   const r = run(['status'], dir);
   const reqDrift = r.drift.filter((d) => d.kind === 'req-status');
@@ -290,32 +290,32 @@ test('status: req-status drift; Deferred and unmapped rows exempt', () => {
   assert.match(reqDrift[1].detail, /REQ-2/);
 });
 
-test('status: cursor agreement and disagreement', () => {
+test('status: cursor agreement and disagreement', (t) => {
   const spec = {
     roadmap: [{ n: 1, name: 'Only' }],
     phases: { 1: { plan: true } },
     cursor: { phase: 1, total: 1, name: 'Only', status: 'planned', next: '/cad-execute 1', updated: '2026-01-01' },
   };
-  const agree = run(['status'], makeTree(spec));
+  const agree = run(['status'], makeTree(spec, t));
   assert.equal(agree.cursor.agrees, true);
   assert.equal(agree.drift, undefined);
 
   const stale = run(['status'], makeTree({
     ...spec,
     cursor: { ...spec.cursor, status: 'executed' }, // derivation says planned
-  }));
+  }, t));
   assert.equal(stale.cursor.agrees, false);
   assert.equal(stale.drift[0].kind, 'cursor');
 });
 
-test('status: decimal insertion phases sort and derive like integers', () => {
+test('status: decimal insertion phases sort and derive like integers', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One', checked: true }, { n: 2.1, name: 'Hotfix' }, { n: 3, name: 'Three' }],
     phases: {
       1: { plan: true, summary: true, uat: [{ status: 'pass' }] },
       '2.1': { plan: true },
     },
-  });
+  }, t);
   verifyChecked(dir);
   const r = run(['status'], dir);
   assert.equal(r.ok, true);
@@ -325,12 +325,12 @@ test('status: decimal insertion phases sort and derive like integers', () => {
   assert.equal(r.total, 3);
 });
 
-test('status: paused cursor always agrees (legal at any point)', () => {
+test('status: paused cursor always agrees (legal at any point)', (t) => {
   const r = run(['status'], makeTree({
     roadmap: [{ n: 1, name: 'Only' }],
     phases: { 1: { plan: true } },
     cursor: { phase: 1, total: 1, name: 'Only', status: 'paused', next: 'resume: finish task 2', updated: '2026-01-01' },
-  }));
+  }, t));
   assert.equal(r.cursor.agrees, true);
 });
 
@@ -348,8 +348,8 @@ function phaseDirs(dir, names) {
 
 const grammarDrift = (r) => (r.drift || []).filter((d) => d.kind === 'phase-dir-grammar');
 
-test('status: named and zero-padded phase dirs are reported, grouped by prefix', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true } } });
+test('status: named and zero-padded phase dirs are reported, grouped by prefix', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true } } }, t);
   phaseDirs(dir, ['08-meteogram-legend', '08', '14-data-depth-x', '14-shared-derivation']);
   const r = run(['status'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -365,19 +365,19 @@ test('status: named and zero-padded phase dirs are reported, grouped by prefix',
   assert.equal('phase' in g[0], false);
 });
 
-test('status: a tree of legal phase dirs reports no drift at all', () => {
+test('status: a tree of legal phase dirs reports no drift at all', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }, { n: 10, name: 'Ten' }],
     phases: { 1: { plan: true }, 2: { plan: true }, 10: { plan: true } },
-  });
+  }, t);
   phaseDirs(dir, ['2.1']);
   const r = run(['status'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.drift, undefined, JSON.stringify(r.drift));
 });
 
-test('status: a stray FILE under phases/ is not a phase directory and is not reported', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true } } });
+test('status: a stray FILE under phases/ is not a phase directory and is not reported', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: true } } }, t);
   writeFileSync(join(dir, 'phases', '.DS_Store'), 'junk');
   writeFileSync(join(dir, 'phases', 'notes.md'), '# scratch\n');
   const r = run(['status'], dir);
@@ -385,8 +385,8 @@ test('status: a stray FILE under phases/ is not a phase directory and is not rep
   assert.deepEqual(grammarDrift(r), []);
 });
 
-test('status: 08 beside a legal 8 names the phase it collides with', () => {
-  const dir = makeTree({ roadmap: [{ n: 8, name: 'Eight' }], phases: { 8: { plan: true } } });
+test('status: 08 beside a legal 8 names the phase it collides with', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 8, name: 'Eight' }], phases: { 8: { plan: true } } }, t);
   phaseDirs(dir, ['08']);
   const r = run(['status'], dir);
   const g = grammarDrift(r);
@@ -402,11 +402,11 @@ test('status: 08 beside a legal 8 names the phase it collides with', () => {
 // phase 2. `1.10` is NOT padded - it is sub-phase ten - and stays legal, which
 // is why the rule cannot be `String(Number(x)) === x`: that round trip accepts
 // `1.01` and refuses `1.10`, exactly backwards.
-test('status: a zero-padded fraction is reported and 1.10 is not', () => {
+test('status: a zero-padded fraction is reported and 1.10 is not', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }],
     phases: { 1: { plan: true }, 2: { plan: true } },
-  });
+  }, t);
   phaseDirs(dir, ['1.00', '1.01', '1.1', '1.10', '2.0', '8']);
   const r = run(['status'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -426,8 +426,8 @@ test('status: a zero-padded fraction is reported and 1.10 is not', () => {
 // (D-04). With `/^\d+(\.\d+)?$/` there, `phases/08` beside `phases/8` passed the
 // filter and `Number('08')` collapsed it onto 8, so the close reported the same
 // phase twice.
-test('status: 08 beside 8 survives the close as ONE phase-dir entry, on the legal name', () => {
-  const dir = makeTree({ roadmap: [], phases: { 8: { plan: true }, '08': { plan: true } } });
+test('status: 08 beside 8 survives the close as ONE phase-dir entry, on the legal name', (t) => {
+  const dir = makeTree({ roadmap: [], phases: { 8: { plan: true }, '08': { plan: true } } }, t);
   const r = run(['status'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.cycle, 'none');
@@ -443,8 +443,8 @@ test('status: 08 beside 8 survives the close as ONE phase-dir entry, on the lega
 // `phase` is the number the name parses to and `dir` is the name: `Number` maps
 // `1.10` onto `1.1`, so the record has to carry the spelling to say which
 // directory it describes.
-test('status: a legal sub-phase directory still survives the close', () => {
-  const dir = makeTree({ roadmap: [], phases: { '1.10': { plan: true } } });
+test('status: a legal sub-phase directory still survives the close', (t) => {
+  const dir = makeTree({ roadmap: [], phases: { '1.10': { plan: true } } }, t);
   const r = run(['status'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   const survivors = (r.drift || []).filter((d) => d.kind === 'phase-dir');
@@ -457,10 +457,10 @@ test('status: a legal sub-phase directory still survives the close', () => {
 // Two LEGAL names that parse to one number. Neither is grammar drift and
 // neither is preferable, so the collision is reported under its own kind rather
 // than resolved - the same answer an illegal name gets, one step over.
-test('status: two legal sub-phases that parse to one number are reported', () => {
+test('status: two legal sub-phases that parse to one number are reported', (t) => {
   const dir = makeTree({
     roadmap: [], phases: { 1.1: { plan: true }, '1.10': { plan: true } },
-  });
+  }, t);
   const r = run(['status'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   const survivors = (r.drift || []).filter((d) => d.kind === 'phase-dir');
@@ -475,10 +475,10 @@ test('status: two legal sub-phases that parse to one number are reported', () =>
 });
 
 // A tree with no collision produces no entry of that kind at all.
-test('status: distinct sub-phase numbers report no collision', () => {
+test('status: distinct sub-phase numbers report no collision', (t) => {
   const dir = makeTree({
     roadmap: [], phases: { 1.1: { plan: true }, 1.2: { plan: true }, 8: { plan: true } },
-  });
+  }, t);
   const r = run(['status'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual((r.drift || []).filter((d) => d.kind === 'phase-dir-collision'), []);
@@ -503,13 +503,13 @@ function writeReports(dir, n, byPlan) {
 }
 
 /** A phase 1 holding a SUMMARY, `PLAN.md` and `PLAN-2.md`. */
-const gapPlanTree = () => makeTree({
+const gapPlanTree = (t) => makeTree({
   roadmap: [{ n: 1, name: 'One' }],
   phases: { 1: { plan: ['PLAN.md', 'PLAN-2.md'], summary: true } },
-});
+}, t);
 
-test('status: an unexecuted gap plan beside a SUMMARY is executed AND outstanding', () => {
-  const dir = writeReports(gapPlanTree(), 1, { 1: 'PLAN COMPLETE\nTasks: 2 of 2\n' });
+test('status: an unexecuted gap plan beside a SUMMARY is executed AND outstanding', (t) => {
+  const dir = writeReports(gapPlanTree(t), 1, { 1: 'PLAN COMPLETE\nTasks: 2 of 2\n' });
   const r = run(['status'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   // The derived status is untouched - this narrows what `executed` MEANS to a
@@ -518,8 +518,8 @@ test('status: an unexecuted gap plan beside a SUMMARY is executed AND outstandin
   assert.deepEqual(r.outstanding, [{ phase: 1, plans: ['PLAN-2.md'] }], JSON.stringify(r.outstanding));
 });
 
-test('status: a PLAN COMPLETE report at the old reports/ path no longer counts', () => {
-  const dir = gapPlanTree();
+test('status: a PLAN COMPLETE report at the old reports/ path no longer counts', (t) => {
+  const dir = gapPlanTree(t);
   run(['status'], dir); // a project not yet converted would have this folder moved to its new place
   const old = join(dir, 'phases', '1', 'reports');
   mkdirSync(old, { recursive: true });
@@ -529,8 +529,8 @@ test('status: a PLAN COMPLETE report at the old reports/ path no longer counts',
   assert.deepEqual(r.outstanding, [{ phase: 1, plans: ['PLAN.md', 'PLAN-2.md'] }], JSON.stringify(r.outstanding));
 });
 
-test('status: every plan reporting complete lists the phase nowhere, and the key is still there', () => {
-  const dir = writeReports(gapPlanTree(), 1, {
+test('status: every plan reporting complete lists the phase nowhere, and the key is still there', (t) => {
+  const dir = writeReports(gapPlanTree(t), 1, {
     1: 'PLAN COMPLETE\nTasks: 2 of 2\n', 2: 'PLAN COMPLETE\nTasks: 1 of 1\n',
   });
   const r = run(['status'], dir);
@@ -543,8 +543,8 @@ test('status: every plan reporting complete lists the phase nowhere, and the key
   assert.deepEqual(r.outstanding, []);
 });
 
-test('status: the outstanding plan list IS replay-check\'s dispatch_set, from one definition', () => {
-  const dir = writeReports(gapPlanTree(), 1, {
+test('status: the outstanding plan list IS replay-check\'s dispatch_set, from one definition', (t) => {
+  const dir = writeReports(gapPlanTree(t), 1, {
     1: 'PLAN COMPLETE\nTasks: 2 of 2\n', 2: 'PLAN PARTIAL\nTasks: 1 of 3\n',
   });
   const status = run(['status'], dir);
@@ -556,10 +556,10 @@ test('status: the outstanding plan list IS replay-check\'s dispatch_set, from on
   assert.deepEqual(listed, ['PLAN-2.md']);
 });
 
-test('status: a planned phase that has run nothing is outstanding in full', () => {
+test('status: a planned phase that has run nothing is outstanding in full', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: ['PLAN.md', 'PLAN-2.md'] } },
-  });
+  }, t);
   const r = run(['status'], dir);
   assert.equal(r.phases[0].status, 'planned', JSON.stringify(r.phases));
   // Plan-number order, so the bare `PLAN.md` (plan 1) precedes `PLAN-2.md`: the
@@ -568,16 +568,16 @@ test('status: a planned phase that has run nothing is outstanding in full', () =
   assert.deepEqual(r.outstanding, [{ phase: 1, plans: ['PLAN.md', 'PLAN-2.md'] }]);
 });
 
-test('status: a phase past nine plans lists and leaves outstanding PLAN-10 after PLAN-9, in number order', () => {
+test('status: a phase past nine plans lists and leaves outstanding PLAN-10 after PLAN-9, in number order', (t) => {
   const names = ['PLAN-1.md', 'PLAN-2.md', 'PLAN-9.md', 'PLAN-10.md', 'PLAN-11.md'];
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: names } } });
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], phases: { 1: { plan: names } } }, t);
   const r = run(['status'], dir);
   assert.deepEqual(r.phases[0].plans, names, JSON.stringify(r.phases[0].plans));
   assert.deepEqual(r.outstanding, [{ phase: 1, plans: names }], JSON.stringify(r.outstanding));
 });
 
-test('status: an unplanned phase has no plans and so takes no entry', () => {
-  const r = run(['status'], makeTree({ roadmap: [{ n: 1, name: 'One' }] }));
+test('status: an unplanned phase has no plans and so takes no entry', (t) => {
+  const r = run(['status'], makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t));
   assert.equal(r.phases[0].status, 'unplanned');
   assert.deepEqual(r.outstanding, []);
 });
@@ -585,9 +585,9 @@ test('status: an unplanned phase has no plans and so takes no entry', () => {
 // --- status: the plan position (phase 1, D-03, D-06, D-08, D-12) -----------------
 
 /** Phase 2 of a two-phase roadmap holding the named plan files, `# Phase 2: Auth - Plan K: Name K`. */
-function positionTree(files, complete = [], stateExtra = '') {
+function positionTree(t, files, complete = [], stateExtra = '') {
   const dir = makeTree({ roadmap: [{ n: 1, name: 'One', checked: true }, { n: 2, name: 'Auth' }],
-    phases: { 1: { plan: true, summary: true, uat: [{ status: 'pass' }] } } });
+    phases: { 1: { plan: true, summary: true, uat: [{ status: 'pass' }] } } }, t);
   const pdir = join(dir, 'phases', '2');
   mkdirSync(join(pdir, 'records', 'reports'), { recursive: true });
   mkdirSync(join(dir, 'phases', '1', 'records', 'reports'), { recursive: true });
@@ -603,31 +603,31 @@ function positionTree(files, complete = [], stateExtra = '') {
 }
 const phase2 = (r) => r.phases.find((p) => p.n === 2);
 
-test('status: a phase with an unfinished plan carries its derived position, and only then', () => {
-  const part = run(['status'], positionTree(['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'], [1]));
+test('status: a phase with an unfinished plan carries its derived position, and only then', (t) => {
+  const part = run(['status'], positionTree(t, ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'], [1]));
   assert.deepEqual(phase2(part).plan, { k: 2, j: 3, name: 'Name 2' });
   assert.ok(!('plan' in part.phases.find((p) => p.n === 1)));
 
-  const done = run(['status'], positionTree(['PLAN-1.md', 'PLAN-2.md'], [1, 2]));
+  const done = run(['status'], positionTree(t, ['PLAN-1.md', 'PLAN-2.md'], [1, 2]));
   assert.ok(!('plan' in phase2(done)));
 
-  const unplanned = run(['status'], positionTree([]));
+  const unplanned = run(['status'], positionTree(t, []));
   assert.ok(!('plan' in phase2(unplanned)));
 
-  const ten = run(['status'], positionTree(Array.from({ length: 10 }, (_, i) => `PLAN-${i + 1}.md`), [1]));
+  const ten = run(['status'], positionTree(t, Array.from({ length: 10 }, (_, i) => `PLAN-${i + 1}.md`), [1]));
   assert.equal(phase2(ten).plan.k, 2);
 });
 
-test('status: the cursor block carries its Plan: line as written, and a mismatch with disk is not drift', () => {
-  const r = run(['status'], positionTree(['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'], [1], 'Plan: 1 of 3 (x)\n'));
+test('status: the cursor block carries its Plan: line as written, and a mismatch with disk is not drift', (t) => {
+  const r = run(['status'], positionTree(t, ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'], [1], 'Plan: 1 of 3 (x)\n'));
   assert.deepEqual(r.cursor.plan, { k: 1, j: 3, name: 'x' });
   assert.deepEqual(phase2(r).plan, { k: 2, j: 3, name: 'Name 2' });
   assert.equal(r.cursor.agrees, true);
   assert.ok(!(r.drift || []).some((d) => d.kind === 'cursor'));
 });
 
-test('status: a four-line cursor block has exactly its five keys', () => {
-  const r = run(['status'], positionTree(['PLAN-1.md']));
+test('status: a four-line cursor block has exactly its five keys', (t) => {
+  const r = run(['status'], positionTree(t, ['PLAN-1.md']));
   assert.deepEqual(Object.keys(r.cursor).sort(), ['agrees', 'next', 'phase', 'status', 'updated']);
 });
 
@@ -639,8 +639,8 @@ const writeReport = (dir, n, k, first = 'PLAN COMPLETE') => {
   writeFileSync(join(dir, 'phases', String(n), 'records', 'reports', `plan-${k}.md`), `${first}\nPlan: x\n`);
 };
 
-test('status: a PLAN COMPLETE report is drift until a seam folds it, then the plan is finished in the state and the position moves', () => {
-  const dir = positionTree(['PLAN-1.md', 'PLAN-2.md']);
+test('status: a PLAN COMPLETE report is drift until a seam folds it, then the plan is finished in the state and the position moves', (t) => {
+  const dir = positionTree(t, ['PLAN-1.md', 'PLAN-2.md']);
   const before = run(['status'], dir);
   assert.deepEqual(phase2(before).plan, { k: 1, j: 2, name: 'Name 1' });
   assert.deepEqual(before.outstanding, [{ phase: 2, plans: ['PLAN-1.md', 'PLAN-2.md'] }]);
@@ -664,8 +664,8 @@ test('status: a PLAN COMPLETE report is drift until a seam folds it, then the pl
   assert.deepEqual(phase2(after).plan, { k: 2, j: 2, name: 'Name 2' });
 });
 
-test('cursor set folds a PLAN COMPLETE report into the state, and a first line that only quotes it does not count', () => {
-  const dir = positionTree(['PLAN-1.md', 'PLAN-2.md']);
+test('cursor set folds a PLAN COMPLETE report into the state, and a first line that only quotes it does not count', (t) => {
+  const dir = positionTree(t, ['PLAN-1.md', 'PLAN-2.md']);
   assert.equal(run(['status'], dir).ok, true);
   writeReport(dir, 2, 1);
   writeReport(dir, 2, 2, 'PLAN PARTIAL - was PLAN COMPLETE');
@@ -674,8 +674,8 @@ test('cursor set folds a PLAN COMPLETE report into the state, and a first line t
   assert.deepEqual(planStates(dir, 2), ['PLAN-1.md:true', 'PLAN-2.md:false']);
 });
 
-test('status: a phase held complete reads every plan finished even with no report (D-23)', () => {
-  const dir = positionTree(['PLAN-1.md', 'PLAN-2.md']);
+test('status: a phase held complete reads every plan finished even with no report (D-23)', (t) => {
+  const dir = positionTree(t, ['PLAN-1.md', 'PLAN-2.md']);
   assert.equal(run(['status'], dir).ok, true);
   assert.equal(run(['phase-done', '--n', '2'], dir).ok, true);
   assert.deepEqual(planStates(dir, 2), ['PLAN-1.md:true', 'PLAN-2.md:true']);

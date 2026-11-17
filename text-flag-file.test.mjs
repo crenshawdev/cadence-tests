@@ -9,14 +9,16 @@
 // "--file" would send a workflow author looking at the wrong flag.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, chmodSync, accessSync, constants } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, chmodSync, accessSync, constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveTextFlag } from '../cadence-core/bin/lib/text-flag-file.mjs';
 
-/** A temp file holding `body`, and its path. */
-function fixture(body) {
-  const file = join(mkdtempSync(join(tmpdir(), 'cad-textflag-')), 'value.txt');
+/** A temp file holding `body`, and its path; its temp root goes when test `t` ends. */
+function fixture(t, body) {
+  const dir = mkdtempSync(join(tmpdir(), 'cad-textflag-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'value.txt');
   writeFileSync(file, body);
   return file;
 }
@@ -36,20 +38,20 @@ test('an ABSENT --<field>-file says nothing at all about the inline flag', () =>
   }
 });
 
-test('the file contents reach the caller trimmed and VERBATIM - no expansion', () => {
+test('the file contents reach the caller trimmed and VERBATIM - no expansion', (t) => {
   // The payload that used to be dangerous inline. Nothing between the file and
   // the caller may touch it: this is the whole point of the transport.
   const payload = 'guard $(touch /tmp/cad-text-flag-should-not-exist) and `id` stay literal';
-  const r = resolveTextFlag({ 'detail-file': fixture(`\n${payload}\n\n`) },
+  const r = resolveTextFlag({ 'detail-file': fixture(t, `\n${payload}\n\n`) },
     'detail', 'trace append');
   assert.equal(r.ok, true);
   assert.equal(r.value, payload);
 });
 
-test('a newline INSIDE the value survives - only the ends are trimmed', () => {
+test('a newline INSIDE the value survives - only the ends are trimmed', (t) => {
   // A multi-line detail is a legitimate value (a checkpoint's reason can wrap);
   // the flags that cannot hold one refuse it at their own site, never here.
-  const r = resolveTextFlag({ 'detail-file': fixture('first\nsecond\n') },
+  const r = resolveTextFlag({ 'detail-file': fixture(t, 'first\nsecond\n') },
     'detail', 'trace append');
   assert.equal(r.ok, true);
   assert.equal(r.value, 'first\nsecond');
@@ -73,8 +75,8 @@ test('a path that does not exist is a refusal NAMING the read error', () => {
   assert.match(r.detail, /ENOENT/, 'the read error was swallowed');
 });
 
-test('an UNREADABLE path is a refusal naming the read error, not an empty value', () => {
-  const file = fixture('a real value');
+test('an UNREADABLE path is a refusal naming the read error, not an empty value', (t) => {
+  const file = fixture(t, 'a real value');
   chmodSync(file, 0o000);
   try {
     // Running as root defeats the mode bits; the row would then assert nothing,
@@ -89,30 +91,30 @@ test('an UNREADABLE path is a refusal naming the read error, not an empty value'
   }
 });
 
-test('a file that is EMPTY once trimmed is a refusal', () => {
+test('a file that is EMPTY once trimmed is a refusal', (t) => {
   for (const body of ['', '\n\n', '   \t\n']) {
-    const r = resolveTextFlag({ 'detail-file': fixture(body) }, 'detail', 'trace close');
+    const r = resolveTextFlag({ 'detail-file': fixture(t, body) }, 'detail', 'trace close');
     assert.equal(r.ok, false, `${JSON.stringify(body)} was accepted as a value`);
     assert.match(r.detail, /trace close --detail-file names an empty file/);
   }
 });
 
-test('the inline and the file form together is a refusal, never a precedence rule', () => {
+test('the inline and the file form together is a refusal, never a precedence rule', (t) => {
   // A precedence rule silently discards one of two values the caller believed
   // was recorded - and which one it discards is invisible in an ok:true
   // envelope. The refusal fires before the path is even read, so a valid file
   // beside an inline value is still refused.
-  const r = resolveTextFlag({ detail: 'from the flag', 'detail-file': fixture('from the file') },
+  const r = resolveTextFlag({ detail: 'from the flag', 'detail-file': fixture(t, 'from the file') },
     'detail', 'trace append');
   assert.equal(r.ok, false);
   assert.equal(r.detail, 'trace append takes --detail or --detail-file, never both');
 });
 
-test('an inline flag present but VALUELESS still counts as both forms given', () => {
+test('an inline flag present but VALUELESS still counts as both forms given', (t) => {
   // `--detail --detail-file <path>` parses `detail` as boolean `true`. Reading
   // that as "no inline value, use the file" would answer a call whose two flags
   // contradict each other; presence is the test, not usability.
-  const r = resolveTextFlag({ detail: true, 'detail-file': fixture('x') },
+  const r = resolveTextFlag({ detail: true, 'detail-file': fixture(t, 'x') },
     'detail', 'trace append');
   assert.equal(r.ok, false);
   assert.match(r.detail, /never both/);

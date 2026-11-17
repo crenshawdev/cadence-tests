@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, chmodSync, statSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +36,12 @@ function rawResident(root, ...args) {
 /** Run `weight.mjs resident`, returning parsed JSON. */
 function resident(root, ...args) {
   return JSON.parse(rawResident(root, ...args));
+}
+// A scratch root that goes when the test that made it ends.
+function tempRoot(t, prefix) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  return root;
 }
 /** @param {{bytes: number}[]} list */
 const sumBytes = (list) => list.reduce((n, f) => n + f.bytes, 0);
@@ -70,15 +76,15 @@ test('determinism: two runs on the same tree are byte-identical', () => {
   assert.equal(raw(REPO), raw(REPO));
 });
 
-test('empty tree: no surface dirs yields ok true and surfaces []', () => {
-  const root = mkdtempSync(join(tmpdir(), 'cad-weight-empty-'));
+test('empty tree: no surface dirs yields ok true and surfaces []', (t) => {
+  const root = tempRoot(t, 'cad-weight-empty-');
   const j = run(root);
   assert.equal(j.ok, true);
   assert.deepEqual(j.surfaces, []);
 });
 
-test('#49.1: a dangling symlink or symlink cycle under a measured surface is skipped, not thrown', () => {
-  const root = mkdtempSync(join(tmpdir(), 'cad-weight-symlink-'));
+test('#49.1: a dangling symlink or symlink cycle under a measured surface is skipped, not thrown', (t) => {
+  const root = tempRoot(t, 'cad-weight-symlink-');
   mkdirSync(join(root, 'agents'), { recursive: true });
   mkdirSync(join(root, 'skills', 'x'), { recursive: true });
   mkdirSync(join(root, 'skills', 'y'), { recursive: true });
@@ -112,8 +118,8 @@ test('BUD-02: an unreadable sibling directory hides only itself', {
     typeof process.getuid === 'function' && process.getuid() === 0
       ? 'root bypasses mode bits'
       : false,
-}, () => {
-  const root = mkdtempSync(join(tmpdir(), 'cad-weight-unreadable-'));
+}, (t) => {
+  const root = tempRoot(t, 'cad-weight-unreadable-');
   mkdirSync(join(root, 'skills', 'good'), { recursive: true });
   writeFileSync(join(root, 'skills', 'good', 'SKILL.md'), 'good skill body');
   const priv = join(root, 'skills', 'private');
@@ -128,8 +134,8 @@ test('BUD-02: an unreadable sibling directory hides only itself', {
   }
 });
 
-test('D-07: a symlinked directory is not descended, so a cycle counts one surface', () => {
-  const root = mkdtempSync(join(tmpdir(), 'cad-weight-dircycle-'));
+test('D-07: a symlinked directory is not descended, so a cycle counts one surface', (t) => {
+  const root = tempRoot(t, 'cad-weight-dircycle-');
   mkdirSync(join(root, 'skills', 'a'), { recursive: true });
   writeFileSync(join(root, 'skills', 'a', 'SKILL.md'), 'x');
   symlinkSync('..', join(root, 'skills', 'a', 'loop'));
@@ -139,8 +145,8 @@ test('D-07: a symlinked directory is not descended, so a cycle counts one surfac
   );
 });
 
-test('a symlinked branch ROOT is descended (the qualified half of D-07)', () => {
-  const root = mkdtempSync(join(tmpdir(), 'cad-weight-linkroot-'));
+test('a symlinked branch ROOT is descended (the qualified half of D-07)', (t) => {
+  const root = tempRoot(t, 'cad-weight-linkroot-');
   mkdirSync(join(root, 'skills-real', 'a'), { recursive: true });
   writeFileSync(join(root, 'skills-real', 'a', 'SKILL.md'), 'y');
   symlinkSync('skills-real', join(root, 'skills'));
@@ -234,8 +240,8 @@ test('resident: an unknown --command or --role is ok:false, naming the name', ()
   assert.equal(r.detail, 'cad-nope');
 });
 
-test('resident: a missing @-include contributes 0 rather than throwing', () => {
-  const root = mkdtempSync(join(tmpdir(), 'cad-resident-missing-'));
+test('resident: a missing @-include contributes 0 rather than throwing', (t) => {
+  const root = tempRoot(t, 'cad-resident-missing-');
   mkdirSync(join(root, 'skills', 'cad-x'), { recursive: true });
   const body = '---\nname: cad-x\n---\n\n@${CLAUDE_PLUGIN_ROOT}/cadence-core/workflows/gone.md\n';
   writeFileSync(join(root, 'skills', 'cad-x', 'SKILL.md'), body);
@@ -246,8 +252,8 @@ test('resident: a missing @-include contributes 0 rather than throwing', () => {
   assert.deepEqual(j.commands[0].eagerFiles.map((f) => f.surface), ['skills/cad-x/SKILL.md']);
 });
 
-test('resident: a *-contract skill is a role, never a command (D-05)', () => {
-  const root = mkdtempSync(join(tmpdir(), 'cad-resident-contract-'));
+test('resident: a *-contract skill is a role, never a command (D-05)', (t) => {
+  const root = tempRoot(t, 'cad-resident-contract-');
   mkdirSync(join(root, 'skills', 'cad-x-contract'), { recursive: true });
   mkdirSync(join(root, 'skills', 'cad-x'), { recursive: true });
   mkdirSync(join(root, 'agents'), { recursive: true });
@@ -265,8 +271,8 @@ test('resident: a *-contract skill is a role, never a command (D-05)', () => {
     Buffer.byteLength(agent, 'utf8') + Buffer.byteLength(contract, 'utf8'));
 });
 
-test('resident: a shared skill listed after the contract leaves the role alone and still bills its bytes', () => {
-  const root = mkdtempSync(join(tmpdir(), 'cad-resident-shared-'));
+test('resident: a shared skill listed after the contract leaves the role alone and still bills its bytes', (t) => {
+  const root = tempRoot(t, 'cad-resident-shared-');
   mkdirSync(join(root, 'agents'), { recursive: true });
   const contract = '---\nname: cad-x-contract\nuser-invocable: false\n---\n\ncontract prose\n';
   const shared = '---\nname: cad-shared-rules\nuser-invocable: false\n---\n\nshared prose\n';
@@ -282,8 +288,8 @@ test('resident: a shared skill listed after the contract leaves the role alone a
     Buffer.byteLength(agent, 'utf8') + Buffer.byteLength(contract, 'utf8') + Buffer.byteLength(shared, 'utf8'));
 });
 
-test('resident: an agent preloading no contract is its own role', () => {
-  const root = mkdtempSync(join(tmpdir(), 'cad-resident-norole-'));
+test('resident: an agent preloading no contract is its own role', (t) => {
+  const root = tempRoot(t, 'cad-resident-norole-');
   mkdirSync(join(root, 'agents'), { recursive: true });
   writeFileSync(join(root, 'agents', 'loner.md'), '---\nname: loner\n---\n\nbody\n');
   const j = resident(root);
@@ -292,8 +298,8 @@ test('resident: an agent preloading no contract is its own role', () => {
   assert.equal(j.roles[0].dispatchBytes, j.roles[0].agentBytes);
 });
 
-test('resident: reachable is ONE hop from the eager set, not a closure', () => {
-  const root = mkdtempSync(join(tmpdir(), 'cad-resident-onehop-'));
+test('resident: reachable is ONE hop from the eager set, not a closure', (t) => {
+  const root = tempRoot(t, 'cad-resident-onehop-');
   mkdirSync(join(root, 'skills', 'cad-x'), { recursive: true });
   mkdirSync(join(root, 'cadence-core', 'references'), { recursive: true });
   mkdirSync(join(root, 'cadence-core', 'workflows'), { recursive: true });
@@ -317,8 +323,8 @@ test('resident: reachable is ONE hop from the eager set, not a closure', () => {
   assert.equal(j.zeroResidentBytes, Buffer.byteLength('leaf\n', 'utf8'));
 });
 
-test('chars/4: estTokens and bytes match the measurement proxy', () => {
-  const root = mkdtempSync(join(tmpdir(), 'cad-weight-chars-'));
+test('chars/4: estTokens and bytes match the measurement proxy', (t) => {
+  const root = tempRoot(t, 'cad-weight-chars-');
   mkdirSync(join(root, 'cadence-core', 'workflows'), { recursive: true });
   const body = 'abcdefghij'; // length 10 -> ceil(10/4) = 3
   writeFileSync(join(root, 'cadence-core', 'workflows', 'w.md'), body);
@@ -327,6 +333,81 @@ test('chars/4: estTokens and bytes match the measurement proxy', () => {
   assert.equal(s[0].surface, 'cadence-core/workflows/w.md');
   assert.equal(s[0].estTokens, Math.ceil(body.length / 4));
   assert.equal(s[0].bytes, Buffer.byteLength(body, 'utf8'));
+});
+
+// --- the `paths` subcommand: each registered ordinary path under its baseline -
+
+/** Run `weight.mjs paths` against a root, returning parsed JSON even when the seam exits 1. */
+function paths(root) {
+  try {
+    return JSON.parse(execFileSync('node', [WEIGHT, 'paths', '--root', root], { encoding: 'utf8' }));
+  } catch (e) {
+    if (typeof e.stdout === 'string' && e.stdout) return JSON.parse(e.stdout);
+    throw e;
+  }
+}
+/** The hold: every path over its baseline, by command and variant with the excess. The arm only reports (D-03). */
+const overBaseline = (j) => j.paths
+  .filter((p) => p.bytes > p.baseline)
+  .map((p) => `${p.command} (${p.variant}): ${p.bytes} B, ${p.bytes - p.baseline} B over ${p.baseline}`);
+/** A fixture root carrying only its own register. */
+function pathsFixture(t, prefix, register) {
+  const root = tempRoot(t, prefix);
+  mkdirSync(join(root, 'cadence-core', 'bin'), { recursive: true });
+  writeFileSync(join(root, 'cadence-core', 'bin', 'path-baselines.json'), JSON.stringify({ paths: register }));
+  return root;
+}
+
+test('paths: every registered ordinary path is at or under its report baseline (D-03)', () => {
+  const j = paths(REPO);
+  assert.equal(j.ok, true, JSON.stringify(j));
+  assert.equal(j.checked, 'path-weight');
+  // No row count: each later phase adds its own paths to the register.
+  assert.ok(j.paths.length > 0);
+  const over = overBaseline(j);
+  assert.deepEqual(over, [], `paths over their baseline:\n${over.join('\n')}`);
+});
+
+test('paths: each total is its files summed, and each file is its size on disk', () => {
+  for (const p of paths(REPO).paths) {
+    const label = `${p.command} (${p.variant})`;
+    assert.equal(p.bytes, sumBytes(p.files), label);
+    for (const f of p.files) assert.equal(f.bytes, statSync(join(REPO, f.surface)).size, `${label}: ${f.surface}`);
+  }
+});
+
+test('paths: the hold names exactly the path that is over its baseline', (t) => {
+  const root = pathsFixture(t, 'cad-paths-over-', [
+    { command: 'cad-big', variant: 'ordinary', files: ['big.md'], baseline: 5 },
+    { command: 'cad-small', variant: 'ordinary', files: ['small.md'], baseline: 5 },
+  ]);
+  writeFileSync(join(root, 'big.md'), 'abcdefgh');
+  writeFileSync(join(root, 'small.md'), 'abc');
+  const j = paths(root);
+  assert.equal(j.ok, true, JSON.stringify(j));
+  assert.deepEqual(overBaseline(j), ['cad-big (ordinary): 8 B, 3 B over 5']);
+});
+
+test('paths: a registered file missing on disk refuses and names it, never counts 0', (t) => {
+  const root = pathsFixture(t, 'cad-paths-missing-', [
+    { command: 'cad-x', variant: 'ordinary', files: ['nope.md'], baseline: 1 },
+  ]);
+  const j = paths(root);
+  assert.equal(j.ok, false);
+  assert.match(j.detail, /nope\.md/);
+  assert.equal(j.paths, undefined);
+});
+
+test('paths: a register file that climbs out, newline-split or plain, is malformed before anything is opened', (t) => {
+  // the newline one slipped a `.*` lookahead that stopped at the line break
+  for (const file of ['a\n/../x', '../x']) {
+    const root = pathsFixture(t, 'cad-paths-escape-', [
+      { command: 'cad-x', variant: 'ordinary', files: [file], baseline: 1 },
+    ]);
+    const j = paths(root);
+    assert.equal(j.ok, false, JSON.stringify(file));
+    assert.equal(j.reason, 'path-register-malformed', `${JSON.stringify(file)}: ${JSON.stringify(j)}`);
+  }
 });
 
 // --- flag values: absent is not the same as present-with-no-value -----------

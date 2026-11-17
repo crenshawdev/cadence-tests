@@ -11,30 +11,29 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync, chmodSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync, chmodSync, rmSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { classifyAcceptanceCriteria } from '../cadence-core/bin/lib/planning-files.mjs';
 import { readState } from '../cadence-core/bin/lib/project-state.mjs';
-import { PLANNING_DIR, makeTree, run, isEntryFile } from './planning.test.mjs';
+import { PLANNING_DIR, makeTree, run, isEntryFile, scratch } from './planning.test.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 
 // --- renumber ------------------------------------------------------------------
 
-export function renumberTree() {
+export function renumberTree(t) {
   return makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }, { n: 3, name: 'Three' }],
     phases: { 1: { plan: true }, 2: { plan: true }, 3: { plan: true } },
     reqs: [['REQ-1', 1, 'Pending'], ['REQ-2', 2, 'Pending'], ['REQ-3', 3, 'Pending']],
     cursor: { phase: 2, total: 3, name: 'Two', status: 'planned', next: '/cad-execute 2', updated: '2026-01-01' },
-  });
+  }, t);
 }
 
-test('renumber insert --dry-run: full op plan, nothing touched', () => {
-  const dir = renumberTree();
+test('renumber insert --dry-run: full op plan, nothing touched', (t) => {
+  const dir = renumberTree(t);
   const before = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
   const r = run(['renumber', 'insert', '--at', '2', '--dry-run'], dir);
   assert.equal(r.ok, true);
@@ -50,8 +49,8 @@ test('renumber insert --dry-run: full op plan, nothing touched', () => {
   assert.ok(readdirSync(join(dir, 'phases')).includes('2'));
 });
 
-test('renumber insert: shifts dirs, tokens, traceability, and cursor', () => {
-  const dir = renumberTree();
+test('renumber insert: shifts dirs, tokens, traceability, and cursor', (t) => {
+  const dir = renumberTree(t);
   const r = run(['renumber', 'insert', '--at', '2'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(readdirSync(join(dir, 'phases')).sort(), ['1', '3', '4']); // 2 is the open slot
@@ -69,8 +68,8 @@ test('renumber insert: shifts dirs, tokens, traceability, and cursor', () => {
   assert.equal(cursor.total, 3);
 });
 
-test('renumber remove: cuts line + detail, orphans reqs, shifts down, reports prose refs', () => {
-  const dir = renumberTree();
+test('renumber remove: cuts line + detail, orphans reqs, shifts down, reports prose refs', (t) => {
+  const dir = renumberTree(t);
   const r = run(['renumber', 'remove', '--n', '2'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.orphaned_reqs, ['REQ-2']);
@@ -86,8 +85,8 @@ test('renumber remove: cuts line + detail, orphans reqs, shifts down, reports pr
   assert.ok(r.warn && /removed phase 2/.test(r.warn)); // cursor pointed at the removed phase
 });
 
-test('renumber insert and remove keep the state, the list and the detail sections in step, and a hand-added list line is not a phase', () => {
-  const dir = renumberTree();
+test('renumber insert and remove keep the state, the list and the detail sections in step, and a hand-added list line is not a phase', (t) => {
+  const dir = renumberTree(t);
   assert.equal(run(['status'], dir).ok, true);
   const file = join(dir, 'ROADMAP.md');
   writeFileSync(file, readFileSync(file, 'utf8')
@@ -111,11 +110,11 @@ test('renumber insert and remove keep the state, the list and the detail section
 
 test('renumber insert: a fact another seam commits while the directories move is kept, and shifted like the rest', {
   skip: process.platform === 'win32' ? 'a shell git stand-in' : false,
-}, () => {
-  const dir = renumberTree();
+}, (t) => {
+  const dir = renumberTree(t);
   assert.equal(run(['status'], dir).ok, true);
   // a git stand-in that lands a state write mid-apply, then fails so the move falls back to the filesystem
-  const bin = mkdtempSync(join(tmpdir(), 'cad-fakegit-'));
+  const bin = scratch('cad-fakegit-', t);
   const writer = join(bin, 'write.mjs');
   writeFileSync(writer, `import { updateState } from ${JSON.stringify(pathToFileURL(join(PLANNING_DIR, '..', 'lib', 'project-state.mjs')).href)};
 const r = updateState(process.argv[2], (s) => ({ ...s,
@@ -135,12 +134,12 @@ if (!r.ok) process.exit(2);
   assert.equal(st.cursor.phase, 3);
 });
 
-test('renumber shifts only Pending rows in the state, leaves Complete and Deferred as they were, and the table agrees', () => {
+test('renumber shifts only Pending rows in the state, leaves Complete and Deferred as they were, and the table agrees', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }, { n: 3, name: 'Three' }],
     phases: { 1: { plan: true }, 2: { plan: true }, 3: { plan: true } },
     reqs: [['REQ-1', 2, 'Pending'], ['REQ-2', 2, 'Complete'], ['REQ-3', 3, 'Deferred'], ['REQ-4', 3, 'Pending']],
-  });
+  }, t);
   const r = run(['renumber', 'insert', '--at', '2'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(readState(dir).state.requirements, [
@@ -153,8 +152,8 @@ test('renumber shifts only Pending rows in the state, leaves Complete and Deferr
   assert.ok(r.req_row_changes.every((c) => c.after === table.split('\n')[c.line - 1]), 'after is the regenerated file\'s row');
 });
 
-test('renumber insert at total+1 appends: nothing shifts, only the slot opens', () => {
-  const dir = renumberTree();
+test('renumber insert at total+1 appends: nothing shifts, only the slot opens', (t) => {
+  const dir = renumberTree(t);
   const r = run(['renumber', 'insert', '--at', '4'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.ops.some((o) => o.git_mv), false); // no dir ever moves
@@ -189,14 +188,14 @@ const CRITERIA_CONTEXT = '# Phase 2: Two - Context\n\n' +
   '- [ ] AC3: the third observable behavior\n';
 
 /** renumberTree plus a real criteria section (and a `Phase 2` token) in phase 2. */
-function criteriaRenumberTree() {
-  const dir = renumberTree();
+function criteriaRenumberTree(t) {
+  const dir = renumberTree(t);
   writeFileSync(join(dir, 'phases', '2', 'CONTEXT.md'), CRITERIA_CONTEXT);
   return dir;
 }
 
-test('renumber insert: an existing phase CONTEXT keeps its AC ids byte-identical (D-02)', () => {
-  const dir = criteriaRenumberTree();
+test('renumber insert: an existing phase CONTEXT keeps its AC ids byte-identical (D-02)', (t) => {
+  const dir = criteriaRenumberTree(t);
   const r = run(['renumber', 'insert', '--at', '2'], dir);
   assert.equal(r.ok, true);
   // phases/2 moved to phases/3; its bytes did not change, `Phase 2` included.
@@ -208,8 +207,8 @@ test('renumber insert: an existing phase CONTEXT keeps its AC ids byte-identical
     ['AC1', 'AC2', 'AC3']);
 });
 
-test('renumber remove: the shift DOWN leaves an existing phase CONTEXT byte-identical too', () => {
-  const dir = criteriaRenumberTree();
+test('renumber remove: the shift DOWN leaves an existing phase CONTEXT byte-identical too', (t) => {
+  const dir = criteriaRenumberTree(t);
   const r = run(['renumber', 'remove', '--n', '1'], dir);
   assert.equal(r.ok, true);
   // phases/2 moved down to phases/1; same bytes, same ids.
@@ -219,11 +218,11 @@ test('renumber remove: the shift DOWN leaves an existing phase CONTEXT byte-iden
     ['AC1', 'AC2', 'AC3']);
 });
 
-test('renumber insert: integer dirs shift even when a decimal phase is highest (#36)', () => {
+test('renumber insert: integer dirs shift even when a decimal phase is highest (#36)', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }, { n: 2.1, name: 'Patch' }],
     phases: { 1: { plan: true }, 2: { plan: true }, '2.1': { plan: true } },
-  });
+  }, t);
   const r = run(['renumber', 'insert', '--at', '1'], dir);
   assert.equal(r.ok, true);
   // integers shift up (1->2, 2->3); the decimal dir NEVER moves
@@ -234,8 +233,8 @@ test('renumber insert: integer dirs shift even when a decimal phase is highest (
   assert.match(roadmap, /\*\*Phase 2\.1: Patch\*\*/); // decimal token untouched
 });
 
-test('renumber remove: dirs shift DOWN low-to-high (collision-safe order)', () => {
-  const dir = renumberTree();
+test('renumber remove: dirs shift DOWN low-to-high (collision-safe order)', (t) => {
+  const dir = renumberTree(t);
   const plan = run(['renumber', 'remove', '--n', '1', '--dry-run'], dir);
   assert.deepEqual(plan.ops[0], { git_mv: ['phases/2', 'phases/1'] }); // 2 first,
   assert.deepEqual(plan.ops[1], { git_mv: ['phases/3', 'phases/2'] }); // then 3
@@ -248,8 +247,8 @@ test('renumber remove: dirs shift DOWN low-to-high (collision-safe order)', () =
   assert.match(readFileSync(join(dir, 'phases', '2', 'PLAN.md'), 'utf8'), /# Plan 3/);
 });
 
-test('renumber remove of the LAST phase cuts the final detail section cleanly', () => {
-  const dir = renumberTree();
+test('renumber remove of the LAST phase cuts the final detail section cleanly', (t) => {
+  const dir = renumberTree(t);
   const r = run(['renumber', 'remove', '--n', '3'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.total, 2);
@@ -260,8 +259,8 @@ test('renumber remove of the LAST phase cuts the final detail section cleanly', 
   assert.deepEqual(readdirSync(join(dir, 'phases')).sort(), ['1', '2']);
 });
 
-test('renumber remove: a detail heading as the last line (no trailing newline) still cuts', () => {
-  const dir = makeTree({});
+test('renumber remove: a detail heading as the last line (no trailing newline) still cuts', (t) => {
+  const dir = makeTree({}, t);
   writeFileSync(join(dir, 'ROADMAP.md'),
     '# Roadmap\n\n## Phases\n\n- [ ] **Phase 1: One** - a\n- [ ] **Phase 2: Two** - b\n\n' +
     '## Phase Details\n\n### Phase 1: One\n**Goal:** g1\n\n### Phase 2: Two');
@@ -273,8 +272,8 @@ test('renumber remove: a detail heading as the last line (no trailing newline) s
   assert.match(roadmap, /### Phase 1: One/);
 });
 
-test('renumber remove: a name-less `### Phase N:` detail heading still cuts (#48.2)', () => {
-  const dir = makeTree({});
+test('renumber remove: a name-less `### Phase N:` detail heading still cuts (#48.2)', (t) => {
+  const dir = makeTree({}, t);
   writeFileSync(join(dir, 'ROADMAP.md'),
     '# Roadmap\n\n## Phases\n\n- [ ] **Phase 1: One** - a\n- [ ] **Phase 2: Two** - b\n\n' +
     // The list line carries a name (the list-line grammar is unchanged); only
@@ -290,12 +289,12 @@ test('renumber remove: a name-less `### Phase N:` detail heading still cuts (#48
   assert.match(roadmap, /\*\*Goal:\*\* g1/);
 });
 
-test('renumber: prose phase refs are reported, never rewritten; key absent when none', () => {
+test('renumber: prose phase refs are reported, never rewritten; key absent when none', (t) => {
   // The structured-only fixture has no lowercase refs -> no in_text_refs key.
-  const clean = run(['renumber', 'remove', '--n', '2', '--dry-run'], renumberTree());
+  const clean = run(['renumber', 'remove', '--n', '2', '--dry-run'], renumberTree(t));
   assert.equal(clean.in_text_refs, undefined);
 
-  const dir = renumberTree();
+  const dir = renumberTree(t);
   writeFileSync(join(dir, 'ROADMAP.md'),
     readFileSync(join(dir, 'ROADMAP.md'), 'utf8') + '\nSee phase 3 for the follow-up work.\n');
   const r = run(['renumber', 'remove', '--n', '2'], dir);
@@ -307,14 +306,14 @@ test('renumber: prose phase refs are reported, never rewritten; key absent when 
   assert.match(readFileSync(join(dir, 'ROADMAP.md'), 'utf8'), /See phase 3 for the follow-up/);
 });
 
-test('renumber: out-of-range and unknown phase refuse', () => {
-  const dir = renumberTree();
+test('renumber: out-of-range and unknown phase refuse', (t) => {
+  const dir = renumberTree(t);
   assert.equal(run(['renumber', 'insert', '--at', '9'], dir).reason, 'out-of-range');
   assert.equal(run(['renumber', 'remove', '--n', '9'], dir).reason, 'unknown-phase');
 });
 
-test('renumber: refuses a colliding destination before any write (#49.2)', () => {
-  const dir = renumberTree();
+test('renumber: refuses a colliding destination before any write (#49.2)', (t) => {
+  const dir = renumberTree(t);
   mkdirSync(join(dir, 'phases', '4'), { recursive: true });
   writeFileSync(join(dir, 'phases', '4', 'PLAN.md'), '# stray\n');
   const before = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
@@ -335,8 +334,8 @@ test('renumber: refuses a colliding destination before any write (#49.2)', () =>
   assert.match(readFileSync(join(dir, 'phases', '4', 'PLAN.md'), 'utf8'), /# stray/);
 });
 
-test('renumber: a dangling symlink at the destination still collides (#49.2)', () => {
-  const dir = renumberTree();
+test('renumber: a dangling symlink at the destination still collides (#49.2)', (t) => {
+  const dir = renumberTree(t);
   const before = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
   symlinkSync('nowhere', join(dir, 'phases', '4'));
 
@@ -346,14 +345,14 @@ test('renumber: a dangling symlink at the destination still collides (#49.2)', (
   assert.equal(readFileSync(join(dir, 'ROADMAP.md'), 'utf8'), before);
 });
 
-test('renumber remove: a dangling symlink at phases/<at> collides instead of dying mid-apply (#49.2)', () => {
+test('renumber remove: a dangling symlink at phases/<at> collides instead of dying mid-apply (#49.2)', (t) => {
   // The remove direction of the arm above. `vacated` used to be seeded with
   // `at` on every remove, but the rm that frees that slot is gated on
   // existingDir (existsSync), which is FALSE for a dangling symlink - so the
   // pre-flight waved through the very occupant occupied()/lstatSync exists to
   // catch, and the apply then died on the first move with completed: [] and a
   // hint asserting a half-renumbered tree when nothing had been written.
-  const dir = renumberTree();
+  const dir = renumberTree(t);
   const before = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
   rmSync(join(dir, 'phases', '2'), { recursive: true });
   symlinkSync('nowhere', join(dir, 'phases', '2'));
@@ -365,14 +364,14 @@ test('renumber remove: a dangling symlink at phases/<at> collides instead of dyi
   assert.equal(readFileSync(join(dir, 'ROADMAP.md'), 'utf8'), before);
 });
 
-test('renumber remove: uncommitted work in phases/<at> is refused before any write', () => {
+test('renumber remove: uncommitted work in phases/<at> is refused before any write', (t) => {
   // `git rm -r -q` exits 0 while leaving untracked/ignored files, so
   // phases/<at> SURVIVES a removal that reported success, the first move
   // nests the next phase inside it (phases/1/2/PLAN.md), and the command
   // still exits ok:true with ROADMAP naming a phase whose dir has no plan.
   // Every other renumber fixture is a bare tmpdir, where gitMv/git rm always
   // fall back to fs calls that cannot nest - so this arm needs a REAL repo.
-  const dir = renumberTree();
+  const dir = renumberTree(t);
   const repo = join(dir, '..');
   const g = (args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe',
     env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
@@ -450,8 +449,8 @@ test('renumber remove: uncommitted work in phases/<at> is refused before any wri
 
 test('PHS-01: an unreadable git state refuses the remove, a non-repo still removes', {
   skip: typeof process.getuid === 'function' && process.getuid() === 0 ? 'root bypasses mode bits' : false,
-}, () => {
-  const dir = renumberTree();
+}, (t) => {
+  const dir = renumberTree(t);
   const repo = join(dir, '..');
   const g = (args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe',
     env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
@@ -506,7 +505,7 @@ test('PHS-01: an unreadable git state refuses the remove, a non-repo still remov
   // anywhere above means nothing is tracked, nothing can be lost to the
   // object store, and the remove must still happen. Eleven shipped renumber
   // fixtures run on exactly this tree.
-  const bare = renumberTree();
+  const bare = renumberTree(t);
   const rBare = run(['renumber', 'remove', '--n', '3'], bare);
   assert.equal(rBare.ok, true, `a tree with no repository must still remove, got ${JSON.stringify(rBare)}`);
   assert.ok(!existsSync(join(bare, 'phases', '3')));
@@ -515,8 +514,8 @@ test('PHS-01: an unreadable git state refuses the remove, a non-repo still remov
 
 test('renumber remove: a partial apply reports which ops completed (#49.2)', {
   skip: typeof process.getuid === 'function' && process.getuid() === 0 ? 'root bypasses mode bits' : false,
-}, () => {
-  const dir = renumberTree();
+}, (t) => {
+  const dir = renumberTree(t);
   // the state file is written by the first seam call, which a read-only root would refuse, so it is already there
   assert.equal(run(['status'], dir).ok, true);
   chmodSync(dir, 0o555); // .planning root read-only; phases/ stays writable
@@ -555,12 +554,12 @@ test('renumber remove: a partial apply reports which ops completed (#49.2)', {
 
 test('renumber remove: a failure before ANY step says so, rather than claiming a half-renumbered tree', {
   skip: typeof process.getuid === 'function' && process.getuid() === 0 ? 'root bypasses mode bits' : false,
-}, () => {
+}, (t) => {
   // completed: [] means nothing was written and the tree still matches
   // ROADMAP - the opposite of the partial case, and safe to re-run. An
   // unconditional "the tree is partly renumbered" hint would send the caller
   // hand-reconciling a tree that was never touched.
-  const dir = renumberTree();
+  const dir = renumberTree(t);
   chmodSync(join(dir, 'phases'), 0o555); // the rm (step one) cannot unlink
   let r;
   try {
@@ -609,13 +608,13 @@ test('renumber remove: a failure before ANY step says so, rather than claiming a
 // with `--test-name-pattern='PHS-01'` - the scope matters for the same reason
 // it does above - then `git worktree remove` it.
 
-test('PHS-01: a repository rooted INSIDE phases/<at> is not deleted out from under itself', () => {
+test('PHS-01: a repository rooted INSIDE phases/<at> is not deleted out from under itself', (t) => {
   // The classifier walks UP from the planning root, so a repository rooted in
   // the very directory the fallback is about to delete is invisible to it: the
   // tree answers "no repository" and `rmSync` takes the nested object store
   // along with the phase. Nothing else in the run reads that repository, so its
   // commits have no second copy anywhere.
-  const dir = renumberTree();
+  const dir = renumberTree(t);
   const nested = join(dir, 'phases', '3');
   execFileSync('git', ['init', '-q', '.'], { cwd: nested, stdio: 'pipe',
     env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
@@ -633,13 +632,13 @@ test('PHS-01: a repository rooted INSIDE phases/<at> is not deleted out from und
 
 test('PHS-01: a GIT_DIR-selected repository counts as present when its state cannot be read', {
   skip: typeof process.getuid === 'function' && process.getuid() === 0 ? 'root bypasses mode bits' : false,
-}, () => {
+}, (t) => {
   // `GIT_DIR`/`GIT_WORK_TREE` select a repository with no lexical `.git`
   // anywhere above the work tree. The filesystem probe finds nothing, so an
   // unreadable external repository classified as ABSENT - the permissive arm,
   // which ends in the recursive delete. Presence is what the environment says
   // here, not what the walk can see.
-  const dir = renumberTree();
+  const dir = renumberTree(t);
   const work = join(dir, '..');
   const meta = join(work, 'meta.git');
   const env = { GIT_DIR: meta, GIT_WORK_TREE: work,
@@ -728,11 +727,11 @@ test('source: the renumber rm fallback\'s recursive delete is gated by the .git 
 
 // --- decimal phases under renumber (the desync fix) ----------------------------
 
-test('renumber: decimal phase tokens are never shifted, and are reported', () => {
+test('renumber: decimal phase tokens are never shifted, and are reported', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }, { n: 3, name: 'Three' }],
     phases: { 1: { plan: true } },
-  });
+  }, t);
   // Add a decimal insertion between 2 and 3, with a token and a path ref.
   const roadmap = readFileSync(join(dir, 'ROADMAP.md'), 'utf8').replace(
     '- [ ] **Phase 3: Three**',
@@ -769,7 +768,7 @@ const SHP_01 = 18;
 const DFR_01 = 22;
 
 /** A fresh tree per call; later tests reuse it as it is. */
-function historyRenumberTree() {
+function historyRenumberTree(t) {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }, { n: 3, name: 'Three' }, { n: 4, name: 'Four' }],
     phases: { 1: { plan: true }, 2: { plan: true }, 3: { plan: true }, 4: { plan: true } },
@@ -782,22 +781,22 @@ function historyRenumberTree() {
       ['DEF-04', 4, 'Deferred'],
       ['LOW-03', 3, 'pending'],
     ],
-  });
+  }, t);
   const reqFile = join(dir, 'REQUIREMENTS.md');
   writeFileSync(reqFile, readFileSync(reqFile, 'utf8') + HISTORY_TAIL);
   return dir;
 }
 
 /** The same tree with REQUIREMENTS.md rewritten CRLF. */
-function crlfHistoryRenumberTree() {
-  const dir = historyRenumberTree();
+function crlfHistoryRenumberTree(t) {
+  const dir = historyRenumberTree(t);
   const reqFile = join(dir, 'REQUIREMENTS.md');
   writeFileSync(reqFile, readFileSync(reqFile, 'utf8').replace(/\n/g, '\r\n'));
   return dir;
 }
 
-test('renumber insert: only Pending Traceability rows move, every other line is byte-identical (GH-259)', () => {
-  const dir = historyRenumberTree();
+test('renumber insert: only Pending Traceability rows move, every other line is byte-identical (GH-259)', (t) => {
+  const dir = historyRenumberTree(t);
   const reqFile = join(dir, 'REQUIREMENTS.md');
   const before = readFileSync(reqFile, 'utf8').split('\n');
   // Pin the fixture, so an index drift fails here and not as a vacuous pass.
@@ -820,8 +819,8 @@ test('renumber insert: only Pending Traceability rows move, every other line is 
   }
 });
 
-test('renumber insert: a CRLF REQUIREMENTS.md stays CRLF and only its Pending rows move', () => {
-  const dir = crlfHistoryRenumberTree();
+test('renumber insert: a CRLF REQUIREMENTS.md stays CRLF and only its Pending rows move', (t) => {
+  const dir = crlfHistoryRenumberTree(t);
   const reqFile = join(dir, 'REQUIREMENTS.md');
   const before = readFileSync(reqFile, 'utf8').split('\n');
   const r = run(['renumber', 'insert', '--at', '3'], dir);
@@ -844,8 +843,8 @@ const HISTORY_ROW_CHANGES = [
   { line: 8, before: '| PND-04 | Phase 4 (phases/4/) | Pending |', after: '| PND-04 | Phase 5 | Pending |' },
 ];
 
-test('renumber insert --dry-run: req_row_changes lists each REQUIREMENTS line the insert changes', () => {
-  const dir = historyRenumberTree();
+test('renumber insert --dry-run: req_row_changes lists each REQUIREMENTS line the insert changes', (t) => {
+  const dir = historyRenumberTree(t);
   const r = run(['renumber', 'insert', '--at', '3', '--dry-run'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.req_row_changes, HISTORY_ROW_CHANGES);
@@ -855,8 +854,8 @@ test('renumber insert --dry-run: req_row_changes lists each REQUIREMENTS line th
   assert.equal(op.changes, r.req_row_changes.length);
 });
 
-test('renumber insert: the applied diff is exactly the req_row_changes the dry-run showed', () => {
-  const dir = historyRenumberTree();
+test('renumber insert: the applied diff is exactly the req_row_changes the dry-run showed', (t) => {
+  const dir = historyRenumberTree(t);
   const reqFile = join(dir, 'REQUIREMENTS.md');
   const shown = run(['renumber', 'insert', '--at', '3', '--dry-run'], dir);
   const before = readFileSync(reqFile, 'utf8').split('\n');
@@ -871,8 +870,8 @@ test('renumber insert: the applied diff is exactly the req_row_changes the dry-r
   assert.deepEqual(r.req_row_changes, shown.req_row_changes);
 });
 
-test('renumber insert: a CRLF file reports req_row_changes without the \\r', () => {
-  const r = run(['renumber', 'insert', '--at', '3', '--dry-run'], crlfHistoryRenumberTree());
+test('renumber insert: a CRLF file reports req_row_changes without the \\r', (t) => {
+  const r = run(['renumber', 'insert', '--at', '3', '--dry-run'], crlfHistoryRenumberTree(t));
   assert.deepEqual(r.req_row_changes, HISTORY_ROW_CHANGES);
   for (const c of r.req_row_changes) {
     assert.doesNotMatch(c.before, /\r/);
@@ -880,12 +879,12 @@ test('renumber insert: a CRLF file reports req_row_changes without the \\r', () 
   }
 });
 
-test('renumber: req_row_changes is absent when nothing changes', () => {
-  const ins = run(['renumber', 'insert', '--at', '4', '--dry-run'], renumberTree());
+test('renumber: req_row_changes is absent when nothing changes', (t) => {
+  const ins = run(['renumber', 'insert', '--at', '4', '--dry-run'], renumberTree(t));
   assert.equal('req_row_changes' in ins, false);
   assert.equal(ins.ops.find((o) => o.edit === 'REQUIREMENTS.md').changes, 0);
 
-  const rem = run(['renumber', 'remove', '--n', '2', '--dry-run'], renumberTree());
+  const rem = run(['renumber', 'remove', '--n', '2', '--dry-run'], renumberTree(t));
   assert.deepEqual(rem.req_row_changes, [
     { line: 8, before: '| REQ-2 | Phase 2 | Pending |', after: '| REQ-2 |  | Pending |' },
     { line: 9, before: '| REQ-3 | Phase 3 | Pending |', after: '| REQ-3 | Phase 2 | Pending |' },
@@ -896,7 +895,7 @@ test('renumber: req_row_changes is absent when nothing changes', () => {
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }],
     phases: { 1: { plan: true }, 2: { plan: true } },
     reqs: [['REQ-1', 1, 'Pending']],
-  }));
+  }, t));
   assert.equal('req_row_changes' in none, false);
   assert.equal(none.ops.find((o) => o.edit === 'REQUIREMENTS.md').changes, 0);
 });
@@ -904,8 +903,8 @@ test('renumber: req_row_changes is absent when nothing changes', () => {
 // A Complete row citing a moved phase is left as written and named in `warn`
 // (D-02). Deferred, lowercase-`pending` and `## Shipped` rows cite moved
 // phases too and must not be named: only Complete Traceability rows are.
-test('renumber insert: a Complete row citing a moved phase stays put and is named in warn', () => {
-  const dir = historyRenumberTree();
+test('renumber insert: a Complete row citing a moved phase stays put and is named in warn', (t) => {
+  const dir = historyRenumberTree(t);
   const reqFile = join(dir, 'REQUIREMENTS.md');
   const shown = run(['renumber', 'insert', '--at', '3', '--dry-run'], dir);
   const before = readFileSync(reqFile, 'utf8').split('\n');
@@ -922,13 +921,13 @@ test('renumber insert: a Complete row citing a moved phase stays put and is name
   assert.equal(shown.warn, r.warn);
 });
 
-test('renumber insert: a decimal-cursor warning keeps its text and comes before the Complete-row warning', () => {
+test('renumber insert: a decimal-cursor warning keeps its text and comes before the Complete-row warning', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }, { n: 3, name: 'Three' }],
     phases: { 1: { plan: true }, 2: { plan: true }, 3: { plan: true } },
     reqs: [['CMP-03', 3, 'Complete']],
     cursor: { phase: 2.1, total: 4, name: 'Patch', status: 'planned', next: '/cad-execute 2.1', updated: '2026-01-01' },
-  });
+  }, t);
   const r = run(['renumber', 'insert', '--at', '2'], dir);
   assert.equal(r.ok, true);
   assert.match(r.warn, /^cursor sits on decimal phase 2\.1, .* re-point it \(cursor set\); /);
@@ -938,8 +937,8 @@ test('renumber insert: a decimal-cursor warning keeps its text and comes before 
 // in_text_refs on insert never sends the model to a frozen line: a `## Shipped`
 // row or a non-Pending Traceability row (D-09). Lowercase prose elsewhere, like
 // the Deferred bullet, is still reported.
-test('renumber insert: in_text_refs skips Shipped and Complete rows, keeps the Deferred bullet', () => {
-  const r = run(['renumber', 'insert', '--at', '3', '--dry-run'], historyRenumberTree());
+test('renumber insert: in_text_refs skips Shipped and Complete rows, keeps the Deferred bullet', (t) => {
+  const r = run(['renumber', 'insert', '--at', '3', '--dry-run'], historyRenumberTree(t));
   const lines = r.in_text_refs.filter((x) => x.file === 'REQUIREMENTS.md').map((x) => x.line);
   assert.ok(lines.includes(DFR_01 + 1), `Deferred bullet missing: ${JSON.stringify(lines)}`);
   assert.ok(!lines.includes(SHP_01 + 1), 'Shipped row reported');
@@ -950,8 +949,8 @@ test('renumber insert: in_text_refs skips Shipped and Complete rows, keeps the D
 // lowercase prose from the phase after the one removed, so at 3 the Shipped and
 // Complete rows' `phase 3` would never be looked at and this would pass
 // whether or not they are skipped.
-test('renumber remove: in_text_refs skips the Shipped and Complete rows', () => {
-  const r = run(['renumber', 'remove', '--n', '2', '--dry-run'], historyRenumberTree());
+test('renumber remove: in_text_refs skips the Shipped and Complete rows', (t) => {
+  const r = run(['renumber', 'remove', '--n', '2', '--dry-run'], historyRenumberTree(t));
   const lines = (r.in_text_refs || []).filter((x) => x.file === 'REQUIREMENTS.md').map((x) => x.line);
   assert.ok(!lines.includes(SHP_01 + 1), 'Shipped row reported');
   assert.ok(!lines.includes(CMP_03 + 1), 'Complete row reported');
@@ -960,8 +959,8 @@ test('renumber remove: in_text_refs skips the Shipped and Complete rows', () => 
 // A capital `Phase 3` outside Traceability used to shift with the whole file.
 // Insert now leaves it as written, so it has to be reported or it goes stale
 // with nobody told (findProsePhaseRefs only sees lowercase).
-test('renumber insert: a v2 bullet citing Phase 3 is left as written and reported', () => {
-  const dir = historyRenumberTree();
+test('renumber insert: a v2 bullet citing Phase 3 is left as written and reported', (t) => {
+  const dir = historyRenumberTree(t);
   const reqFile = join(dir, 'REQUIREMENTS.md');
   const bullet = '- **V2-01**: maybe Phase 3';
   writeFileSync(reqFile, readFileSync(reqFile, 'utf8') + `\n## v2 Requirements\n\n${bullet}\n`);
@@ -986,8 +985,8 @@ test('renumber insert: a v2 bullet citing Phase 3 is left as written and reporte
 const V2_BULLET = '- **V2-01**: maybe Phase 4 (phases/4/)';
 
 /** historyRenumberTree plus a `## v2 Requirements` bullet citing phase 4. */
-function v2HistoryRenumberTree() {
-  const dir = historyRenumberTree();
+function v2HistoryRenumberTree(t) {
+  const dir = historyRenumberTree(t);
   const reqFile = join(dir, 'REQUIREMENTS.md');
   writeFileSync(reqFile, readFileSync(reqFile, 'utf8') + `\n## v2 Requirements\n\n${V2_BULLET}\n`);
   return dir;
@@ -996,8 +995,8 @@ function v2HistoryRenumberTree() {
 const REMOVED_PND_03 = '| PND-03 |  | Pending |';
 const REMOVED_PND_04 = '| PND-04 | Phase 3 | Pending |';
 
-test('renumber remove: only Pending Traceability rows change, every other line is byte-identical (GH-301)', () => {
-  const dir = v2HistoryRenumberTree();
+test('renumber remove: only Pending Traceability rows change, every other line is byte-identical (GH-301)', (t) => {
+  const dir = v2HistoryRenumberTree(t);
   const reqFile = join(dir, 'REQUIREMENTS.md');
   const before = readFileSync(reqFile, 'utf8').split('\n');
   assert.ok(before.includes(V2_BULLET));
@@ -1014,8 +1013,8 @@ test('renumber remove: only Pending Traceability rows change, every other line i
   assert.deepEqual(r.orphaned_reqs, ['PND-03']);
 });
 
-test('renumber remove: a CRLF REQUIREMENTS.md stays CRLF, and its Pending orphan is blanked', () => {
-  const dir = v2HistoryRenumberTree();
+test('renumber remove: a CRLF REQUIREMENTS.md stays CRLF, and its Pending orphan is blanked', (t) => {
+  const dir = v2HistoryRenumberTree(t);
   const reqFile = join(dir, 'REQUIREMENTS.md');
   writeFileSync(reqFile, readFileSync(reqFile, 'utf8').replace(/\n/g, '\r\n'));
   const before = readFileSync(reqFile, 'utf8').split('\n');
@@ -1040,29 +1039,29 @@ test('renumber remove: a CRLF REQUIREMENTS.md stays CRLF, and its Pending orphan
 // lowercase prose and every other number stay as written (D-05).
 
 /** @param {string} next @param {Partial<{phase: number, status: string}>} [at] */
-function nextCursorTree(next, at = {}) {
+function nextCursorTree(t, next, at = {}) {
   return makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }, { n: 3, name: 'Three' }],
     phases: { 1: { plan: true }, 2: { plan: true }, 3: { plan: true } },
     cursor: { phase: at.phase ?? 3, total: 3, name: 'Three', status: at.status ?? 'planned', next, updated: '2026-01-01' },
-  });
+  }, t);
 }
 
 /** Run `renumber <args>` on a fresh tree and return the result and the cursor's Next:. */
-function nextAfter(next, args, at) {
-  const dir = nextCursorTree(next, at);
+function nextAfter(t, next, args, at) {
+  const dir = nextCursorTree(t, next, at);
   const r = run(['renumber', ...args], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   return { r, next: run(['cursor', 'get'], dir).next };
 }
 
-test('renumber: insert and remove re-point the cursor Next: with its phase', () => {
-  assert.equal(nextAfter('/cad-execute 3', ['insert', '--at', '2']).next, '/cad-execute 4');
-  assert.equal(nextAfter('/cad-execute 3', ['remove', '--n', '2']).next, '/cad-execute 2');
+test('renumber: insert and remove re-point the cursor Next: with its phase', (t) => {
+  assert.equal(nextAfter(t, '/cad-execute 3', ['insert', '--at', '2']).next, '/cad-execute 4');
+  assert.equal(nextAfter(t, '/cad-execute 3', ['remove', '--n', '2']).next, '/cad-execute 2');
 });
 
-test('renumber insert: Next: shifts command arguments and Phase K, nothing else', () => {
-  const ins = (next) => nextAfter(next, ['insert', '--at', '2']).next;
+test('renumber insert: Next: shifts command arguments and Phase K, nothing else', (t) => {
+  const ins = (next) => nextAfter(t, next, ['insert', '--at', '2']).next;
   assert.equal(ins('/cad-context 1 then /cad-plan 3'), '/cad-context 1 then /cad-plan 4');
   assert.equal(ins('/cad-execute 3 - plan 1 done; continue from task 2'),
     '/cad-execute 4 - plan 1 done; continue from task 2');
@@ -1070,9 +1069,9 @@ test('renumber insert: Next: shifts command arguments and Phase K, nothing else'
     '/cad-plan 4 --gaps (see Phase 4 UAT; phase 3 prose)');
 });
 
-test('renumber insert: a Next: decimal is never read as its integer prefix', () => {
-  assert.equal(nextAfter('/cad-execute 2.1', ['insert', '--at', '2']).next, '/cad-execute 2.1');
-  assert.equal(nextAfter('/cad-execute 12.1', ['insert', '--at', '1']).next, '/cad-execute 12.1');
+test('renumber insert: a Next: decimal is never read as its integer prefix', (t) => {
+  assert.equal(nextAfter(t, '/cad-execute 2.1', ['insert', '--at', '2']).next, '/cad-execute 2.1');
+  assert.equal(nextAfter(t, '/cad-execute 12.1', ['insert', '--at', '1']).next, '/cad-execute 12.1');
 });
 
 // --- remove shows each REQUIREMENTS line it changes (D-04) -------------------
@@ -1083,8 +1082,8 @@ const REMOVE_ROW_CHANGES = [
   { line: 8, before: '| PND-04 | Phase 4 (phases/4/) | Pending |', after: REMOVED_PND_04 },
 ];
 
-test('renumber remove --dry-run: req_row_changes lists each REQUIREMENTS line the remove changes', () => {
-  const r = run(['renumber', 'remove', '--n', '3', '--dry-run'], historyRenumberTree());
+test('renumber remove --dry-run: req_row_changes lists each REQUIREMENTS line the remove changes', (t) => {
+  const r = run(['renumber', 'remove', '--n', '3', '--dry-run'], historyRenumberTree(t));
   assert.equal(r.ok, true);
   assert.deepEqual(r.req_row_changes, REMOVE_ROW_CHANGES);
   const keys = Object.keys(r);
@@ -1092,8 +1091,8 @@ test('renumber remove --dry-run: req_row_changes lists each REQUIREMENTS line th
   assert.equal(r.ops.find((o) => o.edit === 'REQUIREMENTS.md').changes, r.req_row_changes.length);
 });
 
-test('renumber remove: the applied diff is exactly the req_row_changes the dry-run showed', () => {
-  const dir = historyRenumberTree();
+test('renumber remove: the applied diff is exactly the req_row_changes the dry-run showed', (t) => {
+  const dir = historyRenumberTree(t);
   const reqFile = join(dir, 'REQUIREMENTS.md');
   const shown = run(['renumber', 'remove', '--n', '3', '--dry-run'], dir);
   const before = readFileSync(reqFile, 'utf8').split('\n');
@@ -1108,8 +1107,8 @@ test('renumber remove: the applied diff is exactly the req_row_changes the dry-r
   assert.deepEqual(r.req_row_changes, shown.req_row_changes);
 });
 
-test('renumber remove: a CRLF file reports req_row_changes without the \\r', () => {
-  const r = run(['renumber', 'remove', '--n', '3', '--dry-run'], crlfHistoryRenumberTree());
+test('renumber remove: a CRLF file reports req_row_changes without the \\r', (t) => {
+  const r = run(['renumber', 'remove', '--n', '3', '--dry-run'], crlfHistoryRenumberTree(t));
   assert.deepEqual(r.req_row_changes, REMOVE_ROW_CHANGES);
   for (const c of r.req_row_changes) {
     assert.doesNotMatch(c.before, /\r/);
@@ -1119,8 +1118,8 @@ test('renumber remove: a CRLF file reports req_row_changes without the \\r', () 
 
 // --- remove names Complete rows citing a removed or moved phase (D-03) -------
 
-test('renumber remove: a Complete row citing the removed phase stays put and is named in warn', () => {
-  const dir = historyRenumberTree();
+test('renumber remove: a Complete row citing the removed phase stays put and is named in warn', (t) => {
+  const dir = historyRenumberTree(t);
   const reqFile = join(dir, 'REQUIREMENTS.md');
   const shown = run(['renumber', 'remove', '--n', '3', '--dry-run'], dir);
   const before = readFileSync(reqFile, 'utf8').split('\n');
@@ -1138,25 +1137,25 @@ test('renumber remove: a Complete row citing the removed phase stays put and is 
 });
 
 /** Four phases, one Complete row citing phase 4, optional cursor. */
-function completeFourTree(cursor) {
+function completeFourTree(t, cursor) {
   return makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }, { n: 3, name: 'Three' }, { n: 4, name: 'Four' }],
     phases: { 1: { plan: true }, 2: { plan: true }, 3: { plan: true }, 4: { plan: true } },
     reqs: [['CMP-04', 4, 'Complete']],
     ...(cursor ? { cursor } : {}),
-  });
+  }, t);
 }
 
-test('renumber remove: a Complete row citing a moved phase stays put and is named in warn', () => {
-  const dir = completeFourTree();
+test('renumber remove: a Complete row citing a moved phase stays put and is named in warn', (t) => {
+  const dir = completeFourTree(t);
   const r = run(['renumber', 'remove', '--n', '3'], dir);
   assert.equal(r.ok, true);
   assert.match(r.warn, /CMP-04/);
   assert.ok(readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8').split('\n').includes('| CMP-04 | Phase 4 | Complete |'));
 });
 
-test('renumber remove: the cursor-on-removed warning keeps its text and comes before the Complete-row warning', () => {
-  const dir = completeFourTree({ phase: 3, total: 4, name: 'Three', status: 'planned', next: '/cad-progress', updated: '2026-01-01' });
+test('renumber remove: the cursor-on-removed warning keeps its text and comes before the Complete-row warning', (t) => {
+  const dir = completeFourTree(t, { phase: 3, total: 4, name: 'Three', status: 'planned', next: '/cad-progress', updated: '2026-01-01' });
   const r = run(['renumber', 'remove', '--n', '3'], dir);
   assert.equal(r.ok, true);
   const lead = 'cursor points at removed phase 3; number left as-is - re-point it (cursor set); ';
@@ -1167,8 +1166,8 @@ test('renumber remove: the cursor-on-removed warning keeps its text and comes be
 // A capital `Phase 3` left in a v2 bullet after `remove --n 3` names a phase
 // that no longer exists, and nothing rewrites it, so it is reported (D-08).
 // Frozen rows citing phase 3 or 4 are not.
-test('renumber remove: in_text_refs reports a v2 bullet citing the removed phase, never a frozen row', () => {
-  const dir = historyRenumberTree();
+test('renumber remove: in_text_refs reports a v2 bullet citing the removed phase, never a frozen row', (t) => {
+  const dir = historyRenumberTree(t);
   const reqFile = join(dir, 'REQUIREMENTS.md');
   const bullet = '- **V2-01**: maybe Phase 3';
   writeFileSync(reqFile, readFileSync(reqFile, 'utf8') + `\n## v2 Requirements\n\n${bullet}\n`);
@@ -1191,31 +1190,31 @@ test('renumber remove: in_text_refs reports a v2 bullet citing the removed phase
 // --- a Next: naming the removed phase is kept and named (D-06) ---------------
 // Never blanked: an empty Next: makes parseCursor return null.
 
-test('renumber remove: a Next: naming the removed phase is left as written and named in warn', () => {
-  const { r, next } = nextAfter('/cad-context 2', ['remove', '--n', '2'], { phase: 1, status: 'phase complete' });
+test('renumber remove: a Next: naming the removed phase is left as written and named in warn', (t) => {
+  const { r, next } = nextAfter(t, '/cad-context 2', ['remove', '--n', '2'], { phase: 1, status: 'phase complete' });
   assert.equal(next, '/cad-context 2');
   assert.match(r.warn, /Next:/);
   assert.match(r.warn, /removed phase 2/);
 });
 
-test('renumber remove: the cursor-on-removed warning comes first, then the Next: notice', () => {
-  const r = run(['renumber', 'remove', '--n', '2'], renumberTree());
+test('renumber remove: the cursor-on-removed warning comes first, then the Next: notice', (t) => {
+  const r = run(['renumber', 'remove', '--n', '2'], renumberTree(t));
   assert.equal(r.ok, true);
   assert.ok(r.warn.startsWith('cursor points at removed phase 2; number left as-is - re-point it (cursor set); '), r.warn);
   assert.match(r.warn, /Next:/);
 });
 
-test('renumber remove: a decimal in Next: never names the removed phase', () => {
-  assert.equal(nextAfter('/cad-execute 2.1', ['remove', '--n', '2'], { phase: 1 }).r.warn, undefined);
-  assert.doesNotMatch(nextAfter('/cad-execute 12.1', ['remove', '--n', '1'], { phase: 2 }).r.warn ?? '', /Next:/);
+test('renumber remove: a decimal in Next: never names the removed phase', (t) => {
+  assert.equal(nextAfter(t, '/cad-execute 2.1', ['remove', '--n', '2'], { phase: 1 }).r.warn, undefined);
+  assert.doesNotMatch(nextAfter(t, '/cad-execute 12.1', ['remove', '--n', '1'], { phase: 2 }).r.warn ?? '', /Next:/);
 });
 
 // --- the cursor's Plan: line rides through renumber untouched (phase 1, D-07) --
 
-test('renumber: a present Plan: line stays byte-identical across insert and remove', () => {
+test('renumber: a present Plan: line stays byte-identical across insert and remove', (t) => {
   const planLine = 'Plan: 2 of 3 (The cursor seams)';
   const setup = () => {
-    const dir = renumberTree();
+    const dir = renumberTree(t);
     const text = readFileSync(join(dir, 'STATE.md'), 'utf8')
       .replace(/(Phase: .*\n)/, `$1${planLine}\n`);
     writeFileSync(join(dir, 'STATE.md'), text);

@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path, { join } from 'node:path';
 
@@ -147,8 +147,15 @@ test('a separator run does not manufacture a verb', () => {
 // Four trees, one per answer the walk can give. The probe answers only inside
 // the fixture, so a stray `.planning` or `.git` above the temp dir on some
 // machine cannot change an answer, and the last case still walks to the root.
-function walkFixture() {
-  const base = mkdtempSync(join(tmpdir(), 'cad-walk-'));
+/** A mkdtemp root that goes when test `t` ends. */
+function tmp(t, prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function walkFixture(t) {
+  const base = tmp(t, 'cad-walk-');
   const make = (...parts) => {
     const d = join(base, ...parts);
     mkdirSync(d, { recursive: true });
@@ -174,8 +181,8 @@ function walkFixture() {
   return { has, probed, cases };
 }
 
-test('planningRoot answers the four shapes through a sync probe', () => {
-  const { has, probed, cases } = walkFixture();
+test('planningRoot answers the four shapes through a sync probe', (t) => {
+  const { has, probed, cases } = walkFixture(t);
   for (const [name, start, want] of cases) {
     probed.length = 0;
     assert.equal(planningRoot(start, has), want, name);
@@ -184,8 +191,8 @@ test('planningRoot answers the four shapes through a sync probe', () => {
   assert.equal(probed.at(-1), path.parse(cases[3][1]).root);
 });
 
-test('the walk checks .planning before .git in the same directory', () => {
-  const base = mkdtempSync(join(tmpdir(), 'cad-walk-'));
+test('the walk checks .planning before .git in the same directory', (t) => {
+  const base = tmp(t, 'cad-walk-');
   mkdirSync(join(base, '.planning'));
   mkdirSync(join(base, '.git'));
   assert.equal(planningRoot(base, (d, n) => existsSync(join(d, n))), base);

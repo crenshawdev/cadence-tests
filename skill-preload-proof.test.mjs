@@ -8,7 +8,7 @@
 // The last test reads the stored file the real host wrote, both runs judged by the script's own judge() and judgeSecond().
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync, copyFileSync, symlinkSync }
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, chmodSync, copyFileSync, symlinkSync }
   from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -100,11 +100,14 @@ const SECOND_OK = second(SHARED_RULE);
 /**
  * Run the script against a stand-in, or against no `claude` at all when `firstText` is null.
  * `script` swaps in a copy of the script and `outArgs` replaces the temp `--out`.
+ * Its temp dir goes when test `t` ends.
+ * @param {import('node:test').TestContext} t
  * @param {string|null} firstText @param {string} [secondText] @param {number} [exitCode]
  * @param {{script?: string, outArgs?: string[]}} [opts]
  */
-function run(firstText, secondText = SECOND_OK, exitCode = 0, opts = {}) {
+function run(t, firstText, secondText = SECOND_OK, exitCode = 0, opts = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-spp-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const bin = join(dir, 'bin');
   const env = { ...process.env, PATH: bin, STUB_CAPTURE: join(dir, 'capture.json'),
     STUB_STREAM: join(dir, 'stream.jsonl'), STUB_EXIT: String(exitCode) };
@@ -124,8 +127,8 @@ function run(firstText, secondText = SECOND_OK, exitCode = 0, opts = {}) {
   };
 }
 
-test('both markers back with the counts at 0 passes and stores both runs', () => {
-  const r = run(stream({ returned: BOTH }));
+test('both markers back with the counts at 0 passes and stores both runs', (t) => {
+  const r = run(t, stream({ returned: BOTH }));
   assert.equal(r.status, 0, r.stdout);
   const { first, second: two } = JSON.parse(readFileSync(r.out, 'utf8'));
   assert.ok(first.returned.includes(MARKERS.second));
@@ -141,8 +144,8 @@ test('both markers back with the counts at 0 passes and stores both runs', () =>
   assert.equal(two.host_version, '2.1.323');
 });
 
-test('the first marker back and the rule missing from the second fails naming the second run', () => {
-  const r = run(stream({ returned: BOTH }), second('I have no such rule.'));
+test('the first marker back and the rule missing from the second fails naming the second run', (t) => {
+  const r = run(t, stream({ returned: BOTH }), second('I have no such rule.'));
   assert.notEqual(r.status, 0);
   const out = JSON.parse(r.stdout);
   assert.equal(out.run, 'second');
@@ -150,26 +153,26 @@ test('the first marker back and the rule missing from the second fails naming th
   assert.equal(existsSync(r.out), false);
 });
 
-test('the rule back with its line breaks and spacing changed passes', () => {
+test('the rule back with its line breaks and spacing changed passes', (t) => {
   const rewrapped = SHARED_RULE.replace(/ (?=definitions)/, '\n').replace(/ (?=If it errors)/, '\n\n  ');
-  const r = run(stream({ returned: BOTH }), second(`Here it is:\n${rewrapped}`));
+  const r = run(t, stream({ returned: BOTH }), second(`Here it is:\n${rewrapped}`));
   assert.equal(r.status, 0, r.stdout);
 });
 
-test('the rule back with one word changed fails', () => {
-  const r = run(stream({ returned: BOTH }), second(SHARED_RULE.replace('references', 'usages')));
+test('the rule back with one word changed fails', (t) => {
+  const r = run(t, stream({ returned: BOTH }), second(SHARED_RULE.replace('references', 'usages')));
   assert.notEqual(r.status, 0);
   assert.equal(JSON.parse(r.stdout).run, 'second');
 });
 
-test('a Read inside the second run\'s agent fails naming the count, though the rule came back', () => {
-  const r = run(stream({ returned: BOTH }), second(SHARED_RULE, 1));
+test('a Read inside the second run\'s agent fails naming the count, though the rule came back', (t) => {
+  const r = run(t, stream({ returned: BOTH }), second(SHARED_RULE, 1));
   assert.notEqual(r.status, 0);
   assert.match(r.stdout, /second run: subagent_tool_calls is 1/);
 });
 
-test('the second run: the executor\'s unsuffixed file, no rule text in the prompt, and a parent not held by --tools Agent', () => {
-  const { capture } = run(stream({ returned: BOTH }));
+test('the second run: the executor\'s unsuffixed file, no rule text in the prompt, and a parent not held by --tools Agent', (t) => {
+  const { capture } = run(t, stream({ returned: BOTH }));
   assert.equal(SECOND_AGENT, 'cad-executor');
   assert.equal(SECOND_AGENT, RUNG_FILES['cad-executor'].rungs.high);
   const { argv } = capture[1];
@@ -180,8 +183,10 @@ test('the second run: the executor\'s unsuffixed file, no rule text in the promp
   assert.ok(!argv.includes('--tools'), argv.join(' '));
 });
 
-test('writeFixture puts each marker only in its own skill\'s body, and neither in frontmatter', () => {
-  const plugin = writeFixture(mkdtempSync(join(tmpdir(), 'cad-spp-fixture-')));
+test('writeFixture puts each marker only in its own skill\'s body, and neither in frontmatter', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'cad-spp-fixture-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const plugin = writeFixture(root);
   const [one, two] = SKILLS.map((s) => readFileSync(join(plugin, 'skills', s, 'SKILL.md'), 'utf8'));
   const parts = (t) => { const fm = t.match(FRONTMATTER_RE); return { fm: fm[0], body: t.slice(fm[0].length) }; };
   assert.ok(parts(one).body.includes(MARKERS.first) && !parts(one).body.includes(MARKERS.second));
@@ -192,8 +197,8 @@ test('writeFixture puts each marker only in its own skill\'s body, and neither i
   }
 });
 
-test('what the stand-in was handed: a tool-less agent with both skills in order, a dispatch-only parent, no marker', () => {
-  const { capture: [capture] } = run(stream({ returned: BOTH }));
+test('what the stand-in was handed: a tool-less agent with both skills in order, a dispatch-only parent, no marker', (t) => {
+  const { capture: [capture] } = run(t, stream({ returned: BOTH }));
   const fm = capture.agent.match(FRONTMATTER_RE)[1];
   assert.match(fm, /^tools:[ \t]*\[\][ \t]*$/m, 'the key present and empty - left out it grants every tool');
   assert.deepEqual(parseSkillsField(fm), [...SKILLS]);
@@ -205,46 +210,46 @@ test('what the stand-in was handed: a tool-less agent with both skills in order,
   assert.ok(!prompt.includes(MARKERS.first) && !prompt.includes(MARKERS.second), 'an echo would pass');
 });
 
-test('only the first skill\'s line back fails naming the second marker', () => {
-  const r = run(stream({ returned: FIRST_ONLY }));
+test('only the first skill\'s line back fails naming the second marker', (t) => {
+  const r = run(t, stream({ returned: FIRST_ONLY }));
   assert.notEqual(r.status, 0);
   assert.ok(r.stdout.includes(MARKERS.second), r.stdout);
 });
 
-test('a Read inside the subagent fails naming the count, though the marker came back', () => {
-  const r = run(stream({ returned: BOTH, subagentReads: 1 }));
+test('a Read inside the subagent fails naming the count, though the marker came back', (t) => {
+  const r = run(t, stream({ returned: BOTH, subagentReads: 1 }));
   assert.notEqual(r.status, 0);
   assert.match(r.stdout, /subagent_tool_calls is 1/);
 });
 
-test('a parent Read beside the dispatch fails naming the count', () => {
-  const r = run(stream({ returned: BOTH, parentReads: 1 }));
+test('a parent Read beside the dispatch fails naming the count', (t) => {
+  const r = run(t, stream({ returned: BOTH, parentReads: 1 }));
   assert.notEqual(r.status, 0);
   assert.match(r.stdout, /parent_other_calls is 1/);
 });
 
-test('the marker only in the parent\'s final text fails', () => {
-  const r = run(stream({ returned: FIRST_ONLY, finalText: BOTH }));
+test('the marker only in the parent\'s final text fails', (t) => {
+  const r = run(t, stream({ returned: FIRST_ONLY, finalText: BOTH }));
   assert.notEqual(r.status, 0);
   assert.ok(r.stdout.includes(MARKERS.second), r.stdout);
 });
 
-test('a dispatch input carrying the second marker fails naming the dispatch input', () => {
-  const r = run(stream({ returned: BOTH, dispatchPrompt: `Reply with ${MARKERS.second}.` }));
+test('a dispatch input carrying the second marker fails naming the dispatch input', (t) => {
+  const r = run(t, stream({ returned: BOTH, dispatchPrompt: `Reply with ${MARKERS.second}.` }));
   assert.notEqual(r.status, 0);
   assert.match(r.stdout, /dispatch-input-carries-marker/);
   assert.equal(existsSync(r.out), false, 'a failed run must not leave a file that reads as a pass');
 });
 
-test('a stream with no record from inside the subagent fails naming that cause', () => {
-  const r = run(stream({ returned: BOTH, nested: false }));
+test('a stream with no record from inside the subagent fails naming that cause', (t) => {
+  const r = run(t, stream({ returned: BOTH, nested: false }));
   assert.notEqual(r.status, 0);
   assert.match(r.stdout, /no-subagent-record/);
   assert.equal(existsSync(r.out), false, 'an unchecked 0 must never be stored');
 });
 
-test('a second run with no task notification fails naming the missing tally, though a text record came back', () => {
-  const r = run(stream({ returned: BOTH }), stream({ returned: SHARED_RULE, agentType: SECOND_AGENT_TYPE, notice: false }));
+test('a second run with no task notification fails naming the missing tally, though a text record came back', (t) => {
+  const r = run(t, stream({ returned: BOTH }), stream({ returned: SHARED_RULE, agentType: SECOND_AGENT_TYPE, notice: false }));
   assert.notEqual(r.status, 0);
   const out = JSON.parse(r.stdout);
   assert.equal(out.run, 'second');
@@ -252,9 +257,9 @@ test('a second run with no task notification fails naming the missing tally, tho
   assert.equal(existsSync(r.out), false, 'an unobserved 0 must never be stored');
 });
 
-test('the rule rewrapped inside a nested dispatch input field fails naming the dispatch input', () => {
+test('the rule rewrapped inside a nested dispatch input field fails naming the dispatch input', (t) => {
   const rewrapped = SHARED_RULE.replace(/ (?=definitions)/, '\n  ');
-  const r = run(stream({ returned: BOTH }), stream({ returned: SHARED_RULE, agentType: SECOND_AGENT_TYPE,
+  const r = run(t, stream({ returned: BOTH }), stream({ returned: SHARED_RULE, agentType: SECOND_AGENT_TYPE,
     input: { context: { notes: [`Quote this back: ${rewrapped}`] } } }));
   assert.notEqual(r.status, 0);
   assert.equal(JSON.parse(r.stdout).run, 'second');
@@ -262,17 +267,18 @@ test('the rule rewrapped inside a nested dispatch input field fails naming the d
   assert.equal(existsSync(r.out), false);
 });
 
-test('a host that exits non-zero, and no host on PATH, fail and write no result', () => {
-  for (const r of [run(stream({ returned: BOTH }), SECOND_OK, 1), run(null)]) {
+test('a host that exits non-zero, and no host on PATH, fail and write no result', (t) => {
+  for (const r of [run(t, stream({ returned: BOTH }), SECOND_OK, 1), run(t, null)]) {
     assert.notEqual(r.status, 0);
     assert.match(r.stdout, /host-did-not-run/);
     assert.equal(existsSync(r.out), false, 'a check that did not run records nothing');
   }
 });
 
-test('a passing run with no --out writes nothing, and --out naming the stored file refreshes it (D-14)', () => {
+test('a passing run with no --out writes nothing, and --out naming the stored file refreshes it (D-14)', (t) => {
   // a copy of the script with its own stored file beside it, so the real one is never in reach
   const dir = mkdtempSync(join(tmpdir(), 'cad-spp-copy-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const script = join(dir, 'skill-preload-proof.mjs');
   const stored = join(dir, 'skill-preload-proof.result.json');
   copyFileSync(SCRIPT, script);
@@ -280,12 +286,12 @@ test('a passing run with no --out writes nothing, and --out naming the stored fi
   copyFileSync(STORED_RESULT, stored);
   const before = readFileSync(stored);
 
-  const bare = run(stream({ returned: BOTH }), SECOND_OK, 0, { script, outArgs: [] });
+  const bare = run(t, stream({ returned: BOTH }), SECOND_OK, 0, { script, outArgs: [] });
   assert.equal(bare.status, 0, bare.stdout);
   assert.equal(JSON.parse(bare.stdout).result, undefined, 'no file written, so none named');
   assert.deepEqual(readFileSync(stored), before);
 
-  const refresh = run(stream({ returned: BOTH }), SECOND_OK, 0, { script, outArgs: ['--out', stored] });
+  const refresh = run(t, stream({ returned: BOTH }), SECOND_OK, 0, { script, outArgs: ['--out', stored] });
   assert.equal(refresh.status, 0, refresh.stdout);
   const { first, second: two } = JSON.parse(readFileSync(stored, 'utf8'));
   assert.equal(first.agent, AGENT_TYPE);

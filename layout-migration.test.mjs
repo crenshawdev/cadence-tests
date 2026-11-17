@@ -7,10 +7,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { PLANNING, treeOf } from './planning.test.mjs';
+import { PLANNING, scratch, treeOf } from './planning.test.mjs';
 import { phaseReportsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 import { readState, STAMP_KEY, STATE_LAYOUT, statePath } from '../cadence-core/bin/lib/project-state.mjs';
 import { renderPhasesList, renderStateMd, renderTraceability } from '../cadence-core/bin/lib/state-views.mjs';
@@ -39,10 +38,11 @@ const event = (ts, ev, plan) => JSON.stringify({ corr: '1-abc1234', phase: '1', 
 
 /**
  * A v4.0 project, written file by file, with plans `finished` reported done and plan `next` up. `open` leaves that plan
- * dispatched with no return, the way an executor killed mid-run leaves it. Returns the planning directory and its root.
+ * dispatched with no return, the way an executor killed mid-run leaves it. Returns the planning directory and its root,
+ * which goes when test `t` ends.
  */
-function v40(finished, next, open) {
-  const root = mkdtempSync(join(tmpdir(), 'cad-layout-'));
+function v40(t, finished, next, open) {
+  const root = scratch('cad-layout-', t);
   const dir = join(root, '.planning');
   put(dir, 'config.json', JSON.stringify({ planning: { commit_docs: true } }));
   put(dir, 'ROADMAP.md', '# Roadmap: Fixture\n\n## Phases\n\n- [ ] **Phase 1: Layout** - move the records\n\n'
@@ -121,10 +121,10 @@ function convertAndFinish({ root, dir }, outstanding) {
   assert.deepEqual(treeOf(dir), settled);
 }
 
-test('a v4.0 project stopped mid-plan converts and runs to phase complete', () => {
-  convertAndFinish(v40(1, 2, true), ['PLAN-2.md', 'PLAN-3.md']);
+test('a v4.0 project stopped mid-plan converts and runs to phase complete', (t) => {
+  convertAndFinish(v40(t, 1, 2, true), ['PLAN-2.md', 'PLAN-3.md']);
 });
 
-test('a v4.0 project stopped between plans converts and runs to phase complete', () => {
-  convertAndFinish(v40(2, 3, false), ['PLAN-3.md']);
+test('a v4.0 project stopped between plans converts and runs to phase complete', (t) => {
+  convertAndFinish(v40(t, 2, 3, false), ['PLAN-3.md']);
 });

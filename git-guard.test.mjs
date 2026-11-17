@@ -5,10 +5,10 @@
 // git-segments.test.mjs. This file tests the HOOK: that a reading reaches the
 // permission prompt, which is the guard's only observable (D-09). A defect
 // proven only at the reader level is not proven to reach a decision.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +17,16 @@ import { treeOf, v40Project } from './planning.test.mjs';
 const GUARD = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'git-guard.mjs');
 
 // Hermetic global config (never read the dev's real one).
-const NO_GLOBAL = join(mkdtempSync(join(tmpdir(), 'cad-guard-')), 'no-global.json');
+const NO_GLOBAL_ROOT = mkdtempSync(join(tmpdir(), 'cad-guard-'));
+const NO_GLOBAL = join(NO_GLOBAL_ROOT, 'no-global.json');
+after(() => rmSync(NO_GLOBAL_ROOT, { recursive: true, force: true }));
+
+/** A mkdtemp root that goes when test `t` ends. */
+function tmp(t, prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
 
 // Fixture git calls must never read the dev's global/system git config
 // (commit.gpgsign, init.defaultBranch hooks, ... would break the fixtures).
@@ -44,8 +53,8 @@ function guard(command, cwd) {
 }
 
 /** A Cadence project fixture: git repo on `branch` with a .planning dir. */
-function project(branch, config) {
-  const dir = mkdtempSync(join(tmpdir(), 'cad-guard-repo-'));
+function project(t, branch, config) {
+  const dir = tmp(t, 'cad-guard-repo-');
   git(['-C', dir, 'init', '-q', '-b', branch]);
   writeFileSync(join(dir, 'f.txt'), 'x');
   git(['-C', dir, 'add', '.']);
@@ -58,8 +67,8 @@ function project(branch, config) {
 
 // --- Scope. -----------------------------------------------------------------
 
-test('run against an unstamped v4.0 project it leaves .planning byte-identical and exits 0', () => {
-  const dir = v40Project();
+test('run against an unstamped v4.0 project it leaves .planning byte-identical and exits 0', (t) => {
+  const dir = v40Project(t);
   const root = dirname(dir);
   git(['-C', root, 'init', '-q', '-b', 'main']);
   const before = treeOf(dir);
@@ -74,17 +83,17 @@ test('run against an unstamped v4.0 project it leaves .planning byte-identical a
   assert.deepEqual(treeOf(dir), before);
 });
 
-test('silent outside a Cadence project', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'cad-guard-plain-'));
+test('silent outside a Cadence project', (t) => {
+  const dir = tmp(t, 'cad-guard-plain-');
   assert.equal(guard('git push origin main', dir), null);
 });
 
-test('silent for non-git commands inside a project', () => {
-  assert.equal(guard('ls -la', project('main')), null);
+test('silent for non-git commands inside a project', (t) => {
+  assert.equal(guard('ls -la', project(t, 'main')), null);
 });
 
-test('guard applies from a subdirectory of the project (walk-up)', () => {
-  const dir = project('main');
+test('guard applies from a subdirectory of the project (walk-up)', (t) => {
+  const dir = project(t, 'main');
   const sub = join(dir, 'src', 'deep');
   mkdirSync(sub, { recursive: true });
   const d = guard('git commit -m "x"', sub);
@@ -92,9 +101,9 @@ test('guard applies from a subdirectory of the project (walk-up)', () => {
   assert.match(d.permissionDecisionReason, /protected/);
 });
 
-test('walk-up stops at a repo root without .planning (still not policed)', () => {
+test('walk-up stops at a repo root without .planning (still not policed)', (t) => {
   // A plain repo whose PARENT happens to contain .planning must not be policed.
-  const outer = mkdtempSync(join(tmpdir(), 'cad-guard-outer-'));
+  const outer = tmp(t, 'cad-guard-outer-');
   mkdirSync(join(outer, '.planning'));
   const inner = join(outer, 'other-repo');
   mkdirSync(inner);
@@ -110,8 +119,8 @@ test('walk-up stops at a repo root without .planning (still not policed)', () =>
 // `.planning/` after the commit, so it is untracked and no checkout of the
 // project carries it - the walk has to climb to find it.
 
-test('git push from a linked worktree beneath the project asks', () => {
-  const dir = project('main');
+test('git push from a linked worktree beneath the project asks', (t) => {
+  const dir = project(t, 'main');
   const wt = join(dir, '.claude', 'worktrees', 'agent-x');
   git(['-C', dir, 'worktree', 'add', '-q', '-b', 'agent-x', wt]);
   const d = guard('git push origin x', wt);
@@ -120,9 +129,9 @@ test('git push from a linked worktree beneath the project asks', () => {
   assert.match(d.permissionDecisionReason, /cad-land/);
 });
 
-test('git push from a submodule beneath the project asks', () => {
-  const dir = project('main');
-  const sub = mkdtempSync(join(tmpdir(), 'cad-guard-sub-'));
+test('git push from a submodule beneath the project asks', (t) => {
+  const dir = project(t, 'main');
+  const sub = tmp(t, 'cad-guard-sub-');
   git(['-C', sub, 'init', '-q', '-b', 'main']);
   writeFileSync(join(sub, 's.txt'), 's');
   git(['-C', sub, 'add', '.']);
@@ -135,56 +144,56 @@ test('git push from a submodule beneath the project asks', () => {
   assert.equal(d.permissionDecision, 'ask');
 });
 
-test('a worktree created OUTSIDE the project stays unguarded (D-03)', () => {
-  const dir = project('main');
-  const wt = join(mkdtempSync(join(tmpdir(), 'cad-guard-away-')), 'wt');
+test('a worktree created OUTSIDE the project stays unguarded (D-03)', (t) => {
+  const dir = project(t, 'main');
+  const wt = join(tmp(t, 'cad-guard-away-'), 'wt');
   git(['-C', dir, 'worktree', 'add', '-q', '-b', 'away', wt]);
   assert.equal(guard('git push origin x', wt), null);
 });
 
-test('a commit from a linked worktree is judged exactly as before: silent', () => {
+test('a commit from a linked worktree is judged exactly as before: silent', (t) => {
   // The commit rail keeps its own lookup, so it does not start judging worktree
   // commits even on a branch the project lists as protected.
-  const dir = project('main', { git: { protected_branches: ['agent-x'] } });
+  const dir = project(t, 'main', { git: { protected_branches: ['agent-x'] } });
   const wt = join(dir, '.claude', 'worktrees', 'agent-x');
   git(['-C', dir, 'worktree', 'add', '-q', '-b', 'agent-x', wt]);
   assert.equal(guard('git commit -m x', wt), null);
 });
 
-test('git push always asks (publishing is /cad-land\'s call)', () => {
-  const d = guard('git push origin feature', project('feature'));
+test('git push always asks (publishing is /cad-land\'s call)', (t) => {
+  const d = guard('git push origin feature', project(t, 'feature'));
   assert.equal(d.hookEventName, 'PreToolUse'); // the harness routes on this
   assert.equal(d.permissionDecision, 'ask');
   assert.match(d.permissionDecisionReason, /cad-land/);
 });
 
-test('auto_close true does not exempt any push - every push still asks', () => {
+test('auto_close true does not exempt any push - every push still asks', (t) => {
   // The direct inversion of the removed exemption: git-guard carries NO push
   // exemption. Even the exact shape that once passed silently under repo
   // auto_close now asks. cad-land's sanctioned publish runs through the
   // git-publish seam as a subprocess argv push this Bash hook never sees.
-  const dir = project('cadence/v1.1.0-rc.2', { git: { auto_close: true } });
+  const dir = project(t, 'cadence/v1.1.0-rc.2', { git: { auto_close: true } });
   const d = guard('git push -u origin cadence/v1.1.0-rc.2', dir);
   assert.notEqual(d, null);
   assert.equal(d.permissionDecision, 'ask');
 });
 
-test('compound command still catches the push half', () => {
-  const d = guard('git add . && git push', project('feature'));
+test('compound command still catches the push half', (t) => {
+  const d = guard('git add . && git push', project(t, 'feature'));
   assert.equal(d.permissionDecision, 'ask');
 });
 
-test('global git options are skipped when finding the subcommand', () => {
-  const d = guard('git -C . -c user.name=t push origin x', project('feature'));
+test('global git options are skipped when finding the subcommand', (t) => {
+  const d = guard('git -C . -c user.name=t push origin x', project(t, 'feature'));
   assert.equal(d.permissionDecision, 'ask');
 });
 
-test('git stash push is not a publish (the verb is stash)', () => {
-  assert.equal(guard('git stash push -m wip', project('main')), null);
+test('git stash push is not a publish (the verb is stash)', (t) => {
+  assert.equal(guard('git stash push -m wip', project(t, 'main')), null);
 });
 
-test('push as an argument or inside quotes never fires the rail', () => {
-  const p = project('main');
+test('push as an argument or inside quotes never fires the rail', (t) => {
+  const p = project(t, 'main');
   assert.equal(guard('git log --grep "push"', p), null);
   assert.equal(guard('git log --grep push', p), null);
   assert.equal(guard('echo "git push"', p), null);
@@ -192,78 +201,78 @@ test('push as an argument or inside quotes never fires the rail', () => {
 
 // --- Rail 1: the protected-branch commit guard, the only deny surface. ------
 
-test('commit on a protected branch asks by default, silent on a task branch', () => {
-  const d = guard('git commit -m "x"', project('main'));
+test('commit on a protected branch asks by default, silent on a task branch', (t) => {
+  const d = guard('git commit -m "x"', project(t, 'main'));
   assert.equal(d.permissionDecision, 'ask');
   assert.match(d.permissionDecisionReason, /protected/);
-  assert.equal(guard('git commit -m "x"', project('improve/thing')), null);
+  assert.equal(guard('git commit -m "x"', project(t, 'improve/thing')), null);
 });
 
-test('git.on_protected=refuse denies; =allow stays silent', () => {
+test('git.on_protected=refuse denies; =allow stays silent', (t) => {
   const refuse = guard('git commit -m "x"',
-    project('main', { git: { on_protected: 'refuse' } }));
+    project(t, 'main', { git: { on_protected: 'refuse' } }));
   assert.equal(refuse.permissionDecision, 'deny');
   assert.equal(guard('git commit -m "x"',
-    project('main', { git: { on_protected: 'allow' } })), null);
+    project(t, 'main', { git: { on_protected: 'allow' } })), null);
 });
 
-test('on_protected "deny" is an alias of refuse, not a silent soft-ask (#38)', () => {
+test('on_protected "deny" is an alias of refuse, not a silent soft-ask (#38)', (t) => {
   const d = guard('git commit -m "x"',
-    project('main', { git: { on_protected: 'deny' } }));
+    project(t, 'main', { git: { on_protected: 'deny' } }));
   assert.equal(d.permissionDecision, 'deny');
 });
 
-test('a string protected_branches guards THAT branch, not the default list (#38)', () => {
+test('a string protected_branches guards THAT branch, not the default list (#38)', (t) => {
   // "release" (string, not array) is an easy hand-edit; honor it instead of
   // silently reverting to ['main','master'].
   const d = guard('git commit -m "x"',
-    project('release', { git: { protected_branches: 'release' } }));
+    project(t, 'release', { git: { protected_branches: 'release' } }));
   assert.equal(d.permissionDecision, 'ask');
   assert.equal(guard('git commit -m "x"',
-    project('main', { git: { protected_branches: 'release' } })), null);
+    project(t, 'main', { git: { protected_branches: 'release' } })), null);
 });
 
-test('an EMPTY protected_branches list still means nothing is protected (D-09)', () => {
+test('an EMPTY protected_branches list still means nothing is protected (D-09)', (t) => {
   // `[]` is the user saying "protect nothing"; it must never fall through to
   // the default ['main','master'], which would re-protect main behind their
   // back. A commit on main under it is unguarded.
   assert.equal(guard('git commit -m "x"',
-    project('main', { git: { protected_branches: [] } })), null);
+    project(t, 'main', { git: { protected_branches: [] } })), null);
   assert.equal(guard('git commit -m "x"',
-    project('main', { git: { protected_branches: [], on_protected: 'refuse' } })), null);
+    project(t, 'main', { git: { protected_branches: [], on_protected: 'refuse' } })), null);
 });
 
-test('a protected_branches naming NO branch guards the default list (GRD-01)', () => {
+test('a protected_branches naming NO branch guards the default list (GRD-01)', (t) => {
   // The hole this closes: `""` used to resolve to [""], a list that reads as
   // configured and matches no branch, so a commit on main came back null -
   // setting the key REMOVED the protection it names. A value naming no branch
   // is a typo (D-02), so the default list applies and main is guarded again.
   const ask = guard('git commit -m "x"',
-    project('main', { git: { protected_branches: '' } }));
+    project(t, 'main', { git: { protected_branches: '' } }));
   assert.equal(ask.permissionDecision, 'ask');
   assert.match(ask.permissionDecisionReason, /"main" is a protected branch/);
   const deny = guard('git commit -m "x"',
-    project('main', { git: { protected_branches: '', on_protected: 'refuse' } }));
+    project(t, 'main', { git: { protected_branches: '', on_protected: 'refuse' } }));
   assert.equal(deny.permissionDecision, 'deny');
   // The array spelling of the same hole: one grammar reached two ways (D-01).
   const arr = guard('git commit -m "x"',
-    project('main', { git: { protected_branches: [''] } }));
+    project(t, 'main', { git: { protected_branches: [''] } }));
   assert.equal(arr.permissionDecision, 'ask');
   assert.match(arr.permissionDecisionReason, /"main" is a protected branch/);
 });
 
-test('custom protected_branches list is honored', () => {
+test('custom protected_branches list is honored', (t) => {
   const d = guard('git commit -m "x"',
-    project('release', { git: { protected_branches: ['release'] } }));
+    project(t, 'release', { git: { protected_branches: ['release'] } }));
   assert.equal(d.permissionDecision, 'ask');
   assert.equal(guard('git commit -m "x"',
-    project('main', { git: { protected_branches: ['release'] } })), null);
+    project(t, 'main', { git: { protected_branches: ['release'] } })), null);
 });
 
-test('a commit message naming the push rail is a commit, not a push', () => {
+test('a commit message naming the push rail is a commit, not a push', (t) => {
   // Only the verb is read, so `push` as message content cannot reach rail 3.
   const d = guard('git commit -m "fix the push rail"',
-    project('main', { git: { on_protected: 'refuse' } }));
+    project(t, 'main', { git: { on_protected: 'refuse' } }));
   assert.equal(d.permissionDecision, 'deny');
   assert.match(d.permissionDecisionReason, /protected branch/);
 });
@@ -275,8 +284,8 @@ test('a commit message naming the push rail is a commit, not a push', () => {
 // members of. Anchoring detection to the command word makes every row below
 // silent up front, so there is one rule where there were two and no
 // enumeration to maintain.
-test('a mention or a read-only search is silent, so no deny gate is needed', () => {
-  const p = project('main', { git: { on_protected: 'refuse' } });
+test('a mention or a read-only search is silent, so no deny gate is needed', (t) => {
+  const p = project(t, 'main', { git: { on_protected: 'refuse' } });
   for (const command of [
     'rg -n "git push" .',
     'rg -t sh "git commit"',
@@ -296,9 +305,9 @@ test('a mention or a read-only search is silent, so no deny gate is needed', () 
 // and a future reader does not mistake any of them for an oversight. The
 // tokenizer that saw them cost 840 lines, an escape surface that never stopped
 // producing findings, and a hook OOM that failed OPEN. references/git-publish.md rail 3
-// and the CHANGELOG-v1-v2.md entry that removed the parser carry the same list.
-test('shapes the anchored reader declines to see (stated cost, not an oversight)', () => {
-  const p = project('feature', { git: { on_protected: 'refuse' } });
+// and the docs/history/CHANGELOG-v1-v2.md entry that removed the parser carry the same list.
+test('shapes the anchored reader declines to see (stated cost, not an oversight)', (t) => {
+  const p = project(t, 'feature', { git: { on_protected: 'refuse' } });
   for (const command of [
     'bash -c "git push origin main"',           // shell wrapper
     'sh -c \'git push origin main\'',
@@ -324,31 +333,31 @@ test('malformed stdin exits 0 with no output (guard never blocks work)', () => {
   assert.equal(guardRaw('not json {'), '');
 });
 
-test('payload without a command stays silent inside a project', () => {
-  const dir = project('main');
+test('payload without a command stays silent inside a project', (t) => {
+  const dir = project(t, 'main');
   assert.equal(guardRaw(JSON.stringify({ tool_input: {}, cwd: dir })), '');
 });
 
-test('commit guard degrades silently when .planning has no git repo', () => {
+test('commit guard degrades silently when .planning has no git repo', (t) => {
   // planningRoot finds the project, but `git rev-parse` fails - the guard
   // must swallow that and never block (a broken guard blocks nothing).
-  const dir = mkdtempSync(join(tmpdir(), 'cad-guard-norepo-'));
+  const dir = tmp(t, 'cad-guard-norepo-');
   mkdirSync(join(dir, '.planning'));
   assert.equal(guard('git commit -m "x"', dir), null);
 });
 
-test('detached HEAD is not a protected branch (rev-parse says HEAD)', () => {
-  const dir = project('main');
+test('detached HEAD is not a protected branch (rev-parse says HEAD)', (t) => {
+  const dir = project(t, 'main');
   git(['-C', dir, 'checkout', '-q', '--detach']);
   assert.equal(guard('git commit -m "x"', dir), null);
 });
 
-test('the payload size that OOMed the deleted reader still decides', () => {
+test('the payload size that OOMed the deleted reader still decides', (t) => {
   // The deleted reader was O(K x N) in memory and aborted (SIGABRT, no stdout)
   // at 280KB. This hook FAILS OPEN, so that abort let a real push run
   // unprompted - the guard's worst failure mode reached by its own input. Here
   // the same size decides normally, through the real hook.
-  const p = project('feature');
+  const p = project(t, 'feature');
   const big = 'git clean -fd; '.repeat(24000) + 'git push origin main';
   assert.ok(big.length > 280_000, 'fixture must exceed the measured OOM point');
   const d = guard(big, p);
@@ -362,16 +371,16 @@ test('the payload size that OOMed the deleted reader still decides', () => {
 // read as "no config" and the guard decided from defaults in silence.
 
 /** A project whose repo config layer is RAW text - here, unparseable. */
-function tornProject(branch, raw = '{') {
-  const dir = project(branch);
+function tornProject(t, branch, raw = '{') {
+  const dir = project(t, branch);
   writeFileSync(join(dir, '.planning', 'config.json'), raw);
   return dir;
 }
 
-test('a torn config asks on a NON-protected branch, naming the parse failure', () => {
+test('a torn config asks on a NON-protected branch, naming the parse failure', (t) => {
   // The case worth catching: keying this to a protected-branch hit would miss
   // exactly the user whose own custom list is what was lost.
-  const dir = tornProject('feature/x');
+  const dir = tornProject(t, 'feature/x');
   const d = guard('git commit -m x', dir);
   assert.equal(d.permissionDecision, 'ask');
   assert.match(d.permissionDecisionReason, /failed to parse/);
@@ -383,8 +392,8 @@ test('a torn config asks on a NON-protected branch, naming the parse failure', (
   `reason must name the repo layer: ${d.permissionDecisionReason}`);
 });
 
-test('a torn config asks ONCE on a protected branch, not twice', () => {
-  const dir = tornProject('main');
+test('a torn config asks ONCE on a protected branch, not twice', (t) => {
+  const dir = tornProject(t, 'main');
   const stdout = guardRaw(JSON.stringify({ tool_input: { command: 'git commit -m x' }, cwd: dir }));
   assert.equal(stdout.split('\n').filter(Boolean).length, 1);
   const d = JSON.parse(stdout).hookSpecificOutput;
@@ -392,28 +401,28 @@ test('a torn config asks ONCE on a protected branch, not twice', () => {
   assert.match(d.permissionDecisionReason, /failed to parse/);
 });
 
-test('on_protected: allow with a torn layer still asks - the value was not read', () => {
+test('on_protected: allow with a torn layer still asks - the value was not read', (t) => {
   // `allow` here can only come from the DEFAULTS, since the layer carrying it
   // is the one that did not parse. Silence would be asserting a setting nobody
   // could read.
-  const dir = tornProject('main', '{ "git": { "on_protected": "allow" ');
+  const dir = tornProject(t, 'main', '{ "git": { "on_protected": "allow" ');
   const d = guard('git commit -m x', dir);
   assert.equal(d.permissionDecision, 'ask');
   assert.match(d.permissionDecisionReason, /failed to parse/);
 });
 
-test('a torn layer never DENIES - fail-open stands', () => {
-  const dir = tornProject('main', '{ "git": { "on_protected": "refuse" ');
+test('a torn layer never DENIES - fail-open stands', (t) => {
+  const dir = tornProject(t, 'main', '{ "git": { "on_protected": "refuse" ');
   assert.equal(guard('git commit -m x', dir).permissionDecision, 'ask');
 });
 
-test('a well-formed config on a non-protected branch is still silent', () => {
-  assert.equal(guard('git commit -m x', project('feature/x', { git: {} })), null);
-  assert.equal(guard('git commit -m x', project('feature/x')), null);
+test('a well-formed config on a non-protected branch is still silent', (t) => {
+  assert.equal(guard('git commit -m x', project(t, 'feature/x', { git: {} })), null);
+  assert.equal(guard('git commit -m x', project(t, 'feature/x')), null);
 });
 
-test('the push rail is unchanged by a torn layer', () => {
-  const dir = tornProject('feature/x');
+test('the push rail is unchanged by a torn layer', (t) => {
+  const dir = tornProject(t, 'feature/x');
   const d = guard('git push', dir);
   assert.equal(d.permissionDecision, 'ask');
   assert.match(d.permissionDecisionReason, /publishing is/);
@@ -429,16 +438,16 @@ function guardWithGlobal(command, cwd, gpath) {
   return stdout ? JSON.parse(stdout).hookSpecificOutput : null;
 }
 
-test('a torn USER-GLOBAL layer asks too, naming that layer - it carries the same keys', () => {
+test('a torn USER-GLOBAL layer asks too, naming that layer - it carries the same keys', (t) => {
   // The live defect: the arm matched the REPO layer's path only, so a torn
   // ~/.claude/cadence/config.json - the layer that most often carries
   // protected_branches and on_protected - decided from DEFAULTS in silence.
   // The path here shares nothing with the repo layer, which is the only shape
   // that separates the two implementations: a conflating
   // `includes(repoLayer)` matches nothing and stays silent.
-  const dir = project('feature/x', { git: { protected_branches: ['main'] } });
+  const dir = project(t, 'feature/x', { git: { protected_branches: ['main'] } });
   const repoLayer = join(dir, '.planning', 'config.json');
-  const gpath = join(mkdtempSync(join(tmpdir(), 'cad-guard-elsewhere-')), 'global.json');
+  const gpath = join(tmp(t, 'cad-guard-elsewhere-'), 'global.json');
   assert.ok(!gpath.includes(repoLayer) && !repoLayer.includes(gpath)); // premise, stated
   writeFileSync(gpath, '{ "git": { "protected_branches": ');
   const d = guardWithGlobal('git commit -m x', dir, gpath);
@@ -448,12 +457,12 @@ test('a torn USER-GLOBAL layer asks too, naming that layer - it carries the same
     `reason must name the torn GLOBAL layer: ${d.permissionDecisionReason}`);
 });
 
-test('a torn global layer asks on `release` too - the list that would have named it is gone', () => {
+test('a torn global layer asks on `release` too - the list that would have named it is gone', (t) => {
   // No repo layer at all, so `release` is non-protected under the DEFAULTS -
   // and the file that could have protected it is the unreadable one. Silence
   // here is the commit landing unguarded.
-  const dir = project('release');
-  const gpath = join(mkdtempSync(join(tmpdir(), 'cad-guard-elsewhere2-')), 'global.json');
+  const dir = project(t, 'release');
+  const gpath = join(tmp(t, 'cad-guard-elsewhere2-'), 'global.json');
   writeFileSync(gpath, '{');
   const d = guardWithGlobal('git commit -m x', dir, gpath);
   assert.equal(d.permissionDecision, 'ask');
@@ -461,14 +470,14 @@ test('a torn global layer asks on `release` too - the list that would have named
     `reason must name the torn GLOBAL layer: ${d.permissionDecisionReason}`);
 });
 
-test('a torn GLOBAL layer whose path merely PREFIXES the repo layer asks as itself', () => {
+test('a torn GLOBAL layer whose path merely PREFIXES the repo layer asks as itself', (t) => {
   // The ANTI-CONFLATION case, kept from when this arm was repo-only. mergeLayers
   // warnings are flat strings with no layer field, so a bare
   // `includes(repoLayer)` reads THIS global-layer warning as a torn REPO layer.
   // Both layers now ask, so the decision no longer separates them - the REASON
   // does: it must name `config.json.global`, the file that actually tore, and
   // must not diagnose the repo layer, which is absent and parsed nothing.
-  const dir = project('feature/x');
+  const dir = project(t, 'feature/x');
   const repoLayer = join(dir, '.planning', 'config.json');
   const gpath = `${repoLayer}.global`;
   assert.ok(gpath.startsWith(repoLayer)); // the premise, stated not assumed
@@ -481,14 +490,14 @@ test('a torn GLOBAL layer whose path merely PREFIXES the repo layer asks as itse
     `reason must not claim the repo layer tore: ${d.permissionDecisionReason}`);
 });
 
-test('a torn repo layer never CANCELS a deny the global layer configured', () => {
+test('a torn repo layer never CANCELS a deny the global layer configured', (t) => {
   // The ordering hazard: the torn arm returns `ask`, so putting it in front of
   // the protected-branch decision would turn a configured hard block into a
   // soft ask exactly when the repo layer is the unreadable one. The decision
   // stays `deny` and gains the parse reason.
-  const gpath = join(mkdtempSync(join(tmpdir(), 'cad-guard-g-')), 'global.json');
+  const gpath = join(tmp(t, 'cad-guard-g-'), 'global.json');
   writeFileSync(gpath, JSON.stringify({ git: { on_protected: 'refuse' } }));
-  const dir = tornProject('main');
+  const dir = tornProject(t, 'main');
   const stdout = execFileSync('node', [GUARD], {
     encoding: 'utf8',
     input: JSON.stringify({ tool_input: { command: 'git commit -m x' }, cwd: dir }),
@@ -565,13 +574,13 @@ test('census: no gate value reaches the protected-branch guard (D-11)', () => {
     + 'D-11 forbids.');
 });
 
-test('a deferred gate in the config layer changes no guard decision', () => {
+test('a deferred gate in the config layer changes no guard decision', (t) => {
   // The behavioural half: the same protected-branch commit, once under a bare
   // config and once under a config that ALSO pins a deferred gate on the
   // trigger whose findings this phase queues. The guard reads the same merged
   // layer both times, so "unreached" has to be observable in the decision.
-  const bare = guard('git commit -m "x"', project('main', { git: {} }));
-  const withGate = guard('git commit -m "x"', project('main', {
+  const bare = guard('git commit -m "x"', project(t, 'main', { git: {} }));
+  const withGate = guard('git commit -m "x"', project(t, 'main', {
     git: {},
     review: { triggers: { risk_surface: { gate: 'deferred' } } },
   }));
@@ -581,7 +590,7 @@ test('a deferred gate in the config layer changes no guard decision', () => {
 
   // And the silent arm stays silent: a gate value cannot manufacture a rail on
   // a task branch either.
-  assert.equal(guard('git commit -m "x"', project('improve/thing', {
+  assert.equal(guard('git commit -m "x"', project(t, 'improve/thing', {
     review: { triggers: { risk_surface: { gate: 'deferred' } } },
   })), null);
 });
@@ -589,59 +598,59 @@ test('a deferred gate in the config layer changes no guard decision', () => {
 // --- The commit rail follows `-C` to the repository the commit lands in. ----
 
 /** A plain git repo, not a Cadence project, on `branch`. */
-function scratch(branch) {
-  const dir = mkdtempSync(join(tmpdir(), 'cad-guard-scratch-'));
+function scratch(t, branch) {
+  const dir = tmp(t, 'cad-guard-scratch-');
   git(['-C', dir, 'init', '-q', '-b', branch]);
   return dir;
 }
 
-test('-C into a scratch repo on main is silent, even from a project on main', () => {
-  const s = scratch('main');
-  assert.equal(guard(`git -C ${s} commit -q --allow-empty -m base`, project('main')), null);
-  assert.equal(guard(`git -C "${s}" commit -m x`, project('main')), null);
-  assert.equal(guard(`git -C '${s}' commit -m x`, project('main')), null);
+test('-C into a scratch repo on main is silent, even from a project on main', (t) => {
+  const s = scratch(t, 'main');
+  assert.equal(guard(`git -C ${s} commit -q --allow-empty -m base`, project(t, 'main')), null);
+  assert.equal(guard(`git -C "${s}" commit -m x`, project(t, 'main')), null);
+  assert.equal(guard(`git -C '${s}' commit -m x`, project(t, 'main')), null);
 });
 
-test('-C into a Cadence project on main asks, from a project on a task branch', () => {
-  const target = project('main');
-  const d = guard(`git -C ${target} commit -m x`, project('improve/thing'));
+test('-C into a Cadence project on main asks, from a project on a task branch', (t) => {
+  const target = project(t, 'main');
+  const d = guard(`git -C ${target} commit -m x`, project(t, 'improve/thing'));
   assert.equal(d.permissionDecision, 'ask');
   assert.match(d.permissionDecisionReason, /"main" is a protected branch/);
 });
 
-test('-C into a project on a task branch is silent, from a project on main', () => {
-  const target = project('improve/thing');
-  assert.equal(guard(`git -C ${target} commit -m x`, project('main')), null);
+test('-C into a project on a task branch is silent, from a project on main', (t) => {
+  const target = project(t, 'improve/thing');
+  assert.equal(guard(`git -C ${target} commit -m x`, project(t, 'main')), null);
 });
 
-test('-C applies cumulatively, as git applies it', () => {
-  const target = project('main');
+test('-C applies cumulatively, as git applies it', (t) => {
+  const target = project(t, 'main');
   const d = guard(`git -C ${dirname(target)} -C ${target.slice(dirname(target).length + 1)} commit -m x`,
-    project('improve/thing'));
+    project(t, 'improve/thing'));
   assert.equal(d.permissionDecision, 'ask');
 });
 
-test('an unresolvable -C keeps reading the session directory, and says so', () => {
-  const d = guard('git -C "$S" commit -m x', project('main'));
+test('an unresolvable -C keeps reading the session directory, and says so', (t) => {
+  const d = guard('git -C "$S" commit -m x', project(t, 'main'));
   assert.equal(d.permissionDecision, 'ask');
   assert.match(d.permissionDecisionReason, /cannot tell which repository `git -C "\$S"` commits in/);
   assert.match(d.permissionDecisionReason, /"main" is a protected branch/);
   // No new prompt: the same command from a task branch stays silent, as before.
-  assert.equal(guard('git -C "$S" commit -m x', project('improve/thing')), null);
-  assert.equal(guard('git -C ~/x commit -m x', project('improve/thing')), null);
+  assert.equal(guard('git -C "$S" commit -m x', project(t, 'improve/thing')), null);
+  assert.equal(guard('git -C ~/x commit -m x', project(t, 'improve/thing')), null);
 });
 
-test('-C into a Cadence project is policed even from outside any project', () => {
-  const target = project('main');
-  const outside = mkdtempSync(join(tmpdir(), 'cad-guard-outside-'));
+test('-C into a Cadence project is policed even from outside any project', (t) => {
+  const target = project(t, 'main');
+  const outside = tmp(t, 'cad-guard-outside-');
   const d = guard(`git -C ${target} commit -m x`, outside);
   assert.equal(d.permissionDecision, 'ask');
   // and a push from outside any project stays silent, as before
   assert.equal(guard(`git -C ${target} push`, outside), null);
 });
 
-test('several commits in one command: a deny beats an ask', () => {
-  const refuse = project('main', { git: { on_protected: 'refuse' } });
-  const d = guard(`git commit -m a && git -C ${refuse} commit -m b`, project('main'));
+test('several commits in one command: a deny beats an ask', (t) => {
+  const refuse = project(t, 'main', { git: { on_protected: 'refuse' } });
+  const d = guard(`git commit -m a && git -C ${refuse} commit -m b`, project(t, 'main'));
   assert.equal(d.permissionDecision, 'deny');
 });

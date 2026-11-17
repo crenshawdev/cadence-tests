@@ -30,10 +30,10 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
  * `spelling`, plus a CONTEXT.md carrying `contexts[n]` acceptance criteria for
  * each phase named there (a phase absent from `contexts` gets no CONTEXT.md).
  */
-function criteriaTree(roadmapCounts, spelling, contexts = {}) {
+function criteriaTree(t, roadmapCounts, spelling, contexts = {}) {
   const dir = makeTree({
     roadmap: roadmapCounts.map((_, i) => ({ n: i + 1, name: `P${i + 1}` })),
-  });
+  }, t);
   let rm = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
   roadmapCounts.forEach((count, i) => {
     const list = Array.from({ length: count }, (_, k) => `${k + 1}. criterion ${k + 1}`).join('\n');
@@ -54,10 +54,10 @@ function criteriaTree(roadmapCounts, spelling, contexts = {}) {
 const BOTH_SPELLINGS = ['**Success Criteria:**', 'Success criteria:'];
 
 for (const spelling of BOTH_SPELLINGS) {
-  test(`criteria-size: under the floor and over the ceiling are both named, heading \`${spelling}\``, () => {
+  test(`criteria-size: under the floor and over the ceiling are both named, heading \`${spelling}\``, (t) => {
     // No --phase: every phase the roadmap declares, in one call - what
     // new-project and adopt need at their approval gate.
-    const dir = criteriaTree([1, 6, 3], spelling);
+    const dir = criteriaTree(t, [1, 6, 3], spelling);
     const r = run(['criteria-size', '--roadmap-min', '2', '--roadmap-max', '5'], dir);
     assert.equal(r.ok, true);
     assert.equal(r.within, false);
@@ -71,11 +71,11 @@ for (const spelling of BOTH_SPELLINGS) {
   });
 }
 
-test('criteria-size: an absent CONTEXT.md is not-found, never compared, and never a pass', () => {
+test('criteria-size: an absent CONTEXT.md is not-found, never compared, and never a pass', (t) => {
   // The absence-is-not-zero arm on the CONTEXT half: 0 criteria is under every
   // floor, so an unwritten CONTEXT would otherwise read as a phase that failed
   // the ceiling it was never measured against.
-  const dir = criteriaTree([3], 'Success criteria:');
+  const dir = criteriaTree(t, [3], 'Success criteria:');
   const r = run(['criteria-size', '--phase', '1', '--context-min', '3', '--context-max', '7'], dir);
   assert.equal(r.phases[0].context_found, false);
   assert.equal(r.phases[0].context_criteria, 0);
@@ -84,8 +84,8 @@ test('criteria-size: an absent CONTEXT.md is not-found, never compared, and neve
   assert.equal(r.within, null);
 });
 
-test('criteria-size: a CONTEXT that declared its criteria IS compared, both bounds', () => {
-  const dir = criteriaTree([3, 3], 'Success criteria:', { 1: 2, 2: 5 });
+test('criteria-size: a CONTEXT that declared its criteria IS compared, both bounds', (t) => {
+  const dir = criteriaTree(t, [3, 3], 'Success criteria:', { 1: 2, 2: 5 });
   const r = run(['criteria-size', '--context-min', '3', '--context-max', '7'], dir);
   assert.deepEqual(r.compared, ['context_min', 'context_max']);
   assert.deepEqual(r.over.map((o) => [o.phase, o.kind, o.measured]),
@@ -94,8 +94,8 @@ test('criteria-size: a CONTEXT that declared its criteria IS compared, both boun
   assert.equal(r.phases[1].context_criteria, 5);
 });
 
-test('criteria-size: no ceiling flags compares nothing and reports within: null', () => {
-  const dir = criteriaTree([1, 9], 'Success criteria:', { 1: 1 });
+test('criteria-size: no ceiling flags compares nothing and reports within: null', (t) => {
+  const dir = criteriaTree(t, [1, 9], 'Success criteria:', { 1: 1 });
   const r = run(['criteria-size'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.compared, []);
@@ -107,8 +107,8 @@ test('criteria-size: no ceiling flags compares nothing and reports within: null'
   assert.equal(r.roadmap_min, undefined);
 });
 
-test('criteria-size: a phase with no criteria heading is not-found, and a floor never fires on it', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'P1' }] });
+test('criteria-size: a phase with no criteria heading is not-found, and a floor never fires on it', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'P1' }] }, t);
   const r = run(['criteria-size', '--roadmap-min', '2'], dir);
   assert.equal(r.phases[0].roadmap_found, false);
   assert.equal(r.phases[0].roadmap_criteria, 0);
@@ -116,17 +116,17 @@ test('criteria-size: a phase with no criteria heading is not-found, and a floor 
   assert.equal(r.within, null);
 });
 
-test('criteria-size: a non-integer bound is bad-args, never a coerced comparison', () => {
-  const dir = criteriaTree([3], 'Success criteria:');
+test('criteria-size: a non-integer bound is bad-args, never a coerced comparison', (t) => {
+  const dir = criteriaTree(t, [3], 'Success criteria:');
   assert.equal(run(['criteria-size', '--roadmap-min', 'x'], dir).reason, 'bad-args');
   assert.equal(run(['criteria-size', '--phase', 'x'], dir).reason, 'bad-args');
 });
 
-test('plan-overlap: block-form files: lists intersect like inline ones (#48.1)', () => {
+test('plan-overlap: block-form files: lists intersect like inline ones (#48.1)', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
-  });
+  }, t);
   const pdir = join(dir, 'phases', '1');
   writeFileSync(join(pdir, 'PLAN-1.md'),
     '---\nphase: 1\nplan: 1\nrequirements: []\nfiles:\n  - src/a.rs\n  - src/shared.rs\n---\n# Plan 1\n');
@@ -138,11 +138,11 @@ test('plan-overlap: block-form files: lists intersect like inline ones (#48.1)',
   assert.equal(r.undeclared, undefined); // both plans declared files
 });
 
-test('plan-overlap: a comment line inside each files: block list does not truncate it - both share src/shared.rs (D-04 acceptance criterion)', () => {
+test('plan-overlap: a comment line inside each files: block list does not truncate it - both share src/shared.rs (D-04 acceptance criterion)', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
-  });
+  }, t);
   const pdir = join(dir, 'phases', '1');
   writeFileSync(join(pdir, 'PLAN-1.md'),
     '---\nphase: 1\nplan: 1\nrequirements: []\nfiles:\n  - src/a.rs\n  # shared with plan 2\n  - src/shared.rs\n---\n# Plan 1\n');
@@ -154,9 +154,9 @@ test('plan-overlap: a comment line inside each files: block list does not trunca
   assert.equal(r.undeclared, undefined);
 });
 
-test('audit + plan-overlap: a stray line BETWEEN two block ids is reported and skipped, not a terminator', () => {
-  const withStray = blockPlanTree('requirements:\n  - "#41"\n  this line is not an item\n  - "#46"\nfiles: []');
-  const clean = blockPlanTree('requirements:\n  - "#41"\n  - "#46"\nfiles: []');
+test('audit + plan-overlap: a stray line BETWEEN two block ids is reported and skipped, not a terminator', (t) => {
+  const withStray = blockPlanTree('requirements:\n  - "#41"\n  this line is not an item\n  - "#46"\nfiles: []', '', t);
+  const clean = blockPlanTree('requirements:\n  - "#41"\n  - "#46"\nfiles: []', '', t);
 
   const a = run(['audit'], withStray);
   assert.equal(a.ok, true);
@@ -177,18 +177,18 @@ test('audit + plan-overlap: a stray line BETWEEN two block ids is reported and s
   }]);
 });
 
-test('audit + plan-overlap: the frontmatter_issues diagnostic is not key-scoped', () => {
+test('audit + plan-overlap: the frontmatter_issues diagnostic is not key-scoped', (t) => {
   // A stray line under `requirements:` (which plan-overlap never reads) must
   // still reach plan-overlap's envelope - the diagnostic is whole-pass, not
   // per-key.
-  const underRequirements = blockPlanTree('requirements:\n  - "#41"\n  - "#46"\n  stray under requirements\nfiles: []');
+  const underRequirements = blockPlanTree('requirements:\n  - "#41"\n  - "#46"\n  stray under requirements\nfiles: []', '', t);
   const o1 = run(['plan-overlap', '--phase', '1'], underRequirements);
   assert.equal(o1.ok, true);
   assert.equal(o1.frontmatter_issues[0].issues.some((i) => i.code === 'unknown-line'), true);
 
   // A stray line between two INLINE keys - the shipped template shape, where
   // no block scan runs at all - must reach BOTH envelopes.
-  const betweenInline = blockPlanTree('requirements: ["#41", "#46"]\nstray between inline keys\nfiles: []');
+  const betweenInline = blockPlanTree('requirements: ["#41", "#46"]\nstray between inline keys\nfiles: []', '', t);
   const a = run(['audit'], betweenInline);
   assert.equal(a.ok, true);
   assert.equal(a.frontmatter_issues[0].issues.some((i) => i.code === 'unknown-line'), true);

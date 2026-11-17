@@ -4,7 +4,7 @@
 // what is here is one case per added primitive, and the builtins-only rule that keeps the hook path cheap.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync, symlinkSync, lstatSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync, rmSync, symlinkSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,24 +15,29 @@ import {
 } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const STORE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'lib', 'planning-store.mjs');
-const tmp = () => mkdtempSync(join(tmpdir(), 'cad-store-'));
+/** A fresh mkdtemp root, gone when test `t` ends. */
+const tmp = (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'cad-store-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  return root;
+};
 
-test('appendFile creates the file and then appends', () => {
-  const f = join(tmp(), 'a.jsonl');
+test('appendFile creates the file and then appends', (t) => {
+  const f = join(tmp(t), 'a.jsonl');
   appendFile(f, 'one\n');
   appendFile(f, 'two\n');
   assert.equal(readFileSync(f, 'utf8'), 'one\ntwo\n');
 });
 
-test('makeDir creates parents and accepts an existing directory', () => {
-  const d = join(tmp(), 'x', 'y', 'z');
+test('makeDir creates parents and accepts an existing directory', (t) => {
+  const d = join(tmp(t), 'x', 'y', 'z');
   makeDir(d);
   makeDir(d);
   assert.ok(existsSync(d));
 });
 
-test('movePath renames, and throws ENOENT for a missing source', () => {
-  const root = tmp();
+test('movePath renames, and throws ENOENT for a missing source', (t) => {
+  const root = tmp(t);
   writeFileSync(join(root, 'from'), 'body');
   movePath(join(root, 'from'), join(root, 'to'));
   assert.equal(readFileSync(join(root, 'to'), 'utf8'), 'body');
@@ -40,64 +45,64 @@ test('movePath renames, and throws ENOENT for a missing source', () => {
   assert.throws(() => movePath(join(root, 'from'), join(root, 'again')), { code: 'ENOENT' });
 });
 
-test('copyFile leaves the source in place', () => {
-  const root = tmp();
+test('copyFile leaves the source in place', (t) => {
+  const root = tmp(t);
   writeFileSync(join(root, 'from'), 'body');
   copyFile(join(root, 'from'), join(root, 'to'));
   assert.equal(readFileSync(join(root, 'to'), 'utf8'), 'body');
   assert.ok(existsSync(join(root, 'from')));
 });
 
-test('unlinkFile removes one file, and throws ENOENT when it is gone', () => {
-  const f = join(tmp(), 'gone');
+test('unlinkFile removes one file, and throws ENOENT when it is gone', (t) => {
+  const f = join(tmp(t), 'gone');
   writeFileSync(f, '');
   unlinkFile(f);
   assert.ok(!existsSync(f));
   assert.throws(() => unlinkFile(f), { code: 'ENOENT' });
 });
 
-test('removeTree removes a directory with contents', () => {
-  const d = join(tmp(), 'tree');
+test('removeTree removes a directory with contents', (t) => {
+  const d = join(tmp(t), 'tree');
   mkdirSync(join(d, 'inner'), { recursive: true });
   writeFileSync(join(d, 'inner', 'f'), 'x');
   removeTree(d);
   assert.ok(!existsSync(d));
 });
 
-test('writeFile overwrites, and writeFileNew refuses a file already there', () => {
-  const f = join(tmp(), 'w');
+test('writeFile overwrites, and writeFileNew refuses a file already there', (t) => {
+  const f = join(tmp(t), 'w');
   writeFile(f, 'one');
   writeFile(f, 'two');
   assert.equal(readFileSync(f, 'utf8'), 'two');
   assert.throws(() => writeFileNew(f, 'three'), { code: 'EEXIST' });
   assert.equal(readFileSync(f, 'utf8'), 'two');
-  const g = join(tmp(), 'g');
+  const g = join(tmp(t), 'g');
   writeFileNew(g, 'fresh');
   assert.equal(readFileSync(g, 'utf8'), 'fresh');
 });
 
-test('linkFile hard-links, and throws EEXIST when the path is taken', () => {
-  const root = tmp();
+test('linkFile hard-links, and throws EEXIST when the path is taken', (t) => {
+  const root = tmp(t);
   writeFileSync(join(root, 'live'), 'body');
   linkFile(join(root, 'live'), join(root, 'sibling'));
   assert.equal(readFileSync(join(root, 'sibling'), 'utf8'), 'body');
   assert.throws(() => linkFile(join(root, 'live'), join(root, 'sibling')), { code: 'EEXIST' });
 });
 
-test('statePath names state.json inside the records folder, never the planning root', () => {
-  const root = tmp();
+test('statePath names state.json inside the records folder, never the planning root', (t) => {
+  const root = tmp(t);
   assert.equal(statePath(root), join(recordsDir(root), 'state.json'));
 });
 
-test('recordsDir and recordsPath resolve inside one folder under the planning root', () => {
-  const root = tmp();
+test('recordsDir and recordsPath resolve inside one folder under the planning root', (t) => {
+  const root = tmp(t);
   assert.equal(dirname(recordsDir(root)), root);
   assert.equal(relative(recordsDir(root), recordsPath(root, 'trace.jsonl')), 'trace.jsonl');
   assert.equal(relative(recordsDir(root), recordsPath(root, 'deferred', '3')), join('deferred', '3'));
 });
 
-test('a phase\'s review and return paths sit in their own area of its records folder, live or archived', () => {
-  const root = tmp();
+test('a phase\'s review and return paths sit in their own area of its records folder, live or archived', (t) => {
+  const root = tmp(t);
   for (const phaseDir of [join(root, 'phases', '3'), join(root, 'phases', '_archive-v1', '3')]) {
     assert.equal(phaseRecordsDir(phaseDir), join(phaseDir, 'records'));
     assert.equal(phaseReportsDir(phaseDir), join(phaseDir, 'records', 'reports'));
@@ -110,31 +115,31 @@ test('a phase\'s review and return paths sit in their own area of its records fo
   assert.equal(existsSync(join(root, 'phases')), false);
 });
 
-test('a review or return name that would leave its area is refused with a throw', () => {
-  const phaseDir = join(tmp(), 'phases', '1');
+test('a review or return name that would leave its area is refused with a throw', (t) => {
+  const phaseDir = join(tmp(t), 'phases', '1');
   for (const bad of ['', '.', '..', 'a/b', '../x', 'a\\b', '/abs', 'a\0b']) {
     assert.throws(() => phaseReviewPath(phaseDir, bad), /not a file name/, JSON.stringify(bad));
     assert.throws(() => phaseReturnPath(phaseDir, bad), /not a file name/, JSON.stringify(bad));
   }
 });
 
-test('ensureRecordsDir creates the folder once, refuses a link, and never creates the planning root', () => {
-  const root = tmp();
+test('ensureRecordsDir creates the folder once, refuses a link, and never creates the planning root', (t) => {
+  const root = tmp(t);
   assert.deepEqual(ensureRecordsDir(root), { ok: true });
   assert.equal(lstatSync(recordsDir(root)).isDirectory(), true);
   assert.deepEqual(ensureRecordsDir(root), { ok: true });
 
-  const linked = tmp();
-  symlinkSync(tmp(), recordsDir(linked));
+  const linked = tmp(t);
+  symlinkSync(tmp(t), recordsDir(linked));
   assert.deepEqual(ensureRecordsDir(linked), { ok: false, reason: 'symlinked-records' });
 
-  const missing = join(tmp(), 'no-such-planning-root');
+  const missing = join(tmp(t), 'no-such-planning-root');
   assert.deepEqual(ensureRecordsDir(missing), { ok: false, reason: 'ENOENT' });
   assert.equal(existsSync(missing), false);
 });
 
-test('the records folder gets its .gitignore when created, once, and a hand-edited one is never overwritten', () => {
-  const root = tmp();
+test('the records folder gets its .gitignore when created, once, and a hand-edited one is never overwritten', (t) => {
+  const root = tmp(t);
   const ignore = recordsPath(root, '.gitignore');
   ensureRecordsDir(root);
   const written = readFileSync(ignore, 'utf8');
@@ -147,7 +152,7 @@ test('the records folder gets its .gitignore when created, once, and a hand-edit
   assert.equal(readFileSync(ignore, 'utf8'), '# mine\n');
 
   // a folder that already exists is not given a file on a later call, only a creation writes one
-  const old = tmp();
+  const old = tmp(t);
   mkdirSync(recordsDir(old));
   ensureRecordsDir(old);
   assert.equal(existsSync(recordsPath(old, '.gitignore')), false);

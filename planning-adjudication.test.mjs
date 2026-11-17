@@ -11,10 +11,10 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PLANNING, ensureRoadmap, run, isEntryFile } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap, run, isEntryFile, scratch } from './planning.test.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
@@ -31,10 +31,11 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
  * A scratch git repo holding `.planning/phases/<phase>/` and two commits.
  * Returns {repo, dir, base, head} - `base` is the FIRST commit's 7-char
  * abbreviation, deliberately, because that is what 44 of this repo's 52
- * receipts actually spell.
+ * receipts actually spell. `t`, the calling test's context, removes the repo
+ * when that test ends.
  */
-export function adjRepo({ phase = 2 } = {}) {
-  const repo = mkdtempSync(join(tmpdir(), 'cad-adj-'));
+export function adjRepo({ phase = 2 } = {}, t) {
+  const repo = scratch('cad-adj-', t);
   const git = (...args) => execFileSync('git', ['-C', repo, ...args],
     { encoding: 'utf8', stdio: 'pipe' }).trim();
   git('init', '-q');
@@ -123,8 +124,8 @@ function fixFilePayload(fixFile) {
   return p;
 }
 
-test('adjudication: fix_file naming an ignored file is accepted and stored', () => {
-  const { repo, dir, base } = adjRepo();
+test('adjudication: fix_file naming an ignored file is accepted and stored', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   writeFileSync(join(repo, '.gitignore'), 'local.cfg\n');
   writeFileSync(join(repo, 'local.cfg'), 'k=1\n');
   const payload = adjPayloadFile(repo, fixFilePayload('local.cfg'));
@@ -136,8 +137,8 @@ test('adjudication: fix_file naming an ignored file is accepted and stored', () 
   assert.equal('fix_commit' in rec.entries[0], false);
 });
 
-test('adjudication: fix_file naming a tracked file is refused with its reason and writes nothing', () => {
-  const { repo, dir, base } = adjRepo();
+test('adjudication: fix_file naming a tracked file is refused with its reason and writes nothing', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, fixFilePayload('src.js'));
   const r = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan',
     '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]);
@@ -147,8 +148,8 @@ test('adjudication: fix_file naming a tracked file is refused with its reason an
   assert.deepEqual(adjFiles(dir), []);
 });
 
-test('adjudication: the record lands beside the sibling REVIEW discriminator (AC1)', () => {
-  const { repo, dir, baseFull, headFull, base } = adjRepo();
+test('adjudication: the record lands beside the sibling REVIEW discriminator (AC1)', (t) => {
+  const { repo, dir, baseFull, headFull, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, adjPayload());
   const r = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan',
     '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]);
@@ -173,8 +174,8 @@ test('adjudication: the record lands beside the sibling REVIEW discriminator (AC
   assert.equal(rec.entries[0].claim, adjPayload().voices[0].returned.findings[0].claim);
 });
 
-test('adjudication: every entry carries full 40-char ids from a 7-char base and a literal HEAD (AC2)', () => {
-  const { repo, dir, base, baseFull, headFull } = adjRepo();
+test('adjudication: every entry carries full 40-char ids from a 7-char base and a literal HEAD (AC2)', (t) => {
+  const { repo, dir, base, baseFull, headFull } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, adjPayload());
   const r = adjRun(repo, dir, ['--phase', '2', '--trigger', 'risk_surface',
     '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]);
@@ -194,8 +195,8 @@ test('adjudication: every entry carries full 40-char ids from a 7-char base and 
   }
 });
 
-test('adjudication: a payload whose ruling paraphrases the claim is refused, no file written (AC2)', () => {
-  const { repo, dir, base } = adjRepo();
+test('adjudication: a payload whose ruling paraphrases the claim is refused, no file written (AC2)', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const bad = adjPayload();
   bad.voices[0].rulings[0].claim = 'x is reassigned';
   const payload = adjPayloadFile(repo, bad);
@@ -208,8 +209,8 @@ test('adjudication: a payload whose ruling paraphrases the claim is refused, no 
 });
 
 for (const spelling of ['../escaped', 'sub/plan-1', 'plan-1.json', '.', '-plan-1']) {
-  test(`adjudication: a --discriminator spelled ${JSON.stringify(spelling)} is refused with NO file created`, () => {
-    const { repo, dir, base } = adjRepo();
+  test(`adjudication: a --discriminator spelled ${JSON.stringify(spelling)} is refused with NO file created`, (t) => {
+    const { repo, dir, base } = adjRepo({}, t);
     const payload = adjPayloadFile(repo, adjPayload());
     const r = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan',
       '--discriminator', spelling, '--base', base, '--head', 'HEAD', '--payload', payload]);
@@ -224,8 +225,8 @@ for (const spelling of ['../escaped', 'sub/plan-1', 'plan-1.json', '.', '-plan-1
   });
 }
 
-test('adjudication: a --trigger carrying a path separator is refused the same way', () => {
-  const { repo, dir, base } = adjRepo();
+test('adjudication: a --trigger carrying a path separator is refused the same way', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, adjPayload());
   const r = adjRun(repo, dir, ['--phase', '2', '--trigger', '../../etc/plan',
     '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]);
@@ -235,8 +236,8 @@ test('adjudication: a --trigger carrying a path separator is refused the same wa
   assert.deepEqual(adjFiles(dir), []);
 });
 
-test('adjudication: an unresolvable --head is refused with no file created', () => {
-  const { repo, dir, base } = adjRepo();
+test('adjudication: an unresolvable --head is refused with no file created', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, adjPayload());
   const r = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan',
     '--discriminator', 'plan-1', '--base', base, '--head', 'no-such-ref', '--payload', payload]);
@@ -246,8 +247,8 @@ test('adjudication: an unresolvable --head is refused with no file created', () 
   assert.deepEqual(adjFiles(dir), []);
 });
 
-test('adjudication: a re-arm passes --round 2 and round one survives byte for byte', () => {
-  const { repo, dir, base } = adjRepo();
+test('adjudication: a re-arm passes --round 2 and round one survives byte for byte', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, adjPayload());
   const args = (extra) => ['--phase', '2', '--trigger', 'plan', '--discriminator', 'plan-1',
     '--base', base, '--head', 'HEAD', '--payload', payload, ...extra];
@@ -281,8 +282,8 @@ test('adjudication: a re-arm passes --round 2 and round one survives byte for by
     'round one\'s rulings are unchanged byte for byte');
 });
 
-test('adjudication: a second fire that forgot --round is REFUSED, not merged and not overwritten', () => {
-  const { repo, dir, base } = adjRepo();
+test('adjudication: a second fire that forgot --round is REFUSED, not merged and not overwritten', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, adjPayload());
   const args = ['--phase', '2', '--trigger', 'plan', '--discriminator', 'plan-1',
     '--base', base, '--head', 'HEAD', '--payload', payload];
@@ -302,9 +303,9 @@ test('adjudication: a second fire that forgot --round is REFUSED, not merged and
     'the existing record is untouched byte for byte');
 });
 
-test('adjudication: a second fire on a range-named discriminator is refused with no --round to pass', () => {
+test('adjudication: a second fire on a range-named discriminator is refused with no --round to pass', (t) => {
   // the range is the identity, so --round 2 here would mint a `-r2` name no receipt resolves
-  const { repo, dir, base, headFull } = adjRepo();
+  const { repo, dir, base, headFull } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, adjPayload());
   const args = ['--phase', '2', '--trigger', 'risk_surface',
     '--discriminator', `${base}-${headFull.slice(0, 7)}`,
@@ -317,8 +318,8 @@ test('adjudication: a second fire on a range-named discriminator is refused with
   assert.doesNotMatch(again.hint, /--round \d/);
 });
 
-test('adjudication: a phase directory that does not exist is refused rather than minted', () => {
-  const { repo, dir, base } = adjRepo();
+test('adjudication: a phase directory that does not exist is refused rather than minted', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, adjPayload());
   const r = adjRun(repo, dir, ['--phase', '9', '--trigger', 'plan',
     '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]);
@@ -327,14 +328,14 @@ test('adjudication: a phase directory that does not exist is refused rather than
   assert.deepEqual(readdirSync(join(dir, 'phases')), ['2']);
 });
 
-test('adjudication: --task lands the record in the task\'s own home (GH-227)', () => {
+test('adjudication: --task lands the record in the task\'s own home (GH-227)', (t) => {
   // /cad-task fires with --phase 0 deliberately - 0 is the one number no
   // roadmap phase carries - and writes its artifacts under its slug, so there
   // is no phases/0/ and there never will be. Before --task the two halves
   // disagreed by construction: the sibling REVIEW file landed under
   // tasks/<slug>/ and the record beside it was refused no-phase-dir, which left
   // a hand-append as the only way to settle a gate that BLOCKS by default.
-  const { repo, dir, base } = adjRepo();
+  const { repo, dir, base } = adjRepo({}, t);
   mkdirSync(join(dir, 'tasks', 'a-task-slug'), { recursive: true });
   const payload = adjPayloadFile(repo, adjPayload());
   const r = adjRun(repo, dir, ['--phase', '0', '--task', 'a-task-slug',
@@ -348,13 +349,13 @@ test('adjudication: --task lands the record in the task\'s own home (GH-227)', (
   assert.deepEqual(readdirSync(join(dir, 'phases')), ['2']);
 });
 
-test('adjudication: a task fire\'s record NAMES its slug in the body (D-07)', () => {
+test('adjudication: a task fire\'s record NAMES its slug in the body (D-07)', (t) => {
   // The directory path is not something a reader holding the parsed record
   // still has. Before this the body said `"phase": "0"` and nothing more, so
   // the only statement of what the fire settled was where the file happened to
   // sit - which is why the hand-written record this replaces decorated `phase`
   // as `"0 (task: <slug>)"`, a string a reader has to take back apart.
-  const { repo, dir, base } = adjRepo();
+  const { repo, dir, base } = adjRepo({}, t);
   mkdirSync(join(dir, 'tasks', 'a-task-slug'), { recursive: true });
   const payload = adjPayloadFile(repo, adjPayload());
   const r = adjRun(repo, dir, ['--phase', '0', '--task', 'a-task-slug',
@@ -368,11 +369,11 @@ test('adjudication: a task fire\'s record NAMES its slug in the body (D-07)', ()
   assert.equal(rec.phase, '0');
 });
 
-test('adjudication: a phase fire\'s record carries NO task key - absent, never empty (D-07)', () => {
+test('adjudication: a phase fire\'s record carries NO task key - absent, never empty (D-07)', (t) => {
   // Present-only-when-real: an empty string here would read as "a task fire
   // that lost its slug", and every reader would then owe a truthiness test
   // where an `in` check is the honest question.
-  const { repo, dir, base } = adjRepo();
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, adjPayload());
   const r = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan',
     '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD', '--payload', payload]);
@@ -381,12 +382,12 @@ test('adjudication: a phase fire\'s record carries NO task key - absent, never e
   assert.equal('task' in rec, false, 'a phase record grew a task key');
 });
 
-test('adjudication: --task naming no directory is refused by that name, not as a phase', () => {
+test('adjudication: --task naming no directory is refused by that name, not as a phase', (t) => {
   // The directory has to already exist, the same rule the phase homes take: a
   // seam that recorded a fire would otherwise mint a directory for a mistyped
   // slug. And the refusal names tasks/<slug>/, because "no phases/0/" sends the
   // reader to fix the wrong thing.
-  const { repo, dir, base } = adjRepo();
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, adjPayload());
   const r = adjRun(repo, dir, ['--phase', '0', '--task', 'never-written',
     '--trigger', 'risk_surface', '--discriminator', 'cad-task-abc1234',
@@ -397,11 +398,11 @@ test('adjudication: --task naming no directory is refused by that name, not as a
   assert.equal(existsSync(join(dir, 'tasks')), false, 'the home was minted');
 });
 
-test('adjudication: --task never falls back to a phase home that does exist', () => {
+test('adjudication: --task never falls back to a phase home that does exist', (t) => {
   // The fallback is the dangerous half. A task run is not a phase run with a
   // missing directory, so a slug that names nothing must refuse rather than put
   // a task's rulings into whichever phase directory happens to be there.
-  const { repo, dir, base } = adjRepo({ phase: 0 });
+  const { repo, dir, base } = adjRepo({ phase: 0 }, t);
   const payload = adjPayloadFile(repo, adjPayload());
   const r = adjRun(repo, dir, ['--phase', '0', '--task', 'never-written',
     '--trigger', 'risk_surface', '--discriminator', 'cad-task-abc1234',
@@ -412,11 +413,11 @@ test('adjudication: --task never falls back to a phase home that does exist', ()
     'a phase 0 that exists absorbed the task record');
 });
 
-test('adjudication: a --task that could reach outside its own home is refused', () => {
+test('adjudication: a --task that could reach outside its own home is refused', (t) => {
   // The slug reaches a DIRECTORY name, so it takes the same rail --trigger and
   // --discriminator take. A traversal or a separator here would write the
   // record wherever the caller pointed.
-  const { repo, dir, base } = adjRepo();
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, adjPayload());
   for (const slug of ['../escape', 'a/b', '.', '', '-leading']) {
     const r = adjRun(repo, dir, ['--phase', '0', '--task', slug,
@@ -427,14 +428,14 @@ test('adjudication: a --task that could reach outside its own home is refused', 
   }
 });
 
-test('adjudication: --phase 0 without --task is refused, even where phases/0 exists', () => {
+test('adjudication: --phase 0 without --task is refused, even where phases/0 exists', (t) => {
   // Phase 0 is the TASK's number - /cad-task fires with it precisely because no
   // roadmap phase carries it. Unenforced, a task fire that forgot --task fell
   // through to the ordinary phase branch, and a repo holding a phases/0/ took
   // the record into it and answered ok:true while the sibling REVIEW file under
   // the slug stayed unsettled: a fire reported as recorded, filed where nothing
   // reads it.
-  const { repo, dir, base } = adjRepo({ phase: 0 });
+  const { repo, dir, base } = adjRepo({ phase: 0 }, t);
   const payload = adjPayloadFile(repo, adjPayload());
   const r = adjRun(repo, dir, ['--phase', '0', '--trigger', 'risk_surface',
     '--discriminator', 'cad-task-abc1234', '--base', base, '--head', 'HEAD',
@@ -446,13 +447,13 @@ test('adjudication: --phase 0 without --task is refused, even where phases/0 exi
     'the record landed in a phase directory a task fire must never reach');
 });
 
-test('adjudication: --task beside a REAL phase is refused, the converse of the guard above (D-08)', () => {
+test('adjudication: --task beside a REAL phase is refused, the converse of the guard above (D-08)', (t) => {
   // The other direction of the same failure. --task named a home that really
   // existed, so fireHome found it and wrote there under ok:true - and phase 2's
   // OWN sibling REVIEW file was left unsettled, a fire reported as recorded and
   // filed where nothing reads it. fireHome cannot catch this one: it takes the
   // task as the home the caller CHOSE, and that directory is right there.
-  const { repo, dir, base } = adjRepo();
+  const { repo, dir, base } = adjRepo({}, t);
   mkdirSync(join(dir, 'tasks', 'some-slug'), { recursive: true });
   const payload = adjPayloadFile(repo, adjPayload());
   const r = adjRun(repo, dir, ['--phase', '2', '--task', 'some-slug',
@@ -468,11 +469,11 @@ test('adjudication: --task beside a REAL phase is refused, the converse of the g
     'the record landed in the phase home');
 });
 
-test('adjudication: both legitimate directions still pass on that same tree (D-08)', () => {
+test('adjudication: both legitimate directions still pass on that same tree (D-08)', (t) => {
   // The guard refuses the CONTRADICTION and nothing else, so the two shapes
   // that were always right are unchanged: phase 0 with a slug is a task fire,
   // and any other phase with no slug is a phase fire.
-  const { repo, dir, base } = adjRepo();
+  const { repo, dir, base } = adjRepo({}, t);
   mkdirSync(join(dir, 'tasks', 'some-slug'), { recursive: true });
   const payload = adjPayloadFile(repo, adjPayload());
   const task = adjRun(repo, dir, ['--phase', '0', '--task', 'some-slug',
@@ -488,11 +489,11 @@ test('adjudication: both legitimate directions still pass on that same tree (D-0
   assert.equal(phase.record, 'phases/2/records/ADJUDICATION-plan-plan-1.json');
 });
 
-test('adjudication: a SYMLINKED tasks/ is refused, not followed out of the tree', () => {
+test('adjudication: a SYMLINKED tasks/ is refused, not followed out of the tree', (t) => {
   // lstatSync declines to follow only its OWN last component, so a leaf-only
   // test resolved a symlinked parent on the way past and reported the TARGET's
   // directory. The write then landed outside the planning tree it names.
-  const { repo, dir, base } = adjRepo();
+  const { repo, dir, base } = adjRepo({}, t);
   const outside = join(repo, 'elsewhere');
   mkdirSync(join(outside, 'a-task-slug'), { recursive: true });
   symlinkSync(outside, join(dir, 'tasks'));
@@ -506,10 +507,10 @@ test('adjudication: a SYMLINKED tasks/ is refused, not followed out of the tree'
     'the record was written through the symlink');
 });
 
-test('adjudication: a SYMLINKED phases/ is refused the same way', () => {
+test('adjudication: a SYMLINKED phases/ is refused the same way', (t) => {
   // The same hole on the home this function always had - it was never only the
   // task branch, so the guard is not only on the task branch.
-  const { repo, dir, base } = adjRepo();
+  const { repo, dir, base } = adjRepo({}, t);
   const outside = join(repo, 'elsewhere');
   mkdirSync(join(outside, '2'), { recursive: true });
   rmSync(join(dir, 'phases'), { recursive: true });
@@ -523,8 +524,8 @@ test('adjudication: a SYMLINKED phases/ is refused the same way', () => {
     'the record was written through the symlink');
 });
 
-test('adjudication: a SYMLINKED records folder in a phase is refused, and nothing lands through it', () => {
-  const { repo, dir, base } = adjRepo();
+test('adjudication: a SYMLINKED records folder in a phase is refused, and nothing lands through it', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const outside = join(repo, 'elsewhere');
   mkdirSync(outside, { recursive: true });
   symlinkSync(outside, join(dir, 'phases', '2', 'records'));
@@ -536,10 +537,10 @@ test('adjudication: a SYMLINKED records folder in a phase is refused, and nothin
   assert.deepEqual(readdirSync(outside), [], 'the record was written through the symlink');
 });
 
-test('adjudication: without --task the two phase homes resolve exactly as before', () => {
+test('adjudication: without --task the two phase homes resolve exactly as before', (t) => {
   // The regression pin. --task is optional, and a phase fire that passes none
   // has to reach phases/<N>/ on the same bytes it always did.
-  const { repo, dir, base } = adjRepo();
+  const { repo, dir, base } = adjRepo({}, t);
   mkdirSync(join(dir, 'tasks', 'a-task-slug'), { recursive: true });
   const payload = adjPayloadFile(repo, adjPayload());
   const r = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan',
@@ -548,8 +549,8 @@ test('adjudication: without --task the two phase homes resolve exactly as before
   assert.equal(r.record, 'phases/2/records/ADJUDICATION-plan-plan-1.json');
 });
 
-test('adjudication: an absent --payload is bad-args, never a read of stdin', () => {
-  const { repo, dir, base } = adjRepo();
+test('adjudication: an absent --payload is bad-args, never a read of stdin', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const r = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan',
     '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD']);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -558,8 +559,8 @@ test('adjudication: an absent --payload is bad-args, never a read of stdin', () 
   assert.deepEqual(adjFiles(dir), []);
 });
 
-test('adjudication: a payload file that was never written is no-payload, not a record', () => {
-  const { repo, dir, base } = adjRepo();
+test('adjudication: a payload file that was never written is no-payload, not a record', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const r = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan',
     '--discriminator', 'plan-1', '--base', base, '--head', 'HEAD',
     '--payload', join(repo, 'never-written.json')]);
@@ -568,8 +569,8 @@ test('adjudication: a payload file that was never written is no-payload, not a r
   assert.deepEqual(adjFiles(dir), []);
 });
 
-test('adjudication: --round 0 and a non-numeric round are refused', () => {
-  const { repo, dir, base } = adjRepo();
+test('adjudication: --round 0 and a non-numeric round are refused', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, adjPayload());
   for (const round of ['0', '-1']) {
     const r = adjRun(repo, dir, ['--phase', '2', '--trigger', 'plan',
@@ -581,8 +582,8 @@ test('adjudication: --round 0 and a non-numeric round are refused', () => {
   assert.deepEqual(adjFiles(dir), []);
 });
 
-test('adjudication: a citation absent at head is MARKED and still stored, the present one is not (AC5)', () => {
-  const { repo, dir, base } = adjRepo();
+test('adjudication: a citation absent at head is MARKED and still stored, the present one is not (AC5)', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const two = adjPayload();
   const findings = two.voices[0].returned.findings;
   // One citation present at head (`src.js`), one that is not.
@@ -616,8 +617,8 @@ test('adjudication: a citation absent at head is MARKED and still stored, the pr
   assert.deepEqual(r.counts, { raised: 2, survived: 1, downgraded: 1, refuted: 0 });
 });
 
-test('adjudication: a citation pointing outside the repository is marked, never a crash (AC5)', () => {
-  const { repo, dir, base } = adjRepo();
+test('adjudication: a citation pointing outside the repository is marked, never a crash (AC5)', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
   const escaped = adjPayload();
   escaped.voices[0].returned.findings[0].file = '../outside/secrets.env';
   const payload = adjPayloadFile(repo, escaped);
@@ -649,8 +650,8 @@ test('adjudication: a citation pointing outside the repository is marked, never 
 /** A git repo with a risky range: `.planning` answering the surface question,
  * a base commit, and a head commit adding a file under a `secrets/` directory.
  * Returns the full ids of both ends. */
-function deferralRepo() {
-  const repo = mkdtempSync(join(tmpdir(), 'cad-deferral-'));
+function deferralRepo(t) {
+  const repo = scratch('cad-deferral-', t);
   const git = (...args) => execFileSync('git', ['-C', repo, ...args],
     { encoding: 'utf8', stdio: 'pipe' }).trim();
   git('init', '-q');
@@ -695,8 +696,8 @@ function plRun(repo, dir, args) {
   return { ...JSON.parse(stdout), _exit: code };
 }
 
-test('risk-check status: a `deferral` receipt settles the range it names', () => {
-  const { repo, dir, base, head } = deferralRepo();
+test('risk-check status: a `deferral` receipt settles the range it names', (t) => {
+  const { repo, dir, base, head } = deferralRepo(t);
   const range = ['--phase', '1', '--plan', '1', '--base', base, '--head', head];
 
   const recorded = plRun(repo, dir, ['risk-check', 'run', ...range]);
@@ -724,12 +725,12 @@ test('risk-check status: a `deferral` receipt settles the range it names', () =>
   assert.equal(after.plans[0].state, 'recorded');
 });
 
-test('risk-check status: the acceptance is FIRE_RECEIPTS membership, not any outcome event', () => {
+test('risk-check status: the acceptance is FIRE_RECEIPTS membership, not any outcome event', (t) => {
   // The negative half, and the falsifier for the row above: an `outcome` event
   // on the same trigger, the same plan and the same range, whose only defect is
   // a name the accepted set does not carry, settles nothing. Drop `deferral`
   // from FIRE_RECEIPTS and the row above answers exactly like this one.
-  const { repo, dir, base, head } = deferralRepo();
+  const { repo, dir, base, head } = deferralRepo(t);
   const range = ['--phase', '1', '--plan', '1', '--base', base, '--head', head];
   assert.equal(plRun(repo, dir, ['risk-check', 'run', ...range]).ok, true);
 
@@ -791,8 +792,8 @@ function survivedPayloadFile(repo, name, payload) {
   return file;
 }
 
-test('GH-159: a blocking fire whose highest finding is a survived MEDIUM settles end to end', () => {
-  const { repo, dir, base, head } = deferralRepo();
+test('GH-159: a blocking fire whose highest finding is a survived MEDIUM settles end to end', (t) => {
+  const { repo, dir, base, head } = deferralRepo(t);
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
   const range = ['--phase', '1', '--plan', '1', '--base', base, '--head', head];
 
@@ -873,10 +874,10 @@ function mixedRulingPayload(overDowngraded) {
   };
 }
 
-test('RSK-08: both refusals land where they are stated, over a mixed-ruling fixture end to end', () => {
+test('RSK-08: both refusals land where they are stated, over a mixed-ruling fixture end to end', (t) => {
   // AC6, walked with the seams rather than around them: risk-check run ->
   // adjudication -> the settle receipt -> risk-check status.
-  const { repo, dir, base, head } = deferralRepo();
+  const { repo, dir, base, head } = deferralRepo(t);
   const phaseDir = join(dir, 'phases', '1');
   mkdirSync(phaseDir, { recursive: true });
   const range = ['--phase', '1', '--plan', '1', '--base', base, '--head', head];
@@ -951,11 +952,11 @@ function traceLines(dir) {
   return text.split('\n').filter((l) => l.trim() !== '').map((l) => JSON.parse(l));
 }
 
-test('RSK-08: a REASONLESS receipt over a record holding a cleared halt is refused', () => {
+test('RSK-08: a REASONLESS receipt over a record holding a cleared halt is refused', (t) => {
   // The self-assertion the guard exists to stop: the record says a person let a
   // blocker stand, and the receipt settles the range saying nothing at all -
   // which reads downstream as a clean settle.
-  const { repo, dir, base, head } = deferralRepo();
+  const { repo, dir, base, head } = deferralRepo(t);
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
   const range = ['--phase', '1', '--plan', '1', '--base', base, '--head', head];
 
@@ -997,7 +998,7 @@ test('RSK-08: a REASONLESS receipt over a record holding a cleared halt is refus
   assert.equal(traceLines(dir).length, before + 1);
 });
 
-test('LND-02: a cleared halt that ALSO names a fix commit takes a reasonless receipt', () => {
+test('LND-02: a cleared halt that ALSO names a fix commit takes a reasonless receipt', (t) => {
   // The other side of the row above, and the case D-05 settles. The record
   // grammar permits both markers on one entry - lib/adjudication-record.mjs
   // refuses only when NEITHER is present - so a blocker whose fix landed AND
@@ -1007,7 +1008,7 @@ test('LND-02: a cleared halt that ALSO names a fix commit takes a reasonless rec
   // happened. Without the precedence the fix commit wins on, this entry would
   // demand a reason on every receipt that ever settles this range again, and
   // the reason would have to be written about work that is already committed.
-  const { repo, dir, base, head } = deferralRepo();
+  const { repo, dir, base, head } = deferralRepo(t);
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
   const range = ['--phase', '1', '--plan', '1', '--base', base, '--head', head];
 
@@ -1036,7 +1037,7 @@ test('LND-02: a cleared halt that ALSO names a fix commit takes a reasonless rec
   assert.equal(plRun(repo, dir, ['risk-check', 'status', ...range]).plans[0].state, 'recorded');
 });
 
-test('RSK-08: a FIGURELESS receipt cannot settle the range at all', () => {
+test('RSK-08: a FIGURELESS receipt cannot settle the range at all', (t) => {
   // UAT item 3, going the other way. `overrideAccounted` is reached only once a
   // settled figure is PRESENT, so a receipt carrying none of the three skipped
   // the record before it was opened: measured on the shipped tree, this exact
@@ -1044,7 +1045,7 @@ test('RSK-08: a FIGURELESS receipt cannot settle the range at all', () => {
   // `recorded`. The requirement that closes it is DECLARED - lib/arg-contract.mjs's
   // `PRESENCE_RULES` - and refuses at the argument door, so the seam keeps its
   // "never a runtime refusal keyed to an event name" property untouched.
-  const { repo, dir, base, head } = deferralRepo();
+  const { repo, dir, base, head } = deferralRepo(t);
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
   const range = ['--phase', '1', '--plan', '1', '--base', base, '--head', head];
 
@@ -1098,12 +1099,12 @@ test('RSK-08: a FIGURELESS receipt cannot settle the range at all', () => {
   assert.equal(plRun(repo, dir, ['risk-check', 'status', ...range]).plans[0].state, 'recorded');
 });
 
-test('RSK-08: the guard cannot be discharged by dropping one settled figure', () => {
+test('RSK-08: the guard cannot be discharged by dropping one settled figure', (t) => {
   // `recountReceipt` needs all three because a partial set cannot be compared
   // with a recount that answers all three. This check recounts nothing, so
   // inheriting that precondition would make the guard opt-out: drop `--refuted`
   // and the cleared halt goes unmentioned again.
-  const { repo, dir, base, head } = deferralRepo();
+  const { repo, dir, base, head } = deferralRepo(t);
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
   const range = ['--phase', '1', '--plan', '1', '--base', base, '--head', head];
 
@@ -1125,7 +1126,7 @@ test('RSK-08: the guard cannot be discharged by dropping one settled figure', ()
   assert.equal(traceLines(dir).length, before, 'a refused append writes nothing');
 });
 
-test('RSK-08: an UNREADABLE record over a partial settle line is refused, never passed', () => {
+test('RSK-08: an UNREADABLE record over a partial settle line is refused, never passed', (t) => {
   // The other way to discharge the marker: edit the file the guard reads. An
   // ABSENT record still omits the check - nobody wrote one - but this record
   // exists and was CHANGED, and passing on it would clear the marker with
@@ -1133,7 +1134,7 @@ test('RSK-08: an UNREADABLE record over a partial settle line is refused, never 
   // record only once all THREE figures are present, so the two-figure settle
   // line below never reaches that refusal and the one asserted here is
   // necessarily this guard's own.
-  const { repo, dir, base, head } = deferralRepo();
+  const { repo, dir, base, head } = deferralRepo(t);
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
   const range = ['--phase', '1', '--plan', '1', '--base', base, '--head', head];
 
@@ -1165,10 +1166,10 @@ test('RSK-08: an UNREADABLE record over a partial settle line is refused, never 
   assert.equal(traceLines(dir).length, before, 'a refused append writes nothing');
 });
 
-test('RSK-08: a record holding NO cleared halt takes a reasonless receipt unchanged', () => {
+test('RSK-08: a record holding NO cleared halt takes a reasonless receipt unchanged', (t) => {
   // The guard fires on the contradiction and on nothing else: an ordinary
   // survived medium settles with no reason exactly as it did before.
-  const { repo, dir, base, head } = deferralRepo();
+  const { repo, dir, base, head } = deferralRepo(t);
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
   const range = ['--phase', '1', '--plan', '1', '--base', base, '--head', head];
 
@@ -1189,12 +1190,12 @@ test('RSK-08: a record holding NO cleared halt takes a reasonless receipt unchan
   assert.equal(plRun(repo, dir, ['risk-check', 'status', ...range]).plans[0].state, 'recorded');
 });
 
-test('an OVERRIDDEN blocking fire settles end to end, with the record present rather than absent', () => {
+test('an OVERRIDDEN blocking fire settles end to end, with the record present rather than absent', (t) => {
   // The run `.planning/ARCHIVE.md` records: an `override` receipt was written
   // and no `ADJUDICATION-risk_surface-plan-1.json` existed beside it, because
   // the only ruling the adjudicator held - a blocker that stood unfixed - was
   // the one the record seam refused. This row is what stops that recurring.
-  const { repo, dir, base, head } = deferralRepo();
+  const { repo, dir, base, head } = deferralRepo(t);
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
   const range = ['--phase', '1', '--plan', '1', '--base', base, '--head', head];
 
@@ -1249,8 +1250,8 @@ test('an OVERRIDDEN blocking fire settles end to end, with the record present ra
 /** A repo holding one task's seam-written record, and the figures its envelope
  *  returned. The discriminator is `cad-task-<short head sha>`, the spelling
  *  workflows/task.md states, because the glob arm matches on that tail. */
-function taskFireRepo(slug = 'a-task-slug') {
-  const { repo, dir, base, headFull } = adjRepo();
+function taskFireRepo(t, slug = 'a-task-slug') {
+  const { repo, dir, base, headFull } = adjRepo({}, t);
   mkdirSync(join(dir, 'tasks', slug), { recursive: true });
   const payload = adjPayloadFile(repo, adjPayload());
   const rec = plRun(repo, dir, ['adjudication', '--phase', '0', '--task', slug,
@@ -1260,11 +1261,11 @@ function taskFireRepo(slug = 'a-task-slug') {
   return { repo, dir, base, head: headFull, rec };
 }
 
-test('D-04: a WRONG count on a task settlement is refused, exactly as under a phase', () => {
+test('D-04: a WRONG count on a task settlement is refused, exactly as under a phase', (t) => {
   // The defect measured 2026-09-01: an identical record under phases/9/ refused
   // a fabricated --survivors 999 with count-disagreement, and under
   // tasks/<slug>/ the same receipt was accepted ok:true.
-  const { repo, dir, base, head } = taskFireRepo();
+  const { repo, dir, base, head } = taskFireRepo(t);
   const before = traceLines(dir).length;
   const r = plRun(repo, dir, ['trace', 'append', '--phase', '0',
     '--family', 'outcome', '--event', 'gate_pass', '--trigger', 'risk_surface',
@@ -1276,10 +1277,10 @@ test('D-04: a WRONG count on a task settlement is refused, exactly as under a ph
   assert.equal(traceLines(dir).length, before, 'a refused receipt was appended anyway');
 });
 
-test('D-04: the figures the seam returned settle the same task fire', () => {
+test('D-04: the figures the seam returned settle the same task fire', (t) => {
   // The other half of the pair: widening the recount must not refuse a receipt
   // that agrees with its record, or a task could never be settled at all.
-  const { repo, dir, base, head, rec } = taskFireRepo();
+  const { repo, dir, base, head, rec } = taskFireRepo(t);
   const before = traceLines(dir).length;
   const r = plRun(repo, dir, ['trace', 'append', '--phase', '0',
     '--family', 'outcome', '--event', 'gate_pass', '--trigger', 'risk_surface',
@@ -1291,14 +1292,14 @@ test('D-04: the figures the seam returned settle the same task fire', () => {
   assert.equal(traceLines(dir).length, before + 1, 'the accepted receipt was not appended');
 });
 
-test('D-04: the recount does NOT widen to deferred/<N>/, which keeps its stated posture', () => {
+test('D-04: the recount does NOT widen to deferred/<N>/, which keeps its stated posture', (t) => {
   // The same record, the same receipt, the only difference being the home. A
   // carried fire degrades to NO cross-check rather than to a wrong one: the
   // writer widened to deferred/ so a carried finding could still be ruled on,
   // and matching a receipt against a record there would compare it with one it
   // may not be for. Asserted rather than assumed, so the half-reversal is a
   // choice on the record instead of an oversight nobody re-reads.
-  const { repo, dir, base, headFull } = adjRepo();
+  const { repo, dir, base, headFull } = adjRepo({}, t);
   mkdirSync(join(dir, 'records', 'deferred', '3'), { recursive: true });
   const payload = adjPayloadFile(repo, adjPayload());
   const rec = plRun(repo, dir, ['adjudication', '--phase', '3',
@@ -1333,8 +1334,8 @@ test('D-04: the recount does NOT widen to deferred/<N>/, which keeps its stated 
 
 /** A repo whose phase 1 fired under anchor A, then re-anchored at B. Returns
  *  the range and the earlier window's own sha. */
-function reAnchoredFire() {
-  const { repo, dir, base, head } = deferralRepo();
+function reAnchoredFire(t) {
+  const { repo, dir, base, head } = deferralRepo(t);
   const anchor = head.slice(0, 7);
   // The executor bracket is what registers the row `status --phase <N>` answers
   // for, and it rides the window that was current when the plan ran.
@@ -1360,8 +1361,8 @@ const anchoredReceipt = (base, head, ...extra) => ['trace', 'append', '--phase',
   '--plan', '1', '--base', base, '--sha', head,
   '--survivors', '0', '--downgraded', '0', '--refuted', '0', ...extra];
 
-test('D-01: a receipt naming the earlier window settles the fire that ran in it', () => {
-  const { repo, dir, base, head, anchor } = reAnchoredFire();
+test('D-01: a receipt naming the earlier window settles the fire that ran in it', (t) => {
+  const { repo, dir, base, head, anchor } = reAnchoredFire(t);
   const before = plRun(repo, dir, ['risk-check', 'status', '--phase', '1']);
   assert.equal(before.ok, false, JSON.stringify(before));
   assert.equal(before.reason, 'risk-fire-missing');
@@ -1376,12 +1377,12 @@ test('D-01: a receipt naming the earlier window settles the fire that ran in it'
   assert.equal(after.plans[0].state, 'recorded');
 });
 
-test('D-01: the IDENTICAL receipt without --anchor leaves that range unfired', () => {
+test('D-01: the IDENTICAL receipt without --anchor leaves that range unfired', (t) => {
   // The falsifier for the row above. The only difference is the flag: the
   // receipt names the same trigger, the same plan and both the same range ends,
   // and it settles nothing because it is stamped with the window the run moved
   // ON to. Drop `--anchor` from the seam and the row above answers like this.
-  const { repo, dir, base, head } = reAnchoredFire();
+  const { repo, dir, base, head } = reAnchoredFire(t);
   const receipt = plRun(repo, dir, anchoredReceipt(base, head));
   assert.equal(receipt.ok, true, JSON.stringify(receipt));
 
@@ -1407,8 +1408,8 @@ test('D-01: the IDENTICAL receipt without --anchor leaves that range unfired', (
 
 /** A repo with TWO disjoint fired ranges on one plan - no commit id is shared
  *  between them - plus the executor bracket whose row `status` answers for. */
-function twoFiredRanges() {
-  const repo = mkdtempSync(join(tmpdir(), 'cad-two-ranges-'));
+function twoFiredRanges(t) {
+  const repo = scratch('cad-two-ranges-', t);
   const git = (...args) => execFileSync('git', ['-C', repo, ...args],
     { encoding: 'utf8', stdio: 'pipe' }).trim();
   git('init', '-q');
@@ -1453,8 +1454,8 @@ const authorizedOverride = (base, head, id) => ['trace', 'append', '--phase', '1
   '--base', base, '--sha', head, '--survivors', '1', '--downgraded', '0', '--refuted', '0',
   '--authorization-id', id, '--detail', 'the engineer accepted this risk once, standing'];
 
-test('D-03: one authorization id does NOT let a receipt settle a second range', () => {
-  const { repo, dir, first, second } = twoFiredRanges();
+test('D-03: one authorization id does NOT let a receipt settle a second range', (t) => {
+  const { repo, dir, first, second } = twoFiredRanges(t);
   const AUTH = 'auth-9';
 
   const a = plRun(repo, dir, authorizedOverride(first[0], first[1], AUTH));

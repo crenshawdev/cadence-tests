@@ -58,7 +58,7 @@ function queries() {
  * tree these arms rank over; a baseline taken against a second, drifted builder
  * is not a no-regression claim.
  */
-export function fixtureRoot() {
+export function fixtureRoot(t) {
   const spec = { phases: {}, capture: [] };
   for (const doc of corpus()) {
     const m = doc.source.match(/^phases\/(\d+)\/(SUMMARY|CONTEXT)\.md$/);
@@ -74,7 +74,7 @@ export function fixtureRoot() {
     }
     throw new Error(`recall.corpus.json row ${doc.id} names a source no builder covers: ${doc.source}`);
   }
-  return makeTree(spec);
+  return makeTree(spec, t);
 }
 
 /** The ids of `results`, in returned order, read out of each snippet. */
@@ -84,14 +84,14 @@ function idsOf(results) {
 
 // --- the fixture itself -------------------------------------------------------
 
-test('fold fixture: every corpus document comes back under the source its row states', () => {
+test('fold fixture: every corpus document comes back under the source its row states', (t) => {
   const docs = corpus();
   assert.ok(docs.length >= 24, `the fixture corpus needs at least 24 documents, has ${docs.length}`);
   assert.ok(new Set(docs.map((d) => d.source)).size >= 3,
     'the fixture corpus needs at least three distinct `source` values');
   assert.equal(new Set(docs.map((d) => d.id)).size, docs.length, 'duplicate id in recall.corpus.json');
 
-  const dir = fixtureRoot();
+  const dir = fixtureRoot(t);
   // Five ids per call because `--top` defaults to 5 and the runner does not
   // pass it: an id is a term of exactly one document, so a batch of five is
   // exactly five scoring documents and the window cannot hide one.
@@ -109,10 +109,10 @@ test('fold fixture: every corpus document comes back under the source its row st
   }
 });
 
-test('fold fixture: every committed query returns its named hits in the top 5', () => {
+test('fold fixture: every committed query returns its named hits in the top 5', (t) => {
   const qs = queries();
   assert.ok(qs.length >= 10, `the fixture query set needs at least 10 entries, has ${qs.length}`);
-  const dir = fixtureRoot();
+  const dir = fixtureRoot(t);
   for (const q of qs) {
     assert.ok(Array.isArray(q.hits) && q.hits.length,
       `query ${JSON.stringify(q.query)} names no hits at all`);
@@ -245,9 +245,9 @@ function docWithWord(docs, word) {
   return hits[0].id;
 }
 
-test('fold at the seam: each inflected group returns one and the same document set', () => {
+test('fold at the seam: each inflected group returns one and the same document set', (t) => {
   const docs = corpus();
-  const dir = fixtureRoot();
+  const dir = fixtureRoot(t);
   for (const group of GROUPS) {
     const owner = Object.fromEntries(group.map((w) => [w, docWithWord(docs, w)]));
     /** @type {{json:{results:Array<{snippet:string}>, total:number}}|null} */
@@ -321,8 +321,8 @@ test('fold ordering: a document of raw stopwords alone still contributes nothing
   assert.equal(index.lens[0], 0);
 });
 
-test('fold ordering: at the seam, `notes` and `being` both still return results', () => {
-  const dir = fixtureRoot();
+test('fold ordering: at the seam, `notes` and `being` both still return results', (t) => {
+  const dir = fixtureRoot(t);
   for (const query of ['notes', 'being']) {
     const r = recall(query, dir);
     assert.equal(r.json.ok, true);

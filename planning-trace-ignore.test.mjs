@@ -11,11 +11,10 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync } from 'node:fs';
 import { join, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PLANNING, run, isEntryFile, stampState } from './planning.test.mjs';
+import { PLANNING, run, isEntryFile, scratch, stampState } from './planning.test.mjs';
 import {
   READS_CLAIM_FILE, READS_EVICT_TEMP_FILE, READS_FILE, READS_ROTATE_TEMP_FILE, MAX_READS_BYTES,
   ROTATED_READS_FILE, appendRead, readsPath, rotateReads, rotatedReadsPath,
@@ -36,9 +35,9 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 // arm is scaffold-time only: `--check` is what /cad-health runs, and it may not
 // edit a file it did not create (D-03).
 
-/** A scratch PROJECT root, a git repo unless `git:false`. */
-function ignoreRoot({ git = true, gitignore = null, planning = true } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'cad-ignore-'));
+/** A scratch PROJECT root, a git repo unless `git:false`, gone when test `t` ends. */
+function ignoreRoot(t, { git = true, gitignore = null, planning = true } = {}) {
+  const root = scratch('cad-ignore-', t);
   if (git) {
     execFileSync('git', ['init', '-q'], { cwd: root });
     execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: root });
@@ -101,8 +100,8 @@ function ignoreSource(cwd, path) {
   } catch { return null; }
 }
 
-test('trace ignore: a fresh repo gets the records folder and its own .gitignore written', () => {
-  const root = ignoreRoot();
+test('trace ignore: a fresh repo gets the records folder and its own .gitignore written', (t) => {
+  const root = ignoreRoot(t);
   const r = traceIgnore(root);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.written, true);
@@ -124,8 +123,8 @@ test('trace ignore: a fresh repo gets the records folder and its own .gitignore 
   }
 });
 
-test('trace ignore: a re-run adds no second line and touches no byte', () => {
-  const root = ignoreRoot();
+test('trace ignore: a re-run adds no second line and touches no byte', (t) => {
+  const root = ignoreRoot(t);
   assert.equal(traceIgnore(root).written, true);
   const after = gitignoreOf(root);
   const again = traceIgnore(root);
@@ -135,19 +134,19 @@ test('trace ignore: a re-run adds no second line and touches no byte', () => {
   assert.equal(gitignoreOf(root), after);
 });
 
-test('trace ignore: a brownfield root .gitignore is left byte-identical', () => {
+test('trace ignore: a brownfield root .gitignore is left byte-identical', (t) => {
   // No trailing newline, deliberately: the old arm had to avoid gluing a line onto it. The new one never edits it.
-  const root = ignoreRoot({ gitignore: 'node_modules/\ndist/\n*.log' });
+  const root = ignoreRoot(t, { gitignore: 'node_modules/\ndist/\n*.log' });
   const r = traceIgnore(root);
   assert.equal(r.written, true, JSON.stringify(r));
   assert.equal(readFileSync(join(root, '.gitignore'), 'utf8'), 'node_modules/\ndist/\n*.log');
   assert.equal(traceIgnore(root, ['--check']).ignored, true);
 });
 
-test('trace ignore: the old root lines for the old paths cover nothing at the new ones', () => {
+test('trace ignore: the old root lines for the old paths cover nothing at the new ones', (t) => {
   // Cadence wrote these into the root file before the records folder existed. They stay harmless, and they are not
   // mistaken for coverage: the logs are written elsewhere now.
-  const root = ignoreRoot({ gitignore: '.planning/trace.jsonl\n.planning/trace.1.jsonl\n.planning/reads.jsonl\n' });
+  const root = ignoreRoot(t, { gitignore: '.planning/trace.jsonl\n.planning/trace.1.jsonl\n.planning/reads.jsonl\n' });
   const check = traceIgnore(root, ['--check']);
   assert.equal(check.ignored, false, JSON.stringify(check));
   const r = traceIgnore(root);
@@ -156,8 +155,8 @@ test('trace ignore: the old root lines for the old paths cover nothing at the ne
     '.planning/trace.jsonl\n.planning/trace.1.jsonl\n.planning/reads.jsonl\n');
 });
 
-test('trace ignore: a project ignoring .planning/ wholesale is already correct', () => {
-  const root = ignoreRoot({ gitignore: '.planning/\n' });
+test('trace ignore: a project ignoring .planning/ wholesale is already correct', (t) => {
+  const root = ignoreRoot(t, { gitignore: '.planning/\n' });
   const r = traceIgnore(root, ['--check']);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.ignored, true);
@@ -172,16 +171,16 @@ test('trace ignore: a project ignoring .planning/ wholesale is already correct',
   assert.deepEqual(readdirSync(recordsDir(join(root, '.planning'))).sort(), ['.gitignore', 'state.json']);
 });
 
-test('trace ignore: --check writes nothing, not even the folder', () => {
-  const root = ignoreRoot();
+test('trace ignore: --check writes nothing, not even the folder', (t) => {
+  const root = ignoreRoot(t);
   const r = traceIgnore(root, ['--check']);
   assert.equal(r.written, false);
   assert.equal(r.ignored, false);
   assert.equal(existsSync(recordsDir(join(root, '.planning'))), false);
 });
 
-test('trace ignore: a non-git root falls back to the literal scan and still writes', () => {
-  const root = ignoreRoot({ git: false });
+test('trace ignore: a non-git root falls back to the literal scan and still writes', (t) => {
+  const root = ignoreRoot(t, { git: false });
   const r = traceIgnore(root);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.method, 'file');
@@ -192,8 +191,8 @@ test('trace ignore: a non-git root falls back to the literal scan and still writ
   assert.equal(traceIgnore(root).reason, 'already-ignored');
 });
 
-test('trace ignore: a tracked run record is REPORTED, never quietly ignored', () => {
-  const root = ignoreRoot();
+test('trace ignore: a tracked run record is REPORTED, never quietly ignored', (t) => {
+  const root = ignoreRoot(t);
   mkdirSync(recordsDir(join(root, '.planning')), { recursive: true });
   writeFileSync(tracePath(join(root, '.planning')), '{"phase":1}\n');
   execFileSync('git', ['add', '--', r_(root)], { cwd: root });
@@ -205,12 +204,12 @@ test('trace ignore: a tracked run record is REPORTED, never quietly ignored', ()
 /** The live record's path under the project root. */
 function r_(root) { return logPath(TRACE_FILE); }
 
-test('trace ignore: a TRACKED record whose rule is present reports ignored and writes nothing', () => {
+test('trace ignore: a TRACKED record whose rule is present reports ignored and writes nothing', (t) => {
   // The regression the `--no-index` flag closes. `check-ignore` answers "would
   // this path be ignored if it were untracked", so a path in the INDEX matched
   // nothing at all: `ignored` came back false with the rule sitting right there,
   // and the write arm - which keys off that value - wrote again on EVERY run.
-  const root = ignoreRoot();
+  const root = ignoreRoot(t);
   assert.equal(ensureRecordsDir(join(root, '.planning')).ok, true);
   writeFileSync(tracePath(join(root, '.planning')), '{"phase":1}\n');
   execFileSync('git', ['add', '-f', '--', r_(root)], { cwd: root });
@@ -228,12 +227,12 @@ test('trace ignore: a TRACKED record whose rule is present reports ignored and w
   assert.equal(rulesOf(root).filter((l) => l === `/${TRACE_FILE}`).length, 1);
 });
 
-test('trace ignore: a .git/info/exclude match does NOT satisfy the line', () => {
+test('trace ignore: a .git/info/exclude match does NOT satisfy the line', (t) => {
   // The reason `-v` is used instead of `-q`: neither `.git/info/exclude` nor
   // core.excludesFile is cloned, so a machine-local exclusion would report
   // ignored:true and leave the project with no rule of its own - and the
   // collaborator who clones it commits the run record.
-  const root = ignoreRoot();
+  const root = ignoreRoot(t);
   writeFileSync(join(root, '.git', 'info', 'exclude'), `${logPath(TRACE_FILE)}\n`);
   const check = traceIgnore(root, ['--check']);
   assert.equal(check.ignored, false, JSON.stringify(check));
@@ -244,12 +243,12 @@ test('trace ignore: a .git/info/exclude match does NOT satisfy the line', () => 
   assert.ok(rulesOf(root).includes(`/${TRACE_FILE}`));
 });
 
-test('trace ignore: a hand-edited file in the records folder survives byte-identical, and the gap is reported', () => {
+test('trace ignore: a hand-edited file in the records folder survives byte-identical, and the gap is reported', (t) => {
   // D-07's state: the live record is ignored and the generation its rotation
   // leaves behind is not. Half-covered is not covered, and /cad-health has to
   // say so rather than stay silent. The file is the project's now, so the write
   // arm leaves it alone and says why.
-  const root = ignoreRoot();
+  const root = ignoreRoot(t);
   ensureRecordsDir(join(root, '.planning'));
   const mine = `# mine\n/${TRACE_FILE}\nextra-rule\n`;
   writeFileSync(ignoreFileOf(root), mine);
@@ -265,16 +264,16 @@ test('trace ignore: a hand-edited file in the records folder survives byte-ident
   assert.equal(gitignoreOf(root), mine);
 });
 
-test('trace ignore: the sibling rule names the file the writer actually creates', () => {
+test('trace ignore: the sibling rule names the file the writer actually creates', (t) => {
   // The drift this derivation exists to prevent: a path spelled by hand here
   // and a rotated path spelled in lib/trace.mjs are two statements of one fact.
-  const r = traceIgnore(ignoreRoot());
+  const r = traceIgnore(ignoreRoot(t));
   assert.equal(r.rotated_line, rotatedTracePath('.planning').split(sep).join('/'));
   assert.equal(r.line, tracePath('.planning').split(sep).join('/'));
 });
 
-test('trace ignore: the reads rules name the files the writer actually produces', () => {
-  const r = traceIgnore(ignoreRoot());
+test('trace ignore: the reads rules name the files the writer actually produces', (t) => {
+  const r = traceIgnore(ignoreRoot(t));
   assert.equal(r.reads_lines[0], readsPath('.planning'));
   assert.equal(r.reads_lines[1], rotatedReadsPath('.planning'));
   assert.equal(r.reads_lines[2], logPath(READS_CLAIM_FILE));
@@ -288,11 +287,11 @@ test('trace ignore: the reads rules name the files the writer actually produces'
   assert.equal(r.reads_lines.length, 6);
 });
 
-test('records folder: a fresh one ignores every log file a rotation can leave, and only those', () => {
+test('records folder: a fresh one ignores every log file a rotation can leave, and only those', (t) => {
   // The file the write module writes holds its names as literals (it imports builtins only), so every name is
   // DERIVED here from the libs that write the files, and git is the judge. This is what keeps a rule and a file
   // from drifting.
-  const root = ignoreRoot();
+  const root = ignoreRoot(t);
   const planning = join(root, '.planning');
   assert.equal(ensureRecordsDir(planning).ok, true);
   const dated = (f) => `${f}.12345.k3j2h`;
@@ -312,8 +311,8 @@ test('records folder: a fresh one ignores every log file a rotation can leave, a
   }
 });
 
-test('records folder: git status shows no log after an append and a forced rotation of each', () => {
-  const root = ignoreRoot();
+test('records folder: git status shows no log after an append and a forced rotation of each', (t) => {
+  const root = ignoreRoot(t);
   const planning = join(root, '.planning');
   writeFileSync(join(planning, 'STATE.md'), 'state\n');
   // stamped, or the appenders write nothing; the state file is committed, the ignore file it brought is left for the check
@@ -336,9 +335,9 @@ test('records folder: git status shows no log after an append and a forced rotat
   assert.ok(MAX_READS_BYTES > 0);
 });
 
-test('trace ignore: a symlinked records folder is refused and nothing is written through it', () => {
-  const root = ignoreRoot();
-  const outside = mkdtempSync(join(tmpdir(), 'cad-ignore-outside-'));
+test('trace ignore: a symlinked records folder is refused and nothing is written through it', (t) => {
+  const root = ignoreRoot(t);
+  const outside = scratch('cad-ignore-outside-', t);
   symlinkSync(outside, recordsDir(join(root, '.planning')));
   const r = traceIgnore(root);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -346,8 +345,8 @@ test('trace ignore: a symlinked records folder is refused and nothing is written
   assert.deepEqual(readdirSync(outside), []);
 });
 
-test('trace ignore: a --root present with nothing usable is refused, never the cwd', () => {
-  const root = ignoreRoot();
+test('trace ignore: a --root present with nothing usable is refused, never the cwd', (t) => {
+  const root = ignoreRoot(t);
   // A valueless flag: parseArgs renders it as boolean true.
   const bare = traceIgnore(null, ['--root']);
   assert.equal(bare.ok, false, JSON.stringify(bare));

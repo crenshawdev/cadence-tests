@@ -22,12 +22,12 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 
 // --- phase-done ----------------------------------------------------------------
 
-test('phase-done: flips the box and the phase rows; Deferred untouched; --undo reverses', () => {
+test('phase-done: flips the box and the phase rows; Deferred untouched; --undo reverses', (t) => {
   const spec = {
     roadmap: [{ n: 1, name: 'Done' }, { n: 2, name: 'Open' }],
     reqs: [['REQ-1', 1, 'Pending'], ['REQ-2', 1, 'Deferred'], ['REQ-3', 2, 'Pending']],
   };
-  const dir = makeTree(spec);
+  const dir = makeTree(spec, t);
   const r = run(['phase-done', '--n', '1'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.roadmap.now, '[x]');
@@ -48,11 +48,11 @@ test('phase-done: flips the box and the phase rows; Deferred untouched; --undo r
   assert.match(readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8'), /REQ-1 \| Phase 1 \| Pending /);
 });
 
-test('phase-done: decimal phase flips its own box and rows only', () => {
+test('phase-done: decimal phase flips its own box and rows only', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2.1, name: 'Hotfix' }],
     reqs: [['REQ-1', 2.1, 'Pending'], ['REQ-2', 1, 'Pending']],
-  });
+  }, t);
   const r = run(['phase-done', '--n', '2.1'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.reqs, ['REQ-1']);
@@ -64,11 +64,11 @@ test('phase-done: decimal phase flips its own box and rows only', () => {
   assert.match(reqs, /REQ-2 \| Phase 1 \| Pending /);
 });
 
-test('phase-done --reqs: explicit ids override the phase filter (even Deferred)', () => {
+test('phase-done --reqs: explicit ids override the phase filter (even Deferred)', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }],
     reqs: [['REQ-1', 1, 'Pending'], ['REQ-2', 1, 'Deferred'], ['REQ-3', 2, 'Pending']],
-  });
+  }, t);
   const r = run(['phase-done', '--n', '1', '--reqs', 'REQ-2, REQ-3'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.reqs, ['REQ-2', 'REQ-3']); // exactly the named rows
@@ -78,11 +78,11 @@ test('phase-done --reqs: explicit ids override the phase filter (even Deferred)'
   assert.match(reqs, /REQ-3 \| Phase 2 \| Complete /);
 });
 
-test('phase-done: valueless --reqs is bad-args, not internal (#45.1)', () => {
+test('phase-done: valueless --reqs is bad-args, not internal (#45.1)', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Only' }],
     reqs: [['REQ-1', 1, 'Pending']],
-  });
+  }, t);
   const roadmapBefore = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
   const reqsBefore = readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8');
   const r = run(['phase-done', '--n', '1', '--reqs'], dir);
@@ -97,11 +97,11 @@ test('phase-done: valueless --reqs is bad-args, not internal (#45.1)', () => {
 // through the truthiness test to the bulk phase-filter branch, flipping every
 // non-Deferred row it was never told to touch.
 for (const empty of ['', '   ', ',', ',,']) {
-  test(`phase-done: --reqs "${empty}" refuses instead of flipping the phase`, () => {
+  test(`phase-done: --reqs "${empty}" refuses instead of flipping the phase`, (t) => {
     const dir = makeTree({
       roadmap: [{ n: 1, name: 'Only' }],
       reqs: [['REQ-1', 1, 'Pending'], ['REQ-2', 1, 'Pending']],
-    });
+    }, t);
     const roadmapBefore = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
     const reqsBefore = readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8');
     const r = run(['phase-done', '--n', '1', '--reqs', empty], dir);
@@ -112,11 +112,11 @@ for (const empty of ['', '   ', ',', ',,']) {
   });
 }
 
-test('phase-done: --reqs names exactly the rows it flips; omitting it closes the phase', () => {
+test('phase-done: --reqs names exactly the rows it flips; omitting it closes the phase', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Only' }],
     reqs: [['REQ-1', 1, 'Pending'], ['REQ-2', 1, 'Pending'], ['REQ-3', 1, 'Deferred']],
-  });
+  }, t);
   const named = run(['phase-done', '--n', '1', '--reqs', 'REQ-1'], dir);
   assert.equal(named.ok, true);
   assert.deepEqual(named.reqs, ['REQ-1']);
@@ -126,8 +126,8 @@ test('phase-done: --reqs names exactly the rows it flips; omitting it closes the
   assert.deepEqual(all.reqs, ['REQ-1', 'REQ-2']); // Deferred still exempt
 });
 
-test('phase-done: unknown phase refuses; nothing written', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }] });
+test('phase-done: unknown phase refuses; nothing written', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }] }, t);
   const before = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
   const r = run(['phase-done', '--n', '9'], dir);
   assert.equal(r.ok, false);
@@ -138,11 +138,11 @@ test('phase-done: unknown phase refuses; nothing written', () => {
 // `--n "$PHASE"` with PHASE unset: parseArgs mints `true`, `Number(true)` is 1,
 // and phase 1 was boxed complete with its rows flipped, ok:true.
 for (const [name, arg] of [['valueless', null], ['abc', 'abc'], ['empty string', '']]) {
-  test(`phase-done: a ${name} --n refuses; neither doc is written`, () => {
+  test(`phase-done: a ${name} --n refuses; neither doc is written`, (t) => {
     const dir = makeTree({
       roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }],
       reqs: [['REQ-1', 1, 'Pending']],
-    });
+    }, t);
     const roadmapBefore = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
     const reqsBefore = readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8');
     const r = run(['phase-done', ...(arg === null ? ['--n'] : ['--n', arg])], dir);
@@ -156,11 +156,11 @@ for (const [name, arg] of [['valueless', null], ['abc', 'abc'], ['empty string',
 
 // The guard reads `.value`, not `.raw` (D-11): a zero-padded phase must stay
 // the phase it names rather than regressing to unknown-phase.
-test('phase-done: --n 02 still boxes phase 2', () => {
+test('phase-done: --n 02 still boxes phase 2', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }],
     reqs: [['REQ-2', 2, 'Pending']],
-  });
+  }, t);
   const r = run(['phase-done', '--n', '02'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.reqs, ['REQ-2']);
@@ -176,11 +176,11 @@ test('phase-done: --n 02 still boxes phase 2', () => {
 // assertion - "refused" and "flipped, then reported as an error" are different
 // trees. No chmodSync anywhere: it is a silent no-op under a root test runner,
 // and a directory at the path is uid-independent.
-test('phase-done: an unreadable REQUIREMENTS.md refuses whole; ROADMAP.md is byte-identical', () => {
+test('phase-done: an unreadable REQUIREMENTS.md refuses whole; ROADMAP.md is byte-identical', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }],
     reqs: [['REQ-1', 1, 'Pending']],
-  });
+  }, t);
   rmSync(join(dir, 'REQUIREMENTS.md'));
   mkdirSync(join(dir, 'REQUIREMENTS.md'));
   const sha = (f) => createHash('sha256').update(readFileSync(f)).digest('hex');
@@ -197,8 +197,8 @@ test('phase-done: an unreadable REQUIREMENTS.md refuses whole; ROADMAP.md is byt
 
 const phaseStatus = (dir, n) => readState(dir).state.phases.find((p) => p.n === n).status;
 
-test('phase-done and its undo change the state, and the regenerated box agrees', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
+test('phase-done and its undo change the state, and the regenerated box agrees', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] }, t);
   const done = run(['phase-done', '--n', '2'], dir);
   assert.equal(done.ok, true);
   assert.equal(phaseStatus(dir, 2), 'complete');
@@ -215,8 +215,8 @@ test('phase-done and its undo change the state, and the regenerated box agrees',
   assert.match(readFileSync(join(dir, 'ROADMAP.md'), 'utf8'), /^- \[ \] \*\*Phase 2: Two\*\*/m);
 });
 
-test('phase-done: hand edits to the list change nothing, and the next close puts the generated text back', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
+test('phase-done: hand edits to the list change nothing, and the next close puts the generated text back', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] }, t);
   assert.equal(run(['phase-done', '--n', '1'], dir).ok, true);
   const file = join(dir, 'ROADMAP.md');
   const generated = readFileSync(file, 'utf8');
@@ -233,11 +233,11 @@ test('phase-done: hand edits to the list change nothing, and the next close puts
   assert.equal(after, generated.replace('- [ ] **Phase 2: Two**', '- [x] **Phase 2: Two**'));
 });
 
-test('phase-done and its undo set the state\'s rows, Deferred ones apart, and the table agrees; a hand-set row is put back', () => {
+test('phase-done and its undo set the state\'s rows, Deferred ones apart, and the table agrees; a hand-set row is put back', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     reqs: [['REQ-1', 1, 'Pending'], ['REQ-2', 1, 'Deferred'], ['REQ-3', 1, 'Pending']],
-  });
+  }, t);
   const rows = () => Object.fromEntries(readState(dir).state.requirements.map((r) => [r.id, r.status]));
   assert.deepEqual(run(['phase-done', '--n', '1', '--reqs', 'REQ-1'], dir).reqs, ['REQ-1']);
   assert.deepEqual(rows(), { 'REQ-1': 'Complete', 'REQ-2': 'Deferred', 'REQ-3': 'Pending' });
@@ -254,8 +254,8 @@ test('phase-done and its undo set the state\'s rows, Deferred ones apart, and th
   assert.match(readFileSync(file, 'utf8'), /REQ-3 \| Phase 1 \| Pending/);
 });
 
-test('phase-done: a roadmap with no ## Phases heading is refused and nothing is written', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+test('phase-done: a roadmap with no ## Phases heading is refused and nothing is written', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   assert.equal(run(['status'], dir).ok, true);
   writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap\n\nnothing listed\n');
   const r = run(['phase-done', '--n', '1'], dir);
@@ -267,8 +267,8 @@ test('phase-done: a roadmap with no ## Phases heading is refused and nothing is 
 // The other half of the same distinction: absence is legitimate data, not a
 // refusal - verify.md's phase-done step is a hard step, so a project that never
 // kept a REQUIREMENTS.md must still be able to close a phase.
-test('phase-done: an ABSENT REQUIREMENTS.md still boxes the phase, ok:true', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] });
+test('phase-done: an ABSENT REQUIREMENTS.md still boxes the phase, ok:true', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }] }, t);
   assert.equal(existsSync(join(dir, 'REQUIREMENTS.md')), false);
   const r = run(['phase-done', '--n', '1'], dir);
   assert.equal(r.ok, true);
@@ -291,12 +291,12 @@ test('phase-done: an ABSENT REQUIREMENTS.md still boxes the phase, ok:true', () 
 // no FIFO case is driven here: a regression would hang this suite rather than
 // redden it. Same defect and same fix as the CHANGELOG arm one seam over
 // (`release-bump.test.mjs`, 'a NON-REGULAR CHANGELOG that reads CLEANLY').
-test('phase-done: a non-regular REQUIREMENTS.md that reads CLEANLY still refuses', () => {
+test('phase-done: a non-regular REQUIREMENTS.md that reads CLEANLY still refuses', (t) => {
   if (!existsSync('/dev/null')) return;
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }, { n: 2, name: 'Two' }],
     reqs: [['REQ-1', 1, 'Pending']],
-  });
+  }, t);
   rmSync(join(dir, 'REQUIREMENTS.md'));
   symlinkSync('/dev/null', join(dir, 'REQUIREMENTS.md'));
   const sha = (f) => createHash('sha256').update(readFileSync(f)).digest('hex');
@@ -317,16 +317,16 @@ test('phase-done: a non-regular REQUIREMENTS.md that reads CLEANLY still refuses
 // one-document run is not a failure and must not be reported by mutating
 // `reqs`, so the roadmap-only arm pins `reqs` and the box in the same block: a
 // future change that expresses "not written" through `reqs` reddens here.
-test('phase-done: `wrote` names the documents that moved, on both shapes', () => {
+test('phase-done: `wrote` names the documents that moved, on both shapes', (t) => {
   const both = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     reqs: [['REQ-1', 1, 'Pending']],
-  });
+  }, t);
   const r = run(['phase-done', '--n', '1'], both);
   assert.equal(r.ok, true);
   assert.deepEqual(r.wrote, ['ROADMAP.md', 'REQUIREMENTS.md']);
 
-  const roadmapOnly = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+  const roadmapOnly = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   const o = run(['phase-done', '--n', '1'], roadmapOnly);
   assert.equal(o.ok, true);
   assert.deepEqual(o.wrote, ['ROADMAP.md']);
@@ -340,8 +340,8 @@ test('phase-done: `wrote` names the documents that moved, on both shapes', () =>
 // closes, both documents are still written, and the report rides beside them.
 
 /** A one-phase tree whose CAPTURE.md is written verbatim. */
-function captureTree(text) {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+function captureTree(text, t) {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   if (text !== undefined) writeFileSync(join(dir, 'CAPTURE.md'), text);
   return dir;
 }
@@ -349,8 +349,8 @@ function captureTree(text) {
 const TWO_LEFT = '## Todos\n\n- [ ] (phase 1) the one nobody filed\n\n'
   + '## Seeds\n\n- an idea that outlived the phase\n\n## Notes\n\n- None.\n';
 
-test('phase-done: a non-empty queue is NAMED at close, and the phase still closes', () => {
-  const dir = captureTree(TWO_LEFT);
+test('phase-done: a non-empty queue is NAMED at close, and the phase still closes', (t) => {
+  const dir = captureTree(TWO_LEFT, t);
   const r = run(['phase-done', '--n', '1'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r._exit, 0, 'a leftover queue is a report - the close is not refused');
@@ -366,15 +366,15 @@ test('phase-done: a non-empty queue is NAMED at close, and the phase still close
   ]);
 });
 
-test('phase-done: a queue holding only the placeholders names nothing', () => {
-  const r = run(['phase-done', '--n', '1'], captureTree(EMPTY_CAPTURE));
+test('phase-done: a queue holding only the placeholders names nothing', (t) => {
+  const r = run(['phase-done', '--n', '1'], captureTree(EMPTY_CAPTURE, t));
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.capture.substantive, 0);
   assert.deepEqual(r.capture.items, []);
 });
 
-test('phase-done: an absent CAPTURE.md is an EMPTY queue, and closes cleanly', () => {
-  const r = run(['phase-done', '--n', '1'], captureTree());
+test('phase-done: an absent CAPTURE.md is an EMPTY queue, and closes cleanly', (t) => {
+  const r = run(['phase-done', '--n', '1'], captureTree(undefined, t));
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.roadmap.now, '[x]');
   assert.deepEqual(r.capture, { substantive: 0, items: [] });
@@ -382,10 +382,10 @@ test('phase-done: an absent CAPTURE.md is an EMPTY queue, and closes cleanly', (
 
 test('phase-done: a queue that cannot be READ closes anyway, reported unread', {
   skip: typeof process.getuid === 'function' && process.getuid() === 0 ? 'root bypasses mode bits' : false,
-}, () => {
+}, (t) => {
   // A phase's completion does not depend on this file being legible. The
   // REASON lives in `capture-check`, which refuses that file with a hint.
-  const dir = captureTree(TWO_LEFT);
+  const dir = captureTree(TWO_LEFT, t);
   const file = join(dir, 'CAPTURE.md');
   chmodSync(file, 0o000);
   const r = run(['phase-done', '--n', '1'], dir);
@@ -395,8 +395,8 @@ test('phase-done: a queue that cannot be READ closes anyway, reported unread', {
   assert.deepEqual(r.capture, { unread: true });
 });
 
-test('phase-done --undo: reopening a phase makes NO assertion about the queue', () => {
-  const dir = captureTree(TWO_LEFT);
+test('phase-done --undo: reopening a phase makes NO assertion about the queue', (t) => {
+  const dir = captureTree(TWO_LEFT, t);
   run(['phase-done', '--n', '1'], dir);
   const u = run(['phase-done', '--n', '1', '--undo'], dir);
   assert.equal(u.ok, true, JSON.stringify(u));

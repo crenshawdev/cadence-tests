@@ -37,8 +37,9 @@ const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core',
  * @param {Record<string, string|null>} spec keyed `<group>/<name>`
  * @returns {string}
  */
-function planningRoot(spec) {
+function planningRoot(t, spec) {
   const root = mkdtempSync(join(tmpdir(), 'cad-why-corpus-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const [label, summary] of Object.entries(spec)) {
     const dir = join(root, label);
     mkdirSync(dir, { recursive: true });
@@ -59,11 +60,11 @@ const commitsTable = (rows) => [
 
 // --- The real corpus, both tiers ------------------------------------------
 
-test('the live tier and the archive tier are both walked, each labelled by its own group', () => {
+test('the live tier and the archive tier are both walked, each labelled by its own group', (t) => {
   // A BUILT root, not this repository's: `phases/<N>` exists only while a
   // milestone is open, so pinning the live tier against the real corpus reddens
   // at every close for a reason that is not about the walk (D-05).
-  const root = planningRoot({
+  const root = planningRoot(t, {
     'phases/1': commitsTable([['1', '1', 'ccccccc', 'the open cycle']]),
     '_archive-v9.0.0/1': commitsTable([['1', '1', 'aaaaaaa', 'the older cycle']]),
     '_archive-v9.1.0/1': commitsTable([['1', '1', 'bbbbbbb', 'the newer cycle']]),
@@ -76,10 +77,10 @@ test('the live tier and the archive tier are both walked, each labelled by its o
   assert.deepEqual(labels, [...labels].sort(), 'the walk order is label order, so two runs index the same way');
 });
 
-test('a live phase and an archive phase sharing one number resolve apart, each under its own group', () => {
+test('a live phase and an archive phase sharing one number resolve apart, each under its own group', (t) => {
   // The discrimination the real-corpus case above states, proved on a root that
   // holds both halves whatever milestone this repository is in.
-  const root = planningRoot({
+  const root = planningRoot(t, {
     'phases/1': commitsTable([['1', '1', 'ccccccc', 'the open cycle']]),
     '_archive-v9.0.0/1': commitsTable([['1', '1', 'aaaaaaa', 'the older cycle']]),
   });
@@ -95,8 +96,8 @@ test('a live phase and an archive phase sharing one number resolve apart, each u
 
 // --- Built roots: the states this corpus does not hold ---------------------
 
-test('two archive groups each carrying a phase 1 both index, each under its own label', () => {
-  const root = planningRoot({
+test('two archive groups each carrying a phase 1 both index, each under its own label', (t) => {
+  const root = planningRoot(t, {
     '_archive-v9.0.0/1': commitsTable([['1', '1', 'aaaaaaa', 'the older cycle']]),
     '_archive-v9.1.0/1': commitsTable([['1', '1', 'bbbbbbb', 'the newer cycle']]),
   });
@@ -114,8 +115,8 @@ test('two archive groups each carrying a phase 1 both index, each under its own 
   assert.equal(newer.row.description, 'the newer cycle');
 });
 
-test('a SUMMARY.md that cannot be read contributes no rows and exactly one warning, never a throw', () => {
-  const root = planningRoot({
+test('a SUMMARY.md that cannot be read contributes no rows and exactly one warning, never a throw', (t) => {
+  const root = planningRoot(t, {
     'phases/1': commitsTable([['1', '1', 'ccccccc', 'a readable phase']]),
     'phases/2': null,
   });
@@ -132,17 +133,17 @@ test('a SUMMARY.md that cannot be read contributes no rows and exactly one warni
   assert.match(index.warnings[0], /ENOTREGULAR/);
 });
 
-test('an ABSENT SUMMARY.md is silent - a phase with plans and no summary is the ordinary mid-phase state', () => {
-  const root = planningRoot({ 'phases/1': null });
+test('an ABSENT SUMMARY.md is silent - a phase with plans and no summary is the ordinary mid-phase state', (t) => {
+  const root = planningRoot(t, { 'phases/1': null });
   const index = buildCommitIndex(root);
   assert.deepEqual(index.warnings, []);
   assert.deepEqual(index.rows, []);
   assert.equal(index.dirs.length, 1, 'the directory is still in the walk');
 });
 
-test('two abbreviations that both prefix one full sha answer ambiguous, naming both', () => {
+test('two abbreviations that both prefix one full sha answer ambiguous, naming both', (t) => {
   const full = `abcdef12${'0'.repeat(32)}`;
-  const root = planningRoot({
+  const root = planningRoot(t, {
     '_archive-v9.0.0/3': commitsTable([['1', '4', 'abcdef1', 'the seven-character era']]),
     '_archive-v9.1.0/2': commitsTable([['2', '5', 'abcdef12', 'the eight-character era']]),
   });
@@ -156,8 +157,8 @@ test('two abbreviations that both prefix one full sha answer ambiguous, naming b
   assert.deepEqual(answer.matches.map((m) => `${m.plan}/${m.task}`), ['1/4', '2/5']);
 });
 
-test('a sha no summary names is unresolved, which is a different answer from ambiguous', () => {
-  const root = planningRoot({ 'phases/1': commitsTable([['1', '1', 'ddddddd', 'unrelated']]) });
+test('a sha no summary names is unresolved, which is a different answer from ambiguous', (t) => {
+  const root = planningRoot(t, { 'phases/1': commitsTable([['1', '1', 'ddddddd', 'unrelated']]) });
   const answer = resolveCommit(buildCommitIndex(root), `eeeeeee${'0'.repeat(33)}`);
   assert.equal(answer.state, 'unresolved');
   assert.equal(answer.row, null);
@@ -171,8 +172,8 @@ test('an absent planning root is the pre-project state: no dirs, no rows, no war
 
 // --- The guarded read itself ----------------------------------------------
 
-test('readArtifact tells absent, unreadable and readable apart', () => {
-  const root = planningRoot({ 'phases/1': 'text' });
+test('readArtifact tells absent, unreadable and readable apart', (t) => {
+  const root = planningRoot(t, { 'phases/1': 'text' });
   assert.deepEqual(readArtifact(join(root, 'phases', '1', 'SUMMARY.md')),
     { text: 'text', absent: false, code: null });
   assert.deepEqual(readArtifact(join(root, 'phases', '1', 'nothing.md')),
@@ -182,8 +183,8 @@ test('readArtifact tells absent, unreadable and readable apart', () => {
     'a non-regular file is refused BEFORE it is opened, so a FIFO cannot block the process');
 });
 
-test('readArtifact refuses a symlink resolving outside its own directory', () => {
-  const root = planningRoot({ 'phases/1': 'text' });
+test('readArtifact refuses a symlink resolving outside its own directory', (t) => {
+  const root = planningRoot(t, { 'phases/1': 'text' });
   const outside = join(root, 'secret.txt');
   writeFileSync(outside, 'a credential the caller never asked for');
 
@@ -205,8 +206,9 @@ test('readArtifact refuses a symlink resolving outside its own directory', () =>
 // --- Task 6: the review edge's disk and git half ---------------------------
 
 /** A repository with three commits on `f.txt`, returned oldest first. */
-function repoWithThreeCommits() {
+function repoWithThreeCommits(t) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-why-range-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const env = {
     ...process.env,
     GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
@@ -225,8 +227,8 @@ function repoWithThreeCommits() {
   return { dir, shas };
 }
 
-test('rangeMembers answers base..head, so a record covers A and not B', () => {
-  const { dir, shas } = repoWithThreeCommits();
+test('rangeMembers answers base..head, so a record covers A and not B', (t) => {
+  const { dir, shas } = repoWithThreeCommits(t);
   const [base, a, b] = shas;
   const members = rangeMembers(dir, base, a);
   assert.ok(members instanceof Set);
@@ -235,8 +237,8 @@ test('rangeMembers answers base..head, so a record covers A and not B', () => {
   assert.ok(!members.has(base), 'and base itself is excluded, which is git own reading of base..head');
 });
 
-test('a range whose head this clone does not have is unresolvable, not empty', () => {
-  const { dir, shas } = repoWithThreeCommits();
+test('a range whose head this clone does not have is unresolvable, not empty', (t) => {
+  const { dir, shas } = repoWithThreeCommits(t);
   assert.equal(rangeMembers(dir, shas[0], 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'), null);
   assert.equal(rangeMembers(dir, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef', shas[2]), null);
   // Distinguishable from a range that resolves and happens to be empty.
@@ -245,16 +247,16 @@ test('a range whose head this clone does not have is unresolvable, not empty', (
   assert.equal(empty.size, 0);
 });
 
-test('a base_id that is not hexadecimal never reaches git argv', () => {
-  const { dir, shas } = repoWithThreeCommits();
+test('a base_id that is not hexadecimal never reaches git argv', (t) => {
+  const { dir, shas } = repoWithThreeCommits(t);
   for (const hostile of ['--upload-pack=touch /tmp/pwned', '-x', 'HEAD', '', '../../etc/passwd']) {
     assert.equal(rangeMembers(dir, hostile, shas[2]), null, `${JSON.stringify(hostile)} must be refused`);
     assert.equal(rangeMembers(dir, shas[0], hostile), null);
   }
 });
 
-test('readAdjudications finds records by the one filename rule and skips everything else', () => {
-  const root = planningRoot({ 'phases/1': commitsTable([['1', '1', 'aaaaaaa', 'a phase']]) });
+test('readAdjudications finds records by the one filename rule and skips everything else', (t) => {
+  const root = planningRoot(t, { 'phases/1': commitsTable([['1', '1', 'aaaaaaa', 'a phase']]) });
   const dir = { label: 'phases/1', path: join(root, 'phases', '1') };
   const record = {
     base_id: 'a'.repeat(40),
@@ -277,8 +279,8 @@ test('readAdjudications finds records by the one filename rule and skips everyth
   assert.equal(records[0].survivors[0].claim, 'kept');
 });
 
-test('an unparseable record warns by name and code, and the other records still read', () => {
-  const root = planningRoot({ 'phases/1': commitsTable([['1', '1', 'aaaaaaa', 'a phase']]) });
+test('an unparseable record warns by name and code, and the other records still read', (t) => {
+  const root = planningRoot(t, { 'phases/1': commitsTable([['1', '1', 'aaaaaaa', 'a phase']]) });
   const dir = { label: 'phases/1', path: join(root, 'phases', '1') };
   mkdirSync(join(dir.path, 'records'));
   writeFileSync(join(dir.path, 'records', 'ADJUDICATION-plan-good.json'), JSON.stringify({
@@ -291,8 +293,8 @@ test('an unparseable record warns by name and code, and the other records still 
   assert.deepEqual(warnings, ['phases/1/records/ADJUDICATION-plan-bad.json: unparseable-json']);
 });
 
-test('a phase directory with no record at all is silent', () => {
-  const root = planningRoot({ 'phases/1': commitsTable([['1', '1', 'aaaaaaa', 'a phase']]) });
+test('a phase directory with no record at all is silent', (t) => {
+  const root = planningRoot(t, { 'phases/1': commitsTable([['1', '1', 'aaaaaaa', 'a phase']]) });
   const { records, warnings } = readAdjudications({ label: 'phases/1', path: join(root, 'phases', '1') });
   assert.deepEqual(records, []);
   assert.deepEqual(warnings, []);
@@ -386,9 +388,10 @@ test('a close older than ARCHIVE.md itself reports an ABSENT label rather than g
  * @param {string[]} labels
  * @returns {string}
  */
-function repoWithCloses(labels, summaryFor = (label, phase) => `# ${label} phase ${phase}\n`, extraFiles = () => ({}),
+function repoWithCloses(t, labels, summaryFor = (label, phase) => `# ${label} phase ${phase}\n`, extraFiles = () => ({}),
   archiveFileOf = (planning) => join(recordsDir(planning), 'ARCHIVE.md')) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-why-prune-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   gitIn(dir, ['init', '-q', '-b', 'main']);
   let archive = '# Archive\n';
   labels.forEach((label, i) => {
@@ -417,8 +420,8 @@ function repoWithCloses(labels, summaryFor = (label, phase) => `# ${label} phase
   return dir;
 }
 
-test('two closes in one repository each come back under their own label, in a stable order', () => {
-  const dir = repoWithCloses(['v9.0.0', 'v9.1.0']);
+test('two closes in one repository each come back under their own label, in a stable order', (t) => {
+  const dir = repoWithCloses(t, ['v9.0.0', 'v9.1.0']);
   const first = findPruneCommits(dir);
   const second = findPruneCommits(dir);
   assert.equal(first.prunes.length, 2);
@@ -427,17 +430,18 @@ test('two closes in one repository each come back under their own label, in a st
   assert.deepEqual(second, first, 'two runs over an unchanged repository answer identically');
 });
 
-test('a close committed before the ledger moved still binds its label from the old path', () => {
-  const dir = repoWithCloses(['v9.0.0'], undefined, undefined, (planning) => join(planning, 'ARCHIVE.md'));
+test('a close committed before the ledger moved still binds its label from the old path', (t) => {
+  const dir = repoWithCloses(t, ['v9.0.0'], undefined, undefined, (planning) => join(planning, 'ARCHIVE.md'));
   assert.deepEqual(findPruneCommits(dir).prunes.map((p) => p.label), ['v9.0.0']);
 });
 
-test('a merge-shaped prune record is REPORTED, never answered out of an arbitrary parent', () => {
+test('a merge-shaped prune record is REPORTED, never answered out of an arbitrary parent', (t) => {
   // The shipped argv cannot produce this record - measured on git 2.55.0, a
   // merge matches no diff filter - so the bytes here are git's own, produced by
   // the same log with --diff-merges=first-parent added, and the refusal is
   // proved over them rather than over an invented string.
   const dir = mkdtempSync(join(tmpdir(), 'cad-why-merge-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   gitIn(dir, ['init', '-q', '-b', 'main']);
   mkdirSync(join(dir, '.planning', 'phases', '1'), { recursive: true });
   writeFileSync(join(dir, '.planning', 'phases', '1', 'SUMMARY.md'), '# s\n');
@@ -510,14 +514,14 @@ test('the recovered phase 1 is v3.5.9\'s, never the live phases/1 that holds v3.
     'the live phase 1 exists and reuses the number - a directory-keyed read would land there');
 });
 
-test('the disk tier still wins for a commit BOTH tiers can claim', () => {
+test('the disk tier still wins for a commit BOTH tiers can claim', (t) => {
   // A `--mode archive` close deletes `phases/<N>/SUMMARY.md` and adds
   // `_archive-v<ver>/<N>/SUMMARY.md` in one commit, so a commit either names is
   // in both tiers. Flat-merged that would read as ambiguous; tiered it reads as
   // the record a person can open. The close is built here: the phase summary is
   // committed and pruned, and the archived copy sits on disk.
   const table = commitsTable([['1', '2', 'abcdef1', 'the task both tiers name']]);
-  const dir = repoWithCloses(['v9.0.0'], () => table);
+  const dir = repoWithCloses(t, ['v9.0.0'], () => table);
   const archived = join(dir, '.planning', '_archive-v9.0.0', '1');
   mkdirSync(archived, { recursive: true });
   writeFileSync(join(archived, 'PLAN.md'), '---\nphase: 1\nplan: 1\n---\n\n# a plan\n');
@@ -545,7 +549,7 @@ test('building the map twice over the unchanged repository returns deep-equal re
   assert.deepEqual(buildRecoveredIndex(REPO_ROOT), buildRecoveredIndex(REPO_ROOT));
 });
 
-test('a recovered row naming a sha this clone does not have is stated absent, never dropped', () => {
+test('a recovered row naming a sha this clone does not have is stated absent, never dropped', (t) => {
   const table = (label, phase) => [
     `# ${label} phase ${phase}`, '', '## Commits', '',
     '| Plan | Task | Commit | Description |',
@@ -553,7 +557,7 @@ test('a recovered row naming a sha this clone does not have is stated absent, ne
     '| 1 | 1 | deadbeefdeadbeefdeadbeefdeadbeefdeadbeef | a commit this clone has never had |',
     '',
   ].join('\n');
-  const dir = repoWithCloses(['v9.0.0'], table);
+  const dir = repoWithCloses(t, ['v9.0.0'], table);
   const index = buildRecoveredIndex(dir);
   const row = index.rows.find((r) => r.commit.startsWith('deadbeef'));
   assert.ok(row, 'the row is in the map');
@@ -565,7 +569,7 @@ test('a recovered row naming a sha this clone does not have is stated absent, ne
 
 // --- The recovered artifacts behind the remaining edges (plan 3, task 4) ---
 
-test('a pruned phase carrying a CONTEXT.md and no record resolves the decision edge and states the review absence', () => {
+test('a pruned phase carrying a CONTEXT.md and no record resolves the decision edge and states the review absence', (t) => {
   const summary = (label, phase) => [
     `# ${label} phase ${phase}`, '', '## Commits', '',
     '| Plan | Task | Commit | Description |',
@@ -579,7 +583,7 @@ test('a pruned phase carrying a CONTEXT.md and no record resolves the decision e
     'PLAN.md': ['---', 'phase: 1', 'plan: 1', '---', '', '# a plan', '',
       '### Task 1: the only task', '', '- **Files:** src/a.mjs', ''].join('\n'),
   });
-  const dir = repoWithCloses(['v9.2.0'], summary, extras);
+  const dir = repoWithCloses(t, ['v9.2.0'], summary, extras);
   const index = buildRecoveredIndex(dir);
   const recovered = index.dirs[0];
   assert.equal(recovered.path, null, 'the directory is gone; only the tree is left');
@@ -602,7 +606,7 @@ test('a pruned phase carrying a CONTEXT.md and no record resolves the decision e
     'the tree carries no record - an absence, never a failure of the entry');
 });
 
-test('a recovered adjudication record is found by listing the tree, not by guessing its name', () => {
+test('a recovered adjudication record is found by listing the tree, not by guessing its name', (t) => {
   // The discriminator in `ADJUDICATION-<trigger>-<discriminator>.json` is not
   // predictable, so the read has to ask the tree what is there.
   const summary = (label, phase) => [
@@ -618,7 +622,7 @@ test('a recovered adjudication record is found by listing the tree, not by guess
     }),
     'records/REVIEW-risk_surface-plan-e7c1f09.md': 'not a record',
   });
-  const dir = repoWithCloses(['v9.3.0'], summary, extras);
+  const dir = repoWithCloses(t, ['v9.3.0'], summary, extras);
   const recovered = buildRecoveredIndex(dir).dirs[0];
   const { records, warnings } = readAdjudications(recovered, dir);
   assert.deepEqual(warnings, []);
@@ -626,7 +630,7 @@ test('a recovered adjudication record is found by listing the tree, not by guess
   assert.equal(records[0].survivors[0].claim, 'kept out of a tree');
 });
 
-test('a recovered tree that predates the records folder is read at its top, since a made commit cannot be converted', () => {
+test('a recovered tree that predates the records folder is read at its top, since a made commit cannot be converted', (t) => {
   // The discriminator in `ADJUDICATION-<trigger>-<discriminator>.json` is not
   // predictable, so the read has to ask the tree what is there.
   const summary = (label, phase) => [
@@ -642,7 +646,7 @@ test('a recovered tree that predates the records folder is read at its top, sinc
     }),
     'REVIEW-risk_surface-plan-e7c1f09.md': 'not a record',
   });
-  const dir = repoWithCloses(['v9.4.0'], summary, extras);
+  const dir = repoWithCloses(t, ['v9.4.0'], summary, extras);
   const recovered = buildRecoveredIndex(dir).dirs[0];
   const { records, warnings } = readAdjudications(recovered, dir);
   assert.deepEqual(warnings, []);
@@ -731,8 +735,9 @@ const taskRecord = (rows, files = 'src/a.mjs') => [
  * @param {Record<string, string|null>} spec keyed by slug
  * @returns {string}
  */
-function tasksRoot(spec) {
+function tasksRoot(t, spec) {
   const root = mkdtempSync(join(tmpdir(), 'cad-why-tasks-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const [slug, body] of Object.entries(spec)) {
     const dir = join(root, 'tasks', slug);
     mkdirSync(dir, { recursive: true });
@@ -742,8 +747,8 @@ function tasksRoot(spec) {
   return root;
 }
 
-test('one task record yields one directory and its table rows, each carrying the slug', () => {
-  const root = tasksRoot({
+test('one task record yields one directory and its table rows, each carrying the slug', (t) => {
+  const root = tasksRoot(t, {
     'bound-plan-size': taskRecord([
       ['1', 'aaaaaaa', 'the first commit'],
       ['1', 'bbbbbbb', 'the second commit'],
@@ -774,15 +779,15 @@ test('one task record yields one directory and its table rows, each carrying the
   assert.equal(answer.row.description, 'the first commit');
 });
 
-test('an absent tasks/ is the never-ran-a-task state: no dirs, no rows, no warning', () => {
-  const root = planningRoot({ 'phases/1': commitsTable([['1', '1', 'ccccccc', 'a phase, and no task']]) });
+test('an absent tasks/ is the never-ran-a-task state: no dirs, no rows, no warning', (t) => {
+  const root = planningRoot(t, { 'phases/1': commitsTable([['1', '1', 'ccccccc', 'a phase, and no task']]) });
   assert.deepEqual(buildTaskIndex(root), { dirs: [], rows: [], warnings: [] });
   assert.deepEqual(buildTaskIndex(join(tmpdir(), 'cad-why-tasks-nothing-here')),
     { dirs: [], rows: [], warnings: [] }, 'and so is an absent planning root');
 });
 
-test('a RECORD.md that cannot be read warns by artifact and errno code, and contributes no rows', () => {
-  const root = tasksRoot({ 'escaping-record': taskRecord([['1', 'ddddddd', 'never reached']]) });
+test('a RECORD.md that cannot be read warns by artifact and errno code, and contributes no rows', (t) => {
+  const root = tasksRoot(t, { 'escaping-record': taskRecord([['1', 'ddddddd', 'never reached']]) });
   // A record that RESOLVES out of its own directory: the lister contains the
   // walk against a resolve OUT OF THE PLANNING ROOT, and `readArtifact` is
   // what refuses the one level further in.
@@ -802,8 +807,8 @@ test('a RECORD.md that cannot be read warns by artifact and errno code, and cont
     'the warning names a code, never the bytes it refused to read');
 });
 
-test('building the tasks tier twice over an unchanged root returns deep-equal results', () => {
-  const root = tasksRoot({
+test('building the tasks tier twice over an unchanged root returns deep-equal results', (t) => {
+  const root = tasksRoot(t, {
     'second-slug': taskRecord([['1', 'fffffff', 'later by name']]),
     'first-slug': taskRecord([['1', 'ggggggg', 'earlier by name']]),
   });
@@ -817,8 +822,8 @@ test('building the tasks tier twice over an unchanged root returns deep-equal re
 /** An empty tier, for a merge whose git-recovered half is not under test. */
 const noTier = () => ({ dirs: [], rows: [], warnings: [] });
 
-test('a sha named by BOTH a phase summary and a task record resolves to the PHASE', () => {
-  const root = planningRoot({ 'phases/1': commitsTable([['1', '2', 'abcdef1', 'the phase claims it']]) });
+test('a sha named by BOTH a phase summary and a task record resolves to the PHASE', (t) => {
+  const root = planningRoot(t, { 'phases/1': commitsTable([['1', '2', 'abcdef1', 'the phase claims it']]) });
   const tasks = join(root, 'tasks', 'both-name-it');
   mkdirSync(tasks, { recursive: true });
   writeFileSync(join(tasks, 'RECORD.md'), taskRecord([
@@ -844,8 +849,8 @@ test('a sha named by BOTH a phase summary and a task record resolves to the PHAS
   assert.equal(only.row.description, 'this one only the task record names');
 });
 
-test('the tasks tier is asked AHEAD of the git-recovered one, and prunes still come off recovered alone', () => {
-  const root = tasksRoot({ 'ahead-of-recovery': taskRecord([['1', 'abc1234', 'the record a reader can open']]) });
+test('the tasks tier is asked AHEAD of the git-recovered one, and prunes still come off recovered alone', (t) => {
+  const root = tasksRoot(t, { 'ahead-of-recovery': taskRecord([['1', 'abc1234', 'the record a reader can open']]) });
   const recovered = {
     dirs: [{ label: 'deadbeef:.planning/phases/9', path: null, group: 'recovered', phase: '9', milestone: 'v9.9.9' }],
     rows: [{ plan: '1', task: '1', commit: 'abc1234', description: 'the tree a reader cannot open',
@@ -866,8 +871,8 @@ test('the tasks tier is asked AHEAD of the git-recovered one, and prunes still c
 
 // --- The record's own declaration reaches the join (phase 3 plan 2, task 4) -
 
-test('a task directory holding BOTH a PLAN.md and a RECORD.md declares through the RECORD', () => {
-  const root = tasksRoot({ 'planned-then-run': taskRecord([['1', 'abc1234', 'what it did']], 'src/shipped.mjs') });
+test('a task directory holding BOTH a PLAN.md and a RECORD.md declares through the RECORD', (t) => {
+  const root = tasksRoot(t, { 'planned-then-run': taskRecord([['1', 'abc1234', 'what it did']], 'src/shipped.mjs') });
   // The PLANNED `/cad-task` arm writes this; it states what the run set out to
   // touch, which is not what the `declared by:` edge is asking.
   writeFileSync(join(root, 'tasks', 'planned-then-run', 'PLAN.md'), [
@@ -885,8 +890,8 @@ test('a task directory holding BOTH a PLAN.md and a RECORD.md declares through t
   assert.equal(records.summary, '', 'nor a SUMMARY.md');
 });
 
-test('a PHASE directory is unaffected: RECORD.md is never tried where there is no slug', () => {
-  const root = planningRoot({ 'phases/1': commitsTable([['1', '1', 'abc1234', 'a phase task']]) });
+test('a PHASE directory is unaffected: RECORD.md is never tried where there is no slug', (t) => {
+  const root = planningRoot(t, { 'phases/1': commitsTable([['1', '1', 'abc1234', 'a phase task']]) });
   // A file that would win if the task arm leaked onto the phase tier.
   writeFileSync(join(root, 'phases', '1', 'RECORD.md'), '### Task 1: never read\n\n- **Files:** src/wrong.mjs\n');
   const dir = buildCommitIndex(root).dirs[0];

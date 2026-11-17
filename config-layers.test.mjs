@@ -1,7 +1,7 @@
 // Zero-dep tests for lib/config-layers.mjs and the `config.mjs layers` read behind the /cad-config menu.
 // The lib cases run the real mergeLayers over fixture files, with a small hand-written schema so every
 // expectation is computed by hand. The CLI cases run the shipped schema over temp repos.
-import { test, before } from 'node:test';
+import { after, test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -12,6 +12,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG = join(ROOT, 'cadence-core', 'bin', 'config.mjs');
 const tmp = mkdtempSync(join(tmpdir(), 'cad-layers-'));
+// repoFixture's cli- dirs sit under it, so this one removal takes them too
+after(() => rmSync(tmp, { recursive: true, force: true }));
 const GLOBAL = join(tmp, 'global.json');
 // config-merge reads this at import, so it is set before the dynamic imports below
 process.env.CADENCE_GLOBAL_CONFIG = GLOBAL;
@@ -205,9 +207,9 @@ function templateFixture(global) {
   return f;
 }
 
-test('layers: use_workflows set in only the repo reads off with no winner; a repo test_command reads ignored', () => {
-  const f = repoFixture({ workflow: { use_workflows: true, test_command: 'make' } }, { workflow: { test_command: 'npm t' } });
-  const { json } = cli(f, ['layers', '--key', 'workflow.use_workflows']);
+test('layers: auto_close set in only the repo reads off with no winner; a repo test_command reads ignored', () => {
+  const f = repoFixture({ git: { auto_close: true }, workflow: { test_command: 'make' } }, { workflow: { test_command: 'npm t' } });
+  const { json } = cli(f, ['layers', '--key', 'git.auto_close']);
   assert.deepEqual([json.row.value, json.row.winner], [false, null]);
   assert.equal(json.row.repo.state, 'set');
   const t = cli(f, ['layers', '--key', 'workflow.test_command']).json.row;
@@ -216,7 +218,7 @@ test('layers: use_workflows set in only the repo reads off with no winner; a rep
 
 test('layers: a fresh template repo sets 43, all 43 the shipped default', () => {
   const { json } = cli(templateFixture(), ['layers']);
-  assert.equal(json.totals.settings, 101);
+  assert.equal(json.totals.settings, 97);
   assert.equal(json.totals.repo, 43);
   assert.equal(json.totals.at_default, 43);
   assert.equal(json.totals.global, 0);
@@ -316,14 +318,6 @@ test('layers: the mapper keys have no effect with the code map off, apply with i
   assert.ok(adv.includes('roles.cad-mapper.model') && adv.includes('roles.cad-mapper.effort'), JSON.stringify(adv));
 });
 
-test('layers: workflow_plans sits in How work runs\' advanced list and applies with the code map off', () => {
-  const adv = cli(repoFixture({}), ['layers', '--group', 'How work runs']).json.advanced;
-  assert.ok(adv.includes('planning.workflow_plans'), JSON.stringify(adv));
-  const row = cli(repoFixture({}), ['layers', '--key', 'planning.workflow_plans']).json.row;
-  assert.deepEqual([row.applies, row.no_effect], [true, undefined]);
-  assert.ok(adv.includes('workflow.execute_workflows'), JSON.stringify(adv));
-});
-
 test('layers: the gate works with its tier and effort, and the other trigger keys carry the same conditions', () => {
   const { json } = cli(repoFixture(OPEN_DIFF), ['layers', '--key', 'review.triggers.diff.gate']);
   assert.deepEqual(json.row.works_with, [{ key: 'review.triggers.diff.tier', value: 'cheap' },
@@ -336,18 +330,9 @@ test('layers: the gate works with its tier and effort, and the other trigger key
   }
 });
 
-test('layers: execute_workflows set in only the repo has both true and reads off; set in both it reads on', () => {
-  const alone = cli(repoFixture({ workflow: { execute_workflows: true } }), ['layers', '--key', 'workflow.execute_workflows']).json.row;
-  assert.deepEqual([alone.both, alone.value], [true, false]);
-  const both = cli(repoFixture({ workflow: { execute_workflows: true } }, { workflow: { execute_workflows: true } }),
-    ['layers', '--key', 'workflow.execute_workflows']).json.row;
-  assert.deepEqual([both.both, both.value], [true, true]);
-});
-
 test('layers: a both-layer key and the parallel keys say what they need in interacts', () => {
   const f = repoFixture({});
-  for (const [key, re] of [['git.auto_close', /both set it/], ['workflow.use_workflows', /both set it/],
-    ['workflow.multi_workflow', /both set it/], ['workflow.execute_workflows', /both set it/],
+  for (const [key, re] of [['git.auto_close', /both set it/],
     ['parallelization.enabled', /worktree\.baseRef/],
     ['parallelization.use_worktrees', /worktree\.baseRef/]]) {
     assert.match(cli(f, ['layers', '--key', key]).json.row.interacts, re, key);

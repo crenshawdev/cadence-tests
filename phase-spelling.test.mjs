@@ -22,7 +22,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,10 +39,13 @@ const PLANNING = join(BIN, 'planning.mjs');
 /**
  * A `.planning` tree whose `phases/` holds exactly `names`, and whose ROADMAP
  * lists phases 1 and 2 so `status`-shaped readers have something canonical to
- * reconcile against. Returns the `.planning` directory.
+ * reconcile against. Returns the `.planning` directory; `t`, the calling
+ * test's context, removes the mkdtemp root above it when that test ends.
  */
-function tree(names) {
-  const dir = join(mkdtempSync(join(tmpdir(), 'cad-spelling-')), '.planning');
+function tree(names, t) {
+  const root = mkdtempSync(join(tmpdir(), 'cad-spelling-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = join(root, '.planning');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'ROADMAP.md'),
     '# Roadmap: Fixture\n\n## Phases\n\n- [ ] **Phase 1: One** - desc\n'
@@ -92,16 +95,16 @@ const FIRE_FACES = [
 ];
 
 for (const [label, argv0] of FIRE_FACES) {
-  test(`${label}: --phase 1.10 refuses against a tree holding phases/1.1/`, () => {
-    const dir = tree(['1', '1.1']);
+  test(`${label}: --phase 1.10 refuses against a tree holding phases/1.1/`, (t) => {
+    const dir = tree(['1', '1.1'], t);
     const r = seam([...argv0, '--phase', '1.10', '--trigger', 'risk_surface',
       '--discriminator', 'plan-1'], dir);
     assertRefused(r, '1.10', '1.1');
     assert.ok(r.detail.startsWith(`${label} --phase`), r.detail);
   });
 
-  test(`${label}: --phase 1.10 gets past the phase check when only phases/1.10/ exists`, () => {
-    const dir = tree(['1', '1.10']);
+  test(`${label}: --phase 1.10 gets past the phase check when only phases/1.10/ exists`, (t) => {
+    const dir = tree(['1', '1.10'], t);
     const r = seam([...argv0, '--phase', '1.10', '--trigger', 'risk_surface',
       '--discriminator', 'plan-1'], dir);
     assertNotRefused(r);
@@ -111,8 +114,8 @@ for (const [label, argv0] of FIRE_FACES) {
     assert.match(r.detail, /--base <ref> and --head <ref>/);
   });
 
-  test(`${label}: the token rails still fire after a clean spelling`, () => {
-    const dir = tree(['1', '1.1']);
+  test(`${label}: the token rails still fire after a clean spelling`, (t) => {
+    const dir = tree(['1', '1.1'], t);
     const r = seam([...argv0, '--phase', '1.1', '--trigger', 'risk surface',
       '--discriminator', 'plan-1'], dir);
     assertNotRefused(r);
@@ -121,15 +124,15 @@ for (const [label, argv0] of FIRE_FACES) {
   });
 }
 
-test('the collision refusal is TREE-aware, not the unconditional one: 08 with no phases/8/', () => {
-  const dir = tree(['08']);
+test('the collision refusal is TREE-aware, not the unconditional one: 08 with no phases/8/', (t) => {
+  const dir = tree(['08'], t);
   const r = seam(['adjudication', '--phase', '08', '--trigger', 'risk_surface',
     '--discriminator', 'plan-1'], dir);
   assertNotRefused(r);
 });
 
-test('a canonical spelling is never refused, whatever else is on the tree', () => {
-  const dir = tree(['1', '1.1', '1.10']);
+test('a canonical spelling is never refused, whatever else is on the tree', (t) => {
+  const dir = tree(['1', '1.1', '1.10'], t);
   const r = seam(['adjudication', '--phase', '1.1', '--trigger', 'risk_surface',
     '--discriminator', 'plan-1'], dir);
   assertNotRefused(r);
@@ -194,8 +197,8 @@ const READERS = [
 ];
 
 for (const row of READERS) {
-  test(`${row.label}: --phase 1.10 acts on phases/1.10/ when no phases/1.1 exists`, () => {
-    const dir = tree(['1', '1.10']);
+  test(`${row.label}: --phase 1.10 acts on phases/1.10/ when no phases/1.1 exists`, (t) => {
+    const dir = tree(['1', '1.10'], t);
     row.seed(join(dir, 'phases', '1.10'));
     const extra = row.extraArgs ? row.extraArgs(dir) : [];
     const r = seam([...row.argv, '--phase', '1.10', ...extra], dir);
@@ -203,8 +206,8 @@ for (const row of READERS) {
     row.acted(r);
   });
 
-  test(`${row.label}: --phase 1.10 refuses against a tree holding phases/1.1/`, () => {
-    const dir = tree(['1', '1.1', '1.10']);
+  test(`${row.label}: --phase 1.10 refuses against a tree holding phases/1.1/`, (t) => {
+    const dir = tree(['1', '1.1', '1.10'], t);
     row.seed(join(dir, 'phases', '1.10'));
     const extra = row.extraArgs ? row.extraArgs(dir) : [];
     const r = seam([...row.argv, '--phase', '1.10', ...extra], dir);
@@ -212,8 +215,8 @@ for (const row of READERS) {
     assert.ok(r.detail.startsWith(`${row.label} --phase`), r.detail);
   });
 
-  test(`${row.label}: --phase 08 refuses against a tree holding phases/8/`, () => {
-    const dir = tree(['8', '08']);
+  test(`${row.label}: --phase 08 refuses against a tree holding phases/8/`, (t) => {
+    const dir = tree(['8', '08'], t);
     row.seed(join(dir, 'phases', '08'));
     const extra = row.extraArgs ? row.extraArgs(dir) : [];
     const r = seam([...row.argv, '--phase', '08', ...extra], dir);
@@ -224,16 +227,16 @@ for (const row of READERS) {
 // lease-check is the sixth, and it runs inside a real git repo: the seam
 // resolves the staged set from `git rev-parse --show-toplevel`, so `tree()`
 // above cannot host it.
-test('lease-check: --phase 1.10 acts on phases/1.10/ when no phases/1.1 exists', () => {
-  const { repo, dir } = leaseRepo({ phase: '1.10', files: ['one-ten.txt'] });
+test('lease-check: --phase 1.10 acts on phases/1.10/ when no phases/1.1 exists', (t) => {
+  const { repo, dir } = leaseRepo({ phase: '1.10', files: ['one-ten.txt'] }, t);
   stage(repo, 'one-ten.txt');
   const r = leaseCheck(repo, dir, ['--phase', '1.10', '--plan', '1']);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.plan_file, '.planning/phases/1.10/PLAN.md');
 });
 
-test('lease-check: --phase 1.10 refuses against a tree holding phases/1.1/', () => {
-  const { repo, dir } = leaseRepo({ phase: '1.10', files: ['one-ten.txt'] });
+test('lease-check: --phase 1.10 refuses against a tree holding phases/1.1/', (t) => {
+  const { repo, dir } = leaseRepo({ phase: '1.10', files: ['one-ten.txt'] }, t);
   mkdirSync(join(dir, 'phases', '1.1'), { recursive: true });
   stage(repo, 'one-ten.txt');
   const r = leaseCheck(repo, dir, ['--phase', '1.10', '--plan', '1']);
@@ -241,8 +244,8 @@ test('lease-check: --phase 1.10 refuses against a tree holding phases/1.1/', () 
   assert.ok(r.detail.startsWith('lease-check --phase'), r.detail);
 });
 
-test('lease-check: --phase 08 refuses against a tree holding phases/8/', () => {
-  const { repo, dir } = leaseRepo({ phase: 8, files: ['a.txt'] });
+test('lease-check: --phase 08 refuses against a tree holding phases/8/', (t) => {
+  const { repo, dir } = leaseRepo({ phase: 8, files: ['a.txt'] }, t);
   stage(repo, 'a.txt');
   const r = leaseCheck(repo, dir, ['--phase', '08', '--plan', '1']);
   assertRefused(r, '08', '8');
@@ -281,8 +284,8 @@ function putMember(dir, phase) {
     })}\n`);
 }
 
-test('deferred carry: --phase 1.10 carries out of phases/1.10/ when no phases/1.1 exists', () => {
-  const dir = tree(['1', '1.10']);
+test('deferred carry: --phase 1.10 carries out of phases/1.10/ when no phases/1.1 exists', (t) => {
+  const dir = tree(['1', '1.10'], t);
   putMember(dir, '1.10');
   const r = seam(['deferred', 'carry', '--phase', '1.10'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -291,8 +294,8 @@ test('deferred carry: --phase 1.10 carries out of phases/1.10/ when no phases/1.
   assert.equal(r.moved[0].to, 'records/deferred/1.10/DEFERRED-diff-plan-1.json', JSON.stringify(r));
 });
 
-test('deferred carry: --phase 1.10 refuses against a tree holding phases/1.1/, moving nothing', () => {
-  const dir = tree(['1', '1.1', '1.10']);
+test('deferred carry: --phase 1.10 refuses against a tree holding phases/1.1/, moving nothing', (t) => {
+  const dir = tree(['1', '1.1', '1.10'], t);
   putMember(dir, '1.10');
   const r = seam(['deferred', 'carry', '--phase', '1.10'], dir);
   assertRefused(r, '1.10', '1.1');
@@ -303,14 +306,14 @@ test('deferred carry: --phase 1.10 refuses against a tree holding phases/1.1/, m
   assert.equal(existsSync(join(dir, 'records', 'deferred')), false);
 });
 
-test('deferred carry: --phase 08 refuses against a tree holding phases/8/', () => {
-  const dir = tree(['8', '08']);
+test('deferred carry: --phase 08 refuses against a tree holding phases/8/', (t) => {
+  const dir = tree(['8', '08'], t);
   putMember(dir, '08');
   assertRefused(seam(['deferred', 'carry', '--phase', '08'], dir), '08', '8');
 });
 
-test('deferred list: --phase 1.10 lists phases/1.10/ when no phases/1.1 exists', () => {
-  const dir = tree(['1', '1.10']);
+test('deferred list: --phase 1.10 lists phases/1.10/ when no phases/1.1 exists', (t) => {
+  const dir = tree(['1', '1.10'], t);
   putMember(dir, '1.10');
   const r = seam(['deferred', 'list', '--phase', '1.10'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -318,40 +321,40 @@ test('deferred list: --phase 1.10 lists phases/1.10/ when no phases/1.1 exists',
     ['phases/1.10/records/DEFERRED-diff-plan-1.json'], JSON.stringify(r));
 });
 
-test('deferred list: --phase 1.10 refuses against a tree holding phases/1.1/', () => {
-  const dir = tree(['1', '1.1', '1.10']);
+test('deferred list: --phase 1.10 refuses against a tree holding phases/1.1/', (t) => {
+  const dir = tree(['1', '1.1', '1.10'], t);
   putMember(dir, '1.10');
   const r = seam(['deferred', 'list', '--phase', '1.10'], dir);
   assertRefused(r, '1.10', '1.1');
   assert.ok(r.detail.startsWith('deferred list --phase'), r.detail);
 });
 
-test('deferred list: --phase 08 refuses against a tree holding phases/8/', () => {
-  const dir = tree(['8', '08']);
+test('deferred list: --phase 08 refuses against a tree holding phases/8/', (t) => {
+  const dir = tree(['8', '08'], t);
   putMember(dir, '08');
   assertRefused(seam(['deferred', 'list', '--phase', '08'], dir), '08', '8');
 });
 
 const APPEND = ['trace', 'append', '--family', 'lifecycle', '--event', 'phase_start'];
 
-test('trace append: --phase 1.10 appends when no phases/1.1 exists', () => {
-  const dir = tree(['1', '1.10']);
+test('trace append: --phase 1.10 appends when no phases/1.1 exists', (t) => {
+  const dir = tree(['1', '1.10'], t);
   const r = seam([...APPEND, '--phase', '1.10'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.written, true, JSON.stringify(r));
   assert.equal(r.corr, '1.10', JSON.stringify(r));
 });
 
-test('trace append: --phase 1.10 refuses against a tree holding phases/1.1/, appending nothing', () => {
-  const dir = tree(['1', '1.1', '1.10']);
+test('trace append: --phase 1.10 refuses against a tree holding phases/1.1/, appending nothing', (t) => {
+  const dir = tree(['1', '1.1', '1.10'], t);
   const r = seam([...APPEND, '--phase', '1.10'], dir);
   assertRefused(r, '1.10', '1.1');
   assert.ok(r.detail.startsWith('trace append --phase'), r.detail);
   assert.equal(existsSync(join(recordsDir(dir), 'trace.jsonl')), false);
 });
 
-test('trace close: the same body, so it refuses on the same tree', () => {
-  const dir = tree(['1', '1.1', '1.10']);
+test('trace close: the same body, so it refuses on the same tree', (t) => {
+  const dir = tree(['1', '1.1', '1.10'], t);
   const r = seam(['trace', 'close', '--phase', '1.10', '--role', 'executor'], dir);
   assertRefused(r, '1.10', '1.1');
   assert.ok(r.detail.startsWith('trace close --phase'), r.detail);
@@ -364,16 +367,16 @@ test('trace close: the same body, so it refuses on the same tree', () => {
 // `trace render`, `suggest` and `window` scope a `.planning/trace.jsonl`
 // filter and resolve no directory either.
 
-test('capture: --phase 1.10 still writes the tag (phase 1.10) on a tree holding phases/1.1/', () => {
-  const dir = tree(['1', '1.1', '1.10']);
+test('capture: --phase 1.10 still writes the tag (phase 1.10) on a tree holding phases/1.1/', (t) => {
+  const dir = tree(['1', '1.1', '1.10'], t);
   const r = seam(['capture', '--kind', 'todo', '--text', 'a thing', '--phase', '1.10'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.bullet, '- [ ] (phase 1.10) a thing', JSON.stringify(r));
   assert.match(readFileSync(join(dir, 'CAPTURE.md'), 'utf8'), /\(phase 1\.10\) a thing/);
 });
 
-test('trace render: --phase 1.10 still renders on a tree holding phases/1.1/', () => {
-  const dir = tree(['1', '1.1', '1.10']);
+test('trace render: --phase 1.10 still renders on a tree holding phases/1.1/', (t) => {
+  const dir = tree(['1', '1.1', '1.10'], t);
   seam([...APPEND, '--phase', '1.1'], dir); // something for the filter to skip
   const r = seam(['trace', 'render', '--phase', '1.10'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));

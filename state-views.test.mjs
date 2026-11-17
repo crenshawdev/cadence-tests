@@ -112,14 +112,14 @@ test('STATE.md with no cycle open says so, keeps Next and Updated, and has no Ph
   assert.match(renderStateMd(state({ cycleOpen: false, phases: [], cursor: null })), /No cycle is open/);
 });
 
-test('a state imported from files already in step renders each of the three back unchanged', () => {
+test('a state imported from files already in step renders each of the three back unchanged', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Base', checked: true, desc: 'lay it' }, { n: 2, name: 'Auth', desc: 'sign in' },
       { n: 2.1, name: 'Urgent', desc: 'inserted' }],
     phases: { 1: { plan: true, summary: true, uat: [{ status: 'pass' }] }, 2: { plan: ['PLAN-1.md'] } },
     reqs: [['REQ-1', 1, 'Complete'], ['REQ-2', 2, 'Pending'], ['REQ-3', null, 'Deferred']],
     cursor: { phase: 2, total: 3, name: 'Auth', status: 'planned', next: '/cad-execute 2', updated: '2026-02-03' },
-  });
+  }, t);
   const imported = importState(dir);
   assert.equal(imported.ok, true);
   const at = (f) => readFileSync(join(dir, f), 'utf8');

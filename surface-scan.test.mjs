@@ -11,7 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -85,7 +85,7 @@ test('a dependency matches by NAME, never as a substring', () => {
   assert.equal(scanTree({ dependencies: ['@grpc/grpc-js'] }).evidenced[0].category, 'api_contract');
 });
 
-test('a malformed tree description reports rather than throwing', () => {
+test('a malformed tree description reports rather than throwing', (t) => {
   for (const t of [null, 'nope', 7, { dirs: 'migrations', dependencies: 3 }]) {
     assert.doesNotThrow(() => scanTree(t), JSON.stringify(t));
   }
@@ -201,8 +201,9 @@ function run(...args) {
 }
 const detect = (root) => run('--root', root);
 
-test('detect-surfaces reads directories two levels deep and a manifest it finds', () => {
+test('detect-surfaces reads directories two levels deep and a manifest it finds', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'cad-surfaces-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, 'db', 'migrate'), { recursive: true });
   writeFileSync(join(root, 'package.json'),
     JSON.stringify({ dependencies: { stripe: '^1' } }));
@@ -214,8 +215,9 @@ test('detect-surfaces reads directories two levels deep and a manifest it finds'
   assert.equal(r.inconclusive, false);
 });
 
-test('detect-surfaces names an unparseable manifest in warnings rather than throwing', () => {
+test('detect-surfaces names an unparseable manifest in warnings rather than throwing', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'cad-surfaces-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(join(root, 'package.json'), '{not json');
   const r = detect(root);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -223,8 +225,9 @@ test('detect-surfaces names an unparseable manifest in warnings rather than thro
   assert.equal(r.inconclusive, true);
 });
 
-test('detect-surfaces skips node_modules - every JS project would evidence everything', () => {
+test('detect-surfaces skips node_modules - every JS project would evidence everything', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'cad-surfaces-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, 'node_modules', 'express'), { recursive: true });
   writeFileSync(join(root, 'node_modules', 'package.json'),
     JSON.stringify({ dependencies: { stripe: '^1' } }));
@@ -243,10 +246,11 @@ test('detect-surfaces refuses a --root with nothing usable after it', () => {
  * The #206 demo tree: the project the duplicate-option report was filed from.
  * Express + Stripe + Prisma + Passport, with the four category directories, a
  * `.sql` file and an `openapi.yaml` - six of the eight evidenced, `destructive`
- * and `secrets` silent.
+ * and `secrets` silent. Gone when test `t` ends.
  */
-function demoTree() {
+function demoTree(t) {
   const root = mkdtempSync(join(tmpdir(), 'cad-206-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const d of ['auth', 'migrations', 'api', 'workers']) mkdirSync(join(root, d));
   writeFileSync(join(root, 'package.json'), JSON.stringify({
     dependencies: { express: '^4', stripe: '^14', prisma: '^5', passport: '^0.7' },
@@ -259,12 +263,12 @@ function demoTree() {
 const EVIDENCED_SIX = ['api_contract', 'auth', 'billing', 'concurrency',
   'migrations', 'untrusted_input'];
 
-test('the #206 demo tree evidences six categories and offers two distinct options', () => {
+test('the #206 demo tree evidences six categories and offers two distinct options', (t) => {
   // The defect itself: this question used to arrive with all eight in slot 1
   // and all eight again in the last slot, because the prose told a model to
   // "fill the remaining slots with ... the evidenced categories alone, and all
   // eight". Two options, two different sets.
-  const r = run('--root', demoTree());
+  const r = run('--root', demoTree(t));
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(r.evidenced.map((e) => e.category).sort(), EVIDENCED_SIX,
     JSON.stringify(r.evidenced));
@@ -274,12 +278,12 @@ test('the #206 demo tree evidences six categories and offers two distinct option
   assert.deepEqual([...r.options[1].surfaces].sort(), EVIDENCED_SIX, JSON.stringify(sets));
 });
 
-test('--answered on the demo tree keeps all eight first and puts the union second', () => {
+test('--answered on the demo tree keeps all eight first and puts the union second', (t) => {
   // A project that answered `secrets` and then added the rest. The
   // recommendation does not narrow (D-14); the union is the second choice, and
   // it is NOT all eight - `destructive` is evidenced by nothing and was never
   // answered, so it is absent from it.
-  const r = run('--root', demoTree(), '--answered', 'secrets');
+  const r = run('--root', demoTree(t), '--answered', 'secrets');
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(r.options[0].surfaces, [...CATEGORIES]);
   assert.deepEqual([...r.options[1].surfaces].sort(), [...EVIDENCED_SIX, 'secrets'].sort(),
@@ -287,29 +291,30 @@ test('--answered on the demo tree keeps all eight first and puts the union secon
   assert.ok(!r.options[1].surfaces.includes('destructive'), JSON.stringify(r.options[1]));
 });
 
-test('detect-surfaces refuses an --answered with nothing usable after it', () => {
-  const r = run('--root', demoTree(), '--answered');
+test('detect-surfaces refuses an --answered with nothing usable after it', (t) => {
+  const r = run('--root', demoTree(t), '--answered');
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'bad-args');
   assert.match(r.detail, /--answered/);
 });
 
-test('detect-surfaces refuses an --answered token outside the eight', () => {
+test('detect-surfaces refuses an --answered token outside the eight', (t) => {
   // Narrowing to the tokens that parsed would build an option list from an
   // answer nobody gave, which is how `["auth","secret"]` stops reviewing
   // secrets forever.
-  const r = run('--root', demoTree(), '--answered', 'nope');
+  const r = run('--root', demoTree(t), '--answered', 'nope');
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'bad-args');
   assert.match(r.detail, /nope/);
 });
 
-test('a bare PEP 621 pyproject evidences its dependencies, not an empty manifest', () => {
+test('a bare PEP 621 pyproject evidences its dependencies, not an empty manifest', (t) => {
   // PEP 621 declares `dependencies` as an ARRAY under `[project]`, a header
   // that says nothing about dependencies. A section-scoped read finds the
   // manifest and nothing in it, so the project reads inconclusive and the
   // scan recommends all eight - expensive, and the evidence was right there.
   const root = mkdtempSync(join(tmpdir(), 'cad-surfaces-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(join(root, 'pyproject.toml'),
     '[project]\nname = "my-app"\nversion = "0.1.0"\ndependencies = [\n  "flask>=3",\n  "alembic",\n]\n');
   const r = detect(root);
@@ -322,26 +327,29 @@ test('a bare PEP 621 pyproject evidences its dependencies, not an empty manifest
   assert.ok(!r.evidenced.some((e) => /my-app/.test(e.signal)), JSON.stringify(r.evidenced));
 });
 
-test('a single-line PEP 621 dependencies array closes on its own line', () => {
+test('a single-line PEP 621 dependencies array closes on its own line', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'cad-surfaces-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(join(root, 'pyproject.toml'),
     '[project]\ndependencies = ["flask>=3"]\nname = "passport-themed-name"\n');
   const r = detect(root);
   assert.deepEqual(r.evidenced.map((e) => e.category), ['untrusted_input'], JSON.stringify(r.evidenced));
 });
 
-test('a PEP 508 extra does not end the dependencies array early', () => {
+test('a PEP 508 extra does not end the dependencies array early', (t) => {
   // `"requests[socks]"` carries a `]` of its own. Reading that as the close
   // drops every entry after it, and the surface those entries evidence.
   const root = mkdtempSync(join(tmpdir(), 'cad-surfaces-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(join(root, 'pyproject.toml'),
     '[project]\ndependencies = [\n  "requests[socks]",\n  "alembic",\n]\n');
   const r = detect(root);
   assert.ok(r.evidenced.some((e) => e.category === 'migrations'), JSON.stringify(r.evidenced));
 });
 
-test('a tool table`s ignored-dependencies is a setting, not a dependency', () => {
+test('a tool table`s ignored-dependencies is a setting, not a dependency', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'cad-surfaces-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(join(root, 'pyproject.toml'),
     '[project]\nname = "x"\n\n[tool.some_linter]\nignored-dependencies = ["flask"]\n');
   const r = detect(root);

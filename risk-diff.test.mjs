@@ -16,6 +16,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { ensureRoadmap } from './planning.test.mjs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -214,10 +215,17 @@ test('context lines are not an input - only added and removed lines are read', (
 
 // --- the `risk-check run` seam ------------------------------------------------
 
+/** A fresh mkdtemp root, removed when `t`'s test ends - with `rm`, since the census below reads this file. */
+function temp(t, prefix) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  return root;
+}
+
 /** A scratch repository with its own `.planning/`, so the trace written here is
- * the fixture's and never this project's own record. */
-function riskRepo({ answered = true } = {}) {
-  const repo = mkdtempSync(join(tmpdir(), 'cad-risk-'));
+ * the fixture's and never this project's own record. Gone when `t`'s test ends. */
+function riskRepo(t, { answered = true } = {}) {
+  const repo = temp(t, 'cad-risk-');
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: repo });
   execFileSync('git', ['config', 'user.name', 'T'], { cwd: repo });
@@ -293,13 +301,13 @@ function resolveRangeIn(repo, base, head) {
     { encoding: 'utf8', cwd: repo }));
 }
 
-test('resolveRange: an unresolvable HEAD keeps the base git DID resolve, and names `head`', () => {
+test('resolveRange: an unresolvable HEAD keeps the base git DID resolve, and names `head`', (t) => {
   // The all-or-nothing catch this splits. One `try` around the toplevel probe
   // and both `rev-parse --verify` calls meant any single failure returned
   // `base: '', head: ''`, so a caller was told nothing about WHICH end failed
   // and an id git had already handed over was discarded (verbatim
   // 2026-08-30T18:28:50 wrote both ids null on exactly this shape).
-  const { repo } = riskRepo({ answered: false });
+  const { repo } = riskRepo(t, { answered: false });
   const sha = commitFile(repo, 'README.md', 'start\n');
   const r = resolveRangeIn(repo, sha, 'no-such-ref');
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -309,9 +317,9 @@ test('resolveRange: an unresolvable HEAD keeps the base git DID resolve, and nam
   assert.ok(r.error.includes('no-such-ref'), r.error);
 });
 
-test('resolveRange: an unresolvable BASE keeps the head, and names `base`', () => {
+test('resolveRange: an unresolvable BASE keeps the head, and names `base`', (t) => {
   // The mirror, so the end-naming is a rule and not one branch's wording.
-  const { repo } = riskRepo({ answered: false });
+  const { repo } = riskRepo(t, { answered: false });
   const sha = commitFile(repo, 'README.md', 'start\n');
   const r = resolveRangeIn(repo, 'no-such-ref', 'HEAD');
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -320,8 +328,8 @@ test('resolveRange: an unresolvable BASE keeps the head, and names `base`', () =
   assert.match(r.error, /^base\b/, r.error);
 });
 
-test('risk-check run: a risky range answers ok:true with matches AND leaves one record', () => {
-  const { repo, dir } = riskRepo();
+test('risk-check run: a risky range answers ok:true with matches AND leaves one record', (t) => {
+  const { repo, dir } = riskRepo(t);
   const base = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, 'src/auth/login.ts', AUTH_MODULE);
   const r = riskCheck(repo, dir, ['run', '--phase', '1', '--plan', '1', '--base', base, '--head', 'HEAD']);
@@ -336,11 +344,11 @@ test('risk-check run: a risky range answers ok:true with matches AND leaves one 
   assert.ok(records[0].matches.length >= 1);
 });
 
-test('risk-check run: a CLEAN range leaves the same record - the whole point of the seam', () => {
+test('risk-check run: a CLEAN range leaves the same record - the whole point of the seam', (t) => {
   // The defect RSK-01 closes. A fire used to write a lifecycle event and a
   // non-match wrote nothing, so "the detection step was skipped" and "it ran
   // and matched nothing" were the same bytes on disk: none.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   const base = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, 'docs/notes.md', 'A paragraph about the roadmap.\n');
   const r = riskCheck(repo, dir, ['run', '--phase', '1', '--plan', '1', '--base', base, '--head', 'HEAD']);
@@ -353,13 +361,13 @@ test('risk-check run: a CLEAN range leaves the same record - the whole point of 
   assert.equal(records[0].inconclusive, false);
 });
 
-test('risk-check run: a SAME-COMMIT range is a completed empty check, not an unchecked one', () => {
+test('risk-check run: a SAME-COMMIT range is a completed empty check, not an unchecked one', (t) => {
   // The deadlock #140 closes, at its narrowest shape: `/cad-execute --rerun`
   // over a phase whose tasks are all already satisfied commits nothing, so the
   // range the gate is handed is `HEAD..HEAD`. It answered `checked: false`,
   // `risk-check status` refused `risk-record-missing`, and re-running the
   // detector wrote the same refusal - no argv could clear it.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   commitFile(repo, 'README.md', 'start\n');
   const r = riskCheck(repo, dir, ['run', '--phase', '1', '--plan', '1', '--base', 'HEAD', '--head', 'HEAD']);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -377,13 +385,13 @@ test('risk-check run: a SAME-COMMIT range is a completed empty check, not an unc
   assert.deepEqual(records[0].matches, []);
 });
 
-test('risk-check run: a REVERT PAIR is empty too - the ids differ and the net diff does not', () => {
+test('risk-check run: a REVERT PAIR is empty too - the ids differ and the net diff does not', (t) => {
   // Why emptiness is decided from the BODY and never from `base_id ===
   // head_id` (D-01). This range spans two commits and resolves to two different
   // ids; the tree it starts at and the tree it ends at are the same. An id
   // compare would answer `checked: false` here and leave the defect class
   // alive one shape over.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   const base = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, 'README.md', 'a line the revert takes back\n');
   const head = commitFile(repo, 'README.md', 'start\n');
@@ -409,7 +417,7 @@ test('risk-check run: a REVERT PAIR is empty too - the ids differ and the net di
 // would make the census match itself.
 const DESTRUCTIVE_LINE = 'rm' + ' -rf /';
 
-test('risk-check run: a diff DRIVER cannot turn a risky range into a completed EMPTY check', () => {
+test('risk-check run: a diff DRIVER cannot turn a risky range into a completed EMPTY check', (t) => {
   // The empty arm is only as honest as the read that feeds it. `diff=<driver>`
   // is a CHECKED-IN `.gitattributes` attribute that binds to a
   // `diff.<driver>.command` in the READER's own git config, so a helper that
@@ -421,7 +429,7 @@ test('risk-check run: a diff DRIVER cannot turn a risky range into a completed E
   // required: a `textconv` for pdf or docx in a developer's own ~/.gitconfig
   // does it by accident. `--no-ext-diff --no-textconv` on the seam's read is
   // what closes it.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   execFileSync('git', ['config', 'diff.silent.command', '/bin/true'], { cwd: repo });
   commitFile(repo, '.gitattributes', 'deploy.sh diff=silent\n');
   const base = commitFile(repo, 'deploy.sh', '#!/bin/sh\necho safe\n');
@@ -460,14 +468,14 @@ const adjudicationBody = (quoted) => `${JSON.stringify({
   findings: [{ id: 'F1', ruling: 'survivor', failure_scenario: `an operator runs ${quoted} on the host` }],
 }, null, 2)}\n`;
 
-test('risk-check run: a record quoting a destructive command is a completed CLEAR, not a fire', () => {
+test('risk-check run: a record quoting a destructive command is a completed CLEAR, not a fire', (t) => {
   // RSK-06, AC1. `ADJUDICATION-*.json` stores the reviewer's own words byte for
   // byte by design, so the DOCS commit that files a finding quoting a recursive
   // delete re-tripped the very gate that produced the finding, and a user
   // reviewing their own work had to override a blocking gate to record its
   // output. The range read now withholds the four record artifacts by pathspec,
   // so the hunk never reaches scanDiff and no signal leaves the table.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   const base = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, '.planning/phases/1/records/ADJUDICATION-risk_surface-plan-1.json',
     adjudicationBody(DESTRUCTIVE_LINE));
@@ -494,7 +502,7 @@ test('risk-check run: a record quoting a destructive command is a completed CLEA
   assert.equal(records[0].empty, false, JSON.stringify(records[0]));
 });
 
-test('risk-check run: withholding the record does not withhold detection from the code beside it', () => {
+test('risk-check run: withholding the record does not withhold detection from the code beside it', (t) => {
   // AC2, D-03. The exclusion is BY PATH, so the same range still fires on a
   // changed line in a `.mjs` file. WHY THE `signal` STRING IS ASSERTED and not
   // just the category: signalIn iterates a category's PATTERNS outer and the
@@ -506,7 +514,7 @@ test('risk-check run: withholding the record does not withhold detection from th
   // the git command is what makes this row FAIL against the pre-fix tree rather
   // than merely pass after it. Loosening it to a category check silently gives
   // that up.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   const base = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, '.planning/phases/1/records/ADJUDICATION-risk_surface-plan-1.json',
     adjudicationBody(DESTRUCTIVE_LINE));
@@ -533,8 +541,8 @@ test('risk-check run: withholding the record does not withhold detection from th
  * nothing risky. The second file is load-bearing: it is what leaves the
  * SCANNED range non-empty, so a `matches:[]` answer here reads as a COMPLETED
  * clear and not as the empty arm, which is a different claim. */
-function clearRange(rel, body) {
-  const { repo, dir } = riskRepo();
+function clearRange(t, rel, body) {
+  const { repo, dir } = riskRepo(t);
   const base = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, rel, body);
   const head = commitFile(repo, 'docs/notes.md', 'a note carrying nothing at all\n');
@@ -563,8 +571,8 @@ const recordBody = (rel) => (rel.endsWith('.json')
 for (const [place, sub] of [['records', 'records/'], ['pre-layout', '']]) {
 for (const name of ['ADJUDICATION-risk_surface-plan-1.json', 'REVIEW-risk_surface-plan-1.md',
   'FINDINGS.json', 'verifier-findings.json']) {
-  test(`risk-check run: \`${name}\` at its ${place} place is withheld from the range the gate reads`, () => {
-    const { r } = clearRange(`.planning/phases/1/${sub}${name}`, recordBody(name));
+  test(`risk-check run: \`${name}\` at its ${place} place is withheld from the range the gate reads`, (t) => {
+    const { r } = clearRange(t, `.planning/phases/1/${sub}${name}`, recordBody(name));
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.equal(r.checked, true, JSON.stringify(r));
     assert.deepEqual(r.matches, [], JSON.stringify(r));
@@ -573,21 +581,21 @@ for (const name of ['ADJUDICATION-risk_surface-plan-1.json', 'REVIEW-risk_surfac
 }
 }
 
-test('risk-check run: a PLAN.md in the SAME directory still trips - the boundary is the four shapes', () => {
+test('risk-check run: a PLAN.md in the SAME directory still trips - the boundary is the four shapes', (t) => {
   // Where the withholding STOPS, and why it stops there. A destructive command
   // written into a plan's Action is not a record of something a reviewer said:
   // it is the text an executor is handed to RUN. So a plan file under the same
   // `.planning/phases/<N>/` directory stays scanned, and this exclusion is not
   // "documentation under `.planning/` is exempt". Deleting this row is how the
   // scope quietly widens to all of `.planning/`.
-  const { r } = clearRange('.planning/phases/1/PLAN.md',
+  const { r } = clearRange(t, '.planning/phases/1/PLAN.md',
     `- **Action:** run \`${DESTRUCTIVE_LINE}\` over the build directory first\n`);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.checked, true, JSON.stringify(r));
   assert.deepEqual(r.matches.map((m) => m.category), ['destructive'], JSON.stringify(r));
 });
 
-test('risk-check run: EVERY entry of the withheld set is exercised, however many it holds', () => {
+test('risk-check run: EVERY entry of the withheld set is exercised, however many it holds', (t) => {
   // The drift door. The rows above name four artifacts by hand; this one is
   // driven entirely by the constant, so a FIFTH entry added to it later - the
   // `DEFERRED-*.json` case this phase deliberately left out is the known
@@ -603,7 +611,7 @@ test('risk-check run: EVERY entry of the withheld set is exercised, however many
     // The concrete path each pathspec names: drop the magic and put a literal
     // where each wildcard is.
     const rel = spec.replace(':(top,exclude)', '').replace(/\*/g, 'x');
-    const { r } = clearRange(rel, recordBody(rel));
+    const { r } = clearRange(t, rel, recordBody(rel));
     assert.equal(r.checked, true, `${spec}: the range was not read at all`);
     assert.deepEqual(r.matches, [], `${spec} did not withhold ${rel}: ${JSON.stringify(r.matches)}`);
     assert.equal(r.empty, false, `${spec}: the scanned range was empty, so the row proves nothing`);
@@ -612,10 +620,10 @@ test('risk-check run: EVERY entry of the withheld set is exercised, however many
   assert.equal(ran, REVIEWER_TEXT_PATHSPECS.length, 'the loop skipped a withheld pathspec');
 });
 
-test('risk-check run: a --surfaces token outside the eight is refused, and appends NOTHING', () => {
+test('risk-check run: a --surfaces token outside the eight is refused, and appends NOTHING', (t) => {
   // A caller who mistyped the scope of a blocking gate must see a refusal, not
   // a narrowed clean answer - the rule `trace append --tokens` already states.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   const base = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, 'src/auth/login.ts', AUTH_MODULE);
   const r = riskCheck(repo, dir,
@@ -626,8 +634,8 @@ test('risk-check run: a --surfaces token outside the eight is refused, and appen
   assert.deepEqual(traceLines(dir), [], 'a malformed call appended a record anyway');
 });
 
-test('risk-check run: an unreadable range is ok:false, and STILL leaves its record', () => {
-  const { repo, dir } = riskRepo();
+test('risk-check run: an unreadable range is ok:false, and STILL leaves its record', (t) => {
+  const { repo, dir } = riskRepo(t);
   commitFile(repo, 'README.md', 'start\n');
   const r = riskCheck(repo, dir,
     ['run', '--phase', '1', '--plan', '1', '--base', 'no-such-ref', '--head', 'HEAD']);
@@ -645,12 +653,12 @@ test('risk-check run: an unreadable range is ok:false, and STILL leaves its reco
   assert.equal(records[0].empty, false);
 });
 
-test('risk-check run: an unresolvable HEAD keeps the base id and states the cause on the row', () => {
+test('risk-check run: an unresolvable HEAD keeps the base id and states the cause on the row', (t) => {
   // The half the record used to drop. Both ids went null the moment either ref
   // failed, and the redacted git message reached the ENVELOPE only - so the row
   // on disk was a bare `checked:false, inconclusive:true` that a trace reader
   // could walk straight past (smithers 2026-08-27T23:55:38, 2026-08-28T14:28:12).
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   const sha = commitFile(repo, 'README.md', 'start\n');
   const r = riskCheck(repo, dir,
     ['run', '--phase', '1', '--plan', '1', '--base', sha, '--head', 'no-such-ref']);
@@ -672,8 +680,8 @@ test('risk-check run: an unresolvable HEAD keeps the base id and states the caus
   assert.match(records[0].detail, /^head\b/, records[0].detail);
 });
 
-test('risk-check run: the mirror - an unresolvable BASE keeps the head id and names `base`', () => {
-  const { repo, dir } = riskRepo();
+test('risk-check run: the mirror - an unresolvable BASE keeps the head id and names `base`', (t) => {
+  const { repo, dir } = riskRepo(t);
   const head = commitFile(repo, 'README.md', 'start\n');
   const r = riskCheck(repo, dir,
     ['run', '--phase', '1', '--plan', '1', '--base', 'no-such-ref', '--head', 'HEAD']);
@@ -689,8 +697,8 @@ test('risk-check run: the mirror - an unresolvable BASE keeps the head id and na
   assert.match(records[0].detail, /^base\b/, records[0].detail);
 });
 
-test('risk-check run: --base and --head are required, and a flag-shaped ref is refused', () => {
-  const { repo, dir } = riskRepo();
+test('risk-check run: --base and --head are required, and a flag-shaped ref is refused', (t) => {
+  const { repo, dir } = riskRepo(t);
   const base = commitFile(repo, 'README.md', 'start\n');
   const missing = riskCheck(repo, dir, ['run', '--phase', '1', '--base', base]);
   assert.equal(missing.ok, false, JSON.stringify(missing));
@@ -712,12 +720,12 @@ function stageFile(repo, rel, body) {
   execFileSync('git', ['add', '--', rel], { cwd: repo });
 }
 
-test('risk-check run: --base <ref> --staged scans the INDEX and records it as staged', () => {
+test('risk-check run: --base <ref> --staged scans the INDEX and records it as staged', (t) => {
   // The locked OQ-1 answer. Two projects improvised `HEAD..STAGED` for exactly
   // this scope (verbatim 2026-08-30T18:28:50, weathervane 2026-08-31T11:21:11)
   // because the seam was ref-only and the gate fires BEFORE the commit lands,
   // so the scope the workflows describe in prose had no machine spelling at all.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   const head = commitFile(repo, 'README.md', 'start\n');
   stageFile(repo, 'src/auth/login.ts', AUTH_MODULE);
   const r = riskCheck(repo, dir, ['run', '--phase', '1', '--plan', '1', '--base', 'HEAD', '--staged']);
@@ -736,12 +744,12 @@ test('risk-check run: --base <ref> --staged scans the INDEX and records it as st
   assert.ok(rec.matches.includes('auth'), JSON.stringify(rec.matches));
 });
 
-test('risk-check run: a staged row carries the INDEX id, the identity its base cannot carry', () => {
+test('risk-check run: a staged row carries the INDEX id, the identity its base cannot carry', (t) => {
   // HEAD does not move when a file is staged, so the base is only HALF of what
   // a staged scope is. `git write-tree` names the contents that were scanned,
   // and it is the field a later `status` ask compares - see the mutation row
   // under `risk-check status` below for the hole it closes.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   const head = commitFile(repo, 'README.md', 'start\n');
   stageFile(repo, 'docs/notes.md', 'text\n');
   const r = riskCheck(repo, dir, ['run', '--phase', '1', '--plan', '1', '--base', 'HEAD', '--staged']);
@@ -757,11 +765,11 @@ test('risk-check run: a staged row carries the INDEX id, the identity its base c
     'the envelope said one index and the record said another');
 });
 
-test('risk-check run: --staged reads the INDEX alone - an unadded worktree file is outside it', () => {
+test('risk-check run: --staged reads the INDEX alone - an unadded worktree file is outside it', (t) => {
   // `--cached` is the whole difference. A file merely written is not what is
   // about to be committed, so a gate that read the worktree would fire on
   // changes the caller had not offered.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   commitFile(repo, 'README.md', 'start\n');
   writeFileSync(join(repo, 'notes-only.ts'), AUTH_MODULE);
   const r = riskCheck(repo, dir, ['run', '--phase', '1', '--base', 'HEAD', '--staged']);
@@ -769,8 +777,8 @@ test('risk-check run: --staged reads the INDEX alone - an unadded worktree file 
   assert.deepEqual(r.matches, [], JSON.stringify(r));
 });
 
-test('risk-check run: an EMPTY index is a completed empty check, not an unchecked one', () => {
-  const { repo, dir } = riskRepo();
+test('risk-check run: an EMPTY index is a completed empty check, not an unchecked one', (t) => {
+  const { repo, dir } = riskRepo(t);
   commitFile(repo, 'README.md', 'start\n');
   const r = riskCheck(repo, dir, ['run', '--phase', '1', '--base', 'HEAD', '--staged']);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -779,8 +787,8 @@ test('risk-check run: an EMPTY index is a completed empty check, not an unchecke
   assert.equal(r.staged, true);
 });
 
-test('risk-check run: --head and --staged together are two spellings of one scope, refused', () => {
-  const { repo, dir } = riskRepo();
+test('risk-check run: --head and --staged together are two spellings of one scope, refused', (t) => {
+  const { repo, dir } = riskRepo(t);
   commitFile(repo, 'README.md', 'start\n');
   const r = riskCheck(repo, dir,
     ['run', '--phase', '1', '--base', 'HEAD', '--head', 'HEAD', '--staged']);
@@ -789,8 +797,8 @@ test('risk-check run: --head and --staged together are two spellings of one scop
   assert.deepEqual(traceLines(dir), [], 'a malformed call appended a record anyway');
 });
 
-test('risk-check run: a --staged run whose base does not resolve keeps the staged shape', () => {
-  const { repo, dir } = riskRepo();
+test('risk-check run: a --staged run whose base does not resolve keeps the staged shape', (t) => {
+  const { repo, dir } = riskRepo(t);
   commitFile(repo, 'README.md', 'start\n');
   const r = riskCheck(repo, dir, ['run', '--phase', '1', '--plan', '1', '--base', 'no-such-ref', '--staged']);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -806,11 +814,11 @@ test('risk-check run: a --staged run whose base does not resolve keeps the stage
   assert.equal(rec.index_id, null, JSON.stringify(rec));
 });
 
-test('risk-check run: a REF-RANGE row carries no `staged` field at all', () => {
+test('risk-check run: a REF-RANGE row carries no `staged` field at all', (t) => {
   // Not `staged: false`: a row written before this arm existed is honestly not
   // staged, so absence and `false` say the same thing here - unlike `empty`,
   // whose absence marked a record the seam could not speak for (D-03).
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   const base = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, 'docs/notes.md', 'text\n');
   const r = riskCheck(repo, dir, ['run', '--phase', '1', '--plan', '1', '--base', base, '--head', 'HEAD']);
@@ -823,10 +831,10 @@ test('risk-check run: a REF-RANGE row carries no `staged` field at all', () => {
   assert.equal('index_id' in riskRecords(dir)[0], false);
 });
 
-test('risk-check run: --plan with nothing after it is refused, never read as plan 1', () => {
+test('risk-check run: --plan with nothing after it is refused, never read as plan 1', (t) => {
   // The VAL-01 rail: `parseArgs` gives a valueless flag the boolean `true`, and
   // `Number(true)` is 1, so the record would land on a plan nobody named.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   const base = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, 'docs/notes.md', 'text\n');
   const r = riskCheck(repo, dir, ['run', '--phase', '1', '--plan', '--base', base, '--head', 'HEAD']);
@@ -858,8 +866,8 @@ const FROZEN_PHASE_1 = [
 
 /** A `.planning` fixture holding the given trace lines. No git repo: `status`
  * reads the record and nothing else. */
-function traceFixture(lines) {
-  const dir = join(mkdtempSync(join(tmpdir(), 'cad-risk-status-')), '.planning');
+function traceFixture(t, lines) {
+  const dir = join(temp(t, 'cad-risk-status-'), '.planning');
   mkdirSync(dir, { recursive: true });
   mkdirSync(recordsDir(dir), { recursive: true });
   writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${lines.join('\n')}\n`);
@@ -917,17 +925,17 @@ function riskStatus(dir, args, cwd) {
  * The range arm of `status` resolves refs to commit ids, so any row naming a
  * range needs commits to resolve against - a fixture with no repo can only
  * exercise the phase-wide arm. */
-function repoFixture(lines) {
-  const { repo, dir } = riskRepo();
+function repoFixture(t, lines) {
+  const { repo, dir } = riskRepo(t);
   mkdirSync(recordsDir(dir), { recursive: true });
   writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${lines.join('\n')}\n`);
   return { repo, dir };
 }
 
-test('risk-check status: a completed range with no record refuses, naming the plan', () => {
+test('risk-check status: a completed range with no record refuses, naming the plan', (t) => {
   // The evidence arm. These are the bytes the record actually held, and the
   // omission this check reports is the one that was actually there.
-  const dir = traceFixture(FROZEN_PHASE_1);
+  const dir = traceFixture(t, FROZEN_PHASE_1);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'risk-record-missing');
@@ -936,8 +944,8 @@ test('risk-check status: a completed range with no record refuses, naming the pl
   assert.match(r.hint, /risk-check run/);
 });
 
-test('risk-check status: appending the plan-1 record makes the identical call pass', () => {
-  const dir = traceFixture([...FROZEN_PHASE_1, recordLine('1', 'ae5ca09', 'HEAD')]);
+test('risk-check status: appending the plan-1 record makes the identical call pass', (t) => {
+  const dir = traceFixture(t, [...FROZEN_PHASE_1, recordLine('1', 'ae5ca09', 'HEAD')]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r._exit, 0);
@@ -959,14 +967,14 @@ test('risk-check status: appending the plan-1 record makes the identical call pa
     }]);
 });
 
-test('risk-check status: an EMPTY committed range is `recorded`, not `risk-record-missing`', () => {
+test('risk-check status: an EMPTY committed range is `recorded`, not `risk-record-missing`', (t) => {
   // AC2, end to end: the record is written by the SEAM rather than by hand, so
   // reverting the run-side split reddens this row. The deadlock it pins:
   // `/cad-execute --rerun` over a phase whose tasks are all already satisfied
   // commits nothing, the range is `HEAD..HEAD`, and the gate refused
   // `risk-record-missing` on a check that had in fact run - with no argv that
   // could clear it, because re-running the detector wrote the same record.
-  const { repo, dir } = repoFixture(FROZEN_PHASE_1);
+  const { repo, dir } = repoFixture(t, FROZEN_PHASE_1);
   commitFile(repo, 'README.md', 'start\n');
   const run = riskCheck(repo, dir,
     ['run', '--phase', '1', '--plan', '1', '--base', 'HEAD', '--head', 'HEAD']);
@@ -988,11 +996,11 @@ test('risk-check status: an EMPTY committed range is `recorded`, not `risk-recor
   assert.equal(r.missing, undefined);
 });
 
-test('risk-check status: a PRE-FIX empty-range record still refuses - an absent flag is not empty', () => {
+test('risk-check status: a PRE-FIX empty-range record still refuses - an absent flag is not empty', (t) => {
   // D-03. The 69 `outcome/risk_check` events already on this repository's trace
   // carry the old shape, and a reader that treated an absent flag as empty
   // would retroactively clear every one of them.
-  const dir = traceFixture([...FROZEN_PHASE_1,
+  const dir = traceFixture(t, [...FROZEN_PHASE_1,
     recordLine('1', 'ae5ca09', 'HEAD', { checked: false, inconclusive: true })]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -1004,19 +1012,19 @@ test('risk-check status: a PRE-FIX empty-range record still refuses - an absent 
   assert.deepEqual(r.missing, ['1']);
 });
 
-test('risk-check status: a checkpoint AND a return for one plan report it once, not twice', () => {
-  const dir = traceFixture([...FROZEN_PHASE_1, recordLine('1', 'ae5ca09', 'HEAD')]);
+test('risk-check status: a checkpoint AND a return for one plan report it once, not twice', (t) => {
+  const dir = traceFixture(t, [...FROZEN_PHASE_1, recordLine('1', 'ae5ca09', 'HEAD')]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.plans.length, 1, JSON.stringify(r.plans));
   assert.equal(r.plans[0].plan, '1');
   assert.equal(r.plans[0].completed, 1, 'the checkpoint was counted as a completed range');
 });
 
-test('risk-check status: a record from an earlier, narrower range is STALE, not satisfaction', () => {
+test('risk-check status: a record from an earlier, narrower range is STALE, not satisfaction', (t) => {
   // execute.md's "re-dispatch the remainder" arm is exactly the case: the plan
   // number matches, the range does not, and passing on it would clear a range
   // nothing ever checked.
-  const { repo, dir } = repoFixture(FROZEN_PHASE_1);
+  const { repo, dir } = repoFixture(t, FROZEN_PHASE_1);
   const a = commitFile(repo, 'README.md', 'start\n');
   const b = commitFile(repo, 'docs/one.md', 'one\n');
   const c = commitFile(repo, 'docs/two.md', 'two\n');
@@ -1035,13 +1043,13 @@ test('risk-check status: a record from an earlier, narrower range is STALE, not 
   assert.equal(matched._exit, 0);
 });
 
-test('risk-check status: a record left under `--head HEAD` does not satisfy a LATER HEAD', () => {
+test('risk-check status: a record left under `--head HEAD` does not satisfy a LATER HEAD', (t) => {
   // Range identity is the resolved COMMIT PAIR, never the ref spelling.
   // workflows/execute.md documents `--head HEAD` for both the run and the
   // status call, so this is the live path: a gate fix or a continuation commit
   // landing between them was never scanned, and a spelling compare would still
   // report `recorded`.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   const a = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, 'docs/one.md', 'one\n');
   const run = riskCheck(repo, dir,
@@ -1060,8 +1068,8 @@ test('risk-check status: a record left under `--head HEAD` does not satisfy a LA
   assert.equal(after.plans[0].state, 'stale');
 });
 
-test('risk-check status: a ref that cannot be resolved is a refusal, never a match', () => {
-  const { repo, dir } = riskRepo();
+test('risk-check status: a ref that cannot be resolved is a refusal, never a match', (t) => {
+  const { repo, dir } = riskRepo(t);
   const a = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, 'docs/one.md', 'one\n');
   riskCheck(repo, dir, ['run', '--phase', '1', '--plan', '1', '--base', a, '--head', 'HEAD']);
@@ -1072,11 +1080,11 @@ test('risk-check status: a ref that cannot be resolved is a refusal, never a mat
   assert.equal(r._exit, 1);
 });
 
-test('risk-check status: a STAGED run is the record a staged ask finds', () => {
+test('risk-check status: a STAGED run is the record a staged ask finds', (t) => {
   // The other half of the locked OQ-1 answer. `run` can record a staged scope,
   // so the gate that reports on records has to be able to ask about one - a
   // staged run nothing could find would be written and then demanded again.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   commitFile(repo, 'README.md', 'start\n');
   const run = riskCheck(repo, dir, ['run', '--phase', '1', '--plan', '1', '--base', 'HEAD', '--staged']);
   assert.equal(run.ok, true, JSON.stringify(run));
@@ -1091,14 +1099,14 @@ test('risk-check status: a STAGED run is the record a staged ask finds', () => {
   assert.equal(r.plans[0].wanted.index_id, tree, JSON.stringify(r.plans[0].wanted));
 });
 
-test('risk-check status: a staged record does not answer for a LATER index', () => {
+test('risk-check status: a staged record does not answer for a LATER index', (t) => {
   // THE MUTABLE END. HEAD does not move when a file is staged, so a record
   // identified by its base and the word `staged` alone was satisfied by every
   // later index over that same base: run the detector over a benign index, then
   // stage the risky change, and the gate answered `recorded` for contents
   // nothing had ever read - the widened-range bypass, in the one scope whose
   // second end is not a commit.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   commitFile(repo, 'README.md', 'start\n');
   stageFile(repo, 'docs/notes.md', 'text\n');
   const run = riskCheck(repo, dir, ['run', '--phase', '1', '--plan', '1', '--base', 'HEAD', '--staged']);
@@ -1123,13 +1131,13 @@ test('risk-check status: a staged record does not answer for a LATER index', () 
   assert.ok(again.matches.some((m) => m.category === 'auth'), JSON.stringify(again.matches));
 });
 
-test('risk-check status: a staged record carrying NO index id is never a match', () => {
+test('risk-check status: a staged record carrying NO index id is never a match', (t) => {
   // The legacy arm, and the same safe direction the resolved commit ids take:
   // a record that cannot say which index it read has no identity to bind to, so
   // it reports `stale` and the range is re-run rather than passing on a base
   // that any number of indexes share. The row is written by the SEAM and then
   // stripped, so it is otherwise exactly what a run leaves.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   commitFile(repo, 'README.md', 'start\n');
   stageFile(repo, 'docs/notes.md', 'text\n');
   const run = riskCheck(repo, dir, ['run', '--phase', '1', '--plan', '1', '--base', 'HEAD', '--staged']);
@@ -1146,11 +1154,11 @@ test('risk-check status: a staged record carrying NO index id is never a match',
   assert.equal(r.plans[0].state, 'stale', JSON.stringify(r.plans[0]));
 });
 
-test('risk-check status: a REF-RANGE record does not satisfy a STAGED ask', () => {
+test('risk-check status: a REF-RANGE record does not satisfy a STAGED ask', (t) => {
   // Two different scopes over the same base are two different diffs. Letting
   // the committed one answer for the index would clear a staged change nothing
   // ever read - the widened-range bypass in another spelling.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   const base = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, 'docs/one.md', 'one\n');
   riskCheck(repo, dir, ['run', '--phase', '1', '--plan', '1', '--base', base, '--head', 'HEAD']);
@@ -1159,8 +1167,8 @@ test('risk-check status: a REF-RANGE record does not satisfy a STAGED ask', () =
   assert.equal(r.reason, 'risk-record-missing', JSON.stringify(r));
 });
 
-test('risk-check status: both scopes together, and a staged ask with no --plan, are refused', () => {
-  const { repo, dir } = riskRepo();
+test('risk-check status: both scopes together, and a staged ask with no --plan, are refused', (t) => {
+  const { repo, dir } = riskRepo(t);
   commitFile(repo, 'README.md', 'start\n');
   const both = riskStatus(dir,
     ['--phase', '1', '--plan', '1', '--base', 'HEAD', '--head', 'HEAD', '--staged'], repo);
@@ -1173,8 +1181,8 @@ test('risk-check status: both scopes together, and a staged ask with no --plan, 
   assert.equal(planless.reason, 'bad-args', JSON.stringify(planless));
 });
 
-test('risk-check status: a staged ask whose base does not resolve refuses, naming `base`', () => {
-  const { repo, dir } = riskRepo();
+test('risk-check status: a staged ask whose base does not resolve refuses, naming `base`', (t) => {
+  const { repo, dir } = riskRepo(t);
   commitFile(repo, 'README.md', 'start\n');
   const r = riskStatus(dir, ['--phase', '1', '--plan', '1', '--base', 'no-such-ref', '--staged'], repo);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -1183,8 +1191,8 @@ test('risk-check status: a staged ask whose base does not resolve refuses, namin
   assert.match(r.detail, /^base\b/, r.detail);
 });
 
-test('risk-check run: the record carries the resolved commit ids beside the spellings', () => {
-  const { repo, dir } = riskRepo();
+test('risk-check run: the record carries the resolved commit ids beside the spellings', (t) => {
+  const { repo, dir } = riskRepo(t);
   const a = commitFile(repo, 'README.md', 'start\n');
   const b = commitFile(repo, 'docs/notes.md', 'text\n');
   const r = riskCheck(repo, dir, ['run', '--phase', '1', '--plan', '1', '--base', a, '--head', 'HEAD']);
@@ -1199,13 +1207,13 @@ test('risk-check run: the record carries the resolved commit ids beside the spel
   assert.equal(rec.head_id, b);
 });
 
-test('risk-check status: a record whose git read FAILED is not a check, and does not satisfy', () => {
+test('risk-check status: a record whose git read FAILED is not a check, and does not satisfy', (t) => {
   // The record `risk-check run` leaves on its git-failure path: `ok:false`,
   // `checked:false`, and the line on disk saying the check was ATTEMPTED. A
   // status that found the ref pair and reported `recorded` would pass
   // completion on a check that never read a diff - the exact state RSK-02
   // exists to refuse.
-  const dir = traceFixture([...FROZEN_PHASE_1,
+  const dir = traceFixture(t, [...FROZEN_PHASE_1,
     recordLine('1', 'ae5ca09', 'HEAD', { checked: false, inconclusive: true })]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -1216,8 +1224,8 @@ test('risk-check status: a record whose git read FAILED is not a check, and does
   assert.deepEqual(r.missing, ['1']);
 });
 
-test('risk-check status: a NAMED range whose only record is unchecked is refused too', () => {
-  const { repo, dir } = repoFixture(FROZEN_PHASE_1);
+test('risk-check status: a NAMED range whose only record is unchecked is refused too', (t) => {
+  const { repo, dir } = repoFixture(t, FROZEN_PHASE_1);
   const a = commitFile(repo, 'README.md', 'start\n');
   const b = commitFile(repo, 'docs/one.md', 'one\n');
   mkdirSync(recordsDir(dir), { recursive: true });
@@ -1230,7 +1238,7 @@ test('risk-check status: a NAMED range whose only record is unchecked is refused
     'a matching ref pair on an unchecked record read as satisfaction');
 });
 
-test('risk-check status: an INCONCLUSIVE record satisfies the RECORD half, with the flag on the row', () => {
+test('risk-check status: an INCONCLUSIVE record satisfies the RECORD half, with the flag on the row', (t) => {
   // The deliberate other half, and the opposite call from `checked:false`. A
   // `checked:true, inconclusive:true` record is a COMPLETED check - the seam
   // read the range and honestly reported that part of it cannot be judged - so
@@ -1242,7 +1250,7 @@ test('risk-check status: an INCONCLUSIVE record satisfies the RECORD half, with 
   // beside the record and is supplied here. The row below
   // ('an INCONCLUSIVE range still needs the fire receipt') is the same fixture
   // without it.
-  const dir = traceFixture([...FROZEN_PHASE_1,
+  const dir = traceFixture(t, [...FROZEN_PHASE_1,
     recordLine('1', 'ae5ca09', 'HEAD', { inconclusive: true }),
     receiptLine('adjudication', '1')]);
   const r = riskStatus(dir, ['--phase', '1']);
@@ -1253,24 +1261,24 @@ test('risk-check status: an INCONCLUSIVE record satisfies the RECORD half, with 
     'the row hides that the range was never judged');
 });
 
-test('risk-check status: a phase with no completed executor range is ok:true and empty', () => {
+test('risk-check status: a phase with no completed executor range is ok:true and empty', (t) => {
   // Nothing to require is not a failure - a gate that refused here would block
   // the first plan of every phase.
-  const dir = traceFixture([FROZEN_PHASE_1[0]]);
+  const dir = traceFixture(t, [FROZEN_PHASE_1[0]]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(r.plans, []);
 });
 
-test('risk-check status: the range triple is all three or none', () => {
-  const dir = traceFixture([...FROZEN_PHASE_1, recordLine('1', 'refA', 'refB')]);
+test('risk-check status: the range triple is all three or none', (t) => {
+  const dir = traceFixture(t, [...FROZEN_PHASE_1, recordLine('1', 'refA', 'refB')]);
   const half = riskStatus(dir, ['--phase', '1', '--plan', '1']);
   assert.equal(half.ok, false, JSON.stringify(half));
   assert.equal(half.reason, 'bad-args');
 });
 
-test('risk-check status: a named range is required even when its return never landed', () => {
-  const { repo, dir } = repoFixture([FROZEN_PHASE_1[0]]);
+test('risk-check status: a named range is required even when its return never landed', (t) => {
+  const { repo, dir } = repoFixture(t, [FROZEN_PHASE_1[0]]);
   const a = commitFile(repo, 'README.md', 'start\n');
   const b = commitFile(repo, 'docs/one.md', 'one\n');
   const r = riskStatus(dir, ['--phase', '1', '--plan', '2', '--base', a, '--head', b], repo);
@@ -1313,14 +1321,14 @@ const SECOND_INVOCATION = [
   '{"corr":"1-bbbbbbb","phase":"1","ts":"2026-08-15T19:10:00.000Z","family":"lifecycle","event":"return","plan":"2","role":"cad-executor","tokens":40000}',
 ];
 
-test('risk-check status: an EARLIER invocation of the same cycle is still required', () => {
+test('risk-check status: an EARLIER invocation of the same cycle is still required', (t) => {
   // The regression the newest-anchor scope introduced. execute.md re-anchors at
   // `git rev-parse --short HEAD` on every invocation, so a phase resumed after
   // a checkpoint or a session death takes a second id once its first commits
   // land. Scoped to that newest id alone, everything the FIRST invocation
   // completed silently stopped being required - the same silence this gate
   // exists to break, arriving as an exemption rather than an absence.
-  const dir = traceFixture([
+  const dir = traceFixture(t, [
     ...FROZEN_PHASE_1,                              // invocation 1 completed plan 1
     ...SECOND_INVOCATION,                           // invocation 2 completed plan 2
     recordLine('2', 'bbbbbbb', 'HEAD', { corr: '1-bbbbbbb', ts: '2026-08-15T19:11:00.000Z' }),
@@ -1339,7 +1347,7 @@ test('risk-check status: an EARLIER invocation of the same cycle is still requir
   assert.equal(r.plans.find((/** @type {any} */ p) => p.plan === '1').run, '1-ae5ca09');
 });
 
-test('risk-check status: a signed-off cycle stops being required, an unsigned one does not', () => {
+test('risk-check status: a signed-off cycle stops being required, an unsigned one does not', (t) => {
   // The bound, stated as the pair it is. The ONLY difference between this row
   // and the one above is the phase's own `uat_verdict` `complete` sitting
   // between the two invocations: with it, invocation 1 belongs to a cycle that
@@ -1347,7 +1355,7 @@ test('risk-check status: a signed-off cycle stops being required, an unsigned on
   // is this cycle and stays required.
   const signoff =
     '{"corr":"1-ae5ca09","phase":"1","ts":"2026-08-15T18:58:40.563Z","family":"outcome","event":"uat_verdict","detail":"complete"}';
-  const dir = traceFixture([
+  const dir = traceFixture(t, [
     ...FROZEN_PHASE_1, signoff,
     ...SECOND_INVOCATION,
     recordLine('2', 'bbbbbbb', 'HEAD', { corr: '1-bbbbbbb', ts: '2026-08-15T19:11:00.000Z' }),
@@ -1359,13 +1367,13 @@ test('risk-check status: a signed-off cycle stops being required, an unsigned on
   assert.equal(r.plans[0].plan, '2');
 });
 
-test('risk-check status: a PARTIAL verdict is not a bound', () => {
+test('risk-check status: a PARTIAL verdict is not a bound', (t) => {
   // A partial UAT session is the MIDDLE of a cycle, not its close. Bounding on
   // one would exempt every range completed before the session that failed -
   // precisely the work a partial verdict says is unfinished.
   const partial =
     '{"corr":"1-ae5ca09","phase":"1","ts":"2026-08-15T18:58:40.563Z","family":"outcome","event":"uat_verdict","detail":"partial"}';
-  const dir = traceFixture([
+  const dir = traceFixture(t, [
     ...FROZEN_PHASE_1, partial,
     ...SECOND_INVOCATION,
     recordLine('2', 'bbbbbbb', 'HEAD', { corr: '1-bbbbbbb', ts: '2026-08-15T19:11:00.000Z' }),
@@ -1375,7 +1383,7 @@ test('risk-check status: a PARTIAL verdict is not a bound', () => {
   assert.deepEqual(r.missing, ['1']);
 });
 
-test('risk-check status: an UNREADABLE sign-off is not a bound', () => {
+test('risk-check status: an UNREADABLE sign-off is not a bound', (t) => {
   // The fail-OPEN direction, which is the only one that matters on a gate.
   // Comparing raw `ts` strings let a sign-off stamped 'zzzz' sort above every
   // real ISO timestamp, so every completed range in the file fell before the
@@ -1383,14 +1391,14 @@ test('risk-check status: an UNREADABLE sign-off is not a bound', () => {
   // "nothing to require" because it could not read one line.
   const junk =
     '{"corr":"1-ae5ca09","phase":"1","ts":"zzzz","family":"outcome","event":"uat_verdict","detail":"complete"}';
-  const dir = traceFixture([...FROZEN_PHASE_1, junk]);
+  const dir = traceFixture(t, [...FROZEN_PHASE_1, junk]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r._exit, 1);
   assert.deepEqual(r.missing, ['1']);
 });
 
-test('risk-check status: a return the bound cannot PLACE is still required', () => {
+test('risk-check status: a return the bound cannot PLACE is still required', (t) => {
   // A completed range carrying no readable timestamp cannot be shown to belong
   // to a closed cycle, so it stays required. Dropping it instead would let any
   // writer exempt a range by omitting one field.
@@ -1403,20 +1411,20 @@ test('risk-check status: a return the bound cannot PLACE is still required', () 
     '{"corr":"1-bbbbbbb","phase":"1","family":"lifecycle","event":"dispatch","plan":"2","role":"cad-executor","read":[".planning/phases/1/PLAN-2.md"]}',
     '{"corr":"1-bbbbbbb","phase":"1","family":"lifecycle","event":"return","plan":"2","role":"cad-executor","tokens":40000}',
   ];
-  const dir = traceFixture([...FROZEN_PHASE_1, signoff, ...undated]);
+  const dir = traceFixture(t, [...FROZEN_PHASE_1, signoff, ...undated]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.deepEqual(r.missing, ['2']);
 });
 
-test('risk-check status: a PREVIOUS cycle\'s completed range does not hold this run open', () => {
+test('risk-check status: a PREVIOUS cycle\'s completed range does not hold this run open', (t) => {
   // The whole file, as a real project's record actually reads: an old cycle's
   // phase 1 sitting above this run's phase 1. Scanning every bracket the file
   // holds demanded a record for the v3.4.x cycle's plan 2, which nothing can
   // supply, so the gate refused every time on any project with more than one
   // milestone of history - the check that exists to stop "not run" passing as
   // "ran clean" never passing at all.
-  const dir = traceFixture([...PRIOR_CYCLE_PHASE_1, PRIOR_CYCLE_SIGNOFF,
+  const dir = traceFixture(t, [...PRIOR_CYCLE_PHASE_1, PRIOR_CYCLE_SIGNOFF,
     ...FROZEN_PHASE_1, recordLine('1', 'ae5ca09', 'HEAD')]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -1429,13 +1437,13 @@ test('risk-check status: a PREVIOUS cycle\'s completed range does not hold this 
   assert.equal(r.plans[0].state, 'recorded');
 });
 
-test('risk-check status: scoping to this run is not a blanket pass - the CURRENT corr still refuses', () => {
+test('risk-check status: scoping to this run is not a blanket pass - the CURRENT corr still refuses', (t) => {
   // The same two bracket lines, re-stamped under this run's id and nothing
   // else changed, so the correlation id is the only thing between the row
   // above and this refusal. Without this row the scope could be widened to
   // "ignore every bracket" and the suite above would stay green.
   const thisRun = PRIOR_CYCLE_PHASE_1.slice(1).map((l) => l.replaceAll('1-3a24ad9', '1-ae5ca09'));
-  const dir = traceFixture([...FROZEN_PHASE_1, ...thisRun, recordLine('1', 'ae5ca09', 'HEAD')]);
+  const dir = traceFixture(t, [...FROZEN_PHASE_1, ...thisRun, recordLine('1', 'ae5ca09', 'HEAD')]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r._exit, 1);
@@ -1443,13 +1451,13 @@ test('risk-check status: scoping to this run is not a blanket pass - the CURRENT
   assert.deepEqual(r.missing, ['2']);
 });
 
-test('risk-check status: a record left under a PREVIOUS cycle does not satisfy this run', () => {
+test('risk-check status: a record left under a PREVIOUS cycle does not satisfy this run', (t) => {
   // The other half of the same scoping, and the reason both scans take it: with
   // the brackets scoped and the records not, a plan-1 record from any earlier
   // cycle would clear this run's plan 1 - an unsatisfiable gate traded for a
   // forgeable one.
   const stale = recordLine('1', 'ae5ca09', 'HEAD').replaceAll('1-ae5ca09', '1-3a24ad9');
-  const dir = traceFixture([...PRIOR_CYCLE_PHASE_1, PRIOR_CYCLE_SIGNOFF, stale, ...FROZEN_PHASE_1]);
+  const dir = traceFixture(t, [...PRIOR_CYCLE_PHASE_1, PRIOR_CYCLE_SIGNOFF, stale, ...FROZEN_PHASE_1]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'risk-record-missing');
@@ -1473,8 +1481,8 @@ test('risk-check status: a record left under a PREVIOUS cycle does not satisfy t
 // second receipt under the same correlation id and plan, naming
 // `risk_surface` in the structured `trigger` field.
 
-test('risk-check status: a MATCHED range with no fire receipt is refused', () => {
-  const dir = traceFixture([...FROZEN_PHASE_1,
+test('risk-check status: a MATCHED range with no fire receipt is refused', (t) => {
+  const dir = traceFixture(t, [...FROZEN_PHASE_1,
     recordLine('1', 'ae5ca09', 'HEAD', { matches: ['secrets'] })]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -1496,11 +1504,11 @@ test('risk-check status: a MATCHED range with no fire receipt is refused', () =>
 // would still look green - and "an implementation that honours `adjudication`
 // alone" is exactly the shape these rows exist to redden.
 for (const name of RECEIPTS) {
-  test(`risk-check status: an outcome \`${name}\` clears a matched range`, () => {
+  test(`risk-check status: an outcome \`${name}\` clears a matched range`, (t) => {
     // `override` is the one receipt written on the coordinator's own say-so, so
     // it is the one that must carry a reason; the other three are a review's
     // settled outcome and need none.
-    const dir = traceFixture([...FROZEN_PHASE_1,
+    const dir = traceFixture(t, [...FROZEN_PHASE_1,
       recordLine('1', 'ae5ca09', 'HEAD', { matches: ['secrets'] }),
       receiptLine(name, '1', name === 'override' ? { detail: 'the user cleared it' } : {})]);
     const r = riskStatus(dir, ['--phase', '1']);
@@ -1509,11 +1517,11 @@ for (const name of RECEIPTS) {
     assert.equal(r.plans[0].state, 'recorded');
   });
 
-  test(`risk-check status: an outcome \`${name}\` for ANOTHER trigger clears nothing`, () => {
+  test(`risk-check status: an outcome \`${name}\` for ANOTHER trigger clears nothing`, (t) => {
     // The join is on the trigger, not on the event name: a `diff` fire's
     // adjudication says nothing about whether the blocking `risk_surface` one
     // ever ran, and the two land in the same file minutes apart.
-    const dir = traceFixture([...FROZEN_PHASE_1,
+    const dir = traceFixture(t, [...FROZEN_PHASE_1,
       recordLine('1', 'ae5ca09', 'HEAD', { matches: ['secrets'] }),
       receiptLine(name, '1', { trigger: 'diff' })]);
     const r = riskStatus(dir, ['--phase', '1']);
@@ -1523,11 +1531,11 @@ for (const name of RECEIPTS) {
   });
 }
 
-test('risk-check status: a receipt under a PREVIOUS cycle\'s corr clears nothing', () => {
+test('risk-check status: a receipt under a PREVIOUS cycle\'s corr clears nothing', (t) => {
   // The same scoping both other scans take, and for the same reason: a receipt
   // left under an earlier cycle's id would clear this run's matched range, and
   // `.planning/trace.jsonl` is append-only for the life of the project.
-  const dir = traceFixture([...FROZEN_PHASE_1,
+  const dir = traceFixture(t, [...FROZEN_PHASE_1,
     recordLine('1', 'ae5ca09', 'HEAD', { matches: ['secrets'] }),
     receiptLine('adjudication', '1', { corr: '1-3a24ad9' })]);
   const r = riskStatus(dir, ['--phase', '1']);
@@ -1536,12 +1544,12 @@ test('risk-check status: a receipt under a PREVIOUS cycle\'s corr clears nothing
   assert.equal(r.plans[0].state, 'unfired');
 });
 
-test('risk-check status: a range the detector CLEARED needs no receipt at all', () => {
+test('risk-check status: a range the detector CLEARED needs no receipt at all', (t) => {
   // The over-refusal rail. A clean range never obliged anyone to fire the
   // blocking gate, so demanding its receipt would refuse every phase that
   // touched nothing risky - and a gate that cannot be cleared is one that gets
   // bypassed.
-  const dir = traceFixture([...FROZEN_PHASE_1,
+  const dir = traceFixture(t, [...FROZEN_PHASE_1,
     recordLine('1', 'ae5ca09', 'HEAD', { matches: [], inconclusive: false })]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -1549,11 +1557,11 @@ test('risk-check status: a range the detector CLEARED needs no receipt at all', 
   assert.equal(r.plans[0].state, 'recorded');
 });
 
-test('risk-check status: an INCONCLUSIVE range still needs the fire receipt', () => {
+test('risk-check status: an INCONCLUSIVE range still needs the fire receipt', (t) => {
   // workflows/execute.md fires `risk_surface` on `inconclusive: true` exactly
   // as it does on a match, so the receipt is owed on both - or a range the seam
   // could not judge clears itself by being unjudgeable.
-  const dir = traceFixture([...FROZEN_PHASE_1,
+  const dir = traceFixture(t, [...FROZEN_PHASE_1,
     recordLine('1', 'ae5ca09', 'HEAD', { inconclusive: true })]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -1561,12 +1569,12 @@ test('risk-check status: an INCONCLUSIVE range still needs the fire receipt', ()
   assert.equal(r.plans[0].state, 'unfired');
 });
 
-test('risk-check status: a checked:false record reports `unchecked`, never the new state', () => {
+test('risk-check status: a checked:false record reports `unchecked`, never the new state', (t) => {
   // The new rule sits ON TOP of the four states, never in place of one. A
   // record that never read its range is still not a check, and reporting it as
   // a missing FIRE would send the caller to fire a gate on a range nothing has
   // read.
-  const dir = traceFixture([...FROZEN_PHASE_1,
+  const dir = traceFixture(t, [...FROZEN_PHASE_1,
     recordLine('1', 'ae5ca09', 'HEAD', { checked: false, inconclusive: true })]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -1576,12 +1584,12 @@ test('risk-check status: a checked:false record reports `unchecked`, never the n
   assert.match(r.hint, /risk-check run/);
 });
 
-test('risk-check status: a NAMED range that matched is refused until its fire is recorded', () => {
+test('risk-check status: a NAMED range that matched is refused until its fire is recorded', (t) => {
   // The named-range arm, which is the one workflows/execute.md and
   // references/execute-parallel.md actually call. Identity is the resolved
   // commit pair for the record and `rowKey(corr, plan)` for the receipt, so
   // both halves have to be there for THIS range.
-  const { repo, dir } = repoFixture(FROZEN_PHASE_1);
+  const { repo, dir } = repoFixture(t, FROZEN_PHASE_1);
   const a = commitFile(repo, 'README.md', 'start\n');
   const b = commitFile(repo, 'docs/one.md', 'one\n');
   const matched = recordLine('1', a, b, { base_id: a, head_id: b, matches: ['secrets'] });
@@ -1609,13 +1617,13 @@ test('risk-check status: a NAMED range that matched is refused until its fire is
   assert.equal(after.plans[0].state, 'recorded');
 });
 
-test('risk-check status: an explicit user OVERRIDE written through the seam clears the range', () => {
+test('risk-check status: an explicit user OVERRIDE written through the seam clears the range', (t) => {
   // AC5 end to end, through the CLI the prose actually runs rather than a
   // hand-written fixture line: the reason is the user's own words, so it rides
   // `--detail-file` under the v3.5.2 transport rule (D-13), and the trigger
   // rides the structured `--trigger` flag. A deliberately cleared range is
   // clear - that is what keeps this gate from being an unclearable one.
-  const dir = traceFixture([...FROZEN_PHASE_1,
+  const dir = traceFixture(t, [...FROZEN_PHASE_1,
     recordLine('1', 'ae5ca09', 'HEAD', { matches: ['secrets', 'migrations'] })]);
   const refused = riskStatus(dir, ['--phase', '1']);
   assert.equal(refused.ok, false, JSON.stringify(refused));
@@ -1644,12 +1652,12 @@ test('risk-check status: an explicit user OVERRIDE written through the seam clea
 
 // --- the three the blocking risk_surface gate found on plan 2's own range ----
 
-test('risk-check status: an earlier fire\'s receipt does not clear a LATER matched range', () => {
+test('risk-check status: an earlier fire\'s receipt does not clear a LATER matched range', (t) => {
   // The blocker, and it is GAT-04's own defect one level up: keyed on the run
   // and the plan alone, one fire cleared every later matched range for that
   // plan. Run the detector, fire, fix something, re-run on the widened range,
   // skip the second fire - and status still said ok:true.
-  const { repo, dir } = repoFixture(FROZEN_PHASE_1);
+  const { repo, dir } = repoFixture(t, FROZEN_PHASE_1);
   const a = commitFile(repo, 'README.md', 'start\n');
   const b = commitFile(repo, 'docs/one.md', 'one\n');
   const c = commitFile(repo, 'docs/two.md', 'two\n');
@@ -1679,11 +1687,11 @@ test('risk-check status: an earlier fire\'s receipt does not clear a LATER match
   assert.equal(three.ok, true, JSON.stringify(three));
 });
 
-test('risk-check status: a non-empty matches nothing can name still reads as FIRED', () => {
+test('risk-check status: a non-empty matches nothing can name still reads as FIRED', (t) => {
   // Filtering the array to the strings it could name turned a matched range
   // into a clean one. Widening is the only safe direction on a gate that is
   // blocking by default.
-  const dir = traceFixture([...FROZEN_PHASE_1,
+  const dir = traceFixture(t, [...FROZEN_PHASE_1,
     recordLine('1', 'ae5ca09', 'HEAD', { matches: [null] })]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -1693,27 +1701,27 @@ test('risk-check status: a non-empty matches nothing can name still reads as FIR
   assert.ok(!('matched_unnamed' in r.plans[0].records[0]), 'the internal flag stays internal');
 });
 
-test('risk-check status: a reasonless override is not a receipt', () => {
+test('risk-check status: a reasonless override is not a receipt', (t) => {
   // The one receipt a coordinator writes on its own say-so. With no reason it
   // is indistinguishable from a manufactured clear for a fire nobody made.
-  const bare = traceFixture([...FROZEN_PHASE_1,
+  const bare = traceFixture(t, [...FROZEN_PHASE_1,
     recordLine('1', 'ae5ca09', 'HEAD', { matches: ['secrets'] }),
     receiptLine('override', '1')]);
   const r = riskStatus(bare, ['--phase', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.plans[0].state, 'unfired');
 
-  const blank = traceFixture([...FROZEN_PHASE_1,
+  const blank = traceFixture(t, [...FROZEN_PHASE_1,
     recordLine('1', 'ae5ca09', 'HEAD', { matches: ['secrets'] }),
     receiptLine('override', '1', { detail: '   ' })]);
   assert.equal(riskStatus(blank, ['--phase', '1']).ok, false, 'whitespace is not a reason');
 });
 
-test('risk-check status: the PHASE-WIDE arm needs a receipt per fired range too', () => {
+test('risk-check status: the PHASE-WIDE arm needs a receipt per fired range too', (t) => {
   // The blocker's second half. The named arm bound the receipt to its range;
   // the unscoped arm still cleared the plan on any one satisfying record, so a
   // later matched range rode in on an earlier fire's receipt.
-  const { repo, dir } = repoFixture(FROZEN_PHASE_1);
+  const { repo, dir } = repoFixture(t, FROZEN_PHASE_1);
   const a = commitFile(repo, 'README.md', 'start\n');
   const b = commitFile(repo, 'docs/one.md', 'one\n');
   const c = commitFile(repo, 'docs/two.md', 'two\n');
@@ -1735,10 +1743,10 @@ test('risk-check status: the PHASE-WIDE arm needs a receipt per fired range too'
   assert.equal(riskStatus(dir, ['--phase', '1'], repo).ok, true);
 });
 
-test('risk-check status: a receipt for another BASE over the same head settles nothing', () => {
+test('risk-check status: a receipt for another BASE over the same head settles nothing', (t) => {
   // Two records can share a head and differ at the base; they are different
   // diffs over different surfaces, so one's fire says nothing about the other.
-  const { repo, dir } = repoFixture(FROZEN_PHASE_1);
+  const { repo, dir } = repoFixture(t, FROZEN_PHASE_1);
   const a = commitFile(repo, 'README.md', 'start\n');
   const b = commitFile(repo, 'docs/one.md', 'one\n');
   const c = commitFile(repo, 'docs/two.md', 'two\n');
@@ -1752,10 +1760,10 @@ test('risk-check status: a receipt for another BASE over the same head settles n
   assert.equal(r.plans[0].state, 'unfired');
 });
 
-test('risk-check status: a receipt with no --base settles nothing when the record has ids', () => {
+test('risk-check status: a receipt with no --base settles nothing when the record has ids', (t) => {
   // "Matched if supplied" reopened the widened-range bypass under another name:
   // a fire over B..C would settle A..C on the head alone.
-  const { repo, dir } = repoFixture(FROZEN_PHASE_1);
+  const { repo, dir } = repoFixture(t, FROZEN_PHASE_1);
   const a = commitFile(repo, 'README.md', 'start\n');
   const b = commitFile(repo, 'docs/one.md', 'one\n');
   const c = commitFile(repo, 'docs/two.md', 'two\n');
@@ -1769,13 +1777,13 @@ test('risk-check status: a receipt with no --base settles nothing when the recor
   assert.equal(r.plans[0].state, 'unfired');
 });
 
-test('risk-check status: a receipt written with no --plan joins nothing', () => {
+test('risk-check status: a receipt written with no --plan joins nothing', (t) => {
   // The documented adjudication command in review-triggers.md omitted `--plan`,
   // so a per-plan fire's receipt keyed to no plan and the range stayed unfired.
   // The defect was in the PROSE and the fix is there; this row pins the
   // behaviour that fix relies on, so a later reader cannot decide a plan-less
   // receipt should join loosely and quietly reopen it.
-  const dir = traceFixture([...FROZEN_PHASE_1,
+  const dir = traceFixture(t, [...FROZEN_PHASE_1,
     recordLine('1', 'ae5ca09', 'HEAD', { matches: ['secrets'] }),
     JSON.stringify({
       corr: '1-ae5ca09', phase: '1', ts: '2026-08-15T18:47:00.000Z',
@@ -1786,7 +1794,7 @@ test('risk-check status: a receipt written with no --plan joins nothing', () => 
   assert.equal(r.plans[0].state, 'unfired');
 });
 
-test('risk-check run: an UNANSWERED project is refused rather than detected on a defaulted scope', () => {
+test('risk-check run: an UNANSWERED project is refused rather than detected on a defaulted scope', (t) => {
   // The teeth on the one-time surface question. references/review-triggers.md
   // says a fire whose resolve reports `surfaces_answered: false` "does not
   // proceed to detection until the project has answered" - and nothing enforced
@@ -1795,7 +1803,7 @@ test('risk-check run: an UNANSWERED project is refused rather than detected on a
   // at every point after the resolve. Measured on a sibling project 2026-08-19:
   // seven blocking risk_surface fires across three phases, the question never
   // put to the user.
-  const { repo, dir } = riskRepo({ answered: false });
+  const { repo, dir } = riskRepo(t, { answered: false });
   const base = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, 'src/auth/login.ts', AUTH_MODULE);
   const r = riskCheck(repo, dir, ['run', '--phase', '1', '--base', base, '--head', 'HEAD']);
@@ -1803,15 +1811,18 @@ test('risk-check run: an UNANSWERED project is refused rather than detected on a
   assert.equal(r.reason, 'surfaces-unanswered');
   assert.equal(r._exit, 1);
   assert.match(r.detail, /detect-surfaces/, 'the refusal does not name what settles it');
+  // D-20: the surface question lives in risk-surface.md, so the hint can't send the caller to review-triggers.md
+  assert.match(r.detail, /references\/risk-surface\.md/, 'the refusal does not name the file that holds the question');
+  assert.doesNotMatch(r.detail, /references\/review-triggers\.md/, 'the refusal still points at the old file');
   assert.deepEqual(traceLines(dir), [],
     'a refused call recorded a detection that never happened');
 });
 
-test('risk-check run: an unanswered project with --surfaces named is NOT refused', () => {
+test('risk-check run: an unanswered project with --surfaces named is NOT refused', (t) => {
   // The refusal is precisely for the caller that let the default stand. A
   // caller that named the scope has already resolved it, and refusing there
   // would break every fire site that passes the resolved set through.
-  const { repo, dir } = riskRepo({ answered: false });
+  const { repo, dir } = riskRepo(t, { answered: false });
   const base = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, 'src/auth/login.ts', AUTH_MODULE);
   const r = riskCheck(repo, dir,
@@ -1821,12 +1832,12 @@ test('risk-check run: an unanswered project with --surfaces named is NOT refused
   assert.equal(riskRecords(dir).length, 1);
 });
 
-test('risk-check run: a half-answered list fails SAFE - refused, not narrowed to its valid subset', () => {
+test('risk-check run: a half-answered list fails SAFE - refused, not narrowed to its valid subset', (t) => {
   // `["auth", "secret"]` is a typo for `secrets`, not a decision to stop
   // reviewing secret handling. The shared predicate in lib/surface-scan.mjs
   // reads that as unanswered, which is what keeps a mistyped entry from
   // suppressing the question forever while shrinking the only blocking gate.
-  const { repo, dir } = riskRepo({ answered: false });
+  const { repo, dir } = riskRepo(t, { answered: false });
   writeFileSync(join(dir, 'config.json'),
     JSON.stringify({ review: { triggers: { risk_surface: { surfaces: ['auth', 'secret'] } } } }));
   const base = commitFile(repo, 'README.md', 'start\n');
@@ -1836,11 +1847,11 @@ test('risk-check run: a half-answered list fails SAFE - refused, not narrowed to
   assert.equal(r.reason, 'surfaces-unanswered');
 });
 
-test('risk-check run: the ANSWERED set scopes detection, rather than being resolved and dropped', () => {
+test('risk-check run: the ANSWERED set scopes detection, rather than being resolved and dropped', (t) => {
   // route.mjs:172 states the key IS "the categories the one blocking trigger is
   // scoped to". Before this, `risk-check run` defaulted to all eight whatever
   // the project had answered, so the answer reached the resolve and died there.
-  const { repo, dir } = riskRepo({ answered: false });
+  const { repo, dir } = riskRepo(t, { answered: false });
   writeFileSync(join(dir, 'config.json'),
     JSON.stringify({ review: { triggers: { risk_surface: { surfaces: ['secrets'] } } } }));
   const base = commitFile(repo, 'README.md', 'start\n');
@@ -1853,12 +1864,12 @@ test('risk-check run: the ANSWERED set scopes detection, rather than being resol
     'an auth-only diff matched under a secrets-only scope');
 });
 
-test('risk-check run: a TORN config layer is refused even when --surfaces was named', () => {
+test('risk-check run: a TORN config layer is refused even when --surfaces was named', (t) => {
   // The torn-layer rule is fail-closed or it is not a rule. Placed inside the
   // no-flag arm it would have been a guard an explicit flag stepped around,
   // which the blocking risk_surface gate cannot afford: a syntax error in a
   // config layer must not be readable past on the way to scoping that gate.
-  const { repo, dir } = riskRepo({ answered: false });
+  const { repo, dir } = riskRepo(t, { answered: false });
   writeFileSync(join(dir, 'config.json'), '{"review": {"triggers":');
   const base = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, 'src/auth/login.ts', AUTH_MODULE);
@@ -2044,10 +2055,10 @@ test('scanDeclared: no signal this face returns anywhere contains "changed line"
 test('scanDeclared: a DOCUMENT body is prose - the same bytes are code under a source path', () => {
   // The mention-level raise, in one row. This body carries two real constructs;
   // under a documentation extension it is a file DESCRIBING them, which is what
-  // METHOD.md does and what raised five of this repository's phases.
+  // docs/METHOD.md does and what raised five of this repository's phases.
   const body = `${DESTRUCTIVE_LINE}\nconst read = (s) => ${PARSE_CALL}(s);\n`;
   const scope = ['destructive', 'untrusted_input'];
-  for (const doc of ['METHOD.md', 'docs/guide.markdown', 'notes.mdx',
+  for (const doc of ['docs/METHOD.md', 'docs/guide.markdown', 'notes.mdx',
     'CHANGELOG.txt', 'docs/index.rst', 'docs/index.adoc', 'DOCS/UPPER.MD']) {
     assert.deepEqual(scanDeclared([{ path: doc, body }], scope).matches, [], doc);
   }
@@ -2082,9 +2093,9 @@ test('scanDeclared: the document rule is scoped to THIS face - scanDiff still re
   // MENTION, never a path exemption - stays in force. The two faces are given
   // the same construct in the same file, and only the plan-time one is silent.
   const scope = ['destructive'];
-  assert.deepEqual(scanDiff(diffOf('METHOD.md', [DESTRUCTIVE_LINE]), scope).matches
+  assert.deepEqual(scanDiff(diffOf('docs/METHOD.md', [DESTRUCTIVE_LINE]), scope).matches
     .map((m) => m.category), ['destructive']);
-  assert.deepEqual(scanDeclared([{ path: 'METHOD.md', body: `${DESTRUCTIVE_LINE}\n` }],
+  assert.deepEqual(scanDeclared([{ path: 'docs/METHOD.md', body: `${DESTRUCTIVE_LINE}\n` }],
     scope).matches, []);
 });
 
@@ -2241,7 +2252,7 @@ const PLAN_2_RETURN = [
   '{"corr":"1-ae5ca09","phase":"1","ts":"2026-08-15T18:55:00.000Z","family":"lifecycle","event":"return","plan":"2","role":"cad-executor","tokens":40000}',
 ];
 
-test('risk-check status: a skipped EARLIER plan does not refuse a LATER plan\'s named range', () => {
+test('risk-check status: a skipped EARLIER plan does not refuse a LATER plan\'s named range', (t) => {
   // The defect the deep verify of phase 1 (v3.7.11) found after RSK-10's
   // workflow half landed: execute.md, task.md and execute-parallel.md append
   // `risk_check_skipped` in place of the run for a plan that landed no commits,
@@ -2250,7 +2261,7 @@ test('risk-check status: a skipped EARLIER plan does not refuse a LATER plan\'s 
   // gating `status` call answered `risk-record-missing` - a blocking gate with
   // no exit but an override. Real binary, real repo: plan 1 skipped at the
   // pre-plan HEAD, plan 2 committed and checked.
-  const { repo, dir } = repoFixture(FROZEN_PHASE_1);
+  const { repo, dir } = repoFixture(t, FROZEN_PHASE_1);
   const a = commitFile(repo, 'README.md', 'start\n');
   mkdirSync(recordsDir(dir), { recursive: true });
   writeFileSync(join(recordsDir(dir), 'trace.jsonl'),
@@ -2286,8 +2297,8 @@ const PLAN_3_RETURN = [
 ];
 
 /** Three completed plans, each recorded over its own range unless `record3` is false; plan 2's range is b..c. */
-function threePlanRecord({ record3 = true } = {}) {
-  const { repo, dir } = repoFixture([...FROZEN_PHASE_1, ...PLAN_2_RETURN, ...PLAN_3_RETURN]);
+function threePlanRecord(t, { record3 = true } = {}) {
+  const { repo, dir } = repoFixture(t, [...FROZEN_PHASE_1, ...PLAN_2_RETURN, ...PLAN_3_RETURN]);
   const a = commitFile(repo, 'README.md', 'start\n');
   const b = commitFile(repo, 'docs/one.md', 'one\n');
   const c = commitFile(repo, 'docs/two.md', 'two\n');
@@ -2311,9 +2322,9 @@ function assertNarrowed(/** @type {any} */ r) {
   }
 }
 
-test('risk-check status --plan prints records on the asked plan\'s row only, and the verdict is the one it was', () => {
+test('risk-check status --plan prints records on the asked plan\'s row only, and the verdict is the one it was', (t) => {
   // the verdicts below were typed in from this same call on the code before the narrowing
-  const all = threePlanRecord();
+  const all = threePlanRecord(t);
   const pass = riskStatus(all.dir, ['--phase', '1', '--plan', '2', '--base', all.b, '--head', all.c], all.repo);
   assert.equal(pass.ok, true, JSON.stringify(pass));
   assertNarrowed(pass);
@@ -2321,7 +2332,7 @@ test('risk-check status --plan prints records on the asked plan\'s row only, and
   assert.equal(wide.plans.length, 3);
   for (const row of wide.plans) assert.equal(row.records.length, 1, JSON.stringify(row));
 
-  const gap = threePlanRecord({ record3: false });
+  const gap = threePlanRecord(t, { record3: false });
   const refused = riskStatus(gap.dir, ['--phase', '1', '--plan', '2', '--base', gap.b, '--head', gap.c], gap.repo);
   assert.equal(refused.ok, false, JSON.stringify(refused));
   assert.equal(refused.reason, 'risk-record-missing');
@@ -2333,10 +2344,10 @@ test('risk-check status --plan prints records on the asked plan\'s row only, and
   assert.equal(refused.plans.find((/** @type {any} */ p) => p.plan === '3').state, 'missing');
 });
 
-test('risk-check status: a skip carrying NO sha satisfies nothing', () => {
+test('risk-check status: a skip carrying NO sha satisfies nothing', (t) => {
   // The rule fire receipts already follow: a skip that cannot name the commit
   // it stood at cannot say which range it stood in for.
-  const dir = traceFixture([...FROZEN_PHASE_1, skipLine('1', undefined)]);
+  const dir = traceFixture(t, [...FROZEN_PHASE_1, skipLine('1', undefined)]);
   const r = riskStatus(dir, ['--phase', '1']);
   assert.equal(r.ok, false, JSON.stringify(r));
   assert.equal(r.reason, 'risk-record-missing');
@@ -2345,11 +2356,11 @@ test('risk-check status: a skip carrying NO sha satisfies nothing', () => {
   assert.match(r.hint, /risk_check_skipped/);
 });
 
-test('risk-check status: a skip answers only for the self-comparing range it describes', () => {
+test('risk-check status: a skip answers only for the self-comparing range it describes', (t) => {
   // The named-range arm. A skip at commit `a` stands in for `a..a` and for
   // nothing else: a real range `a..b` is a diff the skip did not read, and a
   // staged ask over `a` names an index with bytes in it.
-  const { repo, dir } = repoFixture([FROZEN_PHASE_1[0]]);
+  const { repo, dir } = repoFixture(t, [FROZEN_PHASE_1[0]]);
   const a = commitFile(repo, 'README.md', 'start\n');
   mkdirSync(recordsDir(dir), { recursive: true });
   writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${[...FROZEN_PHASE_1, skipLine('1', a)].join('\n')}\n`);
@@ -2368,10 +2379,10 @@ test('risk-check status: a skip answers only for the self-comparing range it des
   assert.equal(staged.plans.find((/** @type {any} */ p) => p.plan === '1').state, 'missing');
 });
 
-test('risk-check status: a record outranks a skip for the same plan', () => {
+test('risk-check status: a record outranks a skip for the same plan', (t) => {
   // A record the detector wrote is the stronger claim. A skip beside an
   // unchecked record does not turn `unchecked` into `skipped`.
-  const dir = traceFixture([...FROZEN_PHASE_1,
+  const dir = traceFixture(t, [...FROZEN_PHASE_1,
     recordLine('1', 'ae5ca09', 'HEAD', { checked: false, inconclusive: true }),
     skipLine('1', 'ae5ca09ae5ca09')]);
   const r = riskStatus(dir, ['--phase', '1']);

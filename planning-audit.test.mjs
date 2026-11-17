@@ -14,10 +14,9 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, renameSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, readFileSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { makeTree, run, isEntryFile, verifyChecked } from './planning.test.mjs';
+import { makeTree, run, isEntryFile, verifyChecked, scratch } from './planning.test.mjs';
 import { blockPlanTree } from './planning-plans.test.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
@@ -25,7 +24,7 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 
 // --- audit ---------------------------------------------------------------------
 
-test('audit: traces every break kind, orphans, and deferred', () => {
+test('audit: traces every break kind, orphans, and deferred', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Done', checked: true }, { n: 2, name: 'Open' }],
     phases: {
@@ -41,7 +40,7 @@ test('audit: traces every break kind, orphans, and deferred', () => {
       ['REQ-6', 1, 'Pending'],    // box checked but row Pending -> drift
       ['REQ-9', 2, 'Deferred'],   // deferred: listed, never counted broken
     ],
-  });
+  }, t);
   verifyChecked(dir);
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
@@ -66,9 +65,9 @@ const auditSpec = () => ({
   reqs: [['REQ-1', 1, 'Complete']],
 });
 
-test('audit: a colon-aligned separator row is not a requirement (#41.1)', () => {
-  const plain = makeTree(auditSpec());
-  const aligned = makeTree(auditSpec());
+test('audit: a colon-aligned separator row is not a requirement (#41.1)', (t) => {
+  const plain = makeTree(auditSpec(), t);
+  const aligned = makeTree(auditSpec(), t);
   // GFM alignment cells (`:---`, `:--:`, `---:`) are a legal spelling of the
   // same delimiter row - the parse must be byte-equivalent to the plain form.
   writeFileSync(join(aligned, 'REQUIREMENTS.md'),
@@ -82,9 +81,9 @@ test('audit: a colon-aligned separator row is not a requirement (#41.1)', () => 
   assert.equal(b.requirements.some((q) => /^[-:\s]+$/.test(q.id)), false);
 });
 
-test('audit: rows under a ## section AFTER Traceability are not requirements (#41.2)', () => {
-  const bare = makeTree(auditSpec());
-  const appended = makeTree(auditSpec());
+test('audit: rows under a ## section AFTER Traceability are not requirements (#41.2)', (t) => {
+  const bare = makeTree(auditSpec(), t);
+  const appended = makeTree(auditSpec(), t);
   writeFileSync(join(appended, 'REQUIREMENTS.md'),
     `${readFileSync(join(appended, 'REQUIREMENTS.md'), 'utf8')}\n## Appendix\n\n` +
     '| Requirement | Phase | Status |\n|---|---|---|\n| GHOST-1 | Phase 1 | Complete |\n');
@@ -95,14 +94,14 @@ test('audit: rows under a ## section AFTER Traceability are not requirements (#4
   assert.equal(r.counts.total, a.counts.total);
 });
 
-test('audit: a block-YAML requirements list reads as ids, not zero (#48.1)', () => {
+test('audit: a block-YAML requirements list reads as ids, not zero (#48.1)', (t) => {
   // Under D-01 an unquoted `#41` is a comment, not an id - the block items
   // must be quoted to read as the ids `#41`/`#46`.
   const dir = blockPlanTree(
     'requirements:\n  - "#41"\n  - "#46"  # with a comment\nfiles: []',
     // A prose `requirements:` line OUTSIDE the fence must contribute nothing -
     // an unbounded key scan would swallow the bullets below it as ids.
-    '\nrequirements: these prose ids:\n\n- NOT-AN-ID\n');
+    '\nrequirements: these prose ids:\n\n- NOT-AN-ID\n', t);
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   const byId = Object.fromEntries(r.requirements.map((q) => [q.id, q]));
@@ -115,10 +114,10 @@ test('audit: a block-YAML requirements list reads as ids, not zero (#48.1)', () 
   assert.equal(r.orphans, undefined); // the body list contributed no ids
 });
 
-test('audit: the inline requirements form with a bracketed trailing comment still reads exactly two ids', () => {
+test('audit: the inline requirements form with a bracketed trailing comment still reads exactly two ids', (t) => {
   // The comment itself contains brackets - the greedy `\[(.*)\]` defect three
   // reviewers found would pull "see [D-06]" into the payload as bogus entries.
-  const dir = blockPlanTree('requirements: ["#41", "#46"]  # ids, see [D-06]\nfiles: []');
+  const dir = blockPlanTree('requirements: ["#41", "#46"]  # ids, see [D-06]\nfiles: []', '', t);
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.requirements.map((q) => q.id).sort(), ['#41', '#46']);
@@ -128,14 +127,14 @@ test('audit: the inline requirements form with a bracketed trailing comment stil
   assert.equal(r.orphans, undefined);
 });
 
-test('audit: a comment-only requirements: value falls through to a block list surviving a heading comment, a splitting comment, and a blank line', () => {
+test('audit: a comment-only requirements: value falls through to a block list surviving a heading comment, a splitting comment, and a blank line', (t) => {
   // `^key:\s*(.*)$` eats the whitespace before the `#`, so the whitespace-preceded
   // comment strip can never fire on a remainder that is ITSELF a comment. Read as
   // a scalar (the pre-fix behaviour) this returns the comment text as a fabricated
   // id AND discards both real ids beneath it. D-04: the block SKIPS blank and
   // comment-only lines rather than stopping at the first one.
   const dir = blockPlanTree(
-    'requirements:   # ids\n  # covers auth\n  - "#41"\n  # a splitting comment\n\n  - "#46"\nfiles: []');
+    'requirements:   # ids\n  # covers auth\n  - "#41"\n  # a splitting comment\n\n  - "#46"\nfiles: []', '', t);
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   const byId = Object.fromEntries(r.requirements.map((q) => [q.id, q]));
@@ -146,11 +145,11 @@ test('audit: a comment-only requirements: value falls through to a block list su
   assert.equal(r.orphans, undefined); // the comment text minted no id
 });
 
-test('audit: a no-space `#TODO` comment on the key line still falls through to the block list', () => {
+test('audit: a no-space `#TODO` comment on the key line still falls through to the block list', (t) => {
   // D-01 INVERTS the old bare-`#41`-is-an-id rule: an unquoted `#` always
   // starts a comment, with no `# ` vs `#x` discrimination, so `#TODO` (no
   // space) is a comment exactly like `# TODO` would be.
-  const dir = blockPlanTree('requirements: #TODO fill this in\n  - "#41"\n  - "#46"\nfiles: []');
+  const dir = blockPlanTree('requirements: #TODO fill this in\n  - "#41"\n  - "#46"\nfiles: []', '', t);
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   const byId = Object.fromEntries(r.requirements.map((q) => [q.id, q]));
@@ -162,8 +161,8 @@ test('audit: a no-space `#TODO` comment on the key line still falls through to t
   assert.ok(!JSON.stringify(r).includes('TODO'));
 });
 
-test('audit: a quoted scalar requirements: value reads as the single id', () => {
-  const dir = blockPlanTree('requirements: "#41"\nfiles: []');
+test('audit: a quoted scalar requirements: value reads as the single id', (t) => {
+  const dir = blockPlanTree('requirements: "#41"\nfiles: []', '', t);
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   const byId = Object.fromEntries(r.requirements.map((q) => [q.id, q]));
@@ -174,11 +173,11 @@ test('audit: a quoted scalar requirements: value reads as the single id', () => 
 
 // --- audit: unseeded/unpicked (D-01..D-07) and nonconforming_plans (D-13)
 
-test('audit: an unpicked ## Active id BREAKS at zero rows - the additive shape is reversed', () => {
+test('audit: an unpicked ## Active id BREAKS at zero rows - the additive shape is reversed', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true, planReqs: ['SPN-01'] } },
-  });
+  }, t);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **SPN-01**: desc\n\n## Traceability\n\n' +
     '| Requirement | Phase | Status |\n|---|---|---|\n\nEmpty.\n');
@@ -192,11 +191,11 @@ test('audit: an unpicked ## Active id BREAKS at zero rows - the additive shape i
   assert.deepEqual(r.unseeded, { active_ids: ['SPN-01'] });
 });
 
-test('audit: unseeded reports no_active_section: true when the ## Active heading itself is absent', () => {
+test('audit: unseeded reports no_active_section: true when the ## Active heading itself is absent', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true } },
-  });
+  }, t);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Traceability\n\n| Requirement | Phase | Status |\n|---|---|---|\n\nEmpty.\n');
   const r = run(['audit'], dir);
@@ -207,12 +206,12 @@ test('audit: unseeded reports no_active_section: true when the ## Active heading
   assert.deepEqual(r.requirements, []);
 });
 
-test('audit: a tree with rows and no ## Active heading gains no unpicked break', () => {
+test('audit: a tree with rows and no ## Active heading gains no unpicked break', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['REQ-1'] } },
     reqs: [['REQ-1', 1, 'Complete']],
-  });
+  }, t);
   verifyChecked(dir);
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
@@ -221,11 +220,11 @@ test('audit: a tree with rows and no ## Active heading gains no unpicked break',
   assert.equal(r.counts.total, 1); // still the row count: nothing to add
 });
 
-test('audit: the partially-planned state - a row for AUD-01, none for AUD-02, so AUD-02 breaks and the verdict FAILs', () => {
+test('audit: the partially-planned state - a row for AUD-01, none for AUD-02, so AUD-02 breaks and the verdict FAILs', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'] } },
-  });
+  }, t);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **AUD-01**: planned\n- **AUD-02**: not picked up\n\n' +
     '## Traceability\n\n| Requirement | Phase | Status |\n|---|---|---|\n' +
@@ -242,11 +241,11 @@ test('audit: the partially-planned state - a row for AUD-01, none for AUD-02, so
   assert.deepEqual(r.unseeded, { active_ids: ['AUD-02'] });
 });
 
-test('audit: a ## Deferred id is excluded by SECTION PLACEMENT, and a Deferred-status row is never unpicked', () => {
+test('audit: a ## Deferred id is excluded by SECTION PLACEMENT, and a Deferred-status row is never unpicked', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'] } },
-  });
+  }, t);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **AUD-01**: planned\n- **AUD-02**: deferred by status\n\n' +
     '## Traceability\n\n| Requirement | Phase | Status |\n|---|---|---|\n' +
@@ -261,13 +260,13 @@ test('audit: a ## Deferred id is excluded by SECTION PLACEMENT, and a Deferred-s
   assert.deepEqual(r.counts, { total: 2, traced: 1, broken: 0, deferred: 1 });
 });
 
-test('audit: an ## Active id that is not id-shaped can never reach the arithmetic, at zero rows either', () => {
+test('audit: an ## Active id that is not id-shaped can never reach the arithmetic, at zero rows either', (t) => {
   // The same phantom in the state where `unseeded`'s payload IS the whole
   // `## Active` list: `Note` is reported, not seeded, not counted, not broken.
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true } },
-  });
+  }, t);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **Note**: scope frozen 2026-07-01\n\n' +
     '## Traceability\n\n| Requirement | Phase | Status |\n|---|---|---|\n\nEmpty.\n');
@@ -279,7 +278,7 @@ test('audit: an ## Active id that is not id-shaped can never reach the arithmeti
   assert.deepEqual(r.counts, { total: 0, traced: 0, broken: 0, deferred: 0 });
 });
 
-test('audit: a digit-leading category with a letter in it reaches the arithmetic (PRS-02)', () => {
+test('audit: a digit-leading category with a letter in it reaches the arithmetic (PRS-02)', (t) => {
   // `2FA-01` is how a real project spells this, and the head-anchored admission
   // test held it out of `unpicked`, out of `unseeded.active_ids` and out of
   // `counts` entirely - an `## Active` requirement no phase picked up, silently
@@ -287,7 +286,7 @@ test('audit: a digit-leading category with a letter in it reaches the arithmetic
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true } },
-  });
+  }, t);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **2FA-01**: two-factor auth\n\n' +
     '## Traceability\n\n| Requirement | Phase | Status |\n|---|---|---|\n\nEmpty.\n');
@@ -301,14 +300,14 @@ test('audit: a digit-leading category with a letter in it reaches the arithmetic
   assert.equal((r.active_issues || []).length, 0, JSON.stringify(r.active_issues));
 });
 
-test('audit: a category with NO letter at all is still a phantom, reported and never counted', () => {
+test('audit: a category with NO letter at all is still a phantom, reported and never counted', (t) => {
   // The same fixture spelled `2026-08`: a bolded date must not become an admitted
   // requirement id feeding the counts - the phantom `orphans.plan_ids` break this
   // project already paid for once.
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true } },
-  });
+  }, t);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **2026-08**: the August slice\n\n' +
     '## Traceability\n\n| Requirement | Phase | Status |\n|---|---|---|\n\nEmpty.\n');
@@ -320,11 +319,11 @@ test('audit: a category with NO letter at all is still a phantom, reported and n
   assert.deepEqual(r.counts, { total: 0, traced: 0, broken: 0, deferred: 0 });
 });
 
-test('audit: a v1.3.1-shaped ## Active table is reported in active_issues - and its ids stay invisible to the break', () => {
+test('audit: a v1.3.1-shaped ## Active table is reported in active_issues - and its ids stay invisible to the break', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['A'] } },
-  });
+  }, t);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n| Requirement | Milestone |\n|---|---|\n' +
     '| TRI-01 (triage every open bug) | v1.3.1 |\n\n' +
@@ -349,11 +348,11 @@ test('audit: a v1.3.1-shaped ## Active table is reported in active_issues - and 
 // the audit or move `counts`: the first would FAIL a correct file by a name
 // that is not a requirement, the second would count one requirement twice - as
 // `AUD-01` traced from its row AND `AUD-01:` broken from the bullet.
-test('audit: a prose bold bullet in ## Active is REPORTED, never a break - the phantom-id upgrade pin', () => {
+test('audit: a prose bold bullet in ## Active is REPORTED, never a break - the phantom-id upgrade pin', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'] } },
-  });
+  }, t);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **AUD-01**: the audit gate\n' +
     '- **Note**: scope frozen 2026-07-01\n\n' +
@@ -370,11 +369,11 @@ test('audit: a prose bold bullet in ## Active is REPORTED, never a break - the p
   assert.deepEqual(r.counts, { total: 1, traced: 1, broken: 0, deferred: 0 });
 });
 
-test('audit: a colon INSIDE the bold span reports, and is never normalized into the id it resembles', () => {
+test('audit: a colon INSIDE the bold span reports, and is never normalized into the id it resembles', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Done', checked: true }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'] } },
-  });
+  }, t);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n- **AUD-01:** the colon belongs outside the span\n\n' +
     '## Traceability\n\n| Requirement | Phase | Status |\n|---|---|---|\n' +
@@ -411,8 +410,8 @@ export const GIT_FIXTURE_ENV = {
   GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
 };
 
-function taggedTree(spec, { version = 'v9.9.0', tags = [], roadmapTitle } = {}) {
-  const dir = makeTree(spec);
+function taggedTree(t, spec, { version = 'v9.9.0', tags = [], roadmapTitle } = {}) {
+  const dir = makeTree(spec, t);
   if (version !== null) {
     writeFileSync(join(dir, 'PROJECT.md'),
       `# Fixture\n\n## Requirements\n\n### Active\n\n\`${version}\` - the open cycle\n\n### Out of Scope\n`);
@@ -428,7 +427,7 @@ function taggedTree(spec, { version = 'v9.9.0', tags = [], roadmapTitle } = {}) 
     { stdio: 'ignore', env: GIT_FIXTURE_ENV });
   git('init', '-q');
   git('commit', '--allow-empty', '-q', '-m', 'root');
-  for (const t of tags) git('tag', t);
+  for (const tag of tags) git('tag', tag);
   return dir;
 }
 
@@ -445,44 +444,42 @@ const cycleSpec = (done) => ({
   reqs: [['AUD-01', 1, done ? 'Complete' : 'Pending']],
 });
 
-test('audit: a doc version a tag already carries, with the cycle still open, emits version_drift', () => {
-  const dir = taggedTree(cycleSpec(false), { version: 'v9.9.0', tags: ['v9.9.0'] });
+test('audit: a doc version a tag already carries, with the cycle still open, emits version_drift', (t) => {
+  const dir = taggedTree(t, cycleSpec(false), { version: 'v9.9.0', tags: ['v9.9.0'] });
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.version_drift,
     { doc_version: 'v9.9.0', published_as: 'v9.9.0', cycle_state: 'open' });
 });
 
-test('audit: the SAME tagged version with every phase complete is the interrupted close, not drift', () => {
+test('audit: the SAME tagged version with every phase complete is the interrupted close, not drift', (t) => {
   // D-01's exemption: milestone.md tags at step 2 and evolves PROJECT.md at
   // step 4, so a close interrupted between them leaves exactly this on disk.
   // This case is what a tag-only predicate would get wrong.
-  const dir = taggedTree(cycleSpec(true), { version: 'v9.9.0', tags: ['v9.9.0'] });
+  const dir = taggedTree(t, cycleSpec(true), { version: 'v9.9.0', tags: ['v9.9.0'] });
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.version_drift, undefined);
 });
 
-test('audit: a phase whose checklist holds only a blocked item does not hold the cycle open', () => {
-  // `blocked` is TERMINAL (verify.md) and `uatComplete` refuses it, so this
-  // phase can never derive complete. Under a complete-only exemption the gate
-  // would FAIL forever with "complete the close" unreachable as a remedy.
-  const dir = taggedTree({
+test('audit: a blocked item beside settled ones still holds the cycle open', (t) => {
+  // the next /cad-verify puts a `blocked` item to the user, so it's answerable, not parked
+  const dir = taggedTree(t, {
     roadmap: [{ n: 1, name: 'One', checked: true }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'], summary: true,
-      uat: [{ status: 'pass' }, { status: 'blocked', reason: 'needs the device' }] } },
+      uat: [{ status: 'pass' }, { status: 'skipped', reason: 'no device' },
+        { status: 'blocked', reason: 'needs the device' }] } },
     reqs: [['AUD-01', 1, 'Complete']],
   }, { version: 'v9.9.0', tags: ['v9.9.0'] });
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
-  assert.equal(r.version_drift, undefined);
+  assert.deepEqual(r.version_drift,
+    { doc_version: 'v9.9.0', published_as: 'v9.9.0', cycle_state: 'open' });
 });
 
-test('audit: one still-answerable item beside a blocked one keeps the cycle open', () => {
-  // The complement of the case above: `pending` is what "still being worked
-  // under a published number" looks like, and the blocked item beside it
-  // changes nothing.
-  const dir = taggedTree({
+test('audit: one still-answerable item beside a blocked one keeps the cycle open', (t) => {
+  // `pending` is what "still being worked under a published number" looks like
+  const dir = taggedTree(t, {
     roadmap: [{ n: 1, name: 'One', checked: false }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'], summary: true,
       uat: [{ status: 'pending' }, { status: 'blocked', reason: 'needs the device' }] } },
@@ -494,17 +491,17 @@ test('audit: one still-answerable item beside a blocked one keeps the cycle open
     { doc_version: 'v9.9.0', published_as: 'v9.9.0', cycle_state: 'open' });
 });
 
-test('audit: a doc version that merely SORTS BELOW the newest tag is not drift - membership, not order', () => {
+test('audit: a doc version that merely SORTS BELOW the newest tag is not drift - membership, not order', (t) => {
   // D-04: `v9.9.0` published by nothing while `v9.9.1` exists is a legitimate
   // maintenance milestone, and the retired scalar comparand refused exactly it.
-  const dir = taggedTree(cycleSpec(false), { version: 'v9.9.0', tags: ['v9.9.1'] });
+  const dir = taggedTree(t, cycleSpec(false), { version: 'v9.9.0', tags: ['v9.9.1'] });
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.version_drift, undefined);
 });
 
-test('audit: no git repo at all leaves the envelope unchanged - no tags is no evidence, never a failure', () => {
-  const dir = makeTree(cycleSpec(false));
+test('audit: no git repo at all leaves the envelope unchanged - no tags is no evidence, never a failure', (t) => {
+  const dir = makeTree(cycleSpec(false), t);
   writeFileSync(join(dir, 'PROJECT.md'),
     '# Fixture\n\n## Requirements\n\n### Active\n\n`v9.9.0` - the open cycle\n\n### Out of Scope\n');
   const r = run(['audit'], dir);
@@ -517,10 +514,10 @@ test('audit: no git repo at all leaves the envelope unchanged - no tags is no ev
   assert.deepEqual(r.counts, { total: 1, traced: 0, broken: 1, deferred: 0 });
 });
 
-test('audit: with no ### Active version, the ROADMAP title supplies the comparand', () => {
+test('audit: with no ### Active version, the ROADMAP title supplies the comparand', (t) => {
   // The same `### Active` -> ROADMAP-title precedence branch naming uses - one
   // prose reader, shared, so the two cannot disagree about the milestone.
-  const dir = taggedTree(cycleSpec(false),
+  const dir = taggedTree(t, cycleSpec(false),
     { version: null, tags: ['v9.9.0'], roadmapTitle: '# Roadmap: Fixture v9.9.0' });
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
@@ -528,11 +525,11 @@ test('audit: with no ### Active version, the ROADMAP title supplies the comparan
     { doc_version: 'v9.9.0', published_as: 'v9.9.0', cycle_state: 'open' });
 });
 
-test('audit: the v2.4.0 state of this repo (issue #87) fires - the regression pin FRI-03 exists for', () => {
+test('audit: the v2.4.0 state of this repo (issue #87) fires - the regression pin FRI-03 exists for', (t) => {
   // Docs Active v2.4.0, tag v2.4.0 present, phases still open. The manifest
   // ALSO read 2.4.0 at that moment, which is why a manifest predicate would
   // have been silent here and the tag-plus-open-cycle one is not.
-  const dir = taggedTree(cycleSpec(false), { version: 'v2.4.0', tags: ['v2.3.0', 'v2.4.0'] });
+  const dir = taggedTree(t, cycleSpec(false), { version: 'v2.4.0', tags: ['v2.3.0', 'v2.4.0'] });
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.version_drift,
@@ -575,13 +572,13 @@ const rolledSpec = (status) => ({
   reqs: [['AUD-01', 1, status]],
 });
 
-test('audit: a phase rolled forward - every row Deferred - does not hold the cycle open', () => {
+test('audit: a phase rolled forward - every row Deferred - does not hold the cycle open', (t) => {
   // A close is sanctioned to carry work forward (milestone.md), and such a
   // phase looks byte-identical on disk to one still being worked. The rows are
   // the only surface that says which it is: `Deferred` is what rolling forward
   // writes, and the close's remedy - "complete the close so no phase is left
   // open" - is not reachable for a phase deliberately left open.
-  const dir = taggedTree(rolledSpec('Deferred'), { version: 'v9.9.0', tags: ['v9.9.0'] });
+  const dir = taggedTree(t, rolledSpec('Deferred'), { version: 'v9.9.0', tags: ['v9.9.0'] });
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.version_drift, undefined,
@@ -591,10 +588,10 @@ test('audit: a phase rolled forward - every row Deferred - does not hold the cyc
   assert.deepEqual(r.deferred, ['AUD-01']);
 });
 
-test('audit: the same phase with its rows still Pending keeps the gate armed', () => {
+test('audit: the same phase with its rows still Pending keeps the gate armed', (t) => {
   // D-04's other half, and what keeps the exemption from re-opening #87: a
   // cycle being WORKED under a published number has rows that are not deferred.
-  const dir = taggedTree(rolledSpec('Pending'), { version: 'v9.9.0', tags: ['v9.9.0'] });
+  const dir = taggedTree(t, rolledSpec('Pending'), { version: 'v9.9.0', tags: ['v9.9.0'] });
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.version_drift,
@@ -629,15 +626,15 @@ test('audit: the same phase with its rows still Pending keeps the gate armed', (
 // `<tmp>/cadence-core/bin/`, run `node --test tests/planning.test.mjs`
 // from `<tmp>`, then `git worktree remove <tmp>`.
 
-test('audit: an enclosing repository\'s tags are not this project\'s (TAG-01)', () => {
+test('audit: an enclosing repository\'s tags are not this project\'s (TAG-01)', (t) => {
   // `git -C` discovers the repository UPWARD, and the audit asks the tag
   // question from `.planning` - which never holds `.git` - so a project that is
   // not itself a repository inherited the tags of whatever repository contained
   // it, and could be FAILed by a version an unrelated umbrella repo published.
-  const inner = makeTree(cycleSpec(false));
+  const inner = makeTree(cycleSpec(false), t);
   writeFileSync(join(inner, 'PROJECT.md'),
     '# Fixture\n\n## Requirements\n\n### Active\n\n`v9.9.0` - the open cycle\n\n### Out of Scope\n');
-  const umbrella = mkdtempSync(join(tmpdir(), 'cad-umbrella-'));
+  const umbrella = scratch('cad-umbrella-', t);
   const git = (...args) => execFileSync('git', ['-C', umbrella, ...args],
     { stdio: 'ignore', env: GIT_FIXTURE_ENV });
   git('init', '-q');
@@ -658,18 +655,18 @@ test('audit: an enclosing repository\'s tags are not this project\'s (TAG-01)', 
   assert.deepEqual(r.counts, { total: 1, traced: 0, broken: 1, deferred: 0 });
 });
 
-test('audit: a LINKED WORKTREE still reads its own repository\'s tags (TAG-01)', () => {
+test('audit: a LINKED WORKTREE still reads its own repository\'s tags (TAG-01)', (t) => {
   // The bound must not simply disable the reader. `--show-toplevel` inside a
   // linked worktree returns the WORKTREE root - which is the root the caller
   // derived - and the tags are shared with the main repository, so the drift
   // signal still fires where it should.
-  const dir = taggedTree(cycleSpec(false), { version: 'v9.9.0', tags: ['v9.9.0'] });
+  const dir = taggedTree(t, cycleSpec(false), { version: 'v9.9.0', tags: ['v9.9.0'] });
   const root = dirname(dir);
   const git = (...args) => execFileSync('git', ['-C', root, ...args],
     { stdio: 'ignore', env: GIT_FIXTURE_ENV });
   git('add', '-A');
   git('commit', '-q', '-m', 'planning');
-  const linked = join(mkdtempSync(join(tmpdir(), 'cad-linked-')), 'wt');
+  const linked = join(scratch('cad-linked-', t), 'wt');
   git('worktree', 'add', '--detach', linked, 'HEAD');
 
   const r = run(['audit'], join(linked, '.planning'));
@@ -678,11 +675,11 @@ test('audit: a LINKED WORKTREE still reads its own repository\'s tags (TAG-01)',
     { doc_version: 'v9.9.0', published_as: 'v9.9.0', cycle_state: 'open' });
 });
 
-test('seed-reqs: a v1.3.1-shaped ## Active table leaves its envelope unchanged - the delegation did not leak into the writer', () => {
+test('seed-reqs: a v1.3.1-shaped ## Active table leaves its envelope unchanged - the delegation did not leak into the writer', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true, planReqs: ['TRI-01'] } },
-  });
+  }, t);
   writeFileSync(join(dir, 'REQUIREMENTS.md'),
     '# Requirements: Fixture\n\n## Active\n\n| Requirement | Milestone |\n|---|---|\n' +
     '| TRI-01 (triage every open bug) | v1.3.1 |\n\n' +
@@ -693,12 +690,12 @@ test('seed-reqs: a v1.3.1-shaped ## Active table leaves its envelope unchanged -
   assert.deepEqual(r.orphan_ids, ['TRI-01']);
 });
 
-test('audit + plan-overlap: a PLAN-gaps.md is reported as nonconforming_plans; PLAN-2.md is not, overlaps unchanged', () => {
+test('audit + plan-overlap: a PLAN-gaps.md is reported as nonconforming_plans; PLAN-2.md is not, overlaps unchanged', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: ['PLAN.md', 'PLAN-2.md'] } },
     reqs: [],
-  });
+  }, t);
   writeFileSync(join(dir, 'phases', '1', 'PLAN-gaps.md'),
     '---\nphase: 1\nrequirements: []\nfiles: []\n---\n# Gaps\n');
   const a = run(['audit'], dir);
@@ -712,37 +709,37 @@ test('audit + plan-overlap: a PLAN-gaps.md is reported as nonconforming_plans; P
   assert.equal(o.plans.some((p) => p.plan === 'PLAN-gaps.md'), false);
 });
 
-test('plan-overlap: a phase with no directory still returns no-phase-dir, exit 1 (regression pin across the listPlanFiles refactor)', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+test('plan-overlap: a phase with no directory still returns no-phase-dir, exit 1 (regression pin across the listPlanFiles refactor)', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   const r = run(['plan-overlap', '--phase', '99'], dir);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'no-phase-dir');
   assert.equal(r._exit, 1);
 });
 
-test('audit: a roadmap phase with no directory is still treated as unplanned, ok:true (regression pin across the listPlanFiles refactor)', () => {
+test('audit: a roadmap phase with no directory is still treated as unplanned, ok:true (regression pin across the listPlanFiles refactor)', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     reqs: [['REQ-1', 1, 'Pending']],
-  });
+  }, t);
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.requirements.find((q) => q.id === 'REQ-1').break, 'no-plan');
 });
 
-test('audit: missing REQUIREMENTS or ROADMAP degrades with named reasons', () => {
-  const noReqs = makeTree({ roadmap: [{ n: 1, name: 'Only' }] });
+test('audit: missing REQUIREMENTS or ROADMAP degrades with named reasons', (t) => {
+  const noReqs = makeTree({ roadmap: [{ n: 1, name: 'Only' }] }, t);
   assert.equal(run(['audit'], noReqs).reason, 'no-requirements');
-  const noRoadmap = makeTree({ reqs: [['REQ-1', 1, 'Pending']] });
+  const noRoadmap = makeTree({ reqs: [['REQ-1', 1, 'Pending']] }, t);
   assert.equal(run(['audit'], noRoadmap).reason, 'no-roadmap');
 });
 
-test('audit: the phases are the state\'s, so a phase line added to the list by hand does not make a row\'s phase exist', () => {
+test('audit: the phases are the state\'s, so a phase line added to the list by hand does not make a row\'s phase exist', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     phases: { 1: { plan: true, planReqs: ['REQ-1'] } },
     reqs: [['REQ-1', 1, 'Pending'], ['REQ-7', 7, 'Pending']],
-  });
+  }, t);
   assert.equal(run(['status'], dir).ok, true);
   writeFileSync(join(dir, 'ROADMAP.md'), readFileSync(join(dir, 'ROADMAP.md'), 'utf8')
     .replace('- [ ] **Phase 1: One** - desc', '- [ ] **Phase 1: One** - desc\n- [ ] **Phase 7: Invented** - desc'));

@@ -1097,9 +1097,12 @@ const REREAD = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
  * exact shape, built from `READS_ROTATION` and `ROTATED_READS_FILE` rather than
  * from copied strings, so a change to either spelling reddens here instead of
  * leaving the fixture asserting a marker the writer no longer produces.
+ * Its mkdtemp root goes when test `t` ends.
  */
-function rereadRoot({ stripFiles = false, noReads = false, rotated = false } = {}) {
-  const dir = join(mkdtempSync(join(tmpdir(), 'cad-reread-')), '.planning');
+function rereadRoot(t, { stripFiles = false, noReads = false, rotated = false } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'cad-reread-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = join(root, '.planning');
   mkdirSync(recordsDir(dir), { recursive: true });
   writeFileSync(join(recordsDir(dir), 'trace.jsonl'), readFileSync(join(REREAD, 'reread.trace.jsonl'), 'utf8'));
   if (noReads) return dir;
@@ -1134,8 +1137,8 @@ function rereadSeam(dir, args) {
 const inDispatchEntry = (out) => (out.suggestions || [])
   .find((s) => typeof s.evidence === 'string' && s.evidence.includes('in-dispatch re-reading'));
 
-test('seam: `trace suggest` opens reads.jsonl and names the fixture worst file, with no config key', () => {
-  const out = rereadSeam(rereadRoot(), ['trace', 'suggest']);
+test('seam: `trace suggest` opens reads.jsonl and names the fixture worst file, with no config key', (t) => {
+  const out = rereadSeam(rereadRoot(t), ['trace', 'suggest']);
   assert.equal(out.ok, true);
   const e = inDispatchEntry(out);
   assert.ok(e, `no in-dispatch entry: ${JSON.stringify(out.suggestions)}`);
@@ -1152,10 +1155,10 @@ test('seam: `trace suggest` opens reads.jsonl and names the fixture worst file, 
   assert.equal('warnings' in out, false, JSON.stringify(out.warnings));
 });
 
-test('seam: reads carrying no `files`, and no reads file at all, both yield NO entry and no error', () => {
+test('seam: reads carrying no `files`, and no reads file at all, both yield NO entry and no error', (t) => {
   // The same 17 records with `files` removed - the shape every record written
   // before that field existed has - and then the file absent outright.
-  for (const dir of [rereadRoot({ stripFiles: true }), rereadRoot({ noReads: true })]) {
+  for (const dir of [rereadRoot(t, { stripFiles: true }), rereadRoot(t, { noReads: true })]) {
     const out = rereadSeam(dir, ['trace', 'suggest']);
     assert.equal(out.ok, true);
     assert.equal(inDispatchEntry(out), undefined, JSON.stringify(out.suggestions));
@@ -1166,11 +1169,11 @@ test('seam: reads carrying no `files`, and no reads file at all, both yield NO e
   }
 });
 
-test('seam: an UNREADABLE reads.jsonl fails `reads --join` and WARNS on `trace suggest` - both faces, one test', () => {
+test('seam: an UNREADABLE reads.jsonl fails `reads --join` and WARNS on `trace suggest` - both faces, one test', (t) => {
   // The whole risk of lifting the parse into one helper is that these two
   // diverge: a permissions error loud on one face and invisible on the other.
   // Neither face had a test before this one.
-  const dir = rereadRoot();
+  const dir = rereadRoot(t);
   const file = join(recordsDir(dir), 'reads.jsonl');
   chmodSync(file, 0o000);
   try {
@@ -1192,12 +1195,12 @@ test('seam: an UNREADABLE reads.jsonl fails `reads --join` and WARNS on `trace s
   }
 });
 
-test('seam: the rotation marker is DROPPED at the parse and billed to nothing', () => {
+test('seam: the rotation marker is DROPPED at the parse and billed to nothing', (t) => {
   // D-09: `summarizeReads` bills every object it is handed into `calls` and
   // `byAgent`, so an unfiltered marker is a phantom read `/cad-report` prints
   // in its Reading line as a real tool call. The filter lives in
   // `readReadsRecords` - the one parse both readers cross.
-  const out = rereadSeam(rereadRoot({ rotated: true }), ['reads']);
+  const out = rereadSeam(rereadRoot(t, { rotated: true }), ['reads']);
   assert.equal(out.ok, true, JSON.stringify(out));
   // The 17 fixture records and not one more. Delete the filter and this is 18.
   assert.equal(out.calls, 17, JSON.stringify(out.byAgent));
@@ -1215,16 +1218,16 @@ test('seam: the rotation marker is DROPPED at the parse and billed to nothing', 
   // the marker were not on disk. `reads` is the one key that differs, and it is
   // the report OF the cut rather than a figure counting it.
   const { reads: _cut, ...cutFigures } = out;
-  const { reads: _whole, ...wholeFigures } = rereadSeam(rereadRoot(), ['reads']);
+  const { reads: _whole, ...wholeFigures } = rereadSeam(rereadRoot(t), ['reads']);
   assert.deepEqual(cutFigures, wholeFigures);
 });
 
-test('seam: BOTH faces name the reads record and report its cut, on a key that is not the trace\'s', () => {
+test('seam: BOTH faces name the reads record and report its cut, on a key that is not the trace\'s', (t) => {
   // One root, two commands, the same shape - the risk of a per-face key is that
   // the two diverge and a reader has to learn which envelope spells it how.
   // The trace here never rotated, so a top-level `rotated` on `trace suggest`
   // could only be the READS record's cut leaking onto the trace's key.
-  const dir = rereadRoot({ rotated: true });
+  const dir = rereadRoot(t, { rotated: true });
   const readsFile = join(recordsDir(dir), 'reads.jsonl');
 
   const reads = rereadSeam(dir, ['reads', '--join']);
@@ -1249,8 +1252,8 @@ test('seam: BOTH faces name the reads record and report its cut, on a key that i
   assert.equal('rotated' in suggest, false, JSON.stringify(suggest));
 });
 
-test('seam: a project with no reads record still names the path it looked for', () => {
-  const dir = rereadRoot({ noReads: true });
+test('seam: a project with no reads record still names the path it looked for', (t) => {
+  const dir = rereadRoot(t, { noReads: true });
   const out = rereadSeam(dir, ['reads']);
   assert.equal(out.ok, true, JSON.stringify(out));
   assert.equal(out.note, 'no reads recorded yet');

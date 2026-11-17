@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, mkdtempSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readTags } from '../cadence-core/bin/lib/git-tags.mjs';
@@ -14,17 +14,18 @@ const GIT_ENV = {
   GIT_COMMITTER_NAME: 'cad', GIT_COMMITTER_EMAIL: 'cad@example.invalid',
 };
 
-/** A repo with one commit. */
-function repo() {
+/** A repo with one commit, gone when test `t` ends. */
+function repo(t) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-tags-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: GIT_ENV, maxBuffer: 64 << 20 }).trim();
   git('init', '-q', '-b', 'main');
   git('commit', '-q', '--allow-empty', '-m', 'seed');
   return { dir, git };
 }
 
-test('readTags returns every tag when the list is over 1 MiB', () => {
-  const { dir, git } = repo();
+test('readTags returns every tag when the list is over 1 MiB', (t) => {
+  const { dir, git } = repo(t);
   const head = git('rev-parse', 'HEAD');
   // packed-refs lines, not 6,000 `git tag` calls: long names are what pass 1 MiB
   const names = [];
@@ -38,8 +39,8 @@ test('readTags returns every tag when the list is over 1 MiB', () => {
   assert.deepEqual(tags.slice().sort(), names.slice().sort());
 });
 
-test('readTags reads a small repo, and answers [] for a repo outside the stated root', () => {
-  const { dir, git } = repo();
+test('readTags reads a small repo, and answers [] for a repo outside the stated root', (t) => {
+  const { dir, git } = repo(t);
   git('tag', 'v1.0.0');
   assert.deepEqual(readTags(dir, dir), ['v1.0.0']);
 

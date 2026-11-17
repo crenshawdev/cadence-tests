@@ -28,8 +28,8 @@ const QUEUE = '# Capture\n\n## Todos\n\n- [ ] (phase 1) live one\n- [ ] live two
   + '## Seeds\n\n- a seed\n\n## Notes\n\n- None.\n\n'
   + '## Archive\n\n- retired a\n- retired b\n\n## Debt markers\n\n- a marker\n';
 
-test('capture-sections: every section is named with its count and its walk membership', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+test('capture-sections: every section is named with its count and its walk membership', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   writeFileSync(join(dir, 'CAPTURE.md'), QUEUE);
   const r = run(['capture-sections'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -44,8 +44,8 @@ test('capture-sections: every section is named with its count and its walk membe
   ]);
 });
 
-test('capture-sections: a bullet appended to an out-of-walk section raises THAT count and no other (AC4)', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+test('capture-sections: a bullet appended to an out-of-walk section raises THAT count and no other (AC4)', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   const file = join(dir, 'CAPTURE.md');
   writeFileSync(file, QUEUE);
   const before = run(['capture-sections'], dir).sections;
@@ -61,8 +61,8 @@ test('capture-sections: a bullet appended to an out-of-walk section raises THAT 
   }
 });
 
-test('capture-sections: an absent CAPTURE.md is ok:true with no sections, never a failure', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+test('capture-sections: an absent CAPTURE.md is ok:true with no sections, never a failure', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   const r = run(['capture-sections'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.exists, false);
@@ -70,8 +70,8 @@ test('capture-sections: an absent CAPTURE.md is ok:true with no sections, never 
   assert.equal(r._exit, 0);
 });
 
-test('capture-sections: a VALUELESS --file is bad-args, never silently the --dir default', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+test('capture-sections: a VALUELESS --file is bad-args, never silently the --dir default', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   writeFileSync(join(dir, 'CAPTURE.md'), QUEUE);
   const r = run(['capture-sections', '--file'], dir);
   assert.equal(r.ok, false);

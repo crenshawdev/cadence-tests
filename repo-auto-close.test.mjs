@@ -13,16 +13,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 /** A repo root; `body` written verbatim to .planning/config.json when given,
  * and the file left absent otherwise. Raw text, not JSON.stringify, so a row
- * can hand the reader bytes that are not JSON at all. */
-function repo(body) {
+ * can hand the reader bytes that are not JSON at all. Gone when test `t` ends. */
+function repo(t, body) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-repo-auto-close-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   if (body !== undefined) {
     mkdirSync(join(dir, '.planning'));
     writeFileSync(join(dir, '.planning', 'config.json'), body);
@@ -38,9 +39,11 @@ function repo(body) {
 
 const LIB = pathToFileURL(join(import.meta.dirname, '..', 'cadence-core', 'bin', 'lib', 'repo-auto-close.mjs')).href;
 
-/** A user-global file holding `body` verbatim; its path. */
-function globalText(body) {
-  const file = join(mkdtempSync(join(tmpdir(), 'cad-repo-auto-close-global-')), 'config.json');
+/** A user-global file holding `body` verbatim; its path. Its root goes when test `t` ends. */
+function globalText(t, body) {
+  const root = mkdtempSync(join(tmpdir(), 'cad-repo-auto-close-global-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = join(root, 'config.json');
   writeFileSync(file, body);
   return file;
 }
@@ -57,45 +60,45 @@ function layers(dir, globalFile) {
 
 const ON = '{"git":{"auto_close":true}}';
 
-test('autoCloseLayers: both layers true authorizes', () => {
-  const g = globalText(ON);
-  const a = layers(repo(ON), g);
+test('autoCloseLayers: both layers true authorizes', (t) => {
+  const g = globalText(t, ON);
+  const a = layers(repo(t, ON), g);
   assert.deepEqual([a.authorized, a.repo, a.global, a.globalFile], [true, 'set', 'set', g]);
 });
 
-test('autoCloseLayers: repo-only does not authorize, and the global half reads unset', () => {
+test('autoCloseLayers: repo-only does not authorize, and the global half reads unset', (t) => {
   // The cloned-repository case: the committed config cannot speak for the user.
-  const a = layers(repo(ON), globalText('{"git":{}}'));
+  const a = layers(repo(t, ON), globalText(t, '{"git":{}}'));
   assert.deepEqual([a.authorized, a.repo, a.global], [false, 'set', 'unset']);
 });
 
-test('autoCloseLayers: global-only does not authorize, and the repo half reads unset', () => {
+test('autoCloseLayers: global-only does not authorize, and the repo half reads unset', (t) => {
   // D-08: a home-directory value cannot speak for a repository that stayed silent.
-  const a = layers(repo('{"git":{}}'), globalText(ON));
+  const a = layers(repo(t, '{"git":{}}'), globalText(t, ON));
   assert.deepEqual([a.authorized, a.repo, a.global], [false, 'unset', 'set']);
 });
 
-test('autoCloseLayers: a torn user-global file withholds, and reads unreadable, not unset', () => {
+test('autoCloseLayers: a torn user-global file withholds, and reads unreadable, not unset', (t) => {
   // Fails CLOSED: the opt-in the torn file may carry cannot be proven. The
   // third state is what lets the refusal name the file as broken rather than
   // tell the user to set a key that may already be set.
-  const a = layers(repo(ON), globalText('{"git":{"auto_close":tru'));
+  const a = layers(repo(t, ON), globalText(t, '{"git":{"auto_close":tru'));
   assert.deepEqual([a.authorized, a.repo, a.global], [false, 'set', 'unreadable']);
 });
 
-test('autoCloseLayers: CADENCE_GLOBAL_CONFIG naming the repo file is ONE layer', () => {
+test('autoCloseLayers: CADENCE_GLOBAL_CONFIG naming the repo file is ONE layer', (t) => {
   // One file cannot be both halves - and a cloned repository cannot set the
   // environment variable that would make its own file count twice.
-  const dir = repo(ON);
+  const dir = repo(t, ON);
   const a = layers(dir, join(dir, '.planning', 'config.json'));
   assert.deepEqual([a.authorized, a.repo, a.global, a.shared], [false, 'set', 'unset', true]);
   // Two separate files are never reported as one.
-  assert.equal(layers(repo(ON), globalText(ON)).shared, false);
+  assert.equal(layers(repo(t, ON), globalText(t, ON)).shared, false);
 });
 
-test('autoCloseLayers: a non-object layer reads unreadable and never throws on a bad dir', () => {
-  const a = layers(repo('[true]'), globalText(ON));
+test('autoCloseLayers: a non-object layer reads unreadable and never throws on a bad dir', (t) => {
+  const a = layers(repo(t, '[true]'), globalText(t, ON));
   assert.deepEqual([a.authorized, a.repo, a.global], [false, 'unreadable', 'set']);
-  const b = layers(join(tmpdir(), 'cad-no-such-dir-' + process.pid), globalText(ON));
+  const b = layers(join(tmpdir(), 'cad-no-such-dir-' + process.pid), globalText(t, ON));
   assert.deepEqual([b.authorized, b.repo, b.global], [false, 'unset', 'set']);
 });

@@ -17,7 +17,7 @@
 // *.test.mjs, so nothing here carries an @ts-check burden.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, writeFileSync, mkdtempSync, mkdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname, sep } from 'node:path';
@@ -29,6 +29,13 @@ import { CATEGORIES, scanTree, interviewOptions } from '../cadence-core/bin/lib/
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const REPO = join(HERE, '..', '..');
 const ROUTE = join(HERE, 'route.mjs');
+
+// A scratch root that goes when the test that made it ends.
+function tempRoot(t, prefix) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  return root;
+}
 
 /** A repo file as text. */
 const doc = (...parts) => readFileSync(join(REPO, ...parts), 'utf8');
@@ -109,7 +116,7 @@ test('cad-plan-checker-contract states one dimension count in all three places',
 /** The `defaults to <value>` clause a purpose has to carry, per lib/gate-agreement.mjs. */
 const DEFAULT_CLAUSE = /\bdefaults?\s+to\s+[`"']?([a-z_]+)[`"']?/i;
 
-test('phase_diff: the schema purpose names the gate a no-gate resolve really answers', () => {
+test('phase_diff: the schema purpose names the gate a no-gate resolve really answers', (t) => {
   const key = 'review.triggers.phase_diff.gate';
   const spec = JSON.parse(doc('cadence-core', 'config.schema.json')).keys[key];
   const claimed = DEFAULT_CLAUSE.exec(spec.purpose);
@@ -120,7 +127,7 @@ test('phase_diff: the schema purpose names the gate a no-gate resolve really ans
   // A config setting no gate at all, resolved through the per-repo `--file`
   // layer with the global layer pointed at a path that does not exist, so a dev
   // machine's own config cannot answer for the shipped default.
-  const dir = mkdtempSync(join(tmpdir(), 'cad-prose-gate-'));
+  const dir = tempRoot(t, 'cad-prose-gate-');
   const cfg = join(dir, 'config.json');
   writeFileSync(cfg, '{}\n');
   const line = execFileSync('node', [ROUTE, 'resolve', '--role', 'cad-reviewer', '--file', cfg],
@@ -214,11 +221,11 @@ test('plan authority: Action never invents, Verify decides, in all five document
   const planner = doc('skills', 'cad-planner-contract', 'SKILL.md');
   const executor = doc('skills', 'cad-executor-contract', 'SKILL.md');
   const checker = doc('skills', 'cad-plan-checker-contract', 'SKILL.md');
-  const method = doc('METHOD.md');
+  const method = doc('docs', 'METHOD.md');
 
   // Nothing may re-acquire the demand that produced the guesses.
   for (const [name, text] of [['templates/PLAN.md', template],
-    ['cad-planner-contract', planner], ['METHOD.md', method]]) {
+    ['cad-planner-contract', planner], ['docs/METHOD.md', method]]) {
     assert.doesNotMatch(text, /identifiers,\s*signatures/,
       `${name} asks for identifiers and signatures again - the planner cannot know them`);
   }
@@ -240,7 +247,7 @@ test('plan authority: Action never invents, Verify decides, in all five document
     'the plan checker no longer weighs Verify as the task authority');
 
   // The taxonomy that let unplanned code through as "trivial" stays deleted.
-  for (const [name, text] of [['cad-executor-contract', executor], ['METHOD.md', method]]) {
+  for (const [name, text] of [['cad-executor-contract', executor], ['docs/METHOD.md', method]]) {
     assert.doesNotMatch(text, /\*\*Trivial\b/,
       `${name} re-grew the trivial bucket, which sorted departures by shape rather than authorization`);
     assert.doesNotMatch(text, /input validation, error handling/,
@@ -2496,9 +2503,9 @@ test('IVW-01: both risk-surface interview sites carry the ask-user rules, and th
         '## risk_surface detection', 'references/risk-surface.md'),
     },
     {
-      where: 'workflows/config.md `## Risk surfaces (`--surfaces`)`',
-      text: section(doc('cadence-core', 'workflows', 'config.md'),
-        '## Risk surfaces', 'workflows/config.md'),
+      where: 'workflows/config-surfaces.md `## Risk surfaces (`--surfaces`)`',
+      text: section(doc('cadence-core', 'workflows', 'config-surfaces.md'),
+        '## Risk surfaces', 'workflows/config-surfaces.md'),
     },
   ];
 
@@ -2521,11 +2528,11 @@ test('IVW-01: both risk-surface interview sites carry the ask-user rules, and th
   // way to see it, and nothing else holds the sentence - /code/cadence returns
   // `inconclusive: true` with `evidenced: []`, so the callout cannot fire on
   // the only tree the human check runs against.
-  const surfacesSite = SITES.find((s) => s.where.startsWith('workflows/config.md'));
+  const surfacesSite = SITES.find((s) => s.where.startsWith('workflows/config-surfaces.md'));
   assert.ok(surfacesSite, 'the `--surfaces` site left the SITES list');
   const surfaces = flat(surfacesSite.text);
   assert.match(surfaces, /call(?:s|ing)? out every evidenced category the answered set does not contain/i,
-    'workflows/config.md `## Risk surfaces`: dropped the clause that every evidenced '
+    'workflows/config-surfaces.md `## Risk surfaces`: dropped the clause that every evidenced '
     + 'category the answered set does not cover is called out');
 
   // The code side of the same cap. A site can render at most what the builder
@@ -2718,7 +2725,7 @@ test('triage-gate.md: the corr-keyed re-arm read-back survives the deferred arm 
 // fixtures. This file is the home because its own premise is prose that copies
 // a machine-readable fact, and the copied line here is executable.
 
-test('triage-gate.md: the re-arm read-back, RUN, answers per PLAN and not per corr alone', () => {
+test('triage-gate.md: the re-arm read-back, RUN, answers per PLAN and not per corr alone', (t) => {
   const text = doc('cadence-core', 'references', 'triage-gate-blocking.md');
   const corrFilter = 'o.event==="rearm"&&o.trigger===process.argv[2]&&o.corr===r.corr'
     + '&&(o.plan??"")===(process.argv[3]??"")';
@@ -2728,7 +2735,7 @@ test('triage-gate.md: the re-arm read-back, RUN, answers per PLAN and not per co
 
   // The record, through the seam: a `phase_start` anchor so both events derive
   // ONE `corr`, then a single `rearm` for `risk_surface` under plan 1.
-  const cwd = mkdtempSync(join(tmpdir(), 'cad-rearm-run-'));
+  const cwd = tempRoot(t, 'cad-rearm-run-');
   mkdirSync(join(cwd, '.planning'), { recursive: true });
   const seam = (...args) => JSON.parse(execFileSync('node',
     [join(HERE, 'planning.mjs'), ...args], { encoding: 'utf8', cwd }));
@@ -2744,7 +2751,9 @@ test('triage-gate.md: the re-arm read-back, RUN, answers per PLAN and not per co
   // `${CLAUDE_PLUGIN_ROOT}` stays a shell expansion, answered from the
   // environment, so the block runs as the bytes the file actually carries.
   // The caller's color settings stay out: FORCE_COLOR paints the printed count.
-  const env = { ...process.env, CLAUDE_PLUGIN_ROOT: REPO };
+  // The block's own mktemp -d lands inside cwd, so cwd's teardown takes it too.
+  const env = { ...process.env, CLAUDE_PLUGIN_ROOT: REPO, TMPDIR: join(cwd, 'tmp') };
+  mkdirSync(env.TMPDIR);
   delete env.FORCE_COLOR;
   delete env.NO_COLOR;
   const ask = (plan) => execFileSync('sh', ['-c', block
@@ -3464,7 +3473,7 @@ test('PHS-02 (1): the too-big arm names /cad-phase add before the commands that 
   assert.ok(add < context && context < plan, regressed);
 });
 
-test('PHS-02 (2): the arm resolves the phase number rather than printing a placeholder', () => {
+test('PHS-02 (2): the arm resolves the phase number rather than printing a placeholder', (t) => {
   const arm = tooBigArm(doc(...TASK_WF));
   const regressed = "PHS-02: task.md's too-big arm no longer resolves the phase number from "
     + '`planning.mjs status` and `total + 1` - it hands the user a number to substitute, '
@@ -3475,7 +3484,7 @@ test('PHS-02 (2): the arm resolves the phase number rather than printing a place
   // answer. A prose rule reading a field the envelope does not carry would
   // print nothing at all, and no amount of grepping the prose would show it.
   // Asked of a two-phase roadmap in the test's own directory, so `total` is 2.
-  const cwd = mkdtempSync(join(tmpdir(), 'cad-phs02-'));
+  const cwd = tempRoot(t, 'cad-phs02-');
   mkdirSync(join(cwd, '.planning'));
   writeFileSync(join(cwd, '.planning', 'ROADMAP.md'), [
     '# Roadmap: Fixture', '', '## Phases', '',

@@ -4,7 +4,6 @@
 // The second half pins the main session's side of the path: references/execute-workflow.md and choose_path (Phase 5, plan 5).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,14 +15,6 @@ const at = text.indexOf(MARK);
 const today = text.slice(0, at);
 const arm = text.slice(at + 1);
 const flat = (s) => s.replace(/\s+/g, ' ');
-
-test('workflow arm: the file above the new section is today\'s text byte for byte, its five bullets included', () => {
-  assert.ok(at > 0, 'the section exists');
-  assert.equal(today.split('\n').filter((l) => l.startsWith('- ')).length, 5);
-  // the sha-256 of worktree-executor.md as it stood before the arm was added
-  assert.equal(createHash('sha256').update(today).digest('hex'),
-    'd7326001cc3dda73ca8d1b85a6374fc6c3ebcb3a74857042a88e67ed7ea4477d');
-});
 
 test('workflow arm: its mode line differs from today\'s, says worktree, and names the branch', () => {
   const m = flat(arm).match(/mode line reads exactly "([^"]+)"/);
@@ -68,13 +59,11 @@ const section = (from) => {
 };
 const LAUNCH = section('## 1. Launch one wave');
 
-test('the launch takes the claim before the first resolve and before the launch, and reads plan-overlap before each of them', () => {
-  const take = REF.indexOf('workflow-claim take');
+test('the launch reads plan-overlap before the first resolve and before the launch', () => {
   const overlap = REF.indexOf('planning.mjs" plan-overlap');
   const resolve = REF.indexOf('--bracket-plan');
   const launch = REF.indexOf('cadence:execute-wave');
-  assert.ok(take > 0 && take < overlap && overlap < resolve && resolve < launch, 'claim, then plan-overlap, then resolve, then launch');
-  assert.match(LAUNCH, /Take it before any resolve below, so a lost claim leaves no dispatch open/);
+  assert.ok(overlap > 0 && overlap < resolve && resolve < launch, 'plan-overlap, then resolve, then launch');
   assert.match(LAUNCH, /Ask `plan-overlap` again, never from a list held since `choose_path`/);
   assert.match(LAUNCH, /in the dispatch set `locate` defined that are not already done in this run/);
   assert.match(LAUNCH, /A plan stopped by an earlier wave holds the next wave/);
@@ -82,7 +71,7 @@ test('the launch takes the claim before the first resolve and before the launch,
 
 test('the launch picks its wave in choose_path\'s order: filter every wave, drop the empty ones, take the first, and go to the end when none remain', () => {
   assert.match(LAUNCH, /Pick the wave in `choose_path`'s order\. In every wave of `waves`, keep only the plans in the dispatch set `locate` defined that are not already done in this run, then drop any wave left empty\. Take the first wave that remains/);
-  assert.match(LAUNCH, /When none remain there is nothing to launch: release the claim with the line below and go to the after-the-last-wave step in "Then"/);
+  assert.match(LAUNCH, /When none remain there is nothing to launch: go to the after-the-last-wave step in "Then"/);
 });
 
 test('the launch resolves each plan on its own with the bracket-read the stretch states, and falls back to the script path', () => {
@@ -108,11 +97,10 @@ test('the prompt\'s workflow mode line is the one worktree-executor.md writes, b
   assert.equal(ours[1], theirs);
 });
 
-test('a refused launch releases the claim, closes each opened bracket as an escalation and goes to today\'s path', () => {
-  assert.match(LAUNCH, /A launch the host refuses releases the claim at once/);
+test('a refused launch closes each opened bracket as an escalation and goes to today\'s path', () => {
+  assert.match(LAUNCH, /A launch the host refuses closes each plan's opened bracket as an `escalation`, one call per plan, since no notice will come/);
   assert.match(LAUNCH, /--event escalation --plan <k> --role cad-executor/);
   assert.match(LAUNCH, /run the rest of the phase on today's sequential path/);
-  assert.ok(REF.indexOf('workflow-claim release --fire execute-<N>-wave-<j>') > REF.indexOf('cadence:execute-wave'));
 });
 
 test('cad-execute allows the wave script and its workflow step reads the reference by its full path', () => {
@@ -125,19 +113,9 @@ test('cad-execute allows the wave script and its workflow step reads the referen
 
 // --- choose_path -----------------------------------------------------------------------------------------------
 
-test('choose_path reads the switch through workflow-layers and no config get in execute.md names it', () => {
-  assert.match(chooseFlat, /config\.mjs" workflow-layers/);
-  assert.match(chooseFlat, /`workflow\.execute_workflows` is on in BOTH config layers/);
-  assert.match(chooseFlat, /never with `config\.mjs get`/);
-  // a get call runs from its line to the closing fence or a blank line
-  for (const m of EXEC.matchAll(/config\.mjs" get[^\n]*(?:\n(?!```|\n)[^\n]*)*/g)) {
-    assert.doesNotMatch(m[0], /workflow\.execute_workflows/);
-  }
-});
-
 test('choose_path names every condition of the workflow path and what stops routing to sequential', () => {
   const head = chooseFlat.slice(0, chooseFlat.indexOf(TODAY));
-  for (const part of ['`planning.workflow_plans` is true', 'the `Workflow` tool is in this session\'s tool list', '`ok:true`', '`undeclared`',
+  for (const part of ['the `Workflow` tool is in this session\'s tool list', '`ok:true`', '`undeclared`',
     '`frontmatter_issues`', '`parallelization.enabled` and `parallelization.use_worktrees` are both true']) {
     assert.ok(head.includes(part), `${part} is not named`);
   }
@@ -147,29 +125,22 @@ test('choose_path names every condition of the workflow path and what stops rout
   assert.match(head, /go to `execute_workflow`/);
 });
 
-test('choose_path sends an all-width-1 phase to today\'s path with a line saying why, and prints nothing with neither layer setting the switch', () => {
+test('choose_path sends an all-width-1 phase to today\'s path with a line saying why, and names a missing condition in one line', () => {
   const head = chooseFlat.slice(0, chooseFlat.indexOf(TODAY));
   assert.match(head, /drop every plan outside the dispatch set, and drop any wave left empty\. When every wave left holds one plan, today's path runs and one line says why/);
-  assert.match(head, /when either layer sets the switch \(`repo` or `global` reads `"set"` in that answer\) one line names the missing condition\. With neither layer setting it, print nothing/);
+  assert.match(head, /When a condition is missing, today's path below runs exactly as written, and one line names the missing condition\./);
 });
 
-test('choose_path still makes one plan-overlap call, and the part from "Sequential (default)" on is today\'s text byte for byte', () => {
+test('choose_path still makes one plan-overlap call', () => {
   assert.equal((CHOOSE.match(/planning\.mjs" plan-overlap/g) || []).length, 1);
-  const rest = CHOOSE.slice(CHOOSE.indexOf(TODAY) - 0).replace(/^\n/, '');
-  // the sha-256 of choose_path's body from "Sequential (default)" on; re-pinned when the worktree offer became a plain-words ask
-  assert.equal(createHash('sha256').update(CHOOSE.slice(CHOOSE.indexOf(TODAY)).replace(/^\n/, '')).digest('hex'),
-    '3bfbe09942d4efa70623f472d157f3f9ff6615295c4b4a474766db84e86cb50c');
-  assert.ok(rest.length > 2000);
 });
 
 // --- the notice ------------------------------------------------------------------------------------------------
 
 const NOTICE = section('## 2. On the notice');
 
-test('the notice runs workflow-run with the wave\'s plan list, releases the claim right after it, and writes no close for any wave executor', () => {
+test('the notice runs workflow-run with the wave\'s plan list and writes no close for any wave executor', () => {
   assert.match(NOTICE, /workflow-run --phase <N> --run-file <the run file> --out-dir <the scratch directory> --payload-ref <the scratch directory> --plans <the wave's plan numbers, comma-separated, as 1,2,3>/);
-  assert.match(NOTICE, /Release the claim right after this call returns, whether it answered or refused/);
-  assert.ok(REF.indexOf('workflow-claim release', REF.indexOf('## 2. On the notice')) > REF.indexOf('workflow-run --phase'));
   assert.match(NOTICE, /and no `trace close` is written for any plan\. `--plans` is how it knows the wave when the run file cannot say/);
   assert.match(NOTICE, /as a `checkpoint` under its own plan number that says why, with the notice's totals on the first of them/);
   assert.match(NOTICE, /It writes no `<run id>-notice` bracket for a wave/);
@@ -210,7 +181,7 @@ test('execute.md\'s writers guardrail names workflow-run, and execute-parallel.m
   const guard = flat(EXEC.slice(EXEC.indexOf('<guardrails>')));
   assert.match(guard, /THREE writers[^]*for a wave's executors `workflow-run`'s close/);
   assert.match(flat(readFileSync(join(REPO, 'cadence-core', 'references', 'execute-parallel.md'), 'utf8')), /and a second time by `references\/execute-workflow\.md`/);
-  assert.match(flat(EXEC), /ALL worktree ceremony exists inside the two opt-in branches, the parallel one and the workflow one, and nowhere else/);
+  assert.match(flat(EXEC), /ALL worktree ceremony exists inside `choose_path`'s parallel and workflow paths, and nowhere else/);
 });
 
 // --- the stops -------------------------------------------------------------------------------------------------

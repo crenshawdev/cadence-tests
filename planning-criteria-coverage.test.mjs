@@ -32,10 +32,10 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
  * absent-file rule); `contextText`/`uatText` write raw text instead.
  * `checked: false` leaves the phase's roadmap box unchecked.
  */
-function coverageTree(spec) {
+function coverageTree(spec, t) {
   const roadmap = Object.entries(spec).map(([n, ph]) =>
     ({ n: Number(n), name: `Phase ${n}`, checked: ph.checked !== false }));
-  const dir = makeTree({ roadmap });
+  const dir = makeTree({ roadmap }, t);
   for (const [n, ph] of Object.entries(spec)) {
     const pdir = join(dir, 'phases', n);
     mkdirSync(pdir, { recursive: true });
@@ -137,8 +137,8 @@ const P6_ITEMS = [
   { name: 'Self-hosted test badge renders "Not found" - accept or fix' },
 ];
 
-test('criteria-coverage: phase 6 shipped fieldless beside declared ids - ONE break, no exemption', () => {
-  const dir = coverageTree({ 6: { criteria: P6_CRITERIA, items: P6_ITEMS } });
+test('criteria-coverage: phase 6 shipped fieldless beside declared ids - ONE break, no exemption', (t) => {
+  const dir = coverageTree({ 6: { criteria: P6_CRITERIA, items: P6_ITEMS } }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.breaks,
@@ -153,8 +153,8 @@ test('criteria-coverage: phase 6 shipped fieldless beside declared ids - ONE bre
   assert.deepEqual(r.counts, { criteria: 9, covered: 0, uncovered: 9, untraced: 0, phases: 1 });
 });
 
-test('criteria-coverage: the synthesized fixture breaks on exactly the two dropped ids', () => {
-  const dir = coverageTree({ 1: { criteria: P1_CRITERIA, items: P1_ITEMS_DROPPED } });
+test('criteria-coverage: the synthesized fixture breaks on exactly the two dropped ids', (t) => {
+  const dir = coverageTree({ 1: { criteria: P1_CRITERIA, items: P1_ITEMS_DROPPED } }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.breaks, [
@@ -169,8 +169,8 @@ test('criteria-coverage: the synthesized fixture breaks on exactly the two dropp
   assert.equal(r.legacy, undefined);
 });
 
-test('criteria-coverage: the same fixture with all 14 items returns zero breaks', () => {
-  const dir = coverageTree({ 1: { criteria: P1_CRITERIA, items: P1_ITEMS } });
+test('criteria-coverage: the same fixture with all 14 items returns zero breaks', (t) => {
+  const dir = coverageTree({ 1: { criteria: P1_CRITERIA, items: P1_ITEMS } }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.breaks, undefined);
@@ -178,10 +178,10 @@ test('criteria-coverage: the same fixture with all 14 items returns zero breaks'
   assert.deepEqual(r.counts, { criteria: 7, covered: 7, uncovered: 0, untraced: 0, phases: 1 });
 });
 
-test('criteria-coverage: an item with neither criterion nor origin is untraced, never a break', () => {
+test('criteria-coverage: an item with neither criterion nor origin is untraced, never a break', (t) => {
   const dir = coverageTree({
     1: { criteria: P1_CRITERIA, items: [...P1_ITEMS, { name: 'A deliverable from the PLAN fallback branch' }] },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.deepEqual(r.untraced, [{ phase: 1, item: 15, name: 'A deliverable from the PLAN fallback branch' }]);
   assert.equal(r.breaks, undefined);
@@ -189,30 +189,30 @@ test('criteria-coverage: an item with neither criterion nor origin is untraced, 
   assert.equal(r.counts.untraced, 1);
 });
 
-test('criteria-coverage: origin verifier and smoke exempt an item from untraced entirely', () => {
+test('criteria-coverage: origin verifier and smoke exempt an item from untraced entirely', (t) => {
   const dir = coverageTree({
     1: { criteria: P1_CRITERIA,
       items: [...P1_ITEMS, { name: 'The plugin loads at all', origin: 'smoke' }] },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.untraced, undefined); // the 7 verifier items + the smoke item
   assert.equal(r.breaks, undefined);
   assert.equal(r.counts.untraced, 0);
 });
 
-test('criteria-coverage: origin criterion with no id is STILL untraced - it names nothing', () => {
+test('criteria-coverage: origin criterion with no id is STILL untraced - it names nothing', (t) => {
   const dir = coverageTree({
     1: { criteria: [['AC1', 'one']], items: [{ name: 'Item one', origin: 'criterion' }] },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.deepEqual(r.untraced, [{ phase: 1, item: 1, name: 'Item one' }]);
   assert.deepEqual(r.breaks, [{ phase: 1, id: 'AC1', break: 'uncovered' }]);
 });
 
-test('criteria-coverage: a fieldless checklist beside declared ids breaks, it does not exempt', () => {
+test('criteria-coverage: a fieldless checklist beside declared ids breaks, it does not exempt', (t) => {
   const dir = coverageTree({
     1: { criteria: P1_CRITERIA, items: P1_ITEMS.map((it) => ({ name: it.name })) },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.deepEqual(r.breaks,
     [{ phase: 1, break: 'fieldless-checklist', file: 'phases/1/UAT.md' }]);
@@ -223,11 +223,11 @@ test('criteria-coverage: a fieldless checklist beside declared ids breaks, it do
   assert.deepEqual(r.counts, { criteria: 7, covered: 0, uncovered: 7, untraced: 0, phases: 1 });
 });
 
-test('criteria-coverage: an UNCHECKED box does not suppress the fieldless-checklist break', () => {
+test('criteria-coverage: an UNCHECKED box does not suppress the fieldless-checklist break', (t) => {
   const dir = coverageTree({
     1: { checked: false, criteria: P1_CRITERIA,
       items: P1_ITEMS.map((it) => ({ name: it.name })) },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   // `uncovered` and `missing-uat` are box-gated because work in flight passes
   // through them. This one is not: `uat init` writes `fields_version` before it
@@ -243,11 +243,11 @@ test('criteria-coverage: an UNCHECKED box does not suppress the fieldless-checkl
 // `.planning/phases/3/UAT.md` (7 `criterion`, 0 `origin`) falsified it inside
 // the same commit. This is that file with its links dropped: it must break, not
 // absolve itself. Move the test back onto the item fields and this is what fails.
-test('criteria-coverage: fields_version present and NO criterion, NO origin is NOT legacy', () => {
+test('criteria-coverage: fields_version present and NO criterion, NO origin is NOT legacy', (t) => {
   const dir = coverageTree({
     1: { fieldsVersion: true, criteria: P1_CRITERIA,
       items: P1_ITEMS.slice(0, 7).map((it) => ({ name: it.name })) },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.legacy, undefined);
   assert.deepEqual(r.breaks.map((b) => b.id), ['AC1', 'AC2', 'AC3', 'AC4', 'AC5', 'AC6', 'AC7']);
@@ -258,10 +258,10 @@ test('criteria-coverage: fields_version present and NO criterion, NO origin is N
 // The phase-3 shape, the file that falsified the original two-field premise: a
 // marker, 7 `criterion` lines and 0 `origin` lines. It is fully traced, so
 // neither arm of the fieldless split may touch it.
-test('criteria-coverage: the phase-3 shape (marker, 7 criterion, 0 origin) is not legacy and does not break', () => {
+test('criteria-coverage: the phase-3 shape (marker, 7 criterion, 0 origin) is not legacy and does not break', (t) => {
   const dir = coverageTree({
     1: { fieldsVersion: true, criteria: P1_CRITERIA, items: P1_ITEMS.slice(0, 7) },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.legacy, undefined);
   assert.equal(r.breaks, undefined);
@@ -269,10 +269,10 @@ test('criteria-coverage: the phase-3 shape (marker, 7 criterion, 0 origin) is no
   assert.deepEqual(r.counts, { criteria: 7, covered: 7, uncovered: 0, untraced: 0, phases: 1 });
 });
 
-test('criteria-coverage: a marked checklist whose links are intact is unaffected by the marker', () => {
+test('criteria-coverage: a marked checklist whose links are intact is unaffected by the marker', (t) => {
   const dir = coverageTree({
     1: { fieldsVersion: true, criteria: P1_CRITERIA, items: P1_ITEMS },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.legacy, undefined);
   assert.equal(r.breaks, undefined);
@@ -283,14 +283,14 @@ test('criteria-coverage: a marked checklist whose links are intact is unaffected
 // fieldless checklist beside a CONTEXT that declares no `AC<N>` ids at all. Both
 // halves genuinely predate the fields, because the AC-id grammar shipped after
 // them - so there is no link here that could have been dropped.
-test('criteria-coverage: legacy still applies when the CONTEXT declares no AC ids', () => {
+test('criteria-coverage: legacy still applies when the CONTEXT declares no AC ids', (t) => {
   const dir = coverageTree({
     1: {
       contextText: '# Phase 1 Context\n\n## Acceptance criteria\n\n'
         + '- [ ] the tests pass\n- [ ] the linter is clean\n',
       items: P1_ITEMS.map((it) => ({ name: it.name })),
     },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.legacy.length, 1);
   assert.deepEqual(Object.keys(r.legacy[0]), ['phase', 'reason']);
@@ -312,13 +312,13 @@ test('criteria-coverage: legacy still applies when the CONTEXT declares no AC id
 
 // The largest real population of the exemption: a CONTEXT written before the
 // `## Acceptance criteria` section existed at all.
-test('criteria-coverage: legacy applies with no acceptance-criteria heading at all', () => {
+test('criteria-coverage: legacy applies with no acceptance-criteria heading at all', (t) => {
   const dir = coverageTree({
     1: {
       contextText: '# Phase 1 Context\n\n## Scope boundary\n\nIn: everything.\n',
       items: P1_ITEMS.map((it) => ({ name: it.name })),
     },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.legacy.length, 1);
   assert.equal(r.legacy[0].phase, 1);
@@ -332,13 +332,13 @@ test('criteria-coverage: legacy applies with no acceptance-criteria heading at a
 // zero ids - so without the near-miss gate a typo would collect the exemption
 // and emit a reason string asserting the phase declared nothing. It declared
 // something this seam could not read, which is the opposite claim.
-test('criteria-coverage: a near-miss criteria heading takes the break arm, not the exemption', () => {
+test('criteria-coverage: a near-miss criteria heading takes the break arm, not the exemption', (t) => {
   const dir = coverageTree({
     1: {
       contextText: '# Phase 1 Context\n\n## Acceptance Criteria\n\n- [ ] AC1: the tests pass\n',
       items: [{ name: 'Tests pass' }, { name: 'Linter is clean' }],
     },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.deepEqual(r.breaks,
     [{ phase: 1, break: 'fieldless-checklist', file: 'phases/1/UAT.md' }]);
@@ -369,13 +369,13 @@ const REFUSED_ID_SHAPES = [
 ];
 
 for (const [arm, line, code] of REFUSED_ID_SHAPES) {
-  test(`criteria-coverage: ${arm} is a DECLARED id - the fieldless checklist beside it breaks, it does not exempt`, () => {
+  test(`criteria-coverage: ${arm} is a DECLARED id - the fieldless checklist beside it breaks, it does not exempt`, (t) => {
     const dir = coverageTree({
       1: {
         contextText: `# Phase 1 Context\n\n## Acceptance criteria\n\n${line}\n`,
         items: [{ name: 'Tests pass' }, { name: 'Linter is clean' }],
       },
-    });
+    }, t);
     const r = run(['criteria-coverage'], dir);
     assert.deepEqual(r.breaks,
       [{ phase: 1, break: 'fieldless-checklist', file: 'phases/1/UAT.md' }]);
@@ -390,14 +390,14 @@ for (const [arm, line, code] of REFUSED_ID_SHAPES) {
 // POSITION rather than "the line names an id somewhere": a bullet whose prose
 // mentions an id declares none (`criterion-unidded`, per the grammar's own
 // stated rule), so this phase is genuinely pre-id and keeps the exemption.
-test('criteria-coverage: a bullet whose PROSE names an id declares nothing - still legacy', () => {
+test('criteria-coverage: a bullet whose PROSE names an id declares nothing - still legacy', (t) => {
   const dir = coverageTree({
     1: {
       contextText: '# Phase 1 Context\n\n## Acceptance criteria\n\n'
         + '- [ ] the AC3 pin still holds\n',
       items: [{ name: 'Tests pass' }, { name: 'Linter is clean' }],
     },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.breaks, undefined);
   assert.equal(r.legacy.length, 1);
@@ -414,29 +414,29 @@ test('criteria-coverage: a bullet whose PROSE names an id declares nothing - sti
 // some `origin` but no `criterion` is NOT an old project - it is a live
 // `/cad-verify` that stopped emitting the link. Widen the legacy rule back to a
 // bare no-`criterion` test and this test is what fails.
-test('criteria-coverage: no criterion but at least one origin is NOT legacy - every criterion breaks', () => {
+test('criteria-coverage: no criterion but at least one origin is NOT legacy - every criterion breaks', (t) => {
   const dir = coverageTree({
     1: { criteria: P1_CRITERIA,
       items: P1_ITEMS.map((it) => (it.origin ? it : { name: it.name })) },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.legacy, undefined);
   assert.deepEqual(r.breaks.map((b) => b.id), ['AC1', 'AC2', 'AC3', 'AC4', 'AC5', 'AC6', 'AC7']);
   assert.equal(r.counts.uncovered, 7);
 });
 
-test('criteria-coverage: an EMPTY checklist is not legacy - the drop itself, every criterion breaks', () => {
-  const dir = coverageTree({ 1: { criteria: P1_CRITERIA, items: [] } });
+test('criteria-coverage: an EMPTY checklist is not legacy - the drop itself, every criterion breaks', (t) => {
+  const dir = coverageTree({ 1: { criteria: P1_CRITERIA, items: [] } }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.legacy, undefined);
   assert.equal(r.breaks.length, 7);
   assert.deepEqual(r.phases, [{ phase: 1, criteria: 7, items: 0 }]);
 });
 
-test('criteria-coverage: an unchecked roadmap box counts uncovered but contributes no break', () => {
+test('criteria-coverage: an unchecked roadmap box counts uncovered but contributes no break', (t) => {
   const dir = coverageTree({
     1: { checked: false, criteria: P1_CRITERIA, items: P1_ITEMS_DROPPED },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.breaks, undefined);
   assert.equal(r.counts.uncovered, 2);
@@ -446,8 +446,8 @@ test('criteria-coverage: an unchecked roadmap box counts uncovered but contribut
 // D-10's exemption is the PRUNED phase, and the prune deletes the whole
 // directory - so it always takes CONTEXT.md with it. That is why absence of
 // CONTEXT is the exemption and absence of UAT is not.
-test('criteria-coverage: an absent CONTEXT.md leaves the phase out of the envelope, ok:true', () => {
-  const noContext = coverageTree({ 1: { items: P1_ITEMS_DROPPED } });
+test('criteria-coverage: an absent CONTEXT.md leaves the phase out of the envelope, ok:true', (t) => {
+  const noContext = coverageTree({ 1: { items: P1_ITEMS_DROPPED } }, t);
   const a = run(['criteria-coverage'], noContext);
   assert.equal(a.ok, true);
   assert.deepEqual(a.phases, []);
@@ -457,8 +457,8 @@ test('criteria-coverage: an absent CONTEXT.md leaves the phase out of the envelo
 
 // The hole this closes: a checked phase that declared seven criteria and never
 // got a checklist at all - the total drop - used to report nothing whatsoever.
-test('criteria-coverage: a CHECKED phase with criteria and no UAT.md breaks as missing-uat', () => {
-  const dir = coverageTree({ 1: { criteria: P1_CRITERIA } });
+test('criteria-coverage: a CHECKED phase with criteria and no UAT.md breaks as missing-uat', (t) => {
+  const dir = coverageTree({ 1: { criteria: P1_CRITERIA } }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.phases, [{ phase: 1, criteria: 7, items: 0 }]);
@@ -467,16 +467,16 @@ test('criteria-coverage: a CHECKED phase with criteria and no UAT.md breaks as m
   assert.deepEqual(r.counts, { criteria: 7, covered: 0, uncovered: 7, untraced: 0, phases: 1 });
 });
 
-test('criteria-coverage: an UNCHECKED phase with no UAT.md counts uncovered but never breaks', () => {
-  const dir = coverageTree({ 1: { checked: false, criteria: P1_CRITERIA } });
+test('criteria-coverage: an UNCHECKED phase with no UAT.md counts uncovered but never breaks', (t) => {
+  const dir = coverageTree({ 1: { checked: false, criteria: P1_CRITERIA } }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.breaks, undefined);
   assert.equal(r.counts.uncovered, 7);
   assert.deepEqual(r.phases, [{ phase: 1, criteria: 7, items: 0 }]);
 });
 
-test('criteria-coverage: a phase with no CONTEXT and no UAT is still exempt - the pruned case', () => {
-  const dir = coverageTree({ 1: {} });
+test('criteria-coverage: a phase with no CONTEXT and no UAT is still exempt - the pruned case', (t) => {
+  const dir = coverageTree({ 1: {} }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.phases, []);
@@ -488,8 +488,8 @@ test('criteria-coverage: a phase with no CONTEXT and no UAT is still exempt - th
 // `{"ok":true,"phases":[]}` over a file nothing ever looked at.
 test('criteria-coverage: a CONTEXT.md at chmod 000 breaks instead of being exempted', {
   skip: process.getuid && process.getuid() === 0 ? 'root reads a 000 file anyway' : false,
-}, () => {
-  const dir = coverageTree({ 1: { criteria: [['AC1', 'a thing works'], ['AC2', 'another does']] } });
+}, (t) => {
+  const dir = coverageTree({ 1: { criteria: [['AC1', 'a thing works'], ['AC2', 'another does']] } }, t);
   const ctx = join(dir, 'phases', '1', 'CONTEXT.md');
   chmodSync(ctx, 0o000);
   try {
@@ -502,8 +502,8 @@ test('criteria-coverage: a CONTEXT.md at chmod 000 breaks instead of being exemp
   } finally { chmodSync(ctx, 0o644); }
 });
 
-test('criteria-coverage: a CONTEXT.md that is a DIRECTORY takes the same break', () => {
-  const dir = coverageTree({ 1: { criteria: [['AC1', 'a thing works']] } });
+test('criteria-coverage: a CONTEXT.md that is a DIRECTORY takes the same break', (t) => {
+  const dir = coverageTree({ 1: { criteria: [['AC1', 'a thing works']] } }, t);
   const ctx = join(dir, 'phases', '1', 'CONTEXT.md');
   rmSync(ctx);
   mkdirSync(ctx);
@@ -516,8 +516,8 @@ test('criteria-coverage: a CONTEXT.md that is a DIRECTORY takes the same break',
 
 // The break fires on the checkbox state too - like fieldless-checklist and
 // unlike uncovered, since an unreadable file is never work in flight.
-test('criteria-coverage: an UNCHECKED phase with an unreadable CONTEXT still breaks', () => {
-  const dir = coverageTree({ 1: { checked: false, criteria: [['AC1', 'a thing works']] } });
+test('criteria-coverage: an UNCHECKED phase with an unreadable CONTEXT still breaks', (t) => {
+  const dir = coverageTree({ 1: { checked: false, criteria: [['AC1', 'a thing works']] } }, t);
   const ctx = join(dir, 'phases', '1', 'CONTEXT.md');
   rmSync(ctx);
   mkdirSync(ctx);
@@ -530,13 +530,13 @@ test('criteria-coverage: an UNCHECKED phase with an unreadable CONTEXT still bre
 // so the phase reported zero criteria and the items pointing at AC1 landed in
 // the additive unknown_criterion with the gate green. Now the heading itself is
 // named, which is what makes the drop findable.
-test('criteria-coverage: a near-miss criteria heading is reported, not silent', () => {
+test('criteria-coverage: a near-miss criteria heading is reported, not silent', (t) => {
   const dir = coverageTree({
     1: {
       contextText: '# Phase 1 Context\n\n## Acceptance Criteria\n\n- [ ] AC1: the tests pass\n',
       items: [{ name: 'Tests pass', criterion: 'AC1' }],
     },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.deepEqual(r.context_issues[0].issues.map((i) => i.code), ['criteria-heading-near-miss']);
   assert.equal(r.context_issues[0].issues[0].line, 3);
@@ -544,13 +544,13 @@ test('criteria-coverage: a near-miss criteria heading is reported, not silent', 
   assert.equal(r.counts.criteria, 0);
 });
 
-test('criteria-coverage: a CONTEXT of bare bullets surfaces criterion-unidded, additively', () => {
+test('criteria-coverage: a CONTEXT of bare bullets surfaces criterion-unidded, additively', (t) => {
   const dir = coverageTree({
     1: {
       contextText: '# Phase 1 Context\n\n## Acceptance criteria\n\n- [ ] the tests pass\n- [ ] the linter is clean\n',
       items: [{ name: 'Tests pass', origin: 'verifier' }],
     },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.context_issues[0].issues.map((i) => i.code),
@@ -559,17 +559,17 @@ test('criteria-coverage: a CONTEXT of bare bullets surfaces criterion-unidded, a
   assert.equal(r.counts.criteria, 0);
 });
 
-test('criteria-coverage: a criterion value naming no declared id reports unknown_criterion', () => {
+test('criteria-coverage: a criterion value naming no declared id reports unknown_criterion', (t) => {
   const dir = coverageTree({
     1: { criteria: [['AC1', 'one']], items: [{ name: 'Item one', criterion: 'AC9' }] },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.deepEqual(r.unknown_criterion, [{ phase: 1, item: 1, criterion: 'AC9' }]);
   assert.deepEqual(r.breaks, [{ phase: 1, id: 'AC1', break: 'uncovered' }]);
   assert.equal(r.untraced, undefined); // it carries a criterion, wrong or not
 });
 
-test('criteria-coverage: the counts identity holds across a mixed tree', () => {
+test('criteria-coverage: the counts identity holds across a mixed tree', (t) => {
   const dir = coverageTree({
     1: { criteria: P1_CRITERIA, items: P1_ITEMS },
     // true legacy: fieldless AND its CONTEXT declares no ids
@@ -583,7 +583,7 @@ test('criteria-coverage: the counts identity holds across a mixed tree', () => {
     // fieldless WITH declared ids: one break, its criteria back in the counts
     5: { criteria: [['AC1', 'one'], ['AC2', 'two']],
       items: [{ name: 'Item one' }, { name: 'Item two' }] },
-  });
+  }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.legacy.length, 1);
   assert.equal(r.legacy[0].phase, 2);
@@ -601,8 +601,8 @@ test('criteria-coverage: the counts identity holds across a mixed tree', () => {
 // of maintenance that gets a check deleted.
 const REPO_MANIFEST = join(dirname(PLANNING), '..', '..', '.claude-plugin', 'plugin.json');
 
-test('criteria-coverage: every run states the plugin version and the UAT fields version', () => {
-  const dir = coverageTree({ 1: { criteria: P1_CRITERIA, items: P1_ITEMS } });
+test('criteria-coverage: every run states the plugin version and the UAT fields version', (t) => {
+  const dir = coverageTree({ 1: { criteria: P1_CRITERIA, items: P1_ITEMS } }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.ok, true);
   // First key of the payload: a statement about the run, never an optional
@@ -614,8 +614,8 @@ test('criteria-coverage: every run states the plugin version and the UAT fields 
   });
 });
 
-test('criteria-coverage: CADENCE_PLUGIN_MANIFEST pins the version the run reports', () => {
-  const dir = coverageTree({ 1: { criteria: P1_CRITERIA, items: P1_ITEMS } });
+test('criteria-coverage: CADENCE_PLUGIN_MANIFEST pins the version the run reports', (t) => {
+  const dir = coverageTree({ 1: { criteria: P1_CRITERIA, items: P1_ITEMS } }, t);
   const manifest = join(dir, 'fixture-plugin.json');
   writeFileSync(manifest, JSON.stringify({ name: 'cadence', version: '9.9.9-fixture' }));
   const r = run(['criteria-coverage'], dir, undefined,
@@ -625,8 +625,8 @@ test('criteria-coverage: CADENCE_PLUGIN_MANIFEST pins the version the run report
   assert.equal(r.version.uat_fields, '1');
 });
 
-test('criteria-coverage: an unreadable manifest reports version.plugin null, never a throw', () => {
-  const dir = coverageTree({ 1: { criteria: P1_CRITERIA, items: P1_ITEMS } });
+test('criteria-coverage: an unreadable manifest reports version.plugin null, never a throw', (t) => {
+  const dir = coverageTree({ 1: { criteria: P1_CRITERIA, items: P1_ITEMS } }, t);
   const r = run(['criteria-coverage'], dir, undefined,
     { CADENCE_PLUGIN_MANIFEST: join(dir, 'no-such-manifest.json'), CADENCE_TEST_SEAM: '1' });
   // Provenance must not sink a working gate: the coverage answer is unchanged.
@@ -637,13 +637,13 @@ test('criteria-coverage: an unreadable manifest reports version.plugin null, nev
   assert.deepEqual(r.counts, { criteria: 7, covered: 7, uncovered: 0, untraced: 0, phases: 1 });
 });
 
-test('criteria-coverage: CADENCE_PLUGIN_MANIFEST without the sentinel is ignored', () => {
+test('criteria-coverage: CADENCE_PLUGIN_MANIFEST without the sentinel is ignored', (t) => {
   // The manifest is what every version-skew answer is computed from (QW-04), so
   // it is read from the injected path only when CADENCE_TEST_SEAM is exactly
   // `1`. Unset the sentinel and the run reports the SHIPPED manifest's version
   // - silently, because MANIFEST_PATH resolves at module load, before a
   // dispatch exists to carry a warning.
-  const dir = coverageTree({ 1: { criteria: P1_CRITERIA, items: P1_ITEMS } });
+  const dir = coverageTree({ 1: { criteria: P1_CRITERIA, items: P1_ITEMS } }, t);
   const manifest = join(dir, 'ungated-plugin.json');
   writeFileSync(manifest, JSON.stringify({ name: 'cadence', version: '9.9.9-fixture' }));
   const env = { ...process.env, CADENCE_PLUGIN_MANIFEST: manifest };
@@ -661,8 +661,8 @@ test('criteria-coverage: CADENCE_PLUGIN_MANIFEST without the sentinel is ignored
   assert.equal(opened.version.plugin, '9.9.9-fixture');
 });
 
-test('criteria-coverage: an absent ROADMAP.md degrades with no-roadmap', () => {
-  const dir = makeTree({ reqs: [['REQ-1', 1, 'Pending']] });
+test('criteria-coverage: an absent ROADMAP.md degrades with no-roadmap', (t) => {
+  const dir = makeTree({ reqs: [['REQ-1', 1, 'Pending']] }, t);
   const r = run(['criteria-coverage'], dir);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'no-roadmap');

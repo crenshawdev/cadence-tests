@@ -12,10 +12,10 @@
 // this phase holds that file. What they assert is the GRAMMAR's reach through
 // both faces rather than a risk verdict, so the fixture helpers below are a
 // deliberate second copy of that file's - narrower, and built for this question.
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -87,14 +87,17 @@ const PLANNING = join(HERE, 'planning.mjs');
 /** A global config layer that does not exist, pinned in so a developer whose
  *  own ~/.config/cadence/config.json answers the surface question does not see
  *  rows pass here and fail in CI. */
-const NO_GLOBAL = join(mkdtempSync(join(tmpdir(), 'cad-plankey-')), 'no-global.json');
+const NO_GLOBAL_DIR = mkdtempSync(join(tmpdir(), 'cad-plankey-'));
+after(() => rmSync(NO_GLOBAL_DIR, { recursive: true, force: true }));
+const NO_GLOBAL = join(NO_GLOBAL_DIR, 'no-global.json');
 
 /** A scratch repository with its own `.planning/`, so every record written here
  *  is the fixture's and never this project's own. The surface question is
  *  ANSWERED: an unanswered project is refused `surfaces-unanswered` before
- *  detection runs at all, and these rows are about the key, not the question. */
-function riskRepo() {
+ *  detection runs at all, and these rows are about the key, not the question. Gone when test `t` ends. */
+function riskRepo(t) {
   const repo = mkdtempSync(join(tmpdir(), 'cad-plankey-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: repo });
   execFileSync('git', ['config', 'user.name', 'T'], { cwd: repo });
@@ -164,8 +167,8 @@ const bracket = (plan) => [
  */
 const CREDENTIAL_LINE = `const SERVICE_${'API'}_${'KEY'} = "not-a-real-value";\n`;
 
-test('risk-check run: a fix-pass key is RECORDED, where it answered bad-args', () => {
-  const { repo, dir } = riskRepo();
+test('risk-check run: a fix-pass key is RECORDED, where it answered bad-args', (t) => {
+  const { repo, dir } = riskRepo(t);
   const base = commitFile(repo, 'README.md', 'start\n');
   commitFile(repo, 'src/auth.js', CREDENTIAL_LINE);
   const r = planning(repo, dir, ['risk-check', 'run', '--phase', '3', '--plan', '1-fix',
@@ -178,12 +181,12 @@ test('risk-check run: a fix-pass key is RECORDED, where it answered bad-args', (
   assert.ok(records[0].matches.includes('secrets'), JSON.stringify(records[0]));
 });
 
-test('risk-check status: a 1-fix bracket is satisfiable - record, then fire receipt', () => {
+test('risk-check status: a 1-fix bracket is satisfiable - record, then fire receipt', (t) => {
   // The whole RSK-03 loop, end to end: the gate refuses, the run it names is
   // accepted, the gate still refuses for the FIRE, and the receipt settles it.
   // Before this, step 2 answered `bad-args` and there was no exit but an
   // `override`.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   const base = commitFile(repo, 'README.md', 'start\n');
   const head = commitFile(repo, 'src/auth.js', CREDENTIAL_LINE);
   mkdirSync(recordsDir(dir), { recursive: true });
@@ -213,13 +216,13 @@ test('risk-check status: a 1-fix bracket is satisfiable - record, then fire rece
   assert.equal(settled.plans[0].plan, '1-fix');
 });
 
-test('risk-check status: a bracketed key the grammar REFUSES is malformed, not missing', () => {
+test('risk-check status: a bracketed key the grammar REFUSES is malformed, not missing', (t) => {
   // The one bounded exception to "status does not narrow" (D-01), and the
   // opposite of the exclusion arm that decision rejected: `risk-check run`
   // could never write a record for `1-fix ` either, so demanding one leaves a
   // blocking gate with no exit but an override. It is REPORTED rather than
   // dropped, which is what made the exclusion arm fail-open.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   commitFile(repo, 'README.md', 'start\n');
   mkdirSync(recordsDir(dir), { recursive: true });
   writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${bracket('1-fix ').join('\n')}\n`);
@@ -230,11 +233,11 @@ test('risk-check status: a bracketed key the grammar REFUSES is malformed, not m
   assert.deepEqual(r.plans, [], 'a key no run can record is not a row awaiting one');
 });
 
-test('risk-check status: a bracket with NO plan at all is still required', () => {
+test('risk-check status: a bracket with NO plan at all is still required', (t) => {
   // An absent key is not a malformed one: `risk-check run` with no --plan
   // writes a record that keys to the same empty string and joins it, so the
   // unidentified completed range stays required rather than quietly exempt.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   commitFile(repo, 'README.md', 'start\n');
   mkdirSync(recordsDir(dir), { recursive: true });
   writeFileSync(join(recordsDir(dir), 'trace.jsonl'), `${bracket(undefined).join('\n')}\n`);
@@ -245,13 +248,13 @@ test('risk-check status: a bracket with NO plan at all is still required', () =>
   assert.equal('malformed' in r, false, JSON.stringify(r));
 });
 
-test('every spelling in the table is accepted by BOTH faces or refused by BOTH', () => {
+test('every spelling in the table is accepted by BOTH faces or refused by BOTH', (t) => {
   // D-02's assertion, made where it can actually fail: one predicate, two
   // callers, and no way for the seam that enforces the question to disagree
   // with the face that reports it. `run` and `status` are asked the SAME
   // spelling, and only the `bad-args` verdict is compared - a later refusal
   // (no record yet, no range) is a different answer to a different question.
-  const { repo, dir } = riskRepo();
+  const { repo, dir } = riskRepo(t);
   const base = commitFile(repo, 'README.md', 'start\n');
   const head = commitFile(repo, 'docs/notes.md', 'text\n');
   for (const [value, accepted, why] of PLAN_KEYS) {

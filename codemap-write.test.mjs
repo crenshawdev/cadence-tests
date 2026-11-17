@@ -3,7 +3,7 @@
 //
 // Driven through the CLI on scratch git repositories with run files this file composes. The entry's schema and its worst
 // case are held here too, since workflows/code-map.js spells the same schema and a script can't import it.
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -21,9 +21,10 @@ const { MAX_RUN_BYTES } = await import(join(ROOT, 'cadence-core', 'bin', 'lib', 
 const pad = (n = 90 * 1024) => `${'x'.repeat(80)}\n`.repeat(Math.ceil(n / 81));
 const gitIn = (root, ...a) => execFileSync('git', ['-C', root, ...a], { encoding: 'utf8', stdio: 'pipe' });
 
-/** Three modules, `m1`, `m2` and `m3`, and `blob`, each a small source file with a name of its own and a pad that keeps the three apart. */
-function fixture() {
+/** Three modules, `m1`, `m2` and `m3`, and `blob`, each a small source file with a name of its own and a pad that keeps the three apart. Gone when test `t` ends. */
+function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'cad-write-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   gitIn(root, 'init', '-q'); gitIn(root, 'config', 'user.email', 't@example.com'); gitIn(root, 'config', 'user.name', 'T');
   for (const [dir, fn] of [['m1', 'alpha'], ['m2', 'gamma'], ['m3', 'delta']]) {
     mkdirSync(join(root, dir));
@@ -81,8 +82,10 @@ function entry(dir, fn, over = {}) {
 }
 const FN = { m1: 'alpha', m2: 'gamma', m3: 'delta' };
 
-/** A scratch directory outside the repository for run files and launch files. */
-const scratch = () => mkdtempSync(join(tmpdir(), 'cad-write-run-'));
+/** A scratch directory outside the repository for run files and launch files, each inside one per-file root that goes when the file ends. */
+const RUNS = mkdtempSync(join(tmpdir(), 'cad-write-run-'));
+after(() => rmSync(RUNS, { recursive: true, force: true }));
+const scratch = () => mkdtempSync(join(RUNS, 'run-'));
 const row = (i, over = {}) => ({
   type: 'workflow_agent', index: i, label: `reader m${i}`, agentId: `agent${i}`, agentType: 'cadence:cad-mapper', model: 'claude-haiku-4-5', state: 'done',
   tokens: 1000 * i, toolCalls: 10 + i, durationMs: 5000 * i, ...over,
@@ -106,8 +109,8 @@ function tryEntry(root, name, e) {
   return { r, wrote: r.written === 1, why: r.refused_modules?.[0]?.why };
 }
 
-test('one bad module among three is refused and named, the other two are written, and it stays stale or unbuilt', () => {
-  const root = fixture();
+test('one bad module among three is refused and named, the other two are written, and it stays stale or unbuilt', (t) => {
+  const root = fixture(t);
   scan(root);
   // m3 has no entry: a refusal leaves it unbuilt
   const bad = entry('m3', 'delta', { change_together: [{ path: 'm3/nothing.js', why: 'invented' }] });
@@ -129,8 +132,8 @@ test('one bad module among three is refused and named, the other two are written
   assert.deepEqual(status(root).stale_modules, ['m3']);
 });
 
-test('a path or symbol the facts do not hold refuses its module: an invented symbol, evidence in another module, a path outside the root', () => {
-  const root = fixture();
+test('a path or symbol the facts do not hold refuses its module: an invented symbol, evidence in another module, a path outside the root', (t) => {
+  const root = fixture(t);
   nestedTests(root);
   scan(root);
   const invented = tryEntry(root, 'm1', entry('m1', 'alpha', { invariants: [{ claim: 'c', evidence: [{ path: 'm1/main.js', symbol: 'nothere' }] }] }));
@@ -152,8 +155,8 @@ test('a path or symbol the facts do not hold refuses its module: an invented sym
   assert.match(shape.why, /unknown key/);
 });
 
-test('what is accepted: a path alone, an absolute path under the root stored relative, a nested test in either form, and free text that is false', () => {
-  const root = fixture();
+test('what is accepted: a path alone, an absolute path under the root stored relative, a nested test in either form, and free text that is false', (t) => {
+  const root = fixture(t);
   nestedTests(root);
   scan(root);
   const e = entry('m1', 'alpha', {
@@ -175,8 +178,8 @@ test('what is accepted: a path alone, an absolute path under the root stored rel
   assert.deepEqual(stored.built_from, builtFrom(root, 'm1'));
 });
 
-test('a dead reader is named, a name that is a path never becomes one, and a module that starts no reader is refused', () => {
-  const root = fixture();
+test('a dead reader is named, a name that is a path never becomes one, and a module that starts no reader is refused', (t) => {
+  const root = fixture(t);
   scan(root);
   const evil = { name: '../../evil', built_from: builtFrom(root, 'm1'), entry: entry('m1', 'alpha') };
   const r = write(root, runFile([{ name: 'm2', built_from: builtFrom(root, 'm2'), entry: null }, evil, mod(root, 'm1', entry('m1', 'alpha'))]));
@@ -192,8 +195,8 @@ test('a dead reader is named, a name that is a path never becomes one, and a mod
   assert.match(dup.refused_modules[0].why, /twice/);
 });
 
-test('a killed run, a file that is not JSON and a result with no modules list answer ok:false and write nothing', () => {
-  const root = fixture();
+test('a killed run, a file that is not JSON and a result with no modules list answer ok:false and write nothing', (t) => {
+  const root = fixture(t);
   scan(root);
   const good = [mod(root, 'm1', entry('m1', 'alpha'))];
   const killed = write(root, runFile(good, { status: 'killed' }));
@@ -207,8 +210,8 @@ test('a killed run, a file that is not JSON and a result with no modules list an
   assert.equal(entryFiles(root).length, 0);
 });
 
-test('built_from comes from the run and not from the files now, so an edit during the run leaves the module stale', () => {
-  const root = fixture();
+test('built_from comes from the run and not from the files now, so an edit during the run leaves the module stale', (t) => {
+  const root = fixture(t);
   scan(root);
   const pinned = builtFrom(root, 'm1');
   writeFileSync(join(root, 'm1', 'main.js'), 'export function alpha() { return 2; }\n');
@@ -217,8 +220,8 @@ test('built_from comes from the run and not from the files now, so an edit durin
   assert.deepEqual(status(root).stale_modules, ['m1']);
 });
 
-test('the launch file is checked: a changed hash, a dropped module and an extra one are named, and an unreadable file costs no entry', () => {
-  const root = fixture();
+test('the launch file is checked: a changed hash, a dropped module and an extra one are named, and an unreadable file costs no entry', (t) => {
+  const root = fixture(t);
   scan(root);
   const launch = (items) => { const f = join(scratch(), 'launch.json'); writeFileSync(f, JSON.stringify({ root, items })); return f; };
   const item = (name) => ({ name, built_from: builtFrom(root, name), item: itemFile(name) });
@@ -243,8 +246,8 @@ test('the launch file is checked: a changed hash, a dropped module and an extra 
   assert.match(blind.launch_note, /not compared/);
 });
 
-test('the launch file\'s item path is compared too: a mistyped one and a row with none refuse that module only, and the others are written', () => {
-  const root = fixture();
+test('the launch file\'s item path is compared too: a mistyped one and a row with none refuse that module only, and the others are written', (t) => {
+  const root = fixture(t);
   scan(root);
   const f = join(scratch(), 'launch.json');
   writeFileSync(f, JSON.stringify({ root, items: ['m1', 'm2', 'm3'].map((name) => ({ name, built_from: builtFrom(root, name), item: itemFile(name) })) }));
@@ -286,8 +289,8 @@ test('an entry is bounded so a Baley-sized build fits the run file: the worst ca
   assert.ok(bytes <= MAX_RUN_BYTES, `the composed run is ${bytes} bytes against ${MAX_RUN_BYTES}`);
 });
 
-test('the map is not recalled and not in the why corpus', () => {
-  const root = fixture();
+test('the map is not recalled and not in the why corpus', (t) => {
+  const root = fixture(t);
   scan(root);
   assert.equal(write(root, runFile([mod(root, 'm1', entry('m1', 'alpha', { purpose: 'a quizzical xylophonist lives here' }))])).written, 1);
   const out = execFileSync('node', [PLANNING, 'recall', 'xylophonist', '--dir', join(root, '.planning')], {
@@ -304,8 +307,8 @@ test('the map is not recalled and not in the why corpus', () => {
 const render0 = (root) => planning(root, 'trace', 'render', '--phase', '0');
 const events0 = (root) => planning(root, 'trace', 'render', '--phase', '0', '--events').events.filter((e) => e.family === 'lifecycle');
 
-test('a run with two agent rows bills two brackets under phase 0 with each row\'s figures, and a second call bills none and rewrites the same entries', () => {
-  const root = fixture();
+test('a run with two agent rows bills two brackets under phase 0 with each row\'s figures, and a second call bills none and rewrites the same entries', (t) => {
+  const root = fixture(t);
   scan(root);
   const file = runFile([mod(root, 'm1', entry('m1', 'alpha')), mod(root, 'm2', entry('m2', 'gamma'))]);
   const first = write(root, file);
@@ -327,8 +330,8 @@ test('a run with two agent rows bills two brackets under phase 0 with each row\'
   assert.equal(readFileSync(entryPath(root, 'm1'), 'utf8'), written, 'and the same entries');
 });
 
-test('a killed run is still billed and writes no entry, and an agent that was not done closes as a checkpoint', () => {
-  const root = fixture();
+test('a killed run is still billed and writes no entry, and an agent that was not done closes as a checkpoint', (t) => {
+  const root = fixture(t);
   scan(root);
   const modules = [mod(root, 'm1', entry('m1', 'alpha'))];
   const r = write(root, runFile(modules, { status: 'killed', workflowProgress: [row(1, { state: 'killed' })] }));
@@ -342,8 +345,8 @@ test('a killed run is still billed and writes no entry, and an agent that was no
   assert.deepEqual([bad.reason, bad.brackets.written], ['run-bad-result', 1]);
 });
 
-test('an unreadable run file with the notice\'s totals bills one cad-mapper bracket, and a bad total is refused before anything is billed', () => {
-  const root = fixture();
+test('an unreadable run file with the notice\'s totals bills one cad-mapper bracket, and a bad total is refused before anything is billed', (t) => {
+  const root = fixture(t);
   scan(root);
   const gone = join(scratch(), 'wf_gone.json');
   const r = write(root, gone, '--notice-tokens', '54242', '--notice-turns', '11', '--notice-duration-ms', '6072');
@@ -369,8 +372,8 @@ const itemOf = (item) => JSON.parse(readFileSync(item, 'utf8'));
 const statBytes = (f) => statSync(f).size;
 const hashNow = (root, p) => gitIn(root, 'hash-object', '--no-filters', p).trim();
 
-test('one module edited after its entry was built: the launch file holds that module only, small, with its hashes pinned now and a diff of the change', () => {
-  const root = fixture();
+test('one module edited after its entry was built: the launch file holds that module only, small, with its hashes pinned now and a diff of the change', (t) => {
+  const root = fixture(t);
   built(root);
   writeFileSync(join(root, 'm2', 'main.js'), 'export function gamma() { return 1; }\n');
   const out = scratch();
@@ -403,8 +406,8 @@ test('one module edited after its entry was built: the launch file holds that mo
   assert.equal(diff.includes('pad'), false, 'an unchanged file is not in the diff');
 });
 
-test('an unbuilt module carries no old entry, a module starting no reader never appears, and a missing out-dir is refused with nothing written', () => {
-  const root = fixture();
+test('an unbuilt module carries no old entry, a module starting no reader never appears, and a missing out-dir is refused with nothing written', (t) => {
+  const root = fixture(t);
   nestedTests(root);
   scan(root);
   const out = scratch();
@@ -423,8 +426,9 @@ test('an unbuilt module carries no old entry, a module starting no reader never 
   assert.equal(existsSync(gone), false);
 });
 
-test('a reader is told only what it may open and cite: a symlink and a binary are pinned and not read, a changed symlink is named and never diffed', () => {
+test('a reader is told only what it may open and cite: a symlink and a binary are pinned and not read, a changed symlink is named and never diffed', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'cad-write-mix-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   gitIn(root, 'init', '-q'); gitIn(root, 'config', 'user.email', 't@example.com'); gitIn(root, 'config', 'user.name', 'T');
   mkdirSync(join(root, 'mix'));
   writeFileSync(join(root, 'mix', 'a.js'), 'export function alpha() {\n  function inner() {}\n  return inner;\n}\n');
@@ -452,8 +456,8 @@ test('a reader is told only what it may open and cite: a symlink and a binary ar
   assert.equal(readFileSync(item.diff, 'utf8').includes('passwd'), false, 'the link is named and not diffed');
 });
 
-test('a diff is only offered where the old blob still resolves: on top of an uncommitted edit, and after the blob is garbage collected, the reader reads the whole module', () => {
-  const root = fixture();
+test('a diff is only offered where the old blob still resolves: on top of an uncommitted edit, and after the blob is garbage collected, the reader reads the whole module', (t) => {
+  const root = fixture(t);
   // an uncommitted edit is what the entry is built from, so its hash is one nothing stored
   scan(root);
   writeFileSync(join(root, 'm2', 'main.js'), 'export function gamma() { return 1; }\n');
@@ -467,7 +471,7 @@ test('a diff is only offered where the old blob still resolves: on top of an unc
   assert.ok(item.old_entry);
 
   // a committed edit built from, then the commit thrown away and its objects pruned
-  const lost = fixture();
+  const lost = fixture(t);
   writeFileSync(join(lost, 'm2', 'main.js'), 'export function gamma() { return 3; }\n');
   gitIn(lost, 'commit', '-q', '-am', 'edit');
   scan(lost);
@@ -490,8 +494,8 @@ test('a diff is only offered where the old blob still resolves: on top of an unc
 /** An entry with an own key spelled as JSON text, since `__proto__` set on an object literal is no key at all. */
 const withKey = (e, key, valueText) => JSON.parse(`${JSON.stringify(e).slice(0, -1)},${JSON.stringify(key)}:${valueText}}`);
 
-test('a key named like an inherited property refuses its module and no other, and an unprintable name in the launch file is cut', () => {
-  const root = fixture();
+test('a key named like an inherited property refuses its module and no other, and an unprintable name in the launch file is cut', (t) => {
+  const root = fixture(t);
   scan(root);
   const good = entry('m3', 'delta');
   const evidenceKey = entry('m2', 'gamma');
@@ -514,8 +518,8 @@ test('a key named like an inherited property refuses its module and no other, an
   assert.equal(r.missing_modules[0].length, 200, 'a name from the launch file is cut like a refused one');
 });
 
-test('a missing --run-file is bad-args and bills nothing', () => {
-  const root = fixture();
+test('a missing --run-file is bad-args and bills nothing', (t) => {
+  const root = fixture(t);
   scan(root);
   const r = planning(root, 'codemap', 'write', '--notice-tokens', '54242');
   assert.deepEqual([r.ok, r.reason], [false, 'bad-args']);
@@ -532,8 +536,8 @@ function probe(name) {
   return { prog, marker };
 }
 
-test('the diff runs no clean filter a tracked .gitattributes and the config name, and still carries the hunks', () => {
-  const root = fixture();
+test('the diff runs no clean filter a tracked .gitattributes and the config name, and still carries the hunks', (t) => {
+  const root = fixture(t);
   writeFileSync(join(root, 'm2', '.gitattributes'), '* filter=probe\n');
   gitIn(root, 'add', 'm2/.gitattributes'); gitIn(root, 'commit', '-q', '-m', 'attributes');
   built(root);
@@ -548,9 +552,9 @@ test('the diff runs no clean filter a tracked .gitattributes and the config name
   assert.equal(existsSync(marker), false, 'the configured filter program never ran');
 });
 
-/** The filter scenario of the test above, run with `env` in the launch's environment; the marker says whether the program ran. */
-function filterRun(env) {
-  const root = fixture();
+/** The filter scenario of the test above, run with `env` in the launch's environment; the marker says whether the program ran; its repository goes when test `t` ends. */
+function filterRun(t, env) {
+  const root = fixture(t);
   writeFileSync(join(root, 'm2', '.gitattributes'), '* filter=probe\n');
   gitIn(root, 'add', 'm2/.gitattributes'); gitIn(root, 'commit', '-q', '-m', 'attributes');
   built(root);
@@ -567,16 +571,16 @@ function filterRun(env) {
   return existsSync(marker);
 }
 
-test('the diff runs no clean filter when TMPDIR is relative and names a directory inside the repository', () => {
-  assert.equal(filterRun(() => ({ TMPDIR: 'tmp' })), false, 'the configured filter program never ran');
+test('the diff runs no clean filter when TMPDIR is relative and names a directory inside the repository', (t) => {
+  assert.equal(filterRun(t, () => ({ TMPDIR: 'tmp' })), false, 'the configured filter program never ran');
 });
 
-test('the diff runs no clean filter when the environment aims git at the repository with an absolute GIT_DIR', () => {
-  assert.equal(filterRun((root) => ({ GIT_DIR: join(root, '.git') })), false, 'the configured filter program never ran');
+test('the diff runs no clean filter when the environment aims git at the repository with an absolute GIT_DIR', (t) => {
+  assert.equal(filterRun(t, (root) => ({ GIT_DIR: join(root, '.git') })), false, 'the configured filter program never ran');
 });
 
-test('looking for a missing old blob runs no transport program a promisor remote names', () => {
-  const root = fixture();
+test('looking for a missing old blob runs no transport program a promisor remote names', (t) => {
+  const root = fixture(t);
   scan(root);
   writeFileSync(join(root, 'm2', 'main.js'), 'export function gamma() { return 1; }\n');
   scan(root);
@@ -595,8 +599,8 @@ test('looking for a missing old blob runs no transport program a promisor remote
   assert.equal(existsSync(marker), false, 'the configured transport never ran');
 });
 
-test('a launch item names only what is safe to open: tests that are regular files under the root, and added and removed paths that cannot lead out', () => {
-  const root = fixture();
+test('a launch item names only what is safe to open: tests that are regular files under the root, and added and removed paths that cannot lead out', (t) => {
+  const root = fixture(t);
   nestedTests(root);
   writeFileSync(join(root, 'tests', 'bar.test.mjs'), "import { alpha } from '../m1/main.js';\nalpha();\n");
   gitIn(join(root, 'tests'), 'add', '-A'); gitIn(join(root, 'tests'), 'commit', '-q', '-m', 'bar');
@@ -634,9 +638,9 @@ test('a launch item names only what is safe to open: tests that are regular file
   assert.equal(m2.read.some((p) => p.endsWith('leak')), false);
 });
 
-/** The tests list of m1's item after its stored row names `files` as pins, with one real test file beside them. */
-function testsFor(files) {
-  const root = fixture();
+/** The tests list of m1's item after its stored row names `files` as pins, with one real test file beside them; its repository goes when test `t` ends. */
+function testsFor(t, files) {
+  const root = fixture(t);
   nestedTests(root);
   built(root);
   writeFileSync(join(root, '.env'), 'TOKEN=secret\n');
@@ -653,14 +657,14 @@ function testsFor(files) {
   return itemOf(launchOf(out).items.find((x) => x.name === 'm1').item).tests;
 }
 
-test('a stored pin is listed only when it is a test file: .git/config, .env, a source file and anything under a .git directory are dropped', () => {
-  const tests = testsFor(['.git/config', 'tests/../.git/config', '.git/HEAD', '.env', 'm1/notes.txt', 'tests/.git/config']);
+test('a stored pin is listed only when it is a test file: .git/config, .env, a source file and anything under a .git directory are dropped', (t) => {
+  const tests = testsFor(t, ['.git/config', 'tests/../.git/config', '.git/HEAD', '.env', 'm1/notes.txt', 'tests/.git/config']);
   assert.deepEqual(tests.map((t) => t.slice(t.indexOf('/tests/') + 1)).filter((t) => t.startsWith('tests/')), ['tests/foo.test.mjs']);
   assert.equal(tests.length, 1);
 });
 
-test('a stored pin holding a backslash is dropped, since a native join could read it as a separator', () => {
-  const tests = testsFor(['a\\b.test.mjs', '..\\private\\x.test.mjs']);
+test('a stored pin holding a backslash is dropped, since a native join could read it as a separator', (t) => {
+  const tests = testsFor(t, ['a\\b.test.mjs', '..\\private\\x.test.mjs']);
   assert.equal(tests.length, 1);
   assert.match(tests[0], /foo\.test\.mjs$/);
 });
@@ -677,8 +681,8 @@ test('a quoted spelling of a path is pinned and never listed to open, whether it
   assert.deepEqual(Object.keys(item.built_from).sort(), [quoted, 'm/a.js'].sort());
 });
 
-test('a symbol over the schema bound is not offered as citable', () => {
-  const root = fixture();
+test('a symbol over the schema bound is not offered as citable', (t) => {
+  const root = fixture(t);
   const long = 'a'.repeat(130);
   writeFileSync(join(root, 'm1', 'main.js'), `export function ${long}() {}\nexport function alpha() {}\n`);
   gitIn(root, 'add', '-A'); gitIn(root, 'commit', '-q', '-m', 'long');
