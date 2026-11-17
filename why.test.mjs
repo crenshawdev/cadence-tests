@@ -30,8 +30,9 @@ const GIT_ENV = {
  * commit and the bare chain has exactly two, newest first.
  * @returns {{dir: string, first: string, second: string}}
  */
-function repo() {
+function repo(t) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-why-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'ignore', env: GIT_ENV });
   // Explicit, distinct commit dates (a minute apart) - two commits made back
   // to back in a test otherwise share one second's timestamp, which is a real
@@ -75,8 +76,8 @@ function oneJsonLine(stdout) {
   return JSON.parse(lines[0]);
 }
 
-test('a tracked path returns ok:true, a non-empty text, and the newest commit first', () => {
-  const { dir, first, second } = repo();
+test('a tracked path returns ok:true, a non-empty text, and the newest commit first', (t) => {
+  const { dir, first, second } = repo(t);
   const { status, stdout } = run(['f.txt', '--dir', dir]);
   const env = oneJsonLine(stdout);
   assert.equal(status, 0);
@@ -88,8 +89,8 @@ test('a tracked path returns ok:true, a non-empty text, and the newest commit fi
   assert.equal(env.entries[1].sha, first);
 });
 
-test('<path>:<line> on a line only one of two commits touched returns a strict subset of the bare chain', () => {
-  const { dir, first } = repo();
+test('<path>:<line> on a line only one of two commits touched returns a strict subset of the bare chain', (t) => {
+  const { dir, first } = repo(t);
   const bare = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   const scoped = oneJsonLine(run(['f.txt:1', '--dir', dir]).stdout);
 
@@ -102,8 +103,8 @@ test('<path>:<line> on a line only one of two commits touched returns a strict s
   assert.ok(scoped.entries.every((e) => bareShas.has(e.sha)), 'every scoped entry must also be in the bare chain');
 });
 
-test('a path git never saw returns ok:true with a stated not-in-history result and no fatal: on stdout', () => {
-  const { dir } = repo();
+test('a path git never saw returns ok:true with a stated not-in-history result and no fatal: on stdout', (t) => {
+  const { dir } = repo(t);
   const { status, stdout } = run(['nope/never.txt', '--dir', dir]);
   const env = oneJsonLine(stdout);
   assert.equal(status, 0);
@@ -112,8 +113,8 @@ test('a path git never saw returns ok:true with a stated not-in-history result a
   assert.ok(!stdout.includes('fatal:'));
 });
 
-test('a line past end of file returns a stated result rather than a non-zero exit or a crash', () => {
-  const { dir } = repo();
+test('a line past end of file returns a stated result rather than a non-zero exit or a crash', (t) => {
+  const { dir } = repo(t);
   const { status, stdout } = run(['f.txt:9999', '--dir', dir]);
   const env = oneJsonLine(stdout);
   assert.equal(status, 0);
@@ -130,8 +131,8 @@ test('a valueless --dir returns ok:false naming --dir', () => {
   assert.ok(env.detail.includes('--dir'));
 });
 
-test('a valueless --top with no positional argument refuses on --top rather than the missing query', () => {
-  const { dir } = repo();
+test('a valueless --top with no positional argument refuses on --top rather than the missing query', (t) => {
+  const { dir } = repo(t);
   const { status, stdout } = run(['--dir', dir, '--top']);
   const env = oneJsonLine(stdout);
   assert.equal(status, 1);
@@ -139,8 +140,8 @@ test('a valueless --top with no positional argument refuses on --top rather than
   assert.ok(env.detail.includes('--top'), `expected the refusal to name --top, got ${JSON.stringify(env)}`);
 });
 
-test('every run in this file parses as exactly one JSON object', () => {
-  const { dir } = repo();
+test('every run in this file parses as exactly one JSON object', (t) => {
+  const { dir } = repo(t);
   for (const args of [['f.txt', '--dir', dir], ['nope.txt', '--dir', dir], ['--dir'], []]) {
     const { stdout } = run(args);
     assert.doesNotThrow(() => oneJsonLine(stdout), `${JSON.stringify(args)} did not print one JSON line`);
@@ -149,15 +150,15 @@ test('every run in this file parses as exactly one JSON object', () => {
 
 // --- AC6 / D-07: determinism and the record that is not an input -----------
 
-test('two runs over an unchanged tree write byte-identical stdout', () => {
-  const { dir } = repo();
+test('two runs over an unchanged tree write byte-identical stdout', (t) => {
+  const { dir } = repo(t);
   const a = run(['f.txt', '--dir', dir]).stdout;
   const b = run(['f.txt', '--dir', dir]).stdout;
   assert.equal(a, b);
 });
 
-test('the answer is unchanged whether .planning/trace.jsonl is present or absent', () => {
-  const { dir } = repo();
+test('the answer is unchanged whether .planning/trace.jsonl is present or absent', (t) => {
+  const { dir } = repo(t);
   const before = run(['f.txt', '--dir', dir]).stdout;
   execFileSync('mkdir', ['-p', recordsDir(join(dir, '.planning'))]);
   writeFileSync(join(recordsDir(join(dir, '.planning')), 'trace.jsonl'), '{"not":"read"}\n');
@@ -200,8 +201,9 @@ function entryFor(text, sha) {
  * name the commit.
  * @returns {{dir: string, sha: string}}
  */
-function repoWithArchivedPhase() {
+function repoWithArchivedPhase(t) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-why-archive-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'ignore', env: GIT_ENV });
   const at = (msg, iso) => execFileSync('git', ['-C', dir, 'commit', '-q', '-m', msg],
     { stdio: 'ignore', env: { ...GIT_ENV, GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso } });
@@ -235,8 +237,8 @@ function repoWithArchivedPhase() {
   return { dir, sha };
 }
 
-test('a commit an archived summary names joins to that milestone, phase, plan and task', () => {
-  const { dir, sha } = repoWithArchivedPhase();
+test('a commit an archived summary names joins to that milestone, phase, plan and task', (t) => {
+  const { dir, sha } = repoWithArchivedPhase(t);
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   assert.equal(env.ok, true);
   assert.equal(env.result, 'chain');
@@ -258,8 +260,8 @@ test('a commit an archived summary names joins to that milestone, phase, plan an
   assert.equal(data.join.task, '2');
 });
 
-test('a commit no summary names keeps its phase and plan-task fields stated absent rather than dropped', () => {
-  const { dir, second } = repo();
+test('a commit no summary names keeps its phase and plan-task fields stated absent rather than dropped', (t) => {
+  const { dir, second } = repo(t);
   const { stdout } = run(['f.txt', '--dir', dir]);
   const env = oneJsonLine(stdout);
   assert.equal(env.ok, true);
@@ -361,8 +363,9 @@ test('every joined entry names the absent corrected-by marker rather than report
  * an adjudication record covering the middle one alone.
  * @returns {{dir: string, base: string, a: string, b: string}}
  */
-function repoWithFinding() {
+function repoWithFinding(t) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-why-review-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'ignore', env: GIT_ENV });
   git('init', '-q', '-b', 'main');
   const shas = [];
@@ -407,8 +410,8 @@ function repoWithFinding() {
   return { dir, base, a, b };
 }
 
-test("a survived finding reaches the rendered chain on the commit its range covers, and on no other", () => {
-  const { dir, a, b } = repoWithFinding();
+test("a survived finding reaches the rendered chain on the commit its range covers, and on no other", (t) => {
+  const { dir, a, b } = repoWithFinding(t);
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   assert.equal(env.ok, true);
   assert.deepEqual(env.warnings, []);
@@ -430,8 +433,8 @@ test("a survived finding reaches the rendered chain on the commit its range cove
   assert.ok(!env.text.includes('THE-REFUTED-CLAIM'), 'a refuted finding never prints');
 });
 
-test('a finding whose range does not resolve in this clone is stated unknown, never dropped or applied', () => {
-  const { dir, a } = repoWithFinding();
+test('a finding whose range does not resolve in this clone is stated unknown, never dropped or applied', (t) => {
+  const { dir, a } = repoWithFinding(t);
   const record = join(dir, '.planning', 'phases', '1', 'records', 'ADJUDICATION-risk_surface-plan-1.json');
   const parsed = JSON.parse(readFileSync(record, 'utf8'));
   parsed.head_id = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
@@ -446,7 +449,7 @@ test('a finding whose range does not resolve in this clone is stated unknown, ne
 
 // --- Plan 2 task 7: the task-attributed declared-files edge ----------------
 
-test('a joined entry names the task whose Files: line declared the queried path', () => {
+test('a joined entry names the task whose Files: line declared the queried path', (t) => {
   const { stdout } = run(['cadence-core/bin/lib/capture-file.mjs', '--dir', REPO, '--top', '30']);
   const env = oneJsonLine(stdout);
   const entry = entryFor(env.text, '8e27033805ac8a5886c07ddd61756106538b22e8');
@@ -461,18 +464,18 @@ test('a joined entry names the task whose Files: line declared the queried path'
   assert.ok(data.join.declared.tasks.every((t) => Number.isInteger(t.ordinal) && t.title));
 });
 
-test('a path no task in the resolved plan declares says so rather than going blank', () => {
+test('a path no task in the resolved plan declares says so rather than going blank', (t) => {
   // `f.txt` is what the built fixture's commits touch; its PLAN.md declares
   // nothing, so the sixth field is a stated absence with a reason.
-  const { dir, a } = repoWithFinding();
+  const { dir, a } = repoWithFinding(t);
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   const entry = entryFor(env.text, a);
   assert.ok(entry.includes('declared by: no task in PLAN.md declares this path'),
     `expected a stated absence naming the plan file, got:\n${entry}`);
 });
 
-test('every join field is stated on an unjoined entry, including the sixth', () => {
-  const { dir, second } = repo();
+test('every join field is stated on an unjoined entry, including the sixth', (t) => {
+  const { dir, second } = repo(t);
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   const entry = entryFor(env.text, second);
   assert.match(entry, /^phase: NOT RESOLVED - /m);
@@ -502,8 +505,8 @@ test('a commit whose phase directory exists in NO on-disk tier still names its p
   assert.ok(!/_archive-v3\.5\.9/.test(env.text), 'no such archive group exists on disk');
 });
 
-test('the recovered tier never overrides an on-disk record a reader could open', () => {
-  const { dir, sha } = repoWithArchivedPhase();
+test('the recovered tier never overrides an on-disk record a reader could open', (t) => {
+  const { dir, sha } = repoWithArchivedPhase(t);
   const entry = entryFor(oneJsonLine(run(['f.txt', '--dir', dir]).stdout).text, sha);
   assert.match(entry, /^phase: v9\.0\.0 phase 1 \(_archive-v9\.0\.0\/1\)$/m,
     'the archived directory answers, not the copy recoverable from the same prune commit');
@@ -583,8 +586,9 @@ test('an artifact the recovered tree does not carry is a stated absence, not a f
  * @param {{subject?: string, close?: string}} [opts]
  * @returns {{dir: string, sha: string}}
  */
-function repoWithNoRecord(opts = {}) {
+function repoWithNoRecord(t, opts = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-why-gap-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'ignore', env: GIT_ENV });
   const at = (msg, iso) => execFileSync('git', ['-C', dir, 'commit', '-q', '-m', msg],
     { stdio: 'ignore', env: { ...GIT_ENV, GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso } });
@@ -612,8 +616,8 @@ function repoWithNoRecord(opts = {}) {
   return { dir, sha };
 }
 
-test('a commit no record names comes back as a NAMED gap carrying what git does have', () => {
-  const { dir, sha } = repoWithNoRecord();
+test('a commit no record names comes back as a NAMED gap carrying what git does have', (t) => {
+  const { dir, sha } = repoWithNoRecord(t);
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   assert.equal(env.ok, true);
   const entry = entryFor(env.text, sha);
@@ -628,8 +632,8 @@ test('a commit no record names comes back as a NAMED gap carrying what git does 
   assert.match(entry, /^ {4}f\.txt$/m);
 });
 
-test('the unresolved arm presents NO digit as a phase number', () => {
-  const { dir, sha } = repoWithNoRecord();
+test('the unresolved arm presents NO digit as a phase number', (t) => {
+  const { dir, sha } = repoWithNoRecord(t);
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   const entry = entryFor(env.text, sha);
   assert.ok(!/phase\s+\d/i.test(entry), `a bare "phase <n>" reached the gap arm:\n${entry}`);
@@ -641,8 +645,8 @@ test('the unresolved arm presents NO digit as a phase number', () => {
   assert.ok(!/phase\s+\d/i.test(env.text) && !/phases\/\d/.test(env.text));
 });
 
-test('a conventional-commit scope is printed as corroboration, and the phase still reads as the gap', () => {
-  const { dir, sha } = repoWithNoRecord({ subject: 'feat(3-1): a commit whose scope names a phase it cannot prove' });
+test('a conventional-commit scope is printed as corroboration, and the phase still reads as the gap', (t) => {
+  const { dir, sha } = repoWithNoRecord(t, { subject: 'feat(3-1): a commit whose scope names a phase it cannot prove' });
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   const entry = entryFor(env.text, sha);
   assert.match(entry, /^ {2}commit-message scope: 3-1 - read off the subject line as corroboration and explicitly NOT a resolved phase/m);
@@ -651,8 +655,8 @@ test('a conventional-commit scope is printed as corroboration, and the phase sti
   assert.ok(!/\d/.test(phaseLine), 'and the phase line itself carries no digit at all');
 });
 
-test('a close labelled in ARCHIVE.md contributes its section rows, bound to the label and to no commit', () => {
-  const { dir, sha } = repoWithNoRecord({ close: 'v9.9.0' });
+test('a close labelled in ARCHIVE.md contributes its section rows, bound to the label and to no commit', (t) => {
+  const { dir, sha } = repoWithNoRecord(t, { close: 'v9.9.0' });
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   const entry = entryFor(env.text, sha);
   assert.match(entry, /^ {2}the gap sits under the close at [0-9a-f]{8}, labelled v9\.9\.0$/m);
@@ -662,8 +666,8 @@ test('a close labelled in ARCHIVE.md contributes its section rows, bound to the 
   assert.match(entry, /^phase: NOT RESOLVED - /m, 'ARCHIVE.md supplies no commit-to-phase edge and none is invented');
 });
 
-test('two runs over the gap arm are byte-identical', () => {
-  const { dir } = repoWithNoRecord({ close: 'v9.9.0' });
+test('two runs over the gap arm are byte-identical', (t) => {
+  const { dir } = repoWithNoRecord(t, { close: 'v9.9.0' });
   assert.equal(run(['f.txt', '--dir', dir]).stdout, run(['f.txt', '--dir', dir]).stdout);
 });
 
@@ -676,8 +680,9 @@ test('two runs over the gap arm are byte-identical', () => {
  * @param {string} slug
  * @returns {{dir: string, sha: string, slug: string}}
  */
-function repoWithTaskRecord(slug = 'a-fast-path-run') {
+function repoWithTaskRecord(t, slug = 'a-fast-path-run') {
   const dir = mkdtempSync(join(tmpdir(), 'cad-why-task-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'ignore', env: GIT_ENV });
   git('init', '-q', '-b', 'main');
   writeFileSync(join(dir, 'f.txt'), 'one\n');
@@ -699,8 +704,8 @@ function repoWithTaskRecord(slug = 'a-fast-path-run') {
   return { dir, sha, slug };
 }
 
-test('a commit only a task record names resolves at the seam, to the task and to no phase', () => {
-  const { dir, sha, slug } = repoWithTaskRecord();
+test('a commit only a task record names resolves at the seam, to the task and to no phase', (t) => {
+  const { dir, sha, slug } = repoWithTaskRecord(t);
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   assert.equal(env.ok, true);
   assert.deepEqual(env.warnings, []);
@@ -728,8 +733,8 @@ test('two runs over the tasks tier of this repository write byte-identical stdou
   assert.equal(a, b);
 });
 
-test('the INLINE arm writes no PLAN.md at all, and the declaring task is still named', () => {
-  const { dir, sha, slug } = repoWithTaskRecord('inline-only');
+test('the INLINE arm writes no PLAN.md at all, and the declaring task is still named', (t) => {
+  const { dir, sha, slug } = repoWithTaskRecord(t, 'inline-only');
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   const entry = entryFor(env.text, sha);
   assert.match(entry, new RegExp(`^phase: off-roadmap task ${slug} - `, 'm'));
@@ -751,8 +756,9 @@ test('the INLINE arm writes no PLAN.md at all, and the declaring task is still n
  * in is dropped by the default simplification.
  * @returns {{dir: string, merge: string, side: string}}
  */
-function repoWithSimplifiedMerge() {
+function repoWithSimplifiedMerge(t) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-why-simplified-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'ignore', env: GIT_ENV });
   const commitAt = (msg, iso) => execFileSync('git', ['-C', dir, 'commit', '-q', '-a', '-m', msg],
     { stdio: 'ignore', env: { ...GIT_ENV, GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso } });
@@ -778,8 +784,8 @@ function repoWithSimplifiedMerge() {
   return { dir, merge: head(), side };
 }
 
-test('the envelope names the merge the simplified walk dropped, and none of the commits it kept', () => {
-  const { dir, merge, side } = repoWithSimplifiedMerge();
+test('the envelope names the merge the simplified walk dropped, and none of the commits it kept', (t) => {
+  const { dir, merge, side } = repoWithSimplifiedMerge(t);
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   assert.equal(env.ok, true);
   assert.deepEqual(env.excluded, [{ sha: merge, parentCount: 2 }]);
@@ -788,20 +794,20 @@ test('the envelope names the merge the simplified walk dropped, and none of the 
   assert.ok(!chainShas.includes(merge), 'and the merge is exactly what the chain does not carry');
 });
 
-test('a chain the simplification excluded nothing from reports an EMPTY exclusion, never an absent one', () => {
-  const { dir } = repo();
+test('a chain the simplification excluded nothing from reports an EMPTY exclusion, never an absent one', (t) => {
+  const { dir } = repo(t);
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   assert.deepEqual(env.excluded, [], 'a linear history has nothing to exclude, and says so as an empty list');
 });
 
-test('the LINE arm runs no comparand at all - it carries its own simplification', () => {
-  const { dir } = repoWithSimplifiedMerge();
+test('the LINE arm runs no comparand at all - it carries its own simplification', (t) => {
+  const { dir } = repoWithSimplifiedMerge(t);
   const env = oneJsonLine(run(['f.txt:1', '--dir', dir]).stdout);
   assert.equal(env.ok, true);
   assert.equal(env.excluded, null, 'WHY-02 is scoped to the bare path, so the -L arm reports absence');
 });
 
-test('a failed comparand is not reachable through the shipped argv, so the guard is defensive', () => {
+test('a failed comparand is not reachable through the shipped argv, so the guard is defensive', (t) => {
   // The same disposition why-corpus.test.mjs states about the merge-shaped
   // prune record: the comparand runs only after the probe and the chain query
   // have already answered on this exact path, and `--full-history` adds no
@@ -809,7 +815,7 @@ test('a failed comparand is not reachable through the shipped argv, so the guard
   // fails the comparand alone. What is asserted is the contract the fail-open
   // arm guarantees whichever way it goes: `excluded` is an array or it is
   // absent, and the result is a chain either way, never a refusal.
-  const { dir } = repo();
+  const { dir } = repo(t);
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   assert.equal(env.result, 'chain');
   assert.ok(env.excluded === null || Array.isArray(env.excluded));
@@ -832,8 +838,8 @@ test('this repository: the three merges --full-history adds are named, and none 
   assert.ok(env.excluded.every((e) => !chainShas.has(e.sha)), 'and not one of them is a commit the chain already lists');
 });
 
-test("the seam's own text states the exclusion, so a reader relaying text verbatim sees it", () => {
-  const { dir, merge } = repoWithSimplifiedMerge();
+test("the seam's own text states the exclusion, so a reader relaying text verbatim sees it", (t) => {
+  const { dir, merge } = repoWithSimplifiedMerge(t);
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   assert.match(env.text, /^1 commit\(s\) also touched this path and are NOT listed above\./m);
   assert.ok(env.text.includes(merge.slice(0, 8)), 'the excluded merge is named in the text, not only in the envelope');
@@ -841,8 +847,8 @@ test("the seam's own text states the exclusion, so a reader relaying text verbat
   assert.match(env.text, /see them with: git log --full-history -- f\.txt$/m);
 });
 
-test('a hermetic chain with nothing excluded prints a text with no such block', () => {
-  const { dir } = repo();
+test('a hermetic chain with nothing excluded prints a text with no such block', (t) => {
+  const { dir } = repo(t);
   const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
   assert.ok(!env.text.includes('NOT listed above'), 'a chain with no gap must not state a non-event');
   assert.ok(!env.text.includes('--full-history'));
@@ -869,9 +875,10 @@ test('this repository: the exclusion reaches the rendered text with the count, t
   assert.match(env.text, /git log --full-history -- cadence-core\/bin\/lib\/release-decision\.mjs$/m);
 });
 
-test('a path whose log output is over 1 MiB gets its whole chain, not git-failed', () => {
+test('a path whose log output is over 1 MiB gets its whole chain, not git-failed', (t) => {
   // git fast-import writes the history in one process: 1,200 commits with long subjects pass git's 1 MiB default read buffer
   const dir = mkdtempSync(join(tmpdir(), 'cad-why-big-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   execFileSync('git', ['-C', dir, 'init', '-q', '-b', 'main'], { stdio: 'ignore', env: GIT_ENV });
   const n = 1200;
   const pad = 's'.repeat(900);

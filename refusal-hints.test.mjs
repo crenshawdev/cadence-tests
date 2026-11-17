@@ -9,7 +9,7 @@
 // that the exclusion register is READ as a parameter rather than compiled in.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { refusalHintIssues, refusalSites, REGISTER, CODES } from '../cadence-core/bin/lib/refusal-hints.mjs';
@@ -17,11 +17,14 @@ import { refusalHintIssues, refusalSites, REGISTER, CODES } from '../cadence-cor
 /**
  * A fixture root whose `cadence-core/bin` holds the given `{relative-path:
  * source}` files. Paths are `/`-spelled and may name a `lib/` child.
+ * Gone when test `t` ends.
+ * @param {import('node:test').TestContext} t
  * @param {Record<string, string>} files
  * @returns {string}
  */
-function binRoot(files) {
+function binRoot(t, files) {
   const root = mkdtempSync(join(tmpdir(), 'cad-refusal-hints-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const binDir = join(root, 'cadence-core', 'bin');
   mkdirSync(binDir, { recursive: true });
   for (const [rel, text] of Object.entries(files)) {
@@ -42,35 +45,35 @@ const HEAD = "// @ts-check\n// seam.mjs - a fixture seam.\n'use strict';\n";
 
 // --- the two spellings a refusal is written in --------------------------------
 
-test('a two-argument fail() is reported and a three-argument one is not', () => {
-  const root = binRoot({
+test('a two-argument fail() is reported and a three-argument one is not', (t) => {
+  const root = binRoot(t, {
     'seam.mjs': `${HEAD}if (!a) fail('no-input', 'nothing to read');\n`
       + "if (!b) fail('no-target', 'nothing to write', 'name a target with --to <path>');\n",
   });
   assert.deepEqual(detailsFor(root, 'seam.mjs'), ['line 4: no-input']);
 });
 
-test('an emit({ok:false, reason}) object literal is reported and a hinted one is not', () => {
-  const root = binRoot({
+test('an emit({ok:false, reason}) object literal is reported and a hinted one is not', (t) => {
+  const root = binRoot(t, {
     'seam.mjs': `${HEAD}emit({ ok: false, reason: 'no-input', detail: 'nothing to read' });\n`
       + "emit({ ok: false, reason: 'no-target', detail: 'x', hint: 'name a target' });\n",
   });
   assert.deepEqual(detailsFor(root, 'seam.mjs'), ['line 4: no-input']);
 });
 
-test('the conditional-spread hint spelling counts as hinted', () => {
+test('the conditional-spread hint spelling counts as hinted', (t) => {
   // `planning.mjs`'s own widened wrapper writes it this way: the object carries
   // no top-level `hint` property, so a property-name test alone would report
   // the one wrapper in the tree that already does the right thing.
-  const root = binRoot({
+  const root = binRoot(t, {
     'seam.mjs': `${HEAD}const fail = (reason, detail, hint) =>\n`
       + '  out({ ok: false, reason, detail, ...(hint ? { hint } : {}) });\n',
   });
   assert.deepEqual(detailsFor(root, 'seam.mjs'), []);
 });
 
-test('an emit({ok:true, ...}) is never reported', () => {
-  const root = binRoot({
+test('an emit({ok:true, ...}) is never reported', (t) => {
+  const root = binRoot(t, {
     'seam.mjs': `${HEAD}emit({ ok: true, reason: 'not-a-refusal', detail: 'a report' });\n`
       + 'emit({ ok: problems.length === 0, checked: "x", problems });\n',
   });
@@ -79,8 +82,8 @@ test('an emit({ok:true, ...}) is never reported', () => {
 
 // --- what the register excludes ----------------------------------------------
 
-test('a `usage` and an `internal` refusal are not reported', () => {
-  const root = binRoot({
+test('a `usage` and an `internal` refusal are not reported', (t) => {
+  const root = binRoot(t, {
     'seam.mjs': `${HEAD}if (!sub) fail('usage', 'subcommand: resolve [--dir <path>]');\n`
       + "catchArm(() => emit({ ok: false, reason: 'internal', detail: e.message }));\n"
       + "if (!c) fail('no-input', 'nothing to read');\n",
@@ -88,11 +91,11 @@ test('a `usage` and an `internal` refusal are not reported', () => {
   assert.deepEqual(detailsFor(root, 'seam.mjs'), ['line 6: no-input']);
 });
 
-test('a file the register excludes by name contributes nothing, hintless refusal and all', () => {
+test('a file the register excludes by name contributes nothing, hintless refusal and all', (t) => {
   const src = `${HEAD}fail('no-input', 'nothing to read');\n`;
   const excluded = REGISTER.files[0].file;
   assert.equal(typeof excluded, 'string');
-  const root = binRoot({ [excluded]: src, 'seam.mjs': src });
+  const root = binRoot(t, { [excluded]: src, 'seam.mjs': src });
   assert.deepEqual(detailsFor(root, excluded), []);
   assert.deepEqual(detailsFor(root, 'seam.mjs'), ['line 4: no-input']);
 });
@@ -112,8 +115,8 @@ test('every register row carries a one-line reason', () => {
 
 // --- AC6: the register is READ, not compiled in -------------------------------
 
-test('AC6: a substitute register excluding one more token shrinks the set by exactly that token\'s sites', () => {
-  const root = binRoot({
+test('AC6: a substitute register excluding one more token shrinks the set by exactly that token\'s sites', (t) => {
+  const root = binRoot(t, {
     'seam.mjs': `${HEAD}fail('no-input', 'nothing to read');\n`
       + "fail('write-failed', 'could not write');\n"
       + "fail('write-failed', 'could not write either');\n",
@@ -133,9 +136,9 @@ test('AC6: a substitute register excluding one more token shrinks the set by exa
   assert.equal(shipped.length - narrowed.length, 2);
 });
 
-test('AC6: a substitute register excluding one more FILE drops that file alone', () => {
+test('AC6: a substitute register excluding one more FILE drops that file alone', (t) => {
   const src = `${HEAD}fail('no-input', 'nothing to read');\n`;
-  const root = binRoot({ 'seam.mjs': src, 'lib/other.mjs': src });
+  const root = binRoot(t, { 'seam.mjs': src, 'lib/other.mjs': src });
   const substitute = {
     tokens: REGISTER.tokens,
     files: [...REGISTER.files, { file: 'lib/other.mjs', reason: 'the substitute register this test injects' }],
@@ -146,8 +149,8 @@ test('AC6: a substitute register excluding one more FILE drops that file alone',
 
 // --- D-08: comments are stripped, and the line numbers survive it -------------
 
-test('D-08: a refusal inside a // comment or a /** */ block is not reported', () => {
-  const root = binRoot({
+test('D-08: a refusal inside a // comment or a /** */ block is not reported', (t) => {
+  const root = binRoot(t, {
     'seam.mjs': `${HEAD}// A refusal in prose: fail('no-input', 'nothing to read');\n`
       + '/**\n'
       + " * The design record: emit({ ok: false, reason: 'no-target', detail: 'x' });\n"
@@ -157,7 +160,7 @@ test('D-08: a refusal inside a // comment or a /** */ block is not reported', ()
   assert.deepEqual(detailsFor(root, 'seam.mjs'), ['line 8: the-only-real-one']);
 });
 
-test('D-08: the reported line is the line in the ORIGINAL source, not the stripped one', () => {
+test('D-08: the reported line is the line in the ORIGINAL source, not the stripped one', (t) => {
   // The whole point of stripping with `skim`: a comment is replaced by its own
   // newlines, so line N of the scan is line N of the file. A stripper that
   // collapsed those lines reddens here rather than silently misdirecting every
@@ -166,16 +169,16 @@ test('D-08: the reported line is the line in the ORIGINAL source, not the stripp
     + '// whose only job is to sit between the file head\n'
     + '// and the call below it, so a collapsed line count\n'
     + '// shifts the answer by exactly four.\n';
-  const root = binRoot({ 'seam.mjs': `${HEAD}${comment}fail('no-input', 'nothing to read');\n` });
+  const root = binRoot(t, { 'seam.mjs': `${HEAD}${comment}fail('no-input', 'nothing to read');\n` });
   assert.deepEqual(detailsFor(root, 'seam.mjs'), ['line 8: no-input']);
 });
 
 // --- the reasons a shape rule could not read ----------------------------------
 
-test('a reason that is an EXPRESSION is reported, with the expression named in the detail', () => {
+test('a reason that is an EXPRESSION is reported, with the expression named in the detail', (t) => {
   // D-02 rejected the kebab-shape rule partly for missing exactly these, and
   // they are the refusals a user is most likely to hit.
-  const root = binRoot({
+  const root = binRoot(t, {
     'seam.mjs': `${HEAD}emit({ ok: false, reason: e.seam, detail: e.detail });\n`
       + 'emit({ ok: false, reason: decision.reason, detail: null });\n'
       + "fail(reason, 'from a variable');\n",
@@ -184,21 +187,21 @@ test('a reason that is an EXPRESSION is reported, with the expression named in t
     ['line 4: e.seam', 'line 5: decision.reason', 'line 6: reason']);
 });
 
-test('a site emitting ok:false with NO reason key is reported and its detail says so', () => {
+test('a site emitting ok:false with NO reason key is reported and its detail says so', (t) => {
   // `config.mjs` emits one such envelope, carrying only `file`, `checked` and
   // `errors`; the detail names the absence rather than inventing a token.
-  const root = binRoot({
+  const root = binRoot(t, {
     'seam.mjs': `${HEAD}return out({ ok: false, file, checked: 0,\n`
       + "  errors: [{ key: '(root)', error: 'top-level config must be a JSON object' }] });\n",
   });
   assert.deepEqual(detailsFor(root, 'seam.mjs'), ['line 4: (no reason key)']);
 });
 
-test('a call written inside a string or a regex character class is not a call', () => {
+test('a call written inside a string or a regex character class is not a call', (t) => {
   // The scan tracks the same three literal kinds `skim` does. Dropping regex
   // tracking alone lost 29 real `planning.mjs` refusals to a `/['"]/` that
   // opened a phantom string and swallowed the rest of the file.
-  const root = binRoot({
+  const root = binRoot(t, {
     'seam.mjs': `${HEAD}const doc = "call fail('no-input', 'x') to refuse";\n`
       + 'const quoted = /[\'"]/;\n'
       + "fail('the-only-real-one', 'a refusal a user can reach');\n",
@@ -206,8 +209,8 @@ test('a call written inside a string or a regex character class is not a call', 
   assert.deepEqual(detailsFor(root, 'seam.mjs'), ['line 6: the-only-real-one']);
 });
 
-test('a `function fail(...)` DECLARATION is a signature, not a site - its BODY still is', () => {
-  const root = binRoot({
+test('a `function fail(...)` DECLARATION is a signature, not a site - its BODY still is', (t) => {
+  const root = binRoot(t, {
     'seam.mjs': `${HEAD}function fail(reason, detail) {\n`
       + '  emit({ ok: false, reason, detail });\n'
       + '  throw DONE;\n'
@@ -216,8 +219,8 @@ test('a `function fail(...)` DECLARATION is a signature, not a site - its BODY s
   assert.deepEqual(detailsFor(root, 'seam.mjs'), ['line 5: reason']);
 });
 
-test('a method call reached through a dot is somebody else\'s emit', () => {
-  const root = binRoot({
+test('a method call reached through a dot is somebody else\'s emit', (t) => {
+  const root = binRoot(t, {
     'seam.mjs': `${HEAD}bus.emit({ ok: false, reason: 'not-ours', detail: 'x' });\n`
       + "self.fail('not-ours-either', 'x');\n",
   });
@@ -226,25 +229,26 @@ test('a method call reached through a dot is somebody else\'s emit', () => {
 
 // --- the walk -----------------------------------------------------------------
 
-test('a *.test.mjs under the fixture bin is not walked - a test may write any shape', () => {
-  const root = binRoot({
+test('a *.test.mjs under the fixture bin is not walked - a test may write any shape', (t) => {
+  const root = binRoot(t, {
     'seam.test.mjs': `${HEAD}fail('no-input', 'nothing to read');\n`,
   });
   assert.deepEqual(refusalHintIssues(root), []);
 });
 
-test('a lib/ child IS walked', () => {
-  const root = binRoot({ 'lib/helper.mjs': `${HEAD}fail('no-input', 'nothing to read');\n` });
+test('a lib/ child IS walked', (t) => {
+  const root = binRoot(t, { 'lib/helper.mjs': `${HEAD}fail('no-input', 'nothing to read');\n` });
   assert.deepEqual(detailsFor(root, 'lib/helper.mjs'), ['line 4: no-input']);
 });
 
-test('a non-.mjs file under bin is off the walk', () => {
-  const root = binRoot({ 'data.json': '{"reason":"no-input"}\n' });
+test('a non-.mjs file under bin is off the walk', (t) => {
+  const root = binRoot(t, { 'data.json': '{"reason":"no-input"}\n' });
   assert.deepEqual(refusalHintIssues(root), []);
 });
 
-test('an ABSENT cadence-core/bin reports nothing rather than throwing', () => {
+test('an ABSENT cadence-core/bin reports nothing rather than throwing', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'cad-refusal-hints-bare-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   assert.deepEqual(refusalHintIssues(root), []);
   assert.deepEqual(refusalSites(root), []);
 });
@@ -252,8 +256,8 @@ test('an ABSENT cadence-core/bin reports nothing rather than throwing', () => {
 test('an UNREADABLE cadence-core/bin reports nothing rather than throwing', {
   skip: typeof process.getuid === 'function' && process.getuid() === 0
     ? 'root bypasses mode bits' : false,
-}, () => {
-  const root = binRoot({ 'seam.mjs': `${HEAD}fail('no-input', 'nothing to read');\n` });
+}, (t) => {
+  const root = binRoot(t, { 'seam.mjs': `${HEAD}fail('no-input', 'nothing to read');\n` });
   const binDir = join(root, 'cadence-core', 'bin');
   chmodSync(binDir, 0o000);
   try {
@@ -265,8 +269,8 @@ test('an UNREADABLE cadence-core/bin reports nothing rather than throwing', {
 
 // --- the census AC2 reads -----------------------------------------------------
 
-test('refusalSites is the census refusalHintIssues is built on: hinted sites are counted, not filed', () => {
-  const root = binRoot({
+test('refusalSites is the census refusalHintIssues is built on: hinted sites are counted, not filed', (t) => {
+  const root = binRoot(t, {
     'seam.mjs': `${HEAD}fail('no-input', 'nothing to read');\n`
       + "fail('no-target', 'nothing to write', 'name a target with --to <path>');\n",
   });
@@ -278,8 +282,8 @@ test('refusalSites is the census refusalHintIssues is built on: hinted sites are
   assert.equal(refusalHintIssues(root).length, 1);
 });
 
-test('every issue carries the uniform {kind, file, detail} shape and the one code', () => {
-  const root = binRoot({ 'seam.mjs': `${HEAD}fail('no-input', 'nothing to read');\n` });
+test('every issue carries the uniform {kind, file, detail} shape and the one code', (t) => {
+  const root = binRoot(t, { 'seam.mjs': `${HEAD}fail('no-input', 'nothing to read');\n` });
   const issues = refusalHintIssues(root);
   assert.equal(issues.length, 1);
   assert.deepEqual(Object.keys(issues[0]).sort(), ['detail', 'file', 'kind']);

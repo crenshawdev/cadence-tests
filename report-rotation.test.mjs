@@ -10,14 +10,16 @@
 // with a picker that answers a name the caller is about to overwrite.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, existsSync, globSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, renameSync, existsSync, globSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, sep } from 'node:path';
 import { rotationTarget, isReportName } from '../cadence-core/bin/lib/report-rotation.mjs';
 
-/** A fresh `<plandir>/reports/` holding `files` (name -> contents). */
-function makeReports(files = {}) {
-  const dir = join(mkdtempSync(join(tmpdir(), 'cad-rotate-')), 'reports');
+/** A fresh `<plandir>/reports/` holding `files` (name -> contents); its root goes when test `t` ends. */
+function makeReports(t, files = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'cad-rotate-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = join(root, 'reports');
   mkdirSync(dir, { recursive: true });
   for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
   return dir;
@@ -31,14 +33,14 @@ function rotateThenWrite(dir, planKey, body) {
   return answer;
 }
 
-test('fixture state 1 - no report present: nothing to rotate', () => {
-  const dir = makeReports({});
+test('fixture state 1 - no report present: nothing to rotate', (t) => {
+  const dir = makeReports(t, {});
   assert.deepEqual(rotationTarget(1, readdirSync(dir)), { rotate: false });
 
   // And not because the directory is empty: a report for ANOTHER plan, and the
   // transient risk diff that lives in this same directory, are not this plan's
   // record and must not be mistaken for one.
-  const busy = makeReports({
+  const busy = makeReports(t, {
     'plan-2.md': 'other plan',
     'plan-1-risk-task-3.diff': 'staged diff',
     'plan-11.md': 'plan eleven, not plan one suffixed',
@@ -46,8 +48,8 @@ test('fixture state 1 - no report present: nothing to rotate', () => {
   assert.deepEqual(rotationTarget(1, readdirSync(busy)), { rotate: false });
 });
 
-test('fixture state 2 - one report present: rotates to the first free suffix', () => {
-  const dir = makeReports({ 'plan-1.md': 'run A' });
+test('fixture state 2 - one report present: rotates to the first free suffix', (t) => {
+  const dir = makeReports(t, { 'plan-1.md': 'run A' });
   const answer = rotationTarget(1, readdirSync(dir));
   assert.deepEqual(answer, { rotate: true, from: 'plan-1.md', to: 'plan-1.1.md' });
 
@@ -57,13 +59,13 @@ test('fixture state 2 - one report present: rotates to the first free suffix', (
 
   // A bare `PLAN.md` is plan 1; `PLAN-2.md` is plan 2, and its own report is
   // the one that rotates.
-  const two = makeReports({ 'plan-1.md': 'run A', 'plan-2.md': 'run A of plan 2' });
+  const two = makeReports(t, { 'plan-1.md': 'run A', 'plan-2.md': 'run A of plan 2' });
   assert.deepEqual(rotationTarget(2, readdirSync(two)),
     { rotate: true, from: 'plan-2.md', to: 'plan-2.1.md' });
 });
 
-test('fixture state 3 - several already rotated: takes the lowest free suffix', () => {
-  const dir = makeReports({
+test('fixture state 3 - several already rotated: takes the lowest free suffix', (t) => {
+  const dir = makeReports(t, {
     'plan-1.md': 'run D',
     'plan-1.1.md': 'run A',
     'plan-1.2.md': 'run B',
@@ -74,7 +76,7 @@ test('fixture state 3 - several already rotated: takes the lowest free suffix', 
 
   // A gap a hand-deleted report left is filled, not stepped over: the rule is
   // the lowest FREE suffix, which is total and needs no history.
-  const gapped = makeReports({
+  const gapped = makeReports(t, {
     'plan-1.md': 'run D',
     'plan-1.1.md': 'run A',
     'plan-1.3.md': 'run C',
@@ -84,7 +86,7 @@ test('fixture state 3 - several already rotated: takes the lowest free suffix', 
 
   // Two-digit suffixes sort as numbers, not as strings: with 1..9 taken the
   // answer is 10, and a picker comparing text would answer a taken name.
-  const many = makeReports(Object.fromEntries([
+  const many = makeReports(t, Object.fromEntries([
     ['plan-1.md', 'newest'],
     ...Array.from({ length: 9 }, (_, i) => [`plan-1.${i + 1}.md`, `run ${i}`]),
   ]));
@@ -92,8 +94,8 @@ test('fixture state 3 - several already rotated: takes the lowest free suffix', 
     { rotate: true, from: 'plan-1.md', to: 'plan-1.10.md' });
 });
 
-test('the rotate-twice round trip leaves three readable reports, the earliest byte-identical', () => {
-  const dir = makeReports({});
+test('the rotate-twice round trip leaves three readable reports, the earliest byte-identical', (t) => {
+  const dir = makeReports(t, {});
 
   // Run A writes the first report - nothing to rotate.
   assert.deepEqual(rotateThenWrite(dir, 1, 'RUN A\nPLAN COMPLETE\n'), { rotate: false });
@@ -142,10 +144,10 @@ test('a base report stored in another case is FOUND, not read as absent', () => 
     { rotate: false });
 });
 
-test('unreadable inputs throw rather than answering "nothing to rotate"', () => {
+test('unreadable inputs throw rather than answering "nothing to rotate"', (t) => {
   // Fail-open is the destructive arm: the caller acts on `rotate: false` by
   // writing over the file, so a malformed input must stop it, not license it.
-  const dir = makeReports({ 'plan-1.md': 'run A' });
+  const dir = makeReports(t, { 'plan-1.md': 'run A' });
   for (const bad of [0, -1, 1.5, '08', '', ' 1', null, undefined, '1; rm -rf /']) {
     assert.throws(() => rotationTarget(bad, readdirSync(dir)), TypeError,
       `plan number ${JSON.stringify(bad)} was accepted`);
@@ -158,7 +160,7 @@ test('unreadable inputs throw rather than answering "nothing to rotate"', () => 
 
 // --- AC6: the rotated report is still visible to the reader that lists reports
 
-test('AC6: both names rotation produces are matched by /cad-report\'s own glob', () => {
+test('AC6: both names rotation produces are matched by /cad-report\'s own glob', (t) => {
   // What makes rotation SAFE rather than merely non-destructive. The reader
   // that consumes per-task reports is `workflows/report.md`, which opens
   // `.planning/phases/<N>/reports/plan-*.md` ONLY when SUMMARY.md is absent -
@@ -170,6 +172,7 @@ test('AC6: both names rotation produces are matched by /cad-report\'s own glob',
   // /cad-report itself is deliberately NOT invoked: the workflow is prose an
   // agent runs, not a callable, so the test targets the glob it names.
   const root = mkdtempSync(join(tmpdir(), 'cad-ac6-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const phase = join(root, 'phases', '1');
   const reports = join(phase, 'reports');
   mkdirSync(reports, { recursive: true });
