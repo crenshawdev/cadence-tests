@@ -10,12 +10,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
-import { ensureRoadmap } from './planning.test.mjs';
+import { ensureRoadmap, scratch } from './planning.test.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PLANNING = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
@@ -90,9 +89,9 @@ const HEADINGS = ['What breaks', 'Why I should care', 'What triggers it', 'What 
 const ENTRY_KEYS = new Set(['voice', 'model', 'file', 'line', 'severity', 'claim', 'failure_scenario', 'ruling', 'convergent',
   'counter_evidence', 'fix_commit', 'fix_file', 'overridden', 'citation_missing', 'base_id', 'head_id']);
 
-/** A scratch repo with two commits, a phase 1 directory and an empty out directory for the seam. */
-function tree() {
-  const repo = mkdtempSync(join(tmpdir(), 'cad-wfr-'));
+/** A scratch repo with two commits, a phase 1 directory and an empty out directory for the seam, gone when `ctx`'s test ends. */
+function tree(ctx) {
+  const repo = scratch('cad-wfr-', ctx);
   const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim();
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');
   const dir = join(repo, '.planning');
@@ -144,9 +143,9 @@ const texts = (more = {}) => ({ what_breaks: 'It breaks.', why_care: 'A user los
   what_proves: 'Line 3.', what_uncertain: 'Supported by inspection.', recommendation: 'Fix it.', ...more });
 const emptyOut = (t) => readdirSync(t.out);
 
-test('workflow-run: proved, refuted, neither and a null checker map as stated and the null is listed apart', () => {
+test('workflow-run: proved, refuted, neither and a null checker map as stated and the null is listed apart', (ctx) => {
   // the fixture files as they are: a run file holding only the skeleton, and a journal whose fourth checker wrote no result
-  const t = tree();
+  const t = tree(ctx);
   const r = seam(t, JSON.stringify(SKELETON), undefined, JOURNAL);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(r.counts, { raised: 4, survived: 2, downgraded: 0, refuted: 1, unruled: 1 });
@@ -170,14 +169,14 @@ test('workflow-run: proved, refuted, neither and a null checker map as stated an
   assert.doesNotMatch(review.survivors[0].what_uncertain, /Suspected/);
   assert.equal(r.ready, false);
   // the same returns written by the tests' own split give the same payload and review input
-  const t2 = tree();
+  const t2 = tree(ctx);
   const split = seam(t2, FIXTURE);
   assert.deepEqual(readJson(split.payload), readJson(r.payload));
   assert.deepEqual(readJson(split.review_input), review);
 });
 
-test('workflow-run: a journal from before one checker per voice, labelled `checker <voice> <n>`, still rules its findings, the same as one checker\'s numbered rulings', () => {
-  const t = tree();
+test('workflow-run: a journal from before one checker per voice, labelled `checker <voice> <n>`, still rules its findings, the same as one checker\'s numbered rulings', (ctx) => {
+  const t = tree(ctx);
   const old = seam(t, JSON.stringify(SKELETON), undefined, JOURNAL);
   assert.equal(old.ok, true, JSON.stringify(old));
   assert.deepEqual(old.counts, { raised: 4, survived: 2, downgraded: 0, refuted: 1, unruled: 1 });
@@ -190,7 +189,7 @@ test('workflow-run: a journal from before one checker per voice, labelled `check
     { type: 'started', agentId: 'c', label: 'checker claude-subagent' },
     { type: 'result', agentId: 'c', result: { rulings } },
   ];
-  const t2 = tree();
+  const t2 = tree(ctx);
   const now = seam(t2, JSON.stringify(SKELETON), undefined, lines.map((l) => JSON.stringify(l)).join('\n'));
   assert.equal(now.ok, true, JSON.stringify(now));
   assert.deepEqual(now.counts, old.counts);
@@ -201,28 +200,28 @@ test('workflow-run: a journal from before one checker per voice, labelled `check
 
 // --- the journal: the findings and rulings are read from it and nowhere else (D-04) ---------------------------------
 
-test('workflow-run: findings left in the run file\'s result are not used, the journal\'s are, and an empty journal refuses', () => {
-  const t = tree();
+test('workflow-run: findings left in the run file\'s result are not used, the journal\'s are, and an empty journal refuses', (ctx) => {
+  const t = tree(ctx);
   const r = seam(t, JSON.stringify(FIXTURE), undefined, journalOf(runWith([finding('from the journal')], [verdict('proved')])));
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(r.counts, { raised: 1, survived: 1, downgraded: 0, refuted: 0, unruled: 0 });
   assert.deepEqual(readJson(r.payload).voices[0].rulings.map((x) => x.claim), ['from the journal']);
 
-  const t2 = tree();
+  const t2 = tree(ctx);
   const empty = seam(t2, JSON.stringify(FIXTURE), undefined, '');
   assert.deepEqual([empty.ok, empty.reason], [false, 'journal-unusable']);
   assert.match(empty.detail, /journal\.jsonl holds no result for "reviewer claude-subagent"/);
   assert.deepEqual(emptyOut(t2), []);
 });
 
-test('workflow-run: a missing journal, one over the cap and one with no result for a voice that ran each refuse, write no payload and still bill', () => {
+test('workflow-run: a missing journal, one over the cap and one with no result for a voice that ran each refuse, write no payload and still bill', (ctx) => {
   const cases = [
     ['missing', null, /journal\.jsonl cannot be read \(ENOENT\)/],
     ['over the cap', `${JOURNAL}${' '.repeat(8 * 1024 * 1024)}`, /journal\.jsonl is \d+ bytes, over the 8388608 byte cap/],
     ['no result', JOURNAL.split('\n').filter((l) => !l.includes('"reviewer claude-subagent"') && !l.includes('aa5c9b69246095aa9')).join('\n'), /holds no result for "reviewer claude-subagent"/],
   ];
   for (const [name, journal, detail] of cases) {
-    const t = tree();
+    const t = tree(ctx);
     const r = seam(t, JSON.stringify(SKELETON), undefined, journal);
     assert.deepEqual([r.ok, r.reason], [false, 'journal-unusable'], name);
     assert.match(r.detail, detail, name);
@@ -231,8 +230,8 @@ test('workflow-run: a missing journal, one over the cap and one with no result f
   }
 });
 
-test('workflow-run: with the local reviewer dead and the fallback run under its label, the findings are the fallback\'s', () => {
-  const t = tree();
+test('workflow-run: with the local reviewer dead and the fallback run under its label, the findings are the fallback\'s', (ctx) => {
+  const t = tree(ctx);
   const run = clone(SKELETON);
   run.result.voices = [
     { voice: 'claude-subagent', ran: false, reason: 'the reviewer returned nothing' },
@@ -255,8 +254,8 @@ test('workflow-run: with the local reviewer dead and the fallback run under its 
   assert.deepEqual(readJson(r.payload).voices[0].rulings.map((x) => x.claim), ['the fallback saw it']);
 });
 
-test('workflow-run: proved below the raised severity is downgraded and shown lower; proved above stands at the raised one', () => {
-  const t = tree();
+test('workflow-run: proved below the raised severity is downgraded and shown lower; proved above stands at the raised one', (ctx) => {
+  const t = tree(ctx);
   const run = runWith([finding('lower'), finding('higher', 'medium')], [verdict('proved', { severity: 'low' }), verdict('proved', { severity: 'blocker' })]);
   const r = seam(t, run);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -269,8 +268,8 @@ test('workflow-run: proved below the raised severity is downgraded and shown low
   assert.equal(adjudicate(t, settled.payload).ok, true);
 });
 
-test('workflow-run: a medium its checker proves high shows high and is listed as needing an answer', () => {
-  const t = tree();
+test('workflow-run: a medium its checker proves high shows high and is listed as needing an answer', (ctx) => {
+  const t = tree(ctx);
   const r = seam(t, runWith([finding('rerank', 'medium')], [verdict('proved', { severity: 'high' })]));
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(readJson(r.review_input).survivors.map((s) => s.severity), ['high']);
@@ -282,8 +281,8 @@ test('workflow-run: a medium its checker proves high shows high and is listed as
   assert.deepEqual(fixed.needs_answer, []);
 });
 
-test('workflow-run: a proved high needs an answer, and adjudication and unfixedFindings both refuse until it settles', () => {
-  const t = tree();
+test('workflow-run: a proved high needs an answer, and adjudication and unfixedFindings both refuse until it settles', (ctx) => {
+  const t = tree(ctx);
   const run = runWith([finding('one')], [verdict('proved')]);
   const r = seam(t, run);
   assert.deepEqual(r.needs_answer.map((n) => [n.voice, n.index, n.severity, n.suspected]), [['claude-subagent', 0, 'high', false]]);
@@ -298,8 +297,8 @@ test('workflow-run: a proved high needs an answer, and adjudication and unfixedF
   assert.equal(adjudicate(t, fixed.payload).ok, true);
 });
 
-test('workflow-run: a blocker its checker proves high still needs an answer, and a fix or an override re-ruled survived settles it', () => {
-  const t = tree();
+test('workflow-run: a blocker its checker proves high still needs an answer, and a fix or an override re-ruled survived settles it', (ctx) => {
+  const t = tree(ctx);
   const run = runWith([finding('one', 'blocker')], [verdict('proved', { severity: 'high' })]);
   const r = seam(t, run);
   assert.deepEqual(r.counts, { raised: 1, survived: 0, downgraded: 1, refuted: 0, unruled: 0 });
@@ -312,7 +311,7 @@ test('workflow-run: a blocker its checker proves high still needs an answer, and
   assert.deepEqual(fixed.needs_answer, []);
   assert.equal(adjudicate(t, fixed.payload).ok, true);
 
-  const t2 = tree();
+  const t2 = tree(ctx);
   const over = seam(t2, run, [{ voice: 'claude-subagent', index: 0, ruling: 'survived', overridden: true }]);
   assert.equal(over.ready, true, over.not_ready);
   assert.deepEqual(over.needs_answer, []);
@@ -322,19 +321,19 @@ test('workflow-run: a blocker its checker proves high still needs an answer, and
   assert.deepEqual([entry.ruling, entry.overridden], ['survived', true]);
 
   // a blocker proved only medium leaves the halting severities and asks for nothing
-  const low = seam(tree(), runWith([finding('two', 'blocker')], [verdict('proved', { severity: 'medium' })]));
+  const low = seam(tree(ctx), runWith([finding('two', 'blocker')], [verdict('proved', { severity: 'medium' })]));
   assert.deepEqual(low.needs_answer, []);
   assert.equal(low.ready, true, low.not_ready);
 });
 
-test('workflow-run: a fix_commit, overridden: true and a refuted ruling with counter_evidence each settle a high', () => {
+test('workflow-run: a fix_commit, overridden: true and a refuted ruling with counter_evidence each settle a high', (ctx) => {
   const run = runWith([finding('p'), finding('q'), finding('s')], [verdict('proved'), verdict('proved'), verdict('neither')]);
   const answers = [
     { voice: 'claude-subagent', index: 0, fix_commit: 'abc1234' },
     { voice: 'claude-subagent', index: 1, overridden: true },
     { voice: 'claude-subagent', index: 2, ruling: 'refuted', counter_evidence: { file: 'src/b.js', line: 4, note: 'The check ran and the bound holds.' } },
   ];
-  const t = tree();
+  const t = tree(ctx);
   const r = seam(t, run, answers);
   assert.equal(r.ready, true, r.not_ready);
   assert.deepEqual(r.counts, { raised: 3, survived: 2, downgraded: 0, refuted: 1, unruled: 0 });
@@ -347,27 +346,27 @@ test('workflow-run: a fix_commit, overridden: true and a refuted ruling with cou
   assert.equal(record.entries[1].overridden, true);
 
   // the same refuted answer with no counter_evidence is refused: the finding lands with the nulls and the record won't take it
-  const t2 = tree();
+  const t2 = tree(ctx);
   const bare = seam(t2, run, [...answers.slice(0, 2), { voice: 'claude-subagent', index: 2, ruling: 'refuted' }]);
   assert.equal(bare.ready, false);
   assert.match(bare.unruled[0].reason, /counter_evidence\.file/);
   assert.equal(adjudicate(t2, bare.payload).ok, false);
 });
 
-test('workflow-run: a fix_file answer reaches the payload and settles a high', () => {
-  const t = tree();
+test('workflow-run: a fix_file answer reaches the payload and settles a high', (ctx) => {
+  const t = tree(ctx);
   const run = runWith([finding('one')], [verdict('proved')]);
   const r = seam(t, run, [{ voice: 'claude-subagent', index: 0, fix_file: 'local.cfg' }]);
   assert.equal(r.ready, true, r.not_ready);
   assert.deepEqual(r.needs_answer, []);
   assert.equal(readJson(r.payload).voices[0].rulings[0].fix_file, 'local.cfg');
   assert.equal(adjudicate(t, r.payload).ok, true);
-  const bad = seam(tree(), run, [{ voice: 'claude-subagent', index: 0, fix_file: 7 }]);
+  const bad = seam(tree(ctx), run, [{ voice: 'claude-subagent', index: 0, fix_file: 7 }]);
   assert.match(bad.detail || bad.reason || JSON.stringify(bad), /fix_file must be text/);
 });
 
-test('workflow-run: a null is ruled in one round and settled in the next, and a later settlement replaces the earlier', () => {
-  const t = tree();
+test('workflow-run: a null is ruled in one round and settled in the next, and a later settlement replaces the earlier', (ctx) => {
+  const t = tree(ctx);
   const run = runWith([finding('lost')], [null]);
   const first = seam(t, run, [{ voice: 'claude-subagent', index: 0, ruling: 'survived', ...texts() }]);
   assert.equal(first.counts.unruled, 0);
@@ -386,8 +385,8 @@ test('workflow-run: a null is ruled in one round and settled in the next, and a 
   assert.deepEqual(readJson(third.answers).answers.length, 1);
 });
 
-test('workflow-run: a refuted with no counter_evidence, a neither with no next check and a blank heading are listed with the nulls', () => {
-  const t = tree();
+test('workflow-run: a refuted with no counter_evidence, a neither with no next check and a blank heading are listed with the nulls', (ctx) => {
+  const t = tree(ctx);
   const run = runWith([finding('r', 'medium'), finding('n', 'medium'), finding('b', 'medium')], [
     verdict('refuted'), verdict('neither', { what_proves: '  ' }), verdict('proved', { why_care: '   ' }),
   ]);
@@ -409,8 +408,8 @@ test('workflow-run: a refuted with no counter_evidence, a neither with no next c
   assert.equal(adjudicate(t, fixed.payload).ok, true);
 });
 
-test('workflow-run: the survivors file passes the review-file seam and yields six headings per survivor', () => {
-  const t = tree();
+test('workflow-run: the survivors file passes the review-file seam and yields six headings per survivor', (ctx) => {
+  const t = tree(ctx);
   const r = seam(t, FIXTURE, [
     { voice: 'claude-subagent', index: 3, ruling: 'survived', ...texts() },
   ]);
@@ -422,15 +421,15 @@ test('workflow-run: the survivors file passes the review-file seam and yields si
   for (const h of HEADINGS) assert.equal(text.split('\n').filter((l) => l === `### ${h}`).length, 3, h);
 });
 
-test('workflow-run: a voice that did not run is named and dropped, and one that all failed is a refusal', () => {
-  const t = tree();
+test('workflow-run: a voice that did not run is named and dropped, and one that all failed is a refusal', (ctx) => {
+  const t = tree(ctx);
   const run = clone(FIXTURE);
   run.result.voices.push({ voice: 'openai', ran: false, reason: 'no provider arm in this script yet', result: null, rulings: [] });
   const r = seam(t, run);
   assert.deepEqual(r.dropped, [{ voice: 'openai', reason: 'no provider arm in this script yet' }]);
   assert.deepEqual(r.voices, ['claude-subagent']);
 
-  const t2 = tree();
+  const t2 = tree(ctx);
   run.result.voices[0] = { voice: 'claude-subagent', ran: false, reason: 'the reviewer returned nothing', result: null, rulings: [] };
   const none = seam(t2, run);
   assert.equal(none.ok, false);
@@ -438,7 +437,7 @@ test('workflow-run: a voice that did not run is named and dropped, and one that 
   assert.deepEqual(emptyOut(t2), []);
 });
 
-test('workflow-run: each refusal gives its own reason and writes no payload or review input', () => {
+test('workflow-run: each refusal gives its own reason and writes no payload or review input', (ctx) => {
   const big = ' '.repeat(8 * 1024 * 1024 + 1);
   const cases = [
     ['run-unreadable', (t) => cli(t, ['workflow-run', '--phase', '1', '--run-file', join(t.repo, 'nope.json'), '--out-dir', t.out, '--payload-ref', 'a..b'])],
@@ -453,7 +452,7 @@ test('workflow-run: each refusal gives its own reason and writes no payload or r
     ['run-no-voice', (t) => seam(t, { ...clone(FIXTURE), result: { voices: [] } })],
   ];
   for (const [reason, go] of cases) {
-    const t = tree();
+    const t = tree(ctx);
     const r = go(t);
     assert.equal(r.ok, false, reason);
     assert.equal(r.reason, reason, JSON.stringify(r));
@@ -462,7 +461,7 @@ test('workflow-run: each refusal gives its own reason and writes no payload or r
   }
 });
 
-test('workflow-run: bad answers are refused naming what is wrong, and nothing is written', () => {
+test('workflow-run: bad answers are refused naming what is wrong, and nothing is written', (ctx) => {
   const run = runWith([finding('one', 'low')], [verdict('proved')]);
   for (const [answers, match] of [
     [[{ voice: 'claude-subagent', index: 0, ruling: 'fixed' }], /ruling must be one of/],
@@ -470,7 +469,7 @@ test('workflow-run: bad answers are refused naming what is wrong, and nothing is
     [[{ voice: 'claude-subagent', index: 0, overridden: 'yes' }], /overridden must be the boolean true/],
     [[{ index: 0 }], /voice must name/],
   ]) {
-    const t = tree();
+    const t = tree(ctx);
     const r = seam(t, run, answers);
     assert.equal(r.ok, false);
     assert.equal(r.reason, 'bad-answers');
@@ -479,8 +478,8 @@ test('workflow-run: bad answers are refused naming what is wrong, and nothing is
   }
 });
 
-test('workflow-run: flags it needs are refused at the door', () => {
-  const t = tree();
+test('workflow-run: flags it needs are refused at the door', (ctx) => {
+  const t = tree(ctx);
   const all = ['--phase', '1', '--run-file', 'x', '--out-dir', t.out, '--payload-ref', 'a..b'];
   const without = (flag) => { const i = all.indexOf(flag); return all.filter((_, j) => j !== i && j !== i + 1); };
   for (const flag of ['--phase', '--run-file', '--out-dir', '--payload-ref']) {
@@ -500,8 +499,8 @@ const render = (t) => cli(t, ['trace', 'render', '--phase', '1']);
 const rawEvents = (t) => cli(t, ['trace', 'render', '--phase', '1', '--events']).events;
 const rowsOf = (run) => run.workflowProgress.filter((r) => r.type === 'workflow_agent');
 
-test('workflow-run: three agents of three kinds, one not done, bill three brackets and leave nothing unpaired', () => {
-  const t = tree();
+test('workflow-run: three agents of three kinds, one not done, bill three brackets and leave nothing unpaired', (ctx) => {
+  const t = tree(ctx);
   const run = clone(FIXTURE);
   const [wrapper, reviewer, checker] = rowsOf(run);
   wrapper.state = 'progress';
@@ -535,8 +534,8 @@ test('workflow-run: three agents of three kinds, one not done, bill three bracke
   assert.equal(dispatches.find((e) => e.role === 'cad-reviewer').reviewer, 'claude-subagent');
 });
 
-test('workflow-run: a second call for the same run writes no second set, and a later answers round adds none either', () => {
-  const t = tree();
+test('workflow-run: a second call for the same run writes no second set, and a later answers round adds none either', (ctx) => {
+  const t = tree(ctx);
   assert.equal(seam(t, FIXTURE).brackets.written, 3);
   const before = rawEvents(t).length;
   const again = seam(t, FIXTURE, [{ voice: 'claude-subagent', index: 3, fix_commit: 'abc1234' }]);
@@ -545,8 +544,8 @@ test('workflow-run: a second call for the same run writes no second set, and a l
   assert.equal(render(t).brackets.length, 3);
 });
 
-test('workflow-run: an unreadable run file with the notice\'s totals bills exactly one bracket carrying them', () => {
-  const t = tree();
+test('workflow-run: an unreadable run file with the notice\'s totals bills exactly one bracket carrying them', (ctx) => {
+  const t = tree(ctx);
   const call = () => cli(t, ['workflow-run', '--phase', '1', '--run-file', join(t.repo, 'wf_gone.json'), '--out-dir', t.out,
     '--payload-ref', REF, '--notice-tokens', '54242', '--notice-turns', '11', '--notice-duration-ms', '6072']);
   const r = call();
@@ -563,7 +562,7 @@ test('workflow-run: an unreadable run file with the notice\'s totals bills exact
   assert.equal(render(t).brackets.length, 1);
 
   // a readable file with no agent rows takes the same arm, and no totals means a bracket that says it is unrecorded
-  const t2 = tree();
+  const t2 = tree(ctx);
   const empty = { ...clone(FIXTURE), workflowProgress: [] };
   const r2 = seam(t2, empty);
   assert.equal(r2.ok, true);
@@ -573,8 +572,8 @@ test('workflow-run: an unreadable run file with the notice\'s totals bills exact
   assert.deepEqual(b.roles['review-workflow'], { dispatches: 1, unrecorded: 1 });
 });
 
-test('workflow-run: a retry with the run file gone writes no notice bracket on top of agents already billed', () => {
-  const t = tree();
+test('workflow-run: a retry with the run file gone writes no notice bracket on top of agents already billed', (ctx) => {
+  const t = tree(ctx);
   assert.equal(seam(t, FIXTURE).brackets.written, 3);
   const r = cli(t, ['workflow-run', '--phase', '1', '--run-file', join(t.repo, 'wf_9d70aeab-5d0.json'), '--out-dir', t.out,
     '--payload-ref', REF, '--notice-tokens', '54242', '--notice-turns', '11', '--notice-duration-ms', '6072']);
@@ -584,8 +583,8 @@ test('workflow-run: a retry with the run file gone writes no notice bracket on t
   assert.ok(!rawEvents(t).some((e) => String(e.plan).endsWith('-notice')));
 });
 
-test('workflow-run: a killed run is refused and still bills every agent row, its unfinished one as a checkpoint', () => {
-  const t = tree();
+test('workflow-run: a killed run is refused and still bills every agent row, its unfinished one as a checkpoint', (ctx) => {
+  const t = tree(ctx);
   const rows = rowsOf(KILLED);
   assert.equal(rows.length, 7);
   const r = seam(t, KILLED);
@@ -607,8 +606,8 @@ test('workflow-run: a killed run is refused and still bills every agent row, its
   assert.equal(render(t).brackets.length, 7);
 });
 
-test('workflow-run: trace suggest and the window report run on that record and count the new labels unbudgeted', () => {
-  const t = tree();
+test('workflow-run: trace suggest and the window report run on that record and count the new labels unbudgeted', (ctx) => {
+  const t = tree(ctx);
   seam(t, FIXTURE);
   const suggest = cli(t, ['trace', 'suggest', '--phase', '1']);
   assert.equal(suggest.ok, true, JSON.stringify(suggest));
@@ -659,8 +658,8 @@ function splitCall(t, run, extra = []) {
   return cli(t, ['workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', t.out, '--payload-ref', REF, ...extra]);
 }
 
-test('workflow-run --plan-reads: each mapped plan\'s reviewer and checkers read its own path and input, and every other row the payload', () => {
-  const t = tree();
+test('workflow-run --plan-reads: each mapped plan\'s reviewer and checkers read its own path and input, and every other row the payload', (ctx) => {
+  const t = tree(ctx);
   const run = splitRun();
   const r = splitCall(t, run, ['--plan-reads', PLAN_READS]);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -679,8 +678,8 @@ test('workflow-run --plan-reads: each mapped plan\'s reviewer and checkers read 
   assert.equal([...reads.values()].filter((x) => x.includes(P2[1])).length, 3);
 });
 
-test('workflow-run --plan-reads: without it the same run bills every row the payload reference', () => {
-  const t = tree();
+test('workflow-run --plan-reads: without it the same run bills every row the payload reference', (ctx) => {
+  const t = tree(ctx);
   const run = splitRun();
   assert.equal(splitCall(t, run).brackets.written, 13);
   const reads = readsByLabel(t, run);
@@ -688,9 +687,9 @@ test('workflow-run --plan-reads: without it the same run bills every row the pay
   for (const [lbl, read] of reads) assert.deepEqual(read, [REF], lbl);
 });
 
-test('workflow-run --plan-reads: a malformed map is refused and nothing is written', () => {
+test('workflow-run --plan-reads: a malformed map is refused and nothing is written', (ctx) => {
   for (const bad of [null, '', 'x', '=a,b', '1=', '1=a,,b', '1=a,b;', '1=a,b;1=c,d']) {
-    const t = tree();
+    const t = tree(ctx);
     const r = splitCall(t, splitRun(), bad === null ? ['--plan-reads'] : ['--plan-reads', bad]);
     assert.equal(r.reason, 'bad-args', JSON.stringify(bad));
     assert.equal(existsSync(join(recordsDir(t.dir), 'trace.jsonl')), false, `${JSON.stringify(bad)} wrote no bracket`);
@@ -711,8 +710,8 @@ function providerRun(t, retyped, env, verdicts, extra = {}) {
 const mine = (claim) => finding(claim, 'medium');
 const openaiRulings = (r) => readJson(r.payload).voices.find((v) => v.voice === 'openai').rulings;
 
-test('workflow-run: a retyped claim one character off loses to the envelope, lands unruled, and the record stores the envelope\'s claim once answered', () => {
-  const t = tree();
+test('workflow-run: a retyped claim one character off loses to the envelope, lands unruled, and the record stores the envelope\'s claim once answered', (ctx) => {
+  const t = tree(ctx);
   const real = mine('the bound is off by one');
   const off = { ...real, claim: 'the bound is off by onE' };
   const run = providerRun(t, [off, mine('second')], { ok: true, findings: [real, mine('second')] }, [verdict('proved', { severity: 'medium' }), verdict('proved', { severity: 'medium' })]);
@@ -733,8 +732,8 @@ test('workflow-run: a retyped claim one character off loses to the envelope, lan
   assert.equal(record.entries.find((e) => e.voice === 'openai' && e.claim.startsWith('the bound')).claim, 'the bound is off by one');
 });
 
-test('workflow-run: a finding the agent left out lands unruled, and a retyped one the envelope lacks is dropped and named', () => {
-  const t = tree();
+test('workflow-run: a finding the agent left out lands unruled, and a retyped one the envelope lacks is dropped and named', (ctx) => {
+  const t = tree(ctx);
   const run = providerRun(t, [mine('kept'), mine('invented')], { ok: true, findings: [mine('kept'), mine('left out')] },
     [verdict('proved', { severity: 'medium' }), verdict('proved', { severity: 'medium' })]);
   const r = seam(t, run);
@@ -745,9 +744,9 @@ test('workflow-run: a finding the agent left out lands unruled, and a retyped on
   assert.match(r.notes[0], /openai: the agent returned a finding the provider's own output does not hold, so it was dropped \(src\/a\.js:3\)/);
 });
 
-test('workflow-run: a missing or unreadable envelope uses the agent\'s return and says so; redactions and warnings reach the envelope', () => {
+test('workflow-run: a missing or unreadable envelope uses the agent\'s return and says so; redactions and warnings reach the envelope', (ctx) => {
   for (const env of [null, '{ torn', JSON.stringify({ ok: true, findings: 'x' })]) {
-    const t = tree();
+    const t = tree(ctx);
     const run = providerRun(t, [mine('only')], env, [verdict('proved', { severity: 'medium' })], { redactions: 3, warnings: ['key file is group-readable'] });
     const r = seam(t, run);
     assert.equal(r.ok, true, JSON.stringify(r));
@@ -755,13 +754,13 @@ test('workflow-run: a missing or unreadable envelope uses the agent\'s return an
     assert.deepEqual(r.providers, [{ voice: 'openai', source: 'agent-return', redactions: 3, warnings: ['key file is group-readable'] }]);
     assert.match(r.notes[0], /openai: no readable envelope at .*openai\.envelope\.json, so the agent's own return was used/);
   }
-  const t = tree();
+  const t = tree(ctx);
   const run = providerRun(t, [mine('only')], { ok: true, findings: [mine('only')], redactions: 2, warnings: ['from disk'] }, [verdict('proved', { severity: 'medium' })], { redactions: 9 });
   assert.deepEqual(seam(t, run).providers, [{ voice: 'openai', source: 'envelope', redactions: 2, warnings: ['from disk'] }], 'the file\'s figures win');
 });
 
-test('workflow-run: an envelope that says ok:false drops the voice whatever the agent claimed', () => {
-  const t = tree();
+test('workflow-run: an envelope that says ok:false drops the voice whatever the agent claimed', (ctx) => {
+  const t = tree(ctx);
   const run = providerRun(t, [mine('claimed')], { ok: false, reason: 'transport' }, [verdict('proved', { severity: 'medium' })]);
   const r = seam(t, run);
   assert.deepEqual(r.voices, ['claude-subagent']);
@@ -769,8 +768,8 @@ test('workflow-run: an envelope that says ok:false drops the voice whatever the 
   assert.deepEqual(r.counts, { raised: 1, survived: 1, downgraded: 0, refuted: 0, unruled: 0 });
 });
 
-test('workflow-run: a voice whose wrapper returned nothing but whose envelope holds a high finding lands it unruled, and the review is not clean', () => {
-  const t = tree();
+test('workflow-run: a voice whose wrapper returned nothing but whose envelope holds a high finding lands it unruled, and the review is not clean', (ctx) => {
+  const t = tree(ctx);
   const run = runWith([], []);
   const high = finding('saved before the wrapper died', 'high');
   const env = join(t.repo, 'openai.envelope.json');
@@ -792,9 +791,9 @@ test('workflow-run: a voice whose wrapper returned nothing but whose envelope ho
   assert.equal(answered.needs_answer.length, 0);
 });
 
-test('workflow-run: a voice that did not run keeps today\'s named drop when its envelope is missing, torn or ok:false', () => {
+test('workflow-run: a voice that did not run keeps today\'s named drop when its envelope is missing, torn or ok:false', (ctx) => {
   for (const env of [null, '{ torn', { ok: false, reason: 'transport' }, { ok: true, findings: 'x' }]) {
-    const t = tree();
+    const t = tree(ctx);
     const run = runWith([finding('local one', 'medium')], [verdict('proved', { severity: 'medium' })]);
     const file = join(t.repo, 'openai.envelope.json');
     if (env !== null) writeFileSync(file, typeof env === 'string' ? env : JSON.stringify(env));
@@ -809,9 +808,9 @@ test('workflow-run: a voice that did not run keeps today\'s named drop when its 
 
 // --- Plan 4's three confirmed defects ----------------------------------------------------------------------------
 
-test('workflow-run: a finding whose severity is not one of the four is refused run-bad-result, never a crash', () => {
+test('workflow-run: a finding whose severity is not one of the four is refused run-bad-result, never a crash', (ctx) => {
   for (const severity of [{ toString: null }, 'critical', 3, null]) {
-    const t = tree();
+    const t = tree(ctx);
     const run = runWith([{ ...finding('x'), severity }], [verdict('proved')]);
     const r = seam(t, run);
     assert.equal(r.ok, false, JSON.stringify(severity));
@@ -820,15 +819,15 @@ test('workflow-run: a finding whose severity is not one of the four is refused r
     assert.deepEqual(emptyOut(t), []);
   }
   // the same door guards an envelope's findings: one with a bad severity makes the envelope unusable, not the call a crash
-  const t = tree();
+  const t = tree(ctx);
   const run = providerRun(t, [mine('only')], { ok: true, findings: [{ ...mine('only'), severity: { toString: null } }] }, [verdict('proved', { severity: 'medium' })]);
   const r = seam(t, run);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.providers[0].source, 'agent-return');
 });
 
-test('workflow-run: a retry after a dispatch landed and its terminal did not writes only that terminal', () => {
-  const t = tree();
+test('workflow-run: a retry after a dispatch landed and its terminal did not writes only that terminal', (ctx) => {
+  const t = tree(ctx);
   assert.equal(seam(t, FIXTURE).brackets.written, 3);
   // lose one worker's terminal, the way a crash between the two appends would
   const file = join(recordsDir(t.dir), 'trace.jsonl');
@@ -845,8 +844,8 @@ test('workflow-run: a retry after a dispatch landed and its terminal did not wri
   assert.equal(rawEvents(t).filter((e) => e.family === 'lifecycle' && e.event === 'dispatch').length, 3, 'no second dispatch');
 });
 
-test('workflow-run: once the notice\'s totals are on the record, a retry with a readable file bills no agents on top', () => {
-  const t = tree();
+test('workflow-run: once the notice\'s totals are on the record, a retry with a readable file bills no agents on top', (ctx) => {
+  const t = tree(ctx);
   const { runFile } = hostPaths(t, 'wf_9d70aeab-5d0');
   const args = ['workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', t.out, '--payload-ref', REF, '--notice-tokens', '54242', '--notice-turns', '11', '--notice-duration-ms', '6072'];
   assert.equal(cli(t, args).reason, 'run-unreadable');
@@ -864,9 +863,9 @@ test('workflow-run: once the notice\'s totals are on the record, a retry with a 
 
 // --- the analyzer arm is gone ---------------------------------------------------------------------------------------------
 
-test('workflow-run: a run holding the analyzer\'s result shape is refused run-bad-result even with --analyzer passed, and writes no payload', () => {
+test('workflow-run: a run holding the analyzer\'s result shape is refused run-bad-result even with --analyzer passed, and writes no payload', (ctx) => {
   // the contract never refuses an undeclared flag at runtime, so the review arm has to be the one that says no
-  const t = tree();
+  const t = tree(ctx);
   const run = clone(FIXTURE);
   run.workflowName = 'analyzer';
   run.result = { report: '## Assumptions\n\nNone.\n', nulls: [] };
@@ -880,8 +879,8 @@ test('workflow-run: a run holding the analyzer\'s result shape is refused run-ba
 
 // --- the code map has no arm here (Phase 3, D-16): `codemap write` reads its runs --------------------------------------------
 
-test('workflow-run: a code map run is refused run-bad-result and bills its agents like any other run', () => {
-  const t = tree();
+test('workflow-run: a code map run is refused run-bad-result and bills its agents like any other run', (ctx) => {
+  const t = tree(ctx);
   const run = clone(FIXTURE);
   run.workflowName = 'code-map';
   run.result = { modules: [{ name: 'src', built_from: {}, entry: null }] };
@@ -894,8 +893,8 @@ test('workflow-run: a code map run is refused run-bad-result and bills its agent
 
 // --- two runs of one trigger in one phase keep their records apart (D-02) ---------------------------------
 
-test('workflow-run: two overlapping runs of one trigger keep scratch files, brackets, records and review files apart', () => {
-  const t = tree();
+test('workflow-run: two overlapping runs of one trigger keep scratch files, brackets, records and review files apart', (ctx) => {
+  const t = tree(ctx);
   const out2 = join(t.repo, 'scratch-2'); mkdirSync(out2);
   // the same agent ids in both runs, so only the run id in the bracket key tells their brackets apart
   const mk = (runId, claim, extra) => {
@@ -985,8 +984,8 @@ function dispatchPlan(t, plan) {
 const lifecycle = (t) => rawEvents(t).filter((e) => e.family === 'lifecycle');
 const closesOf = (t) => lifecycle(t).filter((e) => e.event !== 'dispatch');
 
-test('workflow-run: a wave bills one close per executor under its plan number with its own figures, and writes no dispatch', () => {
-  const t = tree();
+test('workflow-run: a wave bills one close per executor under its plan number with its own figures, and writes no dispatch', (ctx) => {
+  const t = tree(ctx);
   dispatchPlan(t, 1); dispatchPlan(t, 2);
   const run = waveRun();
   run.result.plans[1].digest = completeDigest({ tasks: '1 of 1' });
@@ -1005,8 +1004,8 @@ test('workflow-run: a wave bills one close per executor under its plan number wi
   assert.deepEqual(out.roles['cad-executor'], { dispatches: 2, tokens: 3014, turns: 11 + 21 });
 });
 
-test('workflow-run: a checkpoint digest closes as a checkpoint naming its type, and a replay closes as a return with the replay flag', () => {
-  const t = tree();
+test('workflow-run: a checkpoint digest closes as a checkpoint naming its type, and a replay closes as a return with the replay flag', (ctx) => {
+  const t = tree(ctx);
   dispatchPlan(t, 1); dispatchPlan(t, 2);
   const run = waveRun();
   run.result.plans[0].digest = completeDigest({ status: 'PLAN PARTIAL', checkpoint: 'structural', current_task: '2 - x', need: 'a decision' });
@@ -1019,8 +1018,8 @@ test('workflow-run: a checkpoint digest closes as a checkpoint naming its type, 
   assert.equal(closesOf(t).filter((e) => e.event === 'return' && !e.replay).length, 0, 'a plain return carries no replay flag');
 });
 
-test('workflow-run: a row that is not done, and a plan whose slot is null, close as checkpoints naming the state', () => {
-  const t = tree();
+test('workflow-run: a row that is not done, and a plan whose slot is null, close as checkpoints naming the state', (ctx) => {
+  const t = tree(ctx);
   dispatchPlan(t, 1); dispatchPlan(t, 2); dispatchPlan(t, 3);
   const run = waveRun();
   run.result.plans = [{ plan: 1, digest: completeDigest() }, { plan: 2, digest: null }, { plan: 3, digest: completeDigest() }];
@@ -1032,8 +1031,8 @@ test('workflow-run: a row that is not done, and a plan whose slot is null, close
   assert.match(two.detail, /null/);
 });
 
-test('workflow-run: a second call for the same wave writes nothing, but a new dispatch of plan 1 and a new run bill plan 1 again', () => {
-  const t = tree();
+test('workflow-run: a second call for the same wave writes nothing, but a new dispatch of plan 1 and a new run bill plan 1 again', (ctx) => {
+  const t = tree(ctx);
   dispatchPlan(t, 1); dispatchPlan(t, 2);
   const first = seam(t, waveRun());
   assert.deepEqual([first.brackets.source, first.brackets.written, first.brackets.already], ['run-file', 2, 0]);
@@ -1057,8 +1056,8 @@ test('workflow-run: a second call for the same wave writes nothing, but a new di
   assert.deepEqual(closesOf(t).filter((e) => e.agent_id === 'agent-second-1').map((e) => [e.plan, e.tokens]), [['1', 9999]]);
 });
 
-test('workflow-run: a row with no agent id still bills once, and a stray unlabelled row bills as an agent of the run', () => {
-  const t = tree();
+test('workflow-run: a row with no agent id still bills once, and a stray unlabelled row bills as an agent of the run', (ctx) => {
+  const t = tree(ctx);
   dispatchPlan(t, 1);
   const run = waveRun();
   run.result.plans = [{ plan: 1, digest: completeDigest() }];
@@ -1072,8 +1071,8 @@ test('workflow-run: a row with no agent id still bills once, and a stray unlabel
   assert.ok(lifecycle(t).some((e) => e.plan === 'wf_wave-0001-stray-1'), 'the stray row keeps the run-keyed worker');
 });
 
-test('workflow-run: risk-check status for plan 1 accepts its record only once plan 2, which the run also closed, has a skip', () => {
-  const t = tree();
+test('workflow-run: risk-check status for plan 1 accepts its record only once plan 2, which the run also closed, has a skip', (ctx) => {
+  const t = tree(ctx);
   dispatchPlan(t, 1); dispatchPlan(t, 2);
   seam(t, waveRun());
   const ran = cli(t, ['risk-check', 'run', '--phase', '1', '--plan', '1', '--base', t.base, '--head', t.head, '--surfaces', 'auth']);
@@ -1089,8 +1088,8 @@ test('workflow-run: risk-check status for plan 1 accepts its record only once pl
   assert.equal(withSkip.ok, true, JSON.stringify(withSkip));
 });
 
-test('workflow-run: a readable wave result with no agent rows bills one notice bracket under cad-executor', () => {
-  const t = tree();
+test('workflow-run: a readable wave result with no agent rows bills one notice bracket under cad-executor', (ctx) => {
+  const t = tree(ctx);
   const r = seam(t, waveRun({ workflowProgress: [] }));
   assert.deepEqual([r.brackets.source, r.brackets.written], ['notice-totals', 1]);
   const out = render(t);
@@ -1099,8 +1098,8 @@ test('workflow-run: a readable wave result with no agent rows bills one notice b
   assert.equal(rawEvents(t).find((e) => e.event === 'dispatch').plan, 'wf_wave-0001-notice');
 });
 
-test('workflow-run: a wave answers ok with each plan\'s outcome in the script\'s order, a dead slot kept as null, and writes no payload', () => {
-  const t = tree();
+test('workflow-run: a wave answers ok with each plan\'s outcome in the script\'s order, a dead slot kept as null, and writes no payload', (ctx) => {
+  const t = tree(ctx);
   const run = waveRun({ workflowProgress: [execRow(1), execRow(2), execRow(3)] });
   const cp = completeDigest({ status: 'PLAN PARTIAL', checkpoint: 'decision', current_task: '1 - x', need: 'a call' });
   run.result.plans = [{ plan: 2, digest: cp }, { plan: 1, digest: completeDigest() }, { plan: 3, digest: null }];
@@ -1113,8 +1112,8 @@ test('workflow-run: a wave answers ok with each plan\'s outcome in the script\'s
   for (const k of ['payload', 'review_input', 'answers', 'counts']) assert.equal(k in r, false, k);
 });
 
-test('workflow-run: a row the host restarted is named, and a row with no attempt key or attempt 1 is not', () => {
-  const t = tree();
+test('workflow-run: a row the host restarted is named, and a row with no attempt key or attempt 1 is not', (ctx) => {
+  const t = tree(ctx);
   const noKey = execRow(3); delete noKey.attempt;
   const run = waveRun({ workflowProgress: [execRow(1, { attempt: 2 }), execRow(2), noKey] });
   run.result.plans.push({ plan: 3, digest: completeDigest() });
@@ -1123,8 +1122,8 @@ test('workflow-run: a row the host restarted is named, and a row with no attempt
   assert.deepEqual(r.restarted, [{ plan: '1', agent_id: 'agent-plan-1', attempt: 2 }]);
 });
 
-test('workflow-run: a wave whose result lacks its plan list is refused with its own reason, and its executors are still billed', () => {
-  const t = tree();
+test('workflow-run: a wave whose result lacks its plan list is refused with its own reason, and its executors are still billed', (ctx) => {
+  const t = tree(ctx);
   dispatchPlan(t, 1); dispatchPlan(t, 2);
   for (const result of [{}, { plans: 'x' }, { plans: [{ plan: 1, digest: 'text' }] }, { plans: [{ digest: null }] },
     { plans: [{ plan: 1, digest: null }, { plan: '1', digest: null }] }]) {
@@ -1151,7 +1150,7 @@ function waveCall(t, run, { plans = '1,2', notice = [], file = 'wf_wave-0001.jso
   return cli(t, ['workflow-run', '--phase', '1', '--run-file', runFile, '--out-dir', t.out, '--payload-ref', `${t.base}..${t.head}`, '--plans', plans, ...notice]);
 }
 /** A wave of two dispatched plans. */
-function waveTree() { const t = tree(); dispatchPlan(t, 1); dispatchPlan(t, 2); return t; }
+function waveTree(ctx) { const t = tree(ctx); dispatchPlan(t, 1); dispatchPlan(t, 2); return t; }
 /** The trace has no open dispatch and no worker key a plan does not own, and risk-check status takes plan 1's good record. */
 function assertGateClean(t, plan = '1') {
   assert.deepEqual(render(t).unpaired, []);
@@ -1168,8 +1167,8 @@ function assertGateClean(t, plan = '1') {
 }
 const cadTokens = (t) => render(t).roles['cad-executor'].tokens;
 
-test('workflow-run --plans: a plan with no agent row closes as a checkpoint under its own key, saying why, and the other plan bills from its row', () => {
-  const t = waveTree();
+test('workflow-run --plans: a plan with no agent row closes as a checkpoint under its own key, saying why, and the other plan bills from its row', (ctx) => {
+  const t = waveTree(ctx);
   const r = waveCall(t, waveRun({ workflowProgress: [execRow(1)] }));
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual([r.brackets.source, r.brackets.written], ['run-file', 2]);
@@ -1183,8 +1182,8 @@ test('workflow-run --plans: a plan with no agent row closes as a checkpoint unde
   assert.deepEqual([again.brackets.written, again.brackets.already], [0, 2]);
 });
 
-test('workflow-run --plans: a wave with no agent rows bills the notice\'s totals as cad-executor on the first plan, closes the rest, and writes no -notice key', () => {
-  const t = waveTree();
+test('workflow-run --plans: a wave with no agent rows bills the notice\'s totals as cad-executor on the first plan, closes the rest, and writes no -notice key', (ctx) => {
+  const t = waveTree(ctx);
   const r = waveCall(t, waveRun({ workflowProgress: [] }), { notice: NOTICE });
   assert.deepEqual([r.ok, r.brackets.source, r.brackets.written], [true, 'notice-totals', 2]);
   const [one, two] = closesOf(t);
@@ -1198,9 +1197,9 @@ test('workflow-run --plans: a wave with no agent rows bills the notice\'s totals
   assertGateClean(t);
 });
 
-test('workflow-run --plans: an unreadable or non-JSON run file is still a wave, billed as cad-executor and closed per plan, then refused as a run file', () => {
+test('workflow-run --plans: an unreadable or non-JSON run file is still a wave, billed as cad-executor and closed per plan, then refused as a run file', (ctx) => {
   for (const [run, file, reason] of [[null, GONE, 'run-unreadable'], ['not json {', 'wf_wave-0001.json', 'run-not-json']]) {
-    const t = waveTree();
+    const t = waveTree(ctx);
     const r = waveCall(t, run, { notice: NOTICE, file });
     assert.equal(r.ok, false, JSON.stringify(r));
     assert.equal(r.reason, reason);
@@ -1213,8 +1212,8 @@ test('workflow-run --plans: an unreadable or non-JSON run file is still a wave, 
   }
 });
 
-test('workflow-run --plans: the script\'s string result is a wave that started no executor, not a bad review', () => {
-  const t = waveTree();
+test('workflow-run --plans: the script\'s string result is a wave that started no executor, not a bad review', (ctx) => {
+  const t = waveTree(ctx);
   const message = 'execute-wave runs one executor per plan for /cad-execute. It needs args and started no agent.';
   const r = waveCall(t, waveRun({ workflowProgress: [], result: message }), { notice: NOTICE });
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -1227,8 +1226,8 @@ test('workflow-run --plans: the script\'s string result is a wave that started n
   assertGateClean(t);
 });
 
-test('workflow-run --plans: the rows and then the notice\'s totals on a retry bill the wave once', () => {
-  const t = waveTree();
+test('workflow-run --plans: the rows and then the notice\'s totals on a retry bill the wave once', (ctx) => {
+  const t = waveTree(ctx);
   assert.equal(waveCall(t, waveRun()).brackets.written, 2);
   const retry = waveCall(t, null, { notice: NOTICE, file: GONE });
   assert.deepEqual([retry.brackets.written, retry.brackets.already], [0, 2]);
@@ -1237,8 +1236,8 @@ test('workflow-run --plans: the rows and then the notice\'s totals on a retry bi
   assertGateClean(t);
 });
 
-test('workflow-run --plans: the notice\'s totals and then the rows on a retry bill the wave once', () => {
-  const t = waveTree();
+test('workflow-run --plans: the notice\'s totals and then the rows on a retry bill the wave once', (ctx) => {
+  const t = waveTree(ctx);
   assert.equal(waveCall(t, null, { notice: NOTICE, file: GONE }).brackets.written, 2);
   const retry = waveCall(t, waveRun());
   assert.deepEqual([retry.brackets.written, retry.brackets.already], [0, 2]);
@@ -1247,8 +1246,8 @@ test('workflow-run --plans: the notice\'s totals and then the rows on a retry bi
   assertGateClean(t);
 });
 
-test('workflow-run --plans: a later run of the same plan bills again, and a bad plan list is refused before anything is written', () => {
-  const t = waveTree();
+test('workflow-run --plans: a later run of the same plan bills again, and a bad plan list is refused before anything is written', (ctx) => {
+  const t = waveTree(ctx);
   waveCall(t, waveRun());
   dispatchPlan(t, 1);
   const second = waveRun({ runId: 'wf_wave-0002', workflowProgress: [execRow(1, { agentId: 'agent-second-1', tokens: 9999 })] });

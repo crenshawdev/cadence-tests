@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  readFileSync, writeFileSync, mkdtempSync, mkdirSync, readdirSync,
+  readFileSync, writeFileSync, mkdtempSync, mkdirSync, readdirSync, rmSync,
   symlinkSync, lstatSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,8 +31,12 @@ import { atomicWrite } from '../cadence-core/bin/lib/planning-store.mjs';
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const STORE = join(HERE, 'lib', 'planning-store.mjs');
 
-/** A fresh scratch directory - atomicWrite does real I/O, so it needs one. */
-const scratch = () => mkdtempSync(join(tmpdir(), 'cad-atomic-'));
+/** A fresh scratch directory - atomicWrite does real I/O, so it needs one - gone when test `t` ends. */
+const scratch = (t, prefix = 'cad-atomic-') => {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+};
 
 /** Temp-file leftovers beside `file`, by the `<basename>.*.tmp` shape. */
 const strays = (file) => readdirSync(dirname(file))
@@ -1968,8 +1972,8 @@ test('traceability: a fenced `## ` inside the section does not end it', () => {
 
 // --- atomicWrite: the temp path is this call's alone (D-05) ------------------
 
-test('atomicWrite: a DIRECTORY squatting <file>.tmp does not stop the write', () => {
-  const dir = scratch();
+test('atomicWrite: a DIRECTORY squatting <file>.tmp does not stop the write', (t) => {
+  const dir = scratch(t);
   const file = join(dir, 'ROADMAP.md');
   mkdirSync(`${file}.tmp`);            // the old fixed name, now unused
   atomicWrite(file, '# Roadmap\n');
@@ -1977,8 +1981,8 @@ test('atomicWrite: a DIRECTORY squatting <file>.tmp does not stop the write', ()
   assert.deepEqual(strays(file), ['ROADMAP.md.tmp']);   // the squatter, untouched
 });
 
-test('atomicWrite: two concurrent writers of one target land one payload whole', async () => {
-  const dir = scratch();
+test('atomicWrite: two concurrent writers of one target land one payload whole', async (t) => {
+  const dir = scratch(t);
   const file = join(dir, 'STATE.md');
   const child = join(dir, 'write.mjs');
   writeFileSync(child,
@@ -2001,10 +2005,10 @@ test('atomicWrite: two concurrent writers of one target land one payload whole',
 
 // --- atomicWrite: a symlink at the temp path is refused, never followed ------
 
-test('atomicWrite: a symlink at every candidate temp path is refused, nothing written through it', () => {
-  const outside = join(mkdtempSync(join(tmpdir(), 'cad-outside-')), 'secret.txt');
+test('atomicWrite: a symlink at every candidate temp path is refused, nothing written through it', (t) => {
+  const outside = join(scratch(t, 'cad-outside-'), 'secret.txt');
   writeFileSync(outside, 'ORIGINAL\n');
-  const dir = scratch();
+  const dir = scratch(t);
   const file = join(dir, 'ROADMAP.md');
   writeFileSync(file, '# before\n');
   // Every temp path this process can still mint for `file`: the pid is fixed
@@ -2017,10 +2021,10 @@ test('atomicWrite: a symlink at every candidate temp path is refused, nothing wr
   assert.equal(readFileSync(file, 'utf8'), '# before\n');
 });
 
-test("atomicWrite: the audit's <file>.tmp reproduction writes nothing outside the tree", () => {
-  const outside = join(mkdtempSync(join(tmpdir(), 'cad-outside-')), 'secret.txt');
+test("atomicWrite: the audit's <file>.tmp reproduction writes nothing outside the tree", (t) => {
+  const outside = join(scratch(t, 'cad-outside-'), 'secret.txt');
   writeFileSync(outside, 'ORIGINAL\n');
-  const dir = scratch();
+  const dir = scratch(t);
   const file = join(dir, 'ROADMAP.md');
   symlinkSync(outside, `${file}.tmp`);
 
