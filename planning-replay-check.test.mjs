@@ -10,10 +10,9 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { PLANNING, ensureRoadmap, isEntryFile } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap, isEntryFile, scratch } from './planning.test.mjs';
 
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 
@@ -22,9 +21,10 @@ const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
  * `plans` names the plan files; `reports` maps plan number -> that report's
  * whole body, and a number left out has NO report file, which is the state a
  * genuine continuation is in. `headings` maps a plan filename to its H1 line.
+ * Its mkdtemp root goes when test `t` ends.
  */
-function tree({ phase = 2, plans = ['PLAN.md'], reports = {}, headings = {} } = {}) {
-  const dir = join(mkdtempSync(join(tmpdir(), 'cad-replay-')), '.planning');
+function tree(t, { phase = 2, plans = ['PLAN.md'], reports = {}, headings = {} } = {}) {
+  const dir = join(scratch('cad-replay-', t), '.planning');
   const pdir = join(dir, 'phases', String(phase));
   mkdirSync(pdir, { recursive: true });
   ensureRoadmap(dir);
@@ -49,8 +49,8 @@ function check(dir, args = []) {
 
 // --- AC1: the replay is recognised ------------------------------------------
 
-test('AC1: every plan reporting PLAN COMPLETE is a replay, and nothing is dispatched', () => {
-  const dir = tree({ reports: { 1: 'PLAN COMPLETE\nTasks: 3 of 3\n' } });
+test('AC1: every plan reporting PLAN COMPLETE is a replay, and nothing is dispatched', (t) => {
+  const dir = tree(t, { reports: { 1: 'PLAN COMPLETE\nTasks: 3 of 3\n' } });
   const r = check(dir, ['--phase', '2']);
 
   assert.equal(r.ok, true);
@@ -61,8 +61,8 @@ test('AC1: every plan reporting PLAN COMPLETE is a replay, and nothing is dispat
   assert.deepEqual(r.reports_read, ['phases/2/records/reports/plan-1.md']);
 });
 
-test('AC1: a multi-plan phase is a replay only when EVERY plan reports complete', () => {
-  const dir = tree({
+test('AC1: a multi-plan phase is a replay only when EVERY plan reports complete', (t) => {
+  const dir = tree(t, {
     plans: ['PLAN-1.md', 'PLAN-2.md'],
     reports: { 1: 'PLAN COMPLETE\n', 2: 'PLAN COMPLETE\n' },
   });
@@ -76,8 +76,8 @@ test('AC1: a multi-plan phase is a replay only when EVERY plan reports complete'
 
 // --- AC2: a genuine continuation still dispatches ---------------------------
 
-test('AC2: no reports directory at all is not a replay', () => {
-  const r = check(tree(), ['--phase', '2']);
+test('AC2: no reports directory at all is not a replay', (t) => {
+  const r = check(tree(t), ['--phase', '2']);
 
   assert.equal(r.replay, false);
   assert.deepEqual(r.dispatch_set, ['PLAN.md']);
@@ -85,24 +85,24 @@ test('AC2: no reports directory at all is not a replay', () => {
   assert.equal(r.reports[0].exists, false);
 });
 
-test('AC2: PLAN PARTIAL is a continuation, not a replay', () => {
-  const dir = tree({ reports: { 1: 'PLAN PARTIAL\nTasks: 2 of 5\n' } });
+test('AC2: PLAN PARTIAL is a continuation, not a replay', (t) => {
+  const dir = tree(t, { reports: { 1: 'PLAN PARTIAL\nTasks: 2 of 5\n' } });
   const r = check(dir, ['--phase', '2']);
 
   assert.equal(r.replay, false);
   assert.deepEqual(r.dispatch_set, ['PLAN.md']);
 });
 
-test('AC2: PLAN CHECKPOINT is a continuation, not a replay', () => {
-  const dir = tree({ reports: { 1: 'PLAN CHECKPOINT: decision\n' } });
+test('AC2: PLAN CHECKPOINT is a continuation, not a replay', (t) => {
+  const dir = tree(t, { reports: { 1: 'PLAN CHECKPOINT: decision\n' } });
   assert.equal(check(dir, ['--phase', '2']).replay, false);
 });
 
-test('AC2: the status word is the FIRST LINE ONLY - a quoted one in the body cannot fire it', () => {
+test('AC2: the status word is the FIRST LINE ONLY - a quoted one in the body cannot fire it', (t) => {
   // The exact shape the prose test could not pin: a genuine continuation whose
   // open items happen to quote the words. A whole-file search reads this as a
   // replay and refuses a run that has real work left.
-  const dir = tree({
+  const dir = tree(t, {
     reports: { 1: 'PLAN PARTIAL\nTasks: 2 of 5\n\nOpen items:\n- the last run said PLAN COMPLETE too early\n' },
   });
   const r = check(dir, ['--phase', '2']);
@@ -111,15 +111,15 @@ test('AC2: the status word is the FIRST LINE ONLY - a quoted one in the body can
   assert.deepEqual(r.dispatch_set, ['PLAN.md']);
 });
 
-test('AC2: the first line must match EXACTLY - a suffixed status is not complete', () => {
-  const dir = tree({ reports: { 1: 'PLAN COMPLETE - archived\n' } });
+test('AC2: the first line must match EXACTLY - a suffixed status is not complete', (t) => {
+  const dir = tree(t, { reports: { 1: 'PLAN COMPLETE - archived\n' } });
   assert.equal(check(dir, ['--phase', '2']).replay, false);
 });
 
 // --- AC3: the per-plan skip -------------------------------------------------
 
-test('AC3: plan 1 complete and plan 2 unreported dispatches ONLY plan 2', () => {
-  const dir = tree({
+test('AC3: plan 1 complete and plan 2 unreported dispatches ONLY plan 2', (t) => {
+  const dir = tree(t, {
     plans: ['PLAN-1.md', 'PLAN-2.md'],
     reports: { 1: 'PLAN COMPLETE\nTasks: 4 of 4\n' },
   });
@@ -129,8 +129,8 @@ test('AC3: plan 1 complete and plan 2 unreported dispatches ONLY plan 2', () => 
   assert.deepEqual(r.dispatch_set, ['PLAN-2.md'], 'plan 1 is not re-dispatched');
 });
 
-test('AC3: a partially reported phase skips only the plans that finished', () => {
-  const dir = tree({
+test('AC3: a partially reported phase skips only the plans that finished', (t) => {
+  const dir = tree(t, {
     plans: ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'],
     reports: { 1: 'PLAN COMPLETE\n', 2: 'PLAN PARTIAL\n', 3: 'PLAN COMPLETE\n' },
   });
@@ -142,16 +142,16 @@ test('AC3: a partially reported phase skips only the plans that finished', () =>
 
 // --- AC4: --rerun -----------------------------------------------------------
 
-test('a phase past nine plans lists and dispatches PLAN-10 after PLAN-9, in number order', () => {
+test('a phase past nine plans lists and dispatches PLAN-10 after PLAN-9, in number order', (t) => {
   const plans = ['PLAN-1.md', 'PLAN-2.md', 'PLAN-9.md', 'PLAN-10.md', 'PLAN-11.md'];
-  const r = check(tree({ plans }), ['--phase', '2']);
+  const r = check(tree(t, { plans }), ['--phase', '2']);
 
   assert.deepEqual(r.reports.map((p) => p.plan), plans);
   assert.deepEqual(r.dispatch_set, plans);
 });
 
-test('AC4: --rerun clears the replay and widens the dispatch set to every plan', () => {
-  const dir = tree({
+test('AC4: --rerun clears the replay and widens the dispatch set to every plan', (t) => {
+  const dir = tree(t, {
     plans: ['PLAN-1.md', 'PLAN-2.md'],
     reports: { 1: 'PLAN COMPLETE\n', 2: 'PLAN COMPLETE\n' },
   });
@@ -167,8 +167,8 @@ test('AC4: --rerun clears the replay and widens the dispatch set to every plan',
 
 // --- the report path the executor actually writes ---------------------------
 
-test('a bare PLAN.md is keyed k=1 and PLAN-<k>.md by its own number', () => {
-  const dir = tree({ plans: ['PLAN-3.md'], reports: { 3: 'PLAN COMPLETE\n' } });
+test('a bare PLAN.md is keyed k=1 and PLAN-<k>.md by its own number', (t) => {
+  const dir = tree(t, { plans: ['PLAN-3.md'], reports: { 3: 'PLAN COMPLETE\n' } });
   const r = check(dir, ['--phase', '2']);
 
   assert.equal(r.reports[0].k, 3);
@@ -176,10 +176,10 @@ test('a bare PLAN.md is keyed k=1 and PLAN-<k>.md by its own number', () => {
   assert.equal(r.replay, true);
 });
 
-test('a rotated sibling plan-<k>.<n>.md never decides the answer', () => {
+test('a rotated sibling plan-<k>.<n>.md never decides the answer', (t) => {
   // report-rotation.mjs mints these when an executor rotates a prior run's
   // report aside. A glob would let the OLD run's report answer for this one.
-  const dir = tree({ reports: { '1.1': 'PLAN COMPLETE\n' } });
+  const dir = tree(t, { reports: { '1.1': 'PLAN COMPLETE\n' } });
   const r = check(dir, ['--phase', '2']);
 
   assert.equal(r.replay, false, 'plan-1.1.md is not plan-1.md');
@@ -194,8 +194,8 @@ const named = {
   'PLAN-3.md': '# Phase 2: X - Plan 3: Gamma',
 };
 
-test('plan_count is every plan, each row carries k and its name, dispatch_set unchanged', () => {
-  const dir = tree({
+test('plan_count is every plan, each row carries k and its name, dispatch_set unchanged', (t) => {
+  const dir = tree(t, {
     plans: ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'],
     headings: named,
     reports: { 1: 'PLAN COMPLETE\n' },
@@ -207,8 +207,8 @@ test('plan_count is every plan, each row carries k and its name, dispatch_set un
   assert.deepEqual(r.dispatch_set, ['PLAN-2.md', 'PLAN-3.md']);
 });
 
-test('plan_count under --rerun is still every plan', () => {
-  const dir = tree({
+test('plan_count under --rerun is still every plan', (t) => {
+  const dir = tree(t, {
     plans: ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md'],
     headings: named,
     reports: { 1: 'PLAN COMPLETE\n' },
@@ -219,8 +219,8 @@ test('plan_count under --rerun is still every plan', () => {
   assert.deepEqual(r.dispatch_set, ['PLAN-1.md', 'PLAN-2.md', 'PLAN-3.md']);
 });
 
-test('a plan headed "- Plan 2" has no name field on its row', () => {
-  const dir = tree({
+test('a plan headed "- Plan 2" has no name field on its row', (t) => {
+  const dir = tree(t, {
     plans: ['PLAN-1.md', 'PLAN-2.md'],
     headings: { 'PLAN-1.md': named['PLAN-1.md'], 'PLAN-2.md': '# Phase 2: X - Plan 2' },
   });
@@ -230,8 +230,8 @@ test('a plan headed "- Plan 2" has no name field on its row', () => {
   assert.equal('name' in r.reports[1], false);
 });
 
-test('a lone PLAN.md is plan 1 of 1 with its name', () => {
-  const dir = tree({ plans: ['PLAN.md'], headings: { 'PLAN.md': '# Phase 2: X - Plan 1: Y' } });
+test('a lone PLAN.md is plan 1 of 1 with its name', (t) => {
+  const dir = tree(t, { plans: ['PLAN.md'], headings: { 'PLAN.md': '# Phase 2: X - Plan 1: Y' } });
   const r = check(dir, ['--phase', '2']);
 
   assert.equal(r.plan_count, 1);
@@ -242,26 +242,26 @@ test('a lone PLAN.md is plan 1 of 1 with its name', () => {
 
 // --- refusals ---------------------------------------------------------------
 
-test('a phase with no plan files is not a replay - that is the unplanned state', () => {
+test('a phase with no plan files is not a replay - that is the unplanned state', (t) => {
   // `[].every(...)` is true, so without the length guard an unplanned phase
   // reports as already executed and its first real run is refused.
-  const dir = tree({ plans: [] });
+  const dir = tree(t, { plans: [] });
   const r = check(dir, ['--phase', '2']);
 
   assert.equal(r.replay, false);
   assert.deepEqual(r.dispatch_set, []);
 });
 
-test('a missing phase directory refuses by name and exits non-zero', () => {
-  const r = check(tree(), ['--phase', '9']);
+test('a missing phase directory refuses by name and exits non-zero', (t) => {
+  const r = check(tree(t), ['--phase', '9']);
 
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'no-phase-dir');
   assert.equal(r._exit, 1);
 });
 
-test('no --phase refuses by name rather than guessing a phase', () => {
-  const r = check(tree(), []);
+test('no --phase refuses by name rather than guessing a phase', (t) => {
+  const r = check(tree(t), []);
 
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-args');
@@ -273,12 +273,12 @@ test('no --phase refuses by name rather than guessing a phase', () => {
 // `testing.scope` and the four old keys still true gets no replacement step.
 // A plan's legacy `## Evidence map` and `## Tests` are inert text, and a report
 // with no `Test evidence:` section completes as it stands.
-test('a no-policy plan with legacy sections and no evidence section completes, report untouched', () => {
+test('a no-policy plan with legacy sections and no evidence section completes, report untouched', (t) => {
   const phase = 3;
   const legacy = '---\nphase: 3\nfiles: []\n---\n# Plan\n\n## Evidence map\n\n| Check | Task |\n|---|---|\n| AC1 | 1 |\n\n## Tests\n\n| Test | Task |\n|---|---|\n| a | 1 |\n';
   const roadmap = '# Roadmap: Fixture\n\n## Overview\n\nx\n\n## Phases\n\n- [ ] **Phase 3: Three** - desc\n\n## Phase Details\n\n### Phase 3: Three\n**Goal:** goal 3\n**Depends on:** Nothing\n';
   const settle = (body) => {
-    const dir = tree({ phase, reports: { 1: body } });
+    const dir = tree(t, { phase, reports: { 1: body } });
     writeFileSync(join(dir, 'phases', String(phase), 'PLAN.md'), legacy);
     writeFileSync(join(dir, 'config.json'), JSON.stringify({
       workflow: { test_attack: true, test_evidence: true, check_inspection: true, independent_rerun: true },
