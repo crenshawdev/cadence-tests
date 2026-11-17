@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, utimesSync, chmodSync, accessSync, constants } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, utimesSync, chmodSync, accessSync, constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { promisify } from 'node:util';
@@ -20,9 +20,16 @@ const execFileP = promisify(execFile);
 
 const PLANNING = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'planning.mjs');
 
-/** A temp CAPTURE.md path; `body` written when given, absent otherwise. */
-function fixture(body) {
-  const file = join(mkdtempSync(join(tmpdir(), 'cad-capture-')), 'CAPTURE.md');
+/** A temp directory, gone when test `t` ends. */
+function scratch(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'cad-capture-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+/** A temp CAPTURE.md path, gone when test `t` ends; `body` written when given, absent otherwise. */
+function fixture(t, body) {
+  const file = join(scratch(t), 'CAPTURE.md');
   if (body !== undefined) writeFileSync(file, body);
   return file;
 }
@@ -60,8 +67,8 @@ const THREE = '## Todos\n\n- None.\n\n## Seeds\n\n- None.\n\n## Notes\n\n- None.
 // One row per kind: the heading is a fact of the module, not of the caller.
 // ---------------------------------------------------------------------------
 
-test('appendCapture: a todo lands under ## Todos and under no other heading', () => {
-  const file = fixture(THREE);
+test('appendCapture: a todo lands under ## Todos and under no other heading', (t) => {
+  const file = fixture(t, THREE);
   const r = appendCapture(file, 'todo', 'quarantine the flaky fixture', '2');
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.bullet, '- [ ] (phase 2) quarantine the flaky fixture');
@@ -69,38 +76,38 @@ test('appendCapture: a todo lands under ## Todos and under no other heading', ()
   onlyUnder(readBack(file), 'todo', r.bullet);
 });
 
-test('appendCapture: an unphased todo carries a checkbox and no tag', () => {
-  const file = fixture(THREE);
+test('appendCapture: an unphased todo carries a checkbox and no tag', (t) => {
+  const file = fixture(t, THREE);
   const r = appendCapture(file, 'todo', 'no cursor to read');
   assert.equal(r.bullet, '- [ ] no cursor to read');
   onlyUnder(readBack(file), 'todo', r.bullet);
 });
 
-test('appendCapture: a seed lands under ## Seeds as a bare bullet', () => {
-  const file = fixture(THREE);
+test('appendCapture: a seed lands under ## Seeds as a bare bullet', (t) => {
+  const file = fixture(t, THREE);
   const r = appendCapture(file, 'seed', 'a scanner that reads any language');
   assert.equal(r.bullet, '- a scanner that reads any language');
   onlyUnder(readBack(file), 'seed', r.bullet);
 });
 
-test('appendCapture: a note lands under ## Notes, dated by the seam', () => {
-  const file = fixture(THREE);
+test('appendCapture: a note lands under ## Notes, dated by the seam', (t) => {
+  const file = fixture(t, THREE);
   const r = appendCapture(file, 'note', 'the queue lost five bullets');
   const today = new Date().toISOString().slice(0, 10);
   assert.equal(r.bullet, `- ${today} the queue lost five bullets`);
   onlyUnder(readBack(file), 'note', r.bullet);
 });
 
-test('appendCapture: the phase tag keeps the caller\'s own spelling', () => {
+test('appendCapture: the phase tag keeps the caller\'s own spelling', (t) => {
   // `requirePhaseArg` hands the raw string precisely so `1.10` is not
   // normalized to `1.1` - a different phase's directory and a different tag.
-  const file = fixture(THREE);
-  assert.equal(appendCapture(fixture(THREE), 'todo', 'x', '1.10').bullet, '- [ ] (phase 1.10) x');
+  const file = fixture(t, THREE);
+  assert.equal(appendCapture(fixture(t, THREE), 'todo', 'x', '1.10').bullet, '- [ ] (phase 1.10) x');
   assert.equal(appendCapture(file, 'todo', 'y', '08').bullet, '- [ ] (phase 08) y');
 });
 
-test('appendCapture: a kind outside the map is refused, never written somewhere', () => {
-  const file = fixture(THREE);
+test('appendCapture: a kind outside the map is refused, never written somewhere', (t) => {
+  const file = fixture(t, THREE);
   const r = appendCapture(file, 'idea', 'not a kind');
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-kind');
@@ -111,8 +118,8 @@ test('appendCapture: a kind outside the map is refused, never written somewhere'
 // Where the bullet lands inside the file.
 // ---------------------------------------------------------------------------
 
-test('appendCapture: an ABSENT file is created with the three headings', () => {
-  const file = fixture();
+test('appendCapture: an ABSENT file is created with the three headings', (t) => {
+  const file = fixture(t);
   assert.equal(existsSync(file), false);
   const r = appendCapture(file, 'seed', 'first thing ever filed');
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -122,17 +129,17 @@ test('appendCapture: an ABSENT file is created with the three headings', () => {
   onlyUnder(body, 'seed', r.bullet);
 });
 
-test('appendCapture: a missing PARENT directory is created (the --cadence queue)', () => {
+test('appendCapture: a missing PARENT directory is created (the --cadence queue)', (t) => {
   // `/cad-capture --cadence` writes `~/.claude/cadence/CAPTURE.md`, a directory
   // that need not exist yet, and `atomicWrite` renames a SIBLING temp into place.
-  const file = join(mkdtempSync(join(tmpdir(), 'cad-capture-')), 'nested', 'deep', 'CAPTURE.md');
+  const file = join(scratch(t), 'nested', 'deep', 'CAPTURE.md');
   const r = appendCapture(file, 'note', 'friction with cadence itself');
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.ok(readBack(file).includes(r.bullet));
 });
 
-test('appendCapture: the target section being LAST pins the end at EOF', () => {
-  const file = fixture('## Todos\n\n- [ ] one\n\n## Seeds\n\n- a seed\n\n## Notes\n\n- 2026-01-01 a note\n');
+test('appendCapture: the target section being LAST pins the end at EOF', (t) => {
+  const file = fixture(t, '## Todos\n\n- [ ] one\n\n## Seeds\n\n- a seed\n\n## Notes\n\n- 2026-01-01 a note\n');
   const r = appendCapture(file, 'note', 'the last section');
   const body = readBack(file);
   onlyUnder(body, 'note', r.bullet);
@@ -140,8 +147,8 @@ test('appendCapture: the target section being LAST pins the end at EOF', () => {
   assert.match(body, /- 2026-01-01 a note\n- \d{4}-\d\d-\d\d the last section\n/);
 });
 
-test('appendCapture: a target section FOLLOWED by others keeps the boundary', () => {
-  const file = fixture('## Todos\n\n- [ ] one\n\n## Seeds\n\n- a seed\n\n## Notes\n\n- 2026-01-01 a note\n');
+test('appendCapture: a target section FOLLOWED by others keeps the boundary', (t) => {
+  const file = fixture(t, '## Todos\n\n- [ ] one\n\n## Seeds\n\n- a seed\n\n## Notes\n\n- 2026-01-01 a note\n');
   const r = appendCapture(file, 'todo', 'the first section', '3');
   const body = readBack(file);
   onlyUnder(body, 'todo', r.bullet);
@@ -150,17 +157,17 @@ test('appendCapture: a target section FOLLOWED by others keeps the boundary', ()
   assert.match(body, /- \[ \] one\n- \[ \] \(phase 3\) the first section\n\n## Seeds\n/);
 });
 
-test('appendCapture: an EMPTY section still gets its blank line after the heading', () => {
-  const file = fixture('## Todos\n\n## Seeds\n\n- a seed\n\n## Notes\n');
+test('appendCapture: an EMPTY section still gets its blank line after the heading', (t) => {
+  const file = fixture(t, '## Todos\n\n## Seeds\n\n- a seed\n\n## Notes\n');
   const r = appendCapture(file, 'todo', 'into an empty section');
   assert.match(readBack(file), /## Todos\n\n- \[ \] into an empty section\n\n## Seeds\n/);
   onlyUnder(readBack(file), 'todo', r.bullet);
 });
 
-test('appendCapture: a heading ABSENT from the file is created WITH the bullet', () => {
+test('appendCapture: a heading ABSENT from the file is created WITH the bullet', (t) => {
   // Never an EOF append under whatever heading happens to be last (D-09): the
   // heading is written too, so the bullet is inside the walk either way.
-  const file = fixture('## Todos\n\n- [ ] one\n\n## Debt markers\n\n- None.\n');
+  const file = fixture(t, '## Todos\n\n- [ ] one\n\n## Debt markers\n\n- None.\n');
   const r = appendCapture(file, 'seed', 'a queue with no Seeds section');
   const body = readBack(file);
   assert.match(body, /## Seeds\n\n- a queue with no Seeds section\n/);
@@ -168,12 +175,12 @@ test('appendCapture: a heading ABSENT from the file is created WITH the bullet',
   assert.ok(!section(body, '## Debt markers').includes(r.bullet), 'must not land in Debt markers');
 });
 
-test('appendCapture: a FENCED ## line in an earlier section is not the boundary', () => {
+test('appendCapture: a FENCED ## line in an earlier section is not the boundary', (t) => {
   // The destructive half of the bug `sectionSpan` exists to close: a fenced
   // EXAMPLE of a heading read as the real one puts the write inside somebody's
   // code block, and the scan that resumes there reads the CLOSING fence as an
   // opener and swallows every heading after it.
-  const file = fixture('## Todos\n\n- [ ] the format is:\n\n  ```md\n  ## Seeds\n  - an example\n  ```\n\n'
+  const file = fixture(t, '## Todos\n\n- [ ] the format is:\n\n  ```md\n  ## Seeds\n  - an example\n  ```\n\n'
     + '- [ ] the real last todo\n\n## Seeds\n\n- a real seed\n\n## Notes\n\n- None.\n');
   const todo = appendCapture(file, 'todo', 'after the fence', '1');
   const seed = appendCapture(file, 'seed', 'under the real heading');
@@ -190,8 +197,8 @@ test('appendCapture: a FENCED ## line in an earlier section is not the boundary'
   assert.equal(todo.heading, '## Todos');
 });
 
-test('appendCapture: an existing `- None.` placeholder is left alone', () => {
-  const file = fixture(THREE);
+test('appendCapture: an existing `- None.` placeholder is left alone', (t) => {
+  const file = fixture(t, THREE);
   appendCapture(file, 'todo', 'the first real item');
   assert.equal((readBack(file).match(/- None\./g) || []).length, 3);
 });
@@ -210,18 +217,18 @@ function capture(args) {
   }
 }
 
-test('capture: --kind outside the three words is bad-args and writes nothing', () => {
-  const file = fixture(THREE);
+test('capture: --kind outside the three words is bad-args and writes nothing', (t) => {
+  const file = fixture(t, THREE);
   const r = capture(['--kind', 'idea', '--text', 'x', '--file', file]);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-args');
   assert.equal(readBack(file), THREE);
 });
 
-test('capture: a VALUELESS --text is bad-args, never the literal word "true"', () => {
+test('capture: a VALUELESS --text is bad-args, never the literal word "true"', (t) => {
   // parseArgs hands a flag with nothing after it the boolean `true`; written
   // through, the user's sentence is gone under an ok:true envelope (#42/#45).
-  const file = fixture(THREE);
+  const file = fixture(t, THREE);
   const r = capture(['--kind', 'todo', '--text', '--file', file]);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-args');
@@ -229,10 +236,10 @@ test('capture: a VALUELESS --text is bad-args, never the literal word "true"', (
   assert.ok(!readBack(file).includes('true'));
 });
 
-test('capture: --phase with a seed or a note is bad-args, not a dropped flag', () => {
+test('capture: --phase with a seed or a note is bad-args, not a dropped flag', (t) => {
   // Dropping it silently leaves the caller believing it tagged something.
   for (const kind of ['seed', 'note']) {
-    const file = fixture(THREE);
+    const file = fixture(t, THREE);
     const r = capture(['--kind', kind, '--text', 'x', '--phase', '2', '--file', file]);
     assert.equal(r.ok, false, `${kind}: ${JSON.stringify(r)}`);
     assert.equal(r.reason, 'bad-args');
@@ -240,25 +247,25 @@ test('capture: --phase with a seed or a note is bad-args, not a dropped flag', (
   }
 });
 
-test('capture: a VALUELESS --file is bad-args, never silently the --dir default', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'cad-capture-'));
+test('capture: a VALUELESS --file is bad-args, never silently the --dir default', (t) => {
+  const dir = scratch(t);
   const r = capture(['--kind', 'todo', '--text', 'x', '--file', '--dir', dir]);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-args');
   assert.equal(existsSync(join(dir, 'CAPTURE.md')), false);
 });
 
-test('capture: a --phase that is not a phase number is bad-args', () => {
-  const file = fixture(THREE);
+test('capture: a --phase that is not a phase number is bad-args', (t) => {
+  const file = fixture(t, THREE);
   const r = capture(['--kind', 'todo', '--text', 'x', '--phase', 'two', '--file', file]);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-args');
   assert.equal(readBack(file), THREE);
 });
 
-test('capture: --file writes THAT path and leaves the --dir queue untouched', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'cad-capture-'));
-  const elsewhere = join(mkdtempSync(join(tmpdir(), 'cad-capture-')), 'global', 'CAPTURE.md');
+test('capture: --file writes THAT path and leaves the --dir queue untouched', (t) => {
+  const dir = scratch(t);
+  const elsewhere = join(scratch(t), 'global', 'CAPTURE.md');
   const r = capture(['--kind', 'note', '--text', 'friction with cadence', '--file', elsewhere, '--dir', dir]);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.ok(readBack(elsewhere).includes('friction with cadence'));
@@ -273,8 +280,8 @@ test('capture: --file writes THAT path and leaves the --dir queue untouched', ()
 
 const WRITERS = 20;
 
-test('capture: twenty concurrent writers all land, not one bullet lost (AC5)', async () => {
-  const file = fixture(THREE);
+test('capture: twenty concurrent writers all land, not one bullet lost (AC5)', async (t) => {
+  const file = fixture(t, THREE);
   const runs = Array.from({ length: WRITERS }, (_, i) => execFileP('node',
     [PLANNING, 'capture', '--kind', 'todo', '--text', `racer-${i}`, '--file', file]));
   for (const r of await Promise.all(runs)) {
@@ -291,8 +298,8 @@ test('capture: twenty concurrent writers all land, not one bullet lost (AC5)', a
   assert.equal((body.match(/^## /gm) || []).length, 3);
 });
 
-test('capture: a HELD lock refuses non-silently and leaves the file byte-identical (AC5)', () => {
-  const file = fixture(THREE);
+test('capture: a HELD lock refuses non-silently and leaves the file byte-identical (AC5)', (t) => {
+  const file = fixture(t, THREE);
   writeFileSync(`${file}.lock`, ''); // a fresh mtime: a live writer holds it
   const r = capture(['--kind', 'todo', '--text', 'the loser', '--file', file]);
   assert.equal(r.ok, false, JSON.stringify(r));
@@ -302,8 +309,8 @@ test('capture: a HELD lock refuses non-silently and leaves the file byte-identic
   assert.ok(existsSync(`${file}.lock`), 'a refused writer must not release a lock it never took');
 });
 
-test('capture: a STALE lock is broken rather than wedging the queue forever (AC5)', () => {
-  const file = fixture(THREE);
+test('capture: a STALE lock is broken rather than wedging the queue forever (AC5)', (t) => {
+  const file = fixture(t, THREE);
   const lock = `${file}.lock`;
   writeFileSync(lock, '');
   // Older than any staleness threshold this seam could sanely carry: the writer
@@ -316,17 +323,17 @@ test('capture: a STALE lock is broken rather than wedging the queue forever (AC5
   assert.equal(existsSync(lock), false, 'the broken lock is released like any other');
 });
 
-test('capture: the lock is released on the SUCCESS path too', () => {
-  const file = fixture(THREE);
+test('capture: the lock is released on the SUCCESS path too', (t) => {
+  const file = fixture(t, THREE);
   assert.equal(capture(['--kind', 'seed', '--text', 'one', '--file', file]).ok, true);
   assert.equal(existsSync(`${file}.lock`), false);
   assert.equal(capture(['--kind', 'seed', '--text', 'two', '--file', file]).ok, true);
 });
 
-test('capture: a newline inside --text cannot break the bullet into two lines', () => {
+test('capture: a newline inside --text cannot break the bullet into two lines', (t) => {
   // A second line that is not a bullet is dropped by the walk in silence -
   // this phase's headline bug arriving through the front door.
-  const file = fixture(THREE);
+  const file = fixture(t, THREE);
   const r = capture(['--kind', 'seed', '--text', 'first line\n## Notes\nsecond line', '--file', file]);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.bullet, '- first line ## Notes second line');
@@ -339,11 +346,11 @@ test('capture: a newline inside --text cannot break the bullet into two lines', 
 // is proved by a test that could redden, not by reading the patch.
 // ---------------------------------------------------------------------------
 
-test('appendCapture: an UNREADABLE queue is a failure, never an empty one', () => {
+test('appendCapture: an UNREADABLE queue is a failure, never an empty one', (t) => {
   // The finding: `read()` caught every error and returned null, so a present
   // but unreadable CAPTURE.md was treated as absent and OVERWRITTEN with the
   // empty three-section skeleton - the whole backlog destroyed under ok:true.
-  const file = fixture(THREE);
+  const file = fixture(t, THREE);
   const before = readBack(file);
   chmodSync(file, 0o000);
   try {
@@ -358,11 +365,11 @@ test('appendCapture: an UNREADABLE queue is a failure, never an empty one', () =
   assert.equal(readBack(file), before, 'the existing queue was overwritten');
 });
 
-test('capture: --text-file carries a sentence no shell could expand', () => {
+test('capture: --text-file carries a sentence no shell could expand', (t) => {
   // The finding: workflows prescribed `--text "<item>"`, so item text holding
   // `$(...)` executed before Node started. The path transport is the fix, and
   // the sentence here is exactly the payload that used to be dangerous.
-  const file = fixture(THREE);
+  const file = fixture(t, THREE);
   const src = join(dirname(file), 'item.txt');
   const payload = 'guard $(touch /tmp/cad-should-not-exist) and `id` stay literal';
   writeFileSync(src, payload);
@@ -372,8 +379,8 @@ test('capture: --text-file carries a sentence no shell could expand', () => {
   assert.equal(existsSync('/tmp/cad-should-not-exist'), false, 'the payload executed');
 });
 
-test('capture: --text and --text-file together is bad-args, not a silent winner', () => {
-  const file = fixture(THREE);
+test('capture: --text and --text-file together is bad-args, not a silent winner', (t) => {
+  const file = fixture(t, THREE);
   const src = join(dirname(file), 'item.txt');
   writeFileSync(src, 'from the file');
   const r = capture(['--kind', 'todo', '--text', 'from the flag', '--text-file', src, '--file', file]);
@@ -382,16 +389,16 @@ test('capture: --text and --text-file together is bad-args, not a silent winner'
   assert.equal(readBack(file), THREE);
 });
 
-test('capture: a --text-file that cannot be read is bad-args and writes nothing', () => {
-  const file = fixture(THREE);
+test('capture: a --text-file that cannot be read is bad-args and writes nothing', (t) => {
+  const file = fixture(t, THREE);
   const r = capture(['--kind', 'todo', '--text-file', join(dirname(file), 'absent.txt'), '--file', file]);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-args');
   assert.equal(readBack(file), THREE);
 });
 
-test('capture: a VALUELESS --text-file is bad-args, never the literal "true"', () => {
-  const file = fixture(THREE);
+test('capture: a VALUELESS --text-file is bad-args, never the literal "true"', (t) => {
+  const file = fixture(t, THREE);
   const r = capture(['--kind', 'todo', '--text-file', '--file', file]);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-args');
@@ -405,9 +412,9 @@ test('capture: a VALUELESS --text-file is bad-args, never the literal "true"', (
 
 const CRED_ENTRY = 'x (host: https://u:SECRET@github.com/a/b.git, command: /cad-plan)';
 
-test('capture --file: URL credentials never reach the entry, from --text-file or --text', () => {
+test('capture --file: URL credentials never reach the entry, from --text-file or --text', (t) => {
   for (const via of ['text-file', 'text']) {
-    const file = fixture(THREE);
+    const file = fixture(t, THREE);
     const args = ['--kind', 'note', '--file', file];
     if (via === 'text') args.push('--text', CRED_ENTRY);
     else {
@@ -424,8 +431,8 @@ test('capture --file: URL credentials never reach the entry, from --text-file or
   }
 });
 
-test('capture without --file: the project arm writes the same text unchanged', () => {
-  const dir = dirname(fixture(THREE));
+test('capture without --file: the project arm writes the same text unchanged', (t) => {
+  const dir = dirname(fixture(t, THREE));
   const src = join(dir, 'item.txt');
   writeFileSync(src, CRED_ENTRY);
   const r = capture(['--kind', 'note', '--text-file', src, '--dir', dir]);

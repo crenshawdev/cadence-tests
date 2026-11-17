@@ -7,7 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,9 +15,10 @@ import { hookEventIssues, HOOK_EVENTS, CODES, HOOKS_FILE } from '../cadence-core
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** A root carrying `hooks/hooks.json` with `text`, and a plugin manifest if asked. */
-function root(text, { full = false } = {}) {
+/** A root carrying `hooks/hooks.json` with `text`, and a plugin manifest if asked; gone when test `t` ends. */
+function root(t, text, { full = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-hookevents-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   if (full) {
     mkdirSync(join(dir, '.claude-plugin'), { recursive: true });
     writeFileSync(join(dir, '.claude-plugin', 'plugin.json'), '{}');
@@ -54,36 +55,36 @@ test('the shipped register covers the shipped hooks.json - the tree agrees with 
   assert.deepEqual(hookEventIssues(REPO), []);
 });
 
-test('an unregistered event is reported by name; the registered ones beside it are not', () => {
-  const issues = hookEventIssues(root(hooks('PreToolUse', 'SubagentStopped', 'PostToolUse')));
+test('an unregistered event is reported by name; the registered ones beside it are not', (t) => {
+  const issues = hookEventIssues(root(t, hooks('PreToolUse', 'SubagentStopped', 'PostToolUse')));
   assert.equal(issues.length, 1, JSON.stringify(issues));
   assert.equal(issues[0].kind, CODES.unregistered);
   assert.equal(issues[0].file, HOOKS_FILE);
   assert.match(issues[0].detail, /`SubagentStopped`/);
 });
 
-test('SubagentStop is registered TODAY, so a rename of it is what the check catches', () => {
+test('SubagentStop is registered TODAY, so a rename of it is what the check catches', (t) => {
   // The row this phase adds. Its absence would leave the trace bracket's close
   // half unwatched, which is the failure this check was built for.
   assert.ok(HOOK_EVENTS.some((r) => r.event === 'SubagentStop'));
-  assert.deepEqual(hookEventIssues(root(hooks('SubagentStop'))), []);
-  const renamed = hookEventIssues(root(hooks('SubagentStop2')));
+  assert.deepEqual(hookEventIssues(root(t, hooks('SubagentStop'))), []);
+  const renamed = hookEventIssues(root(t, hooks('SubagentStop2')));
   assert.equal(renamed.length, 1);
   assert.match(renamed[0].detail, /SubagentStop2/);
 });
 
-test('ONE DIRECTION: a register row no hooks.json carries is not a problem', () => {
+test('ONE DIRECTION: a register row no hooks.json carries is not a problem', (t) => {
   // Removing a hook is an ordinary edit. Reporting it would make the register a
   // second place that has to be edited to DELETE something, which is not what
   // it is for.
-  assert.deepEqual(hookEventIssues(root(hooks('PreToolUse'))), []);
-  assert.deepEqual(hookEventIssues(root(JSON.stringify({ hooks: {} }))), []);
+  assert.deepEqual(hookEventIssues(root(t, hooks('PreToolUse'))), []);
+  assert.deepEqual(hookEventIssues(root(t, JSON.stringify({ hooks: {} }))), []);
 });
 
-test('the register is a PARAMETER, so a test never asserts it against itself', () => {
+test('the register is a PARAMETER, so a test never asserts it against itself', (t) => {
   const rows = [{ event: 'Synthetic', why: 'a row that exists nowhere in the shipped register' }];
-  assert.deepEqual(hookEventIssues(root(hooks('Synthetic')), rows), []);
-  const issues = hookEventIssues(root(hooks('PreToolUse')), rows);
+  assert.deepEqual(hookEventIssues(root(t, hooks('Synthetic')), rows), []);
+  const issues = hookEventIssues(root(t, hooks('PreToolUse')), rows);
   assert.equal(issues.length, 1);
   assert.match(issues[0].detail, /`PreToolUse`/);
   // The detail names what WAS declared, so a reader of the failure can see the
@@ -91,17 +92,17 @@ test('the register is a PARAMETER, so a test never asserts it against itself', (
   assert.match(issues[0].detail, /Synthetic/);
 });
 
-test('an absent file is lenient on a partial root and missing-input on a full install', () => {
-  assert.deepEqual(hookEventIssues(root(null)), []);
-  const full = hookEventIssues(root(null, { full: true }));
+test('an absent file is lenient on a partial root and missing-input on a full install', (t) => {
+  assert.deepEqual(hookEventIssues(root(t, null)), []);
+  const full = hookEventIssues(root(t, null, { full: true }));
   assert.equal(full.length, 1);
   assert.equal(full[0].kind, CODES.missing);
   assert.equal(full[0].file, HOOKS_FILE);
 });
 
-test('an unreadable or shapeless file is ONE issue, never a throw', () => {
+test('an unreadable or shapeless file is ONE issue, never a throw', (t) => {
   for (const text of ['{ "hooks": ', 'not json at all', '[]', 'null', '{"hooks": []}', '{"hooks": "x"}', '{}']) {
-    const issues = hookEventIssues(root(text));
+    const issues = hookEventIssues(root(t, text));
     assert.equal(issues.length, 1, `${text}: ${JSON.stringify(issues)}`);
     assert.equal(issues[0].kind, CODES.unreadable);
     assert.equal(issues[0].file, HOOKS_FILE, text);

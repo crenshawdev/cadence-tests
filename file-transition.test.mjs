@@ -13,7 +13,7 @@
 // Only node: builtins.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { runTransition } from '../cadence-core/bin/lib/file-transition.mjs';
@@ -111,9 +111,11 @@ test('an object key comes back by IDENTITY, never as a clone', () => {
 // only a real tree can falsify. The module still opens nothing itself - every
 // write below is inside a caller thunk that must never be entered.
 
-/** A `.planning/`-shaped tree of three documents, each with known contents. */
-function planningFixture() {
-  const root = join(mkdtempSync(join(tmpdir(), 'cad-transition-')), '.planning');
+/** A `.planning/`-shaped tree of three documents, each with known contents; its temp root goes when test `t` ends. */
+function planningFixture(t) {
+  const base = mkdtempSync(join(tmpdir(), 'cad-transition-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const root = join(base, '.planning');
   mkdirSync(join(root, 'phases', '1'), { recursive: true });
   writeFileSync(join(root, 'ROADMAP.md'), '# Roadmap\n\n- [x] **Phase 1: Store**\n');
   writeFileSync(join(root, 'REQUIREMENTS.md'), '# Requirements\n\n| STOR-01 | 1 |\n');
@@ -146,8 +148,8 @@ function rewriteAll(root, ran) {
   }]);
 }
 
-test('pre-flight: the first unsatisfied condition refuses, and no thunk runs', () => {
-  const root = planningFixture();
+test('pre-flight: the first unsatisfied condition refuses, and no thunk runs', (t) => {
+  const root = planningFixture(t);
   const before = FIXTURE_FILES.map((f) => readFileSync(join(root, f), 'utf8'));
   const ran = [];
   const evaluated = [];
@@ -178,11 +180,11 @@ test('pre-flight: the first unsatisfied condition refuses, and no thunk runs', (
     'every file in the planned write set is byte-identical');
 });
 
-test('pre-flight: a refusal creates no file anywhere under the planning root', () => {
+test('pre-flight: a refusal creates no file anywhere under the planning root', (t) => {
   // The listing is what pins D-01 in code rather than in prose: a journal, a
   // marker, a lock or a temp path written anywhere below the root reddens this
   // case, whatever it is named.
-  const root = planningFixture();
+  const root = planningFixture(t);
   const before = listing(root);
 
   const r = runTransition({
@@ -196,8 +198,8 @@ test('pre-flight: a refusal creates no file anywhere under the planning root', (
 });
 
 for (const discipline of ['stop-at-first-failure', 'continue-past-failure']) {
-  test(`pre-flight: every condition satisfied runs the steps normally (${discipline})`, () => {
-    const root = planningFixture();
+  test(`pre-flight: every condition satisfied runs the steps normally (${discipline})`, (t) => {
+    const root = planningFixture(t);
     const ran = [];
     const r = runTransition({
       preflight: [

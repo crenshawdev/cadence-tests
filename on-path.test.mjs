@@ -12,14 +12,15 @@
 // would change what every LATER row in this process resolves.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { executableIn, onPath } from '../cadence-core/bin/lib/on-path.mjs';
 
-/** A temp directory holding `files` as `{name: mode}`. */
-function binDir(files) {
+/** A temp directory holding `files` as `{name: mode}`, gone when test `t` ends. */
+function binDir(t, files) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-onpath-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   for (const [name, mode] of Object.entries(files)) {
     writeFileSync(join(dir, name), '#!/bin/sh\nexit 0\n', { mode });
   }
@@ -35,50 +36,50 @@ function withPath(value, fn) {
 
 // --- onPath: the PATH walk --------------------------------------------------
 
-test('onPath: a name made reachable by a stub directory prepended to PATH', () => {
-  const dir = binDir({ 'cad-stub-tool': 0o755 });
+test('onPath: a name made reachable by a stub directory prepended to PATH', (t) => {
+  const dir = binDir(t, { 'cad-stub-tool': 0o755 });
   withPath(dir + delimiter + (process.env.PATH || ''), () => {
     assert.equal(onPath('cad-stub-tool'), true);
   });
 });
 
-test('onPath: a name nothing on PATH provides is false, never a throw', () => {
-  const dir = binDir({ 'cad-stub-tool': 0o755 });
+test('onPath: a name nothing on PATH provides is false, never a throw', (t) => {
+  const dir = binDir(t, { 'cad-stub-tool': 0o755 });
   withPath(dir, () => {
     assert.equal(onPath('cad-absent-tool'), false);
   });
 });
 
-test('onPath: an EMPTY PATH entry is skipped, not read as the cwd', () => {
+test('onPath: an EMPTY PATH entry is skipped, not read as the cwd', (t) => {
   // `:/some/dir:` is how a shell spells "and also the current directory". A
   // walk that joined '' with the name would resolve a file in whatever
   // directory the process happens to sit in - a different answer per caller.
-  const dir = binDir({ 'cad-stub-tool': 0o755 });
+  const dir = binDir(t, { 'cad-stub-tool': 0o755 });
   withPath(delimiter + dir + delimiter, () => {
     assert.equal(onPath('cad-stub-tool'), true);
     assert.equal(onPath('cad-absent-tool'), false);
   });
 });
 
-test('onPath: a PATH entry that does not exist is skipped, not a throw', () => {
-  const dir = binDir({ 'cad-stub-tool': 0o755 });
+test('onPath: a PATH entry that does not exist is skipped, not a throw', (t) => {
+  const dir = binDir(t, { 'cad-stub-tool': 0o755 });
   const gone = join(tmpdir(), 'cad-onpath-does-not-exist');
   withPath(gone + delimiter + dir, () => {
     assert.equal(onPath('cad-stub-tool'), true);
   });
 });
 
-test('onPath: a same-named file with no execute bit does not resolve', () => {
+test('onPath: a same-named file with no execute bit does not resolve', (t) => {
   // The whole question is whether the name can be RUN. A readable file of the
   // right name is what a tool config leaves behind, and answering true for it
   // would tell an executor to run something that exits 126.
-  const unreadable = binDir({ 'cad-stub-tool': 0o644 });
+  const unreadable = binDir(t, { 'cad-stub-tool': 0o644 });
   withPath(unreadable, () => {
     assert.equal(onPath('cad-stub-tool'), false);
   });
   // And the same name IS found once a directory holding an executable copy is
   // on PATH - so the row above proves the mode and not the harness.
-  const runnable = binDir({ 'cad-stub-tool': 0o755 });
+  const runnable = binDir(t, { 'cad-stub-tool': 0o755 });
   withPath(unreadable + delimiter + runnable, () => {
     assert.equal(onPath('cad-stub-tool'), true);
   });
@@ -94,10 +95,10 @@ test('onPath: an unset PATH answers false rather than throwing', () => {
 
 // --- executableIn: the one-directory half -----------------------------------
 
-test('executableIn: answers about ONE named directory, ignoring PATH', () => {
+test('executableIn: answers about ONE named directory, ignoring PATH', (t) => {
   // The `npx`-delegated arm's question: `node_modules/.bin/<tool>` is where npx
   // resolves a tool, and it is not on PATH at all.
-  const nm = binDir({ tsc: 0o755 });
+  const nm = binDir(t, { tsc: 0o755 });
   withPath(join(tmpdir(), 'cad-onpath-does-not-exist'), () => {
     assert.equal(executableIn(nm, 'tsc'), true);
     assert.equal(executableIn(nm, 'eslint'), false);
@@ -105,8 +106,8 @@ test('executableIn: answers about ONE named directory, ignoring PATH', () => {
   });
 });
 
-test('executableIn: a non-string or empty side is false, never a throw', () => {
-  const dir = binDir({ 'cad-stub-tool': 0o755 });
+test('executableIn: a non-string or empty side is false, never a throw', (t) => {
+  const dir = binDir(t, { 'cad-stub-tool': 0o755 });
   for (const bad of [undefined, null, true, 42, '']) {
     assert.equal(executableIn(dir, bad), false, `bin ${String(bad)}`);
     assert.equal(executableIn(bad, 'cad-stub-tool'), false, `dir ${String(bad)}`);
