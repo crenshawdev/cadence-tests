@@ -5,11 +5,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { PLANNING, makeTree, run, stampState } from './planning.test.mjs';
+import { PLANNING, makeTree, run, scratch, stampState } from './planning.test.mjs';
 import { importState } from '../cadence-core/bin/planning/state-import.mjs';
 import { readState, statePath, STAMP_KEY, STATE_LAYOUT } from '../cadence-core/bin/lib/project-state.mjs';
 
@@ -24,15 +24,15 @@ function snapshot(dir, rel = '') {
   return out;
 }
 
-const v40 = () => makeTree({
+const v40 = (t) => makeTree({
   roadmap: [{ n: 1, name: 'Base', checked: true, desc: 'lay it' }, { n: 2, name: 'Auth', desc: 'sign in' }],
   phases: { 1: { plan: true, summary: true, uat: [{ status: 'pass' }] }, 2: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
   reqs: [['REQ-1', 1, 'Complete'], ['REQ-2', 2, 'Pending']],
   cursor: { phase: 2, total: 2, name: 'Auth', status: 'planned', next: '/cad-execute 2', updated: '2026-02-03' },
-});
+}, t);
 
-test('a first seam call on a v4.0 project leaves a valid stamped state equal to the importer\'s, and the Markdown untouched', () => {
-  const dir = v40();
+test('a first seam call on a v4.0 project leaves a valid stamped state equal to the importer\'s, and the Markdown untouched', (t) => {
+  const dir = v40(t);
   const before = snapshot(dir);
   const want = importState(dir).state;
   const r = run(['status'], dir);
@@ -46,8 +46,8 @@ test('a first seam call on a v4.0 project leaves a valid stamped state equal to 
   assert.deepEqual(readdirSync(join(dir, 'records')).sort(), ['.gitignore', 'state.json']);
 });
 
-test('a second call rewrites nothing: same bytes, same mtime', () => {
-  const dir = v40();
+test('a second call rewrites nothing: same bytes, same mtime', (t) => {
+  const dir = v40(t);
   run(['status'], dir);
   const bytes = readFileSync(statePath(dir), 'utf8');
   const mtime = statSync(statePath(dir)).mtimeMs;
@@ -57,8 +57,8 @@ test('a second call rewrites nothing: same bytes, same mtime', () => {
   assert.equal(statSync(statePath(dir)).mtimeMs, mtime);
 });
 
-test('an out-of-grammar roadmap is refused with unparseable-roadmap, no handler runs, and no state file is left', () => {
-  const dir = makeTree({});
+test('an out-of-grammar roadmap is refused with unparseable-roadmap, no handler runs, and no state file is left', (t) => {
+  const dir = makeTree({}, t);
   writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap\n\n## Phases\n\n- Phase 1: Ship auth\n');
   const before = snapshot(dir);
   // a seam that would otherwise have answered ok:true on its own
@@ -71,16 +71,16 @@ test('an out-of-grammar roadmap is refused with unparseable-roadmap, no handler 
   assert.deepEqual(snapshot(dir), before);
 });
 
-test('a roadmap with no phases section is refused the same way', () => {
-  const dir = makeTree({});
+test('a roadmap with no phases section is refused the same way', (t) => {
+  const dir = makeTree({}, t);
   writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap\n\nno list\n');
   const r = run(['cursor', 'get'], dir);
   assert.deepEqual([r.ok, r.reason], [false, 'unparseable-roadmap']);
   assert.equal(existsSync(statePath(dir)), false);
 });
 
-test('a state file that does not parse is refused naming the file and the reason, and stays byte-identical', () => {
-  const dir = v40();
+test('a state file that does not parse is refused naming the file and the reason, and stays byte-identical', (t) => {
+  const dir = v40(t);
   mkdirSync(join(dir, 'records'));
   writeFileSync(statePath(dir), '{torn');
   const before = snapshot(dir);
@@ -94,8 +94,8 @@ test('a state file that does not parse is refused naming the file and the reason
   assert.deepEqual(snapshot(dir), before);
 });
 
-test('a state file of a newer layout is refused with its own hint and left alone', () => {
-  const dir = v40();
+test('a state file of a newer layout is refused with its own hint and left alone', (t) => {
+  const dir = v40(t);
   mkdirSync(join(dir, 'records'));
   const newer = JSON.stringify({ [STAMP_KEY]: STATE_LAYOUT + 1 });
   writeFileSync(statePath(dir), newer);
@@ -106,8 +106,8 @@ test('a state file of a newer layout is refused with its own hint and left alone
   assert.equal(readFileSync(statePath(dir), 'utf8'), newer);
 });
 
-test('a Rust-era .planning/state.json is never read as a stamp and is byte-identical afterward', () => {
-  const dir = v40();
+test('a Rust-era .planning/state.json is never read as a stamp and is byte-identical afterward', (t) => {
+  const dir = v40(t);
   const rust = '{"version":1,"generation":3,"phase":{"layout":99}}';
   writeFileSync(join(dir, 'state.json'), rust);
   const r = run(['status'], dir);
@@ -116,15 +116,15 @@ test('a Rust-era .planning/state.json is never read as a stamp and is byte-ident
   assert.equal(readState(dir).kind, 'valid');
 });
 
-test('an empty planning directory is stamped with no cycle open, and the handler still answers for itself', () => {
-  const dir = makeTree({});
+test('an empty planning directory is stamped with no cycle open, and the handler still answers for itself', (t) => {
+  const dir = makeTree({}, t);
   const r = run(['status'], dir);
   assert.deepEqual([r.ok, r.reason], [false, 'no-roadmap']);
   assert.deepEqual(readState(dir), { kind: 'valid', state: { cycleOpen: false, cursor: null, phases: [], requirements: [] } });
 });
 
-test('a missing roadmap beside phase folders is refused and leaves no state file', () => {
-  const dir = makeTree({ phases: { 1: { plan: true } }, roadmap: false });
+test('a missing roadmap beside phase folders is refused and leaves no state file', (t) => {
+  const dir = makeTree({ phases: { 1: { plan: true } }, roadmap: false }, t);
   const before = snapshot(dir);
   const r = run(['cursor', 'get'], dir);
   assert.deepEqual([r.ok, r.reason], [false, 'no-roadmap']);
@@ -133,11 +133,11 @@ test('a missing roadmap beside phase folders is refused and leaves no state file
   assert.deepEqual(snapshot(dir), before);
 });
 
-test('no planning directory and an unknown subcommand create nothing', () => {
+test('no planning directory and an unknown subcommand create nothing', (t) => {
   const gone = join(tmpdir(), 'cad-migrate-does-not-exist');
   assert.equal(run(['status'], gone).reason, 'no-planning-dir');
   assert.equal(existsSync(gone), false);
-  const dir = v40();
+  const dir = v40(t);
   assert.equal(run(['no-such-subcommand'], dir).reason, 'usage');
   assert.equal(existsSync(join(dir, 'records')), false);
 });
@@ -150,9 +150,9 @@ function traceIgnoreFromRoot(root, extra = []) {
   } catch (e) { return JSON.parse(e.stdout); }
 }
 
-test('trace ignore answers what the project had before the stamp, then stamps it; --check writes nothing', () => {
+test('trace ignore answers what the project had before the stamp, then stamps it; --check writes nothing', (t) => {
   for (const extra of [[], ['--check']]) {
-    const root = mkdtempSync(join(tmpdir(), 'cad-migrate-ignore-'));
+    const root = scratch('cad-migrate-ignore-', t);
     mkdirSync(join(root, '.planning'));
     const r = traceIgnoreFromRoot(root, extra);
     assert.equal(r.ok, true);
@@ -164,10 +164,10 @@ test('trace ignore answers what the project had before the stamp, then stamps it
   }
 });
 
-test('trace ignore on a symlinked records folder keeps its own refusal, not state-write-failed', () => {
-  const root = mkdtempSync(join(tmpdir(), 'cad-migrate-ignore-'));
+test('trace ignore on a symlinked records folder keeps its own refusal, not state-write-failed', (t) => {
+  const root = scratch('cad-migrate-ignore-', t);
   mkdirSync(join(root, '.planning'));
-  symlinkSync(mkdtempSync(join(tmpdir(), 'cad-migrate-elsewhere-')), join(root, '.planning', 'records'));
+  symlinkSync(scratch('cad-migrate-elsewhere-', t), join(root, '.planning', 'records'));
   const r = traceIgnoreFromRoot(root);
   assert.deepEqual([r.ok, r.reason], [false, 'symlinked-records']);
 });
@@ -215,8 +215,8 @@ const put = (dir, rel, text = `bytes of ${rel}\n`) => {
 };
 
 // a refused conversion changes nothing, so the whole tree is compared, records/ included
-test('a live plan worktree refuses the conversion, and removing it lets it through', () => {
-  const dir = v40();
+test('a live plan worktree refuses the conversion, and removing it lets it through', (t) => {
+  const dir = v40(t);
   const root = track(dir);
   const before = deep(dir);
 
@@ -234,7 +234,7 @@ test('a live plan worktree refuses the conversion, and removing it lets it throu
 });
 
 /** A v4.0 project built file by file: what scripts keep sits at the old places, plus things Cadence does not own. */
-function layoutFixture() {
+function layoutFixture(t) {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Base', checked: true }, { n: 2, name: 'Auth' }],
     phases: { 1: { plan: true, summary: true, uat: [{ status: 'pass' }] }, 2: { plan: ['PLAN-1.md', 'PLAN-2.md'] } },
@@ -242,7 +242,7 @@ function layoutFixture() {
     cursor: { phase: 2, total: 2, name: 'Auth', status: 'planned', next: '/cad-execute 2', updated: '2026-02-03' },
     capture: [{ section: 'Notes', text: 'a note' }],
     config: { planning: { commit_docs: true } },
-  });
+  }, t);
   const moved = [
     'trace.jsonl', 'trace.1.jsonl', 'trace.1.jsonl.claim', 'reads.jsonl', 'reads.1.jsonl', 'reads.jsonl.rotate.42.ab',
     'ARCHIVE.md', 'FILED.md', 'DECLINED.md', 'deferred/DEFERRED-diff-plan-1.json', 'risk-carry/ruling.json', 'codemap/map.json',
@@ -262,8 +262,8 @@ function layoutFixture() {
   return { dir, moved, inPhase, kept };
 }
 
-test('a first seam call moves the records into the layout, byte for byte, and leaves what Cadence does not own in place', () => {
-  const { dir, moved, inPhase, kept } = layoutFixture();
+test('a first seam call moves the records into the layout, byte for byte, and leaves what Cadence does not own in place', (t) => {
+  const { dir, moved, inPhase, kept } = layoutFixture(t);
   const root = track(dir);
   const was = deep(dir);
   const commits = git(root, 'rev-list', '--count', 'HEAD');
@@ -307,8 +307,8 @@ test('a first seam call moves the records into the layout, byte for byte, and le
   assert.equal(JSON.parse(readFileSync(statePath(dir), 'utf8'))[STAMP_KEY], STATE_LAYOUT);
 });
 
-test('a destination already taken with other bytes refuses the whole conversion; a run that stopped part way is finished', () => {
-  const dir = v40();
+test('a destination already taken with other bytes refuses the whole conversion; a run that stopped part way is finished', (t) => {
+  const dir = v40(t);
   put(dir, 'trace.jsonl', 'one\n');
   put(dir, 'ARCHIVE.md', 'ledger\n');
   put(dir, 'records/trace.jsonl', 'two\n');
@@ -335,8 +335,8 @@ test('a destination already taken with other bytes refuses the whole conversion;
 
 const asRoot = process.getuid?.() === 0;
 
-test('a linked phase folder, a linked archive group and a folder that cannot be read each refuse; nothing moves', () => {
-  const elsewhere = mkdtempSync(join(tmpdir(), 'cad-migrate-elsewhere-'));
+test('a linked phase folder, a linked archive group and a folder that cannot be read each refuse; nothing moves', (t) => {
+  const elsewhere = scratch('cad-migrate-elsewhere-', t);
   put(elsewhere, 'phase-2/reports/plan-1.md', 'PLAN COMPLETE\n');
   put(elsewhere, 'archive/1/REVIEW-diff-plan-1.md');
   const cases = [
@@ -346,7 +346,7 @@ test('a linked phase folder, a linked archive group and a folder that cannot be 
   // permissions do not stop root, so the unreadable case means nothing there
   if (!asRoot) cases.push(['layout-unreadable', (dir) => { put(dir, 'phases/2/REVIEW-diff-plan-1.md'); chmodSync(join(dir, 'phases', '2'), 0o000); return join(dir, 'phases', '2'); }]);
   for (const [reason, shape] of cases) {
-    const dir = v40();
+    const dir = v40(t);
     put(dir, 'phases/1/REVIEW-diff-plan-1.md');
     const named = shape(dir);
     const before = reason === 'layout-unreadable' ? null : deep(dir, 'phases', {});
@@ -361,10 +361,10 @@ test('a linked phase folder, a linked archive group and a folder that cannot be 
   }
 });
 
-test('a top records folder that is not a real folder refuses before a phase file moves; a state write that fails after says so', () => {
-  const dir = v40();
+test('a top records folder that is not a real folder refuses before a phase file moves; a state write that fails after says so', (t) => {
+  const dir = v40(t);
   put(dir, 'phases/1/REVIEW-diff-plan-1.md');
-  symlinkSync(mkdtempSync(join(tmpdir(), 'cad-migrate-elsewhere-')), join(dir, 'records'));
+  symlinkSync(scratch('cad-migrate-elsewhere-', t), join(dir, 'records'));
   const before = deep(dir);
   const r = run(['status'], dir);
   assert.deepEqual([r.ok, r.reason], [false, 'layout-records-not-dir']);
@@ -388,10 +388,11 @@ test('a top records folder that is not a real folder refuses before a phase file
 
 // --- who converts ------------------------------------------------------------
 
-test('a call from a linked worktree aimed at the main tree never converts; a --worktree main session converts its own project', () => {
-  const dir = v40();
+test('a call from a linked worktree aimed at the main tree never converts; a --worktree main session converts its own project', (t) => {
+  const dir = v40(t);
   const root = track(dir);
   const exec = join(root, '..', `${root.split('/').pop()}-exec`);
+  t.after(() => rmSync(exec, { recursive: true, force: true })); // a sibling of the root, so the root's own teardown misses it
   git(root, 'worktree', 'add', '-q', '-b', 'side', exec);
   const before = deep(dir);
   const refused = runIn(exec, ['lease-check', '--phase', '1', '--plan', '1'], dir);
@@ -420,9 +421,9 @@ test('no hook script reaches the conversion', () => {
 
 // --- the answer of the call that converted -----------------------------------
 
-test('the converting call says a commit is due, or not, and no other call carries the field', () => {
+test('the converting call says a commit is due, or not, and no other call carries the field', (t) => {
   // due: commit_docs on, .planning tracked
-  const due = layoutFixture().dir;
+  const due = layoutFixture(t).dir;
   const root = track(due);
   const first = runIn(root, ['status'], due);
   assert.equal(first.migration.converted, true);
@@ -434,34 +435,34 @@ test('the converting call says a commit is due, or not, and no other call carrie
   assert.deepEqual(rest, second);
 
   // not due: commit_docs off
-  const off = v40();
+  const off = v40(t);
   writeFileSync(join(off, 'config.json'), JSON.stringify({ planning: { commit_docs: false } }));
   const offRoot = track(off);
   const offRun = runIn(offRoot, ['status'], off);
   assert.deepEqual([offRun.migration.converted, offRun.migration.commit_due, 'hint' in offRun.migration], [true, false, false]);
 
   // not due: git ignores the planning directory
-  const ignored = v40();
+  const ignored = v40(t);
   const ignRoot = track(ignored, { '.gitignore': '.planning/\n' });
   assert.equal(runIn(ignRoot, ['status'], ignored).migration.commit_due, false);
 
   // not due outside a repository
-  assert.equal(run(['status'], v40()).migration.commit_due, false);
+  assert.equal(run(['status'], v40(t)).migration.commit_due, false);
 });
 
 // --- rebuilding a state file that does not parse -----------------------------
 
 /** A converted v4.0 project whose state file was cut off half way. */
-function truncated() {
-  const dir = v40();
+function truncated(t) {
+  const dir = v40(t);
   assert.equal(run(['status'], dir).ok, true);
   const text = readFileSync(statePath(dir), 'utf8');
   writeFileSync(statePath(dir), text.slice(0, Math.floor(text.length / 2)));
   return dir;
 }
 
-test('a truncated state file makes every other seam refuse naming state-rebuild, and leaves the file as it was', () => {
-  const dir = truncated();
+test('a truncated state file makes every other seam refuse naming state-rebuild, and leaves the file as it was', (t) => {
+  const dir = truncated(t);
   const torn = readFileSync(statePath(dir), 'utf8');
   for (const args of [['status'], ['cursor', 'get'], ['audit'], ['criteria-coverage'], ['deferred', 'list'], ['trace', 'render', '--phase', '1']]) {
     const r = run(args, dir);
@@ -471,9 +472,9 @@ test('a truncated state file makes every other seam refuse naming state-rebuild,
   assert.equal(readFileSync(statePath(dir), 'utf8'), torn);
 });
 
-test('through a linked planning directory a torn state file gets the same refusal, and state-rebuild through the link repairs it', () => {
-  const dir = truncated();
-  const link = join(mkdtempSync(join(tmpdir(), 'cad-migrate-link-')), '.planning');
+test('through a linked planning directory a torn state file gets the same refusal, and state-rebuild through the link repairs it', (t) => {
+  const dir = truncated(t);
+  const link = join(scratch('cad-migrate-link-', t), '.planning');
   symlinkSync(dir, link);
   const torn = readFileSync(statePath(dir), 'utf8');
   for (const args of [['status'], ['cursor', 'get'], ['audit'], ['criteria-coverage']]) {
@@ -487,8 +488,8 @@ test('through a linked planning directory a torn state file gets the same refusa
   assert.equal(run(['status'], link).ok, true);
 });
 
-test('a state file that breaks between the gate and the write is refused invalid-state naming state-rebuild', () => {
-  const dir = truncated();
+test('a state file that breaks between the gate and the write is refused invalid-state naming state-rebuild', (t) => {
+  const dir = truncated(t);
   // changeState called straight, past the gate, is the write the race reaches
   const mod = pathToFileURL(join(dirname(PLANNING), 'planning', 'state-import.mjs')).href;
   let out;
@@ -503,8 +504,8 @@ test('a state file that breaks between the gate and the write is refused invalid
   assert.match(r.hint, /`planning\.mjs state-rebuild`/);
 });
 
-test('state-rebuild restores a state equal to a fresh import, moves no file, and status then answers ok:true', () => {
-  const dir = truncated();
+test('state-rebuild restores a state equal to a fresh import, moves no file, and status then answers ok:true', (t) => {
+  const dir = truncated(t);
   const paths = Object.keys(deep(dir)).sort();
   const r = run(['state-rebuild'], dir);
   assert.equal(r.ok, true);
@@ -521,8 +522,8 @@ test('state-rebuild restores a state equal to a fresh import, moves no file, and
   assert.equal(readFileSync(statePath(dir), 'utf8'), bytes);
 });
 
-test('state-rebuild on a project the importer refuses answers that refusal and leaves the damaged file byte-identical', () => {
-  const dir = truncated();
+test('state-rebuild on a project the importer refuses answers that refusal and leaves the damaged file byte-identical', (t) => {
+  const dir = truncated(t);
   writeFileSync(join(dir, 'ROADMAP.md'), '# Roadmap\n\n## Phases\n\n- Phase 1: Ship auth\n');
   const before = deep(dir);
   const r = run(['state-rebuild'], dir);
@@ -531,8 +532,8 @@ test('state-rebuild on a project the importer refuses answers that refusal and l
   assert.deepEqual(deep(dir), before);
 });
 
-test('state-rebuild refuses a state file of a newer layout and leaves it alone', () => {
-  const dir = v40();
+test('state-rebuild refuses a state file of a newer layout and leaves it alone', (t) => {
+  const dir = v40(t);
   mkdirSync(join(dir, 'records'));
   const newer = JSON.stringify({ [STAMP_KEY]: STATE_LAYOUT + 1 });
   writeFileSync(statePath(dir), newer);
