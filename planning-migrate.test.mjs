@@ -221,6 +221,8 @@ test('a live plan worktree refuses the conversion, and removing it lets it throu
   const before = deep(dir);
 
   const wt = join(root, '..', `${root.split('/').pop()}-wt`);
+  // the worktree sits beside the fixture, not in it, so a failed assert would strand it
+  t.after(() => rmSync(wt, { recursive: true, force: true }));
   git(root, 'worktree', 'add', '-q', '-b', 'cadence/phase-1-plan-2', wt);
   const live = runIn(root, ['status'], dir);
   assert.deepEqual([live.ok, live.reason], [false, 'plan-worktree-live']);

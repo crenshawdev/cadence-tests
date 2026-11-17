@@ -888,16 +888,17 @@ const WORKFLOW_STOP = {
 const ORDINARY_STOP = { ...WORKFLOW_STOP, agent_transcript_path: '/home/u/.claude/projects/p/s1/subagents/agent-wf-agent-1.jsonl' };
 
 /** A real trace holding one open `cad-reviewer` dispatch, a panel's own, and the render the hook would read. */
-function openReviewer() {
+function openReviewer(t) {
   const root = mkdtempSync(join(tmpdir(), 'cad-wfstop-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   stampState(root);
   appendEvent(root, { phase: '1', family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   appendEvent(root, { phase: '1', family: 'lifecycle', event: 'dispatch', plan: 'cad-reviewer', role: 'cad-reviewer' });
   return { root, render: renderTrace(root) };
 }
 
-test('stop: a workflow agent with one open dispatch of its role closes nothing, whatever the transcript says', () => {
-  const { root, render: r } = openReviewer();
+test('stop: a workflow agent with one open dispatch of its role closes nothing, whatever the transcript says', (t) => {
+  const { root, render: r } = openReviewer(t);
   assert.equal(r.unpaired.length, 1, 'the fixture holds one open dispatch');
   const events = closeForStop(WORKFLOW_STOP, r, { transcript: billedStop('end_turn') });
   assert.equal(events.some((e) => ['return', 'checkpoint', 'escalation'].includes(e.event)), false, JSON.stringify(events));
@@ -906,11 +907,10 @@ test('stop: a workflow agent with one open dispatch of its role closes nothing, 
   const after = renderTrace(root);
   assert.equal(after.unpaired.length, 1, 'the other worker\'s dispatch is still open');
   assert.equal(after.brackets.length, 0);
-  rmSync(root, { recursive: true, force: true });
 });
 
-test('stop: the same stop with an ordinary transcript path still closes the one open dispatch', () => {
-  const { root, render: r } = openReviewer();
+test('stop: the same stop with an ordinary transcript path still closes the one open dispatch', (t) => {
+  const { root, render: r } = openReviewer(t);
   const events = closeForStop(ORDINARY_STOP, r, { transcript: billedStop('end_turn') });
   assert.deepEqual(events.map((e) => e.event), ['return']);
   for (const e of events) appendEvent(root, e);
@@ -920,5 +920,4 @@ test('stop: the same stop with an ordinary transcript path still closes the one 
   for (const payload of [bare, { ...WORKFLOW_STOP, agent_transcript_path: '/x/subagents/workflows-old/a.jsonl' }, { ...WORKFLOW_STOP, agent_transcript_path: 7 }]) {
     assert.deepEqual(closeForStop(payload, r, { transcript: billedStop('end_turn') }).map((e) => e.event), ['return'], JSON.stringify(payload));
   }
-  rmSync(root, { recursive: true, force: true });
 });

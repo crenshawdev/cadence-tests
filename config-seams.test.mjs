@@ -71,8 +71,7 @@ const NO_XDG = mkdtempSync(join(tmpdir(), 'cad-seams-xdg-'));
 after(() => rmSync(NO_XDG, { recursive: true, force: true }));
 
 /**
- * A mkdtemp root that goes when test `t` ends. No `t` keeps it, which is
- * git-publish.test.mjs's `gitLayers` call until it passes one.
+ * A mkdtemp root that goes when test `t` ends. No `t` keeps it.
  * @param {string} prefix @param {import('node:test').TestContext} [t]
  */
 function tempRoot(prefix, t) {
