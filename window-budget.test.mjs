@@ -126,7 +126,7 @@ test('every row lands in exactly one bucket, so the buckets sum to the row count
 // CADENCE_GLOBAL_CONFIG points at a path that does not exist, so the machine's
 // own user-global layer cannot decide a ceiling this test is asserting.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -136,9 +136,10 @@ import { stampState } from './planning.test.mjs';
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const PLANNING = join(HERE, 'planning.mjs');
 
-/** A fresh, empty planning root, and a global-config path that is not there. */
-function root() {
+/** A fresh, empty planning root, and a global-config path that is not there; both go when test `t` ends. */
+function root(t) {
   const base = mkdtempSync(join(tmpdir(), 'cad-window-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
   const dir = join(base, '.planning');
   mkdirSync(dir, { recursive: true });
   // stamped, or appendEvent writes no bracket into it
@@ -165,8 +166,8 @@ function bracket(dir, { phase, plan, role, tokens }) {
   appendEvent(dir, { phase, family: 'lifecycle', event: 'return', plan, role, tokens });
 }
 
-test('trace window: a crossing bracket is reported in the budget-overrun shape', () => {
-  const fx = root();
+test('trace window: a crossing bracket is reported in the budget-overrun shape', (t) => {
+  const fx = root(t);
   bracket(fx.dir, { phase: 1, plan: '1', role: 'cad-executor', tokens: 275285 });
   const r = run(fx, ['trace', 'window']);
   assert.equal(r.ok, true);
@@ -182,8 +183,8 @@ test('trace window: a crossing bracket is reported in the budget-overrun shape',
   assert.equal(r.ceilings['cad-executor'], 200000);
 });
 
-test('trace window: a repo-layer config raising that role\'s key removes the crossing', () => {
-  const fx = root();
+test('trace window: a repo-layer config raising that role\'s key removes the crossing', (t) => {
+  const fx = root(t);
   bracket(fx.dir, { phase: 1, plan: '1', role: 'cad-executor', tokens: 275285 });
   writeFileSync(join(fx.dir, 'config.json'),
     JSON.stringify({ workflow: { max_dispatch_tokens: { 'cad-executor': 300000 } } }));
@@ -196,8 +197,8 @@ test('trace window: a repo-layer config raising that role\'s key removes the cro
   assert.equal(r.compared, 1);
 });
 
-test('trace window: --phase scopes which brackets are read', () => {
-  const fx = root();
+test('trace window: --phase scopes which brackets are read', (t) => {
+  const fx = root(t);
   bracket(fx.dir, { phase: 1, plan: '1', role: 'cad-executor', tokens: 275285 });
   bracket(fx.dir, { phase: 2, plan: '1', role: 'cad-executor', tokens: 10 });
   const all = run(fx, ['trace', 'window']);
@@ -209,8 +210,8 @@ test('trace window: --phase scopes which brackets are read', () => {
   assert.equal(two.compared, 1);
 });
 
-test('trace window: an absent trace file is ok:true with nothing to report', () => {
-  const fx = root();
+test('trace window: an absent trace file is ok:true with nothing to report', (t) => {
+  const fx = root(t);
   const r = run(fx, ['trace', 'window']);
   assert.equal(r.ok, true);
   assert.deepEqual(r.problems, []);
@@ -219,8 +220,8 @@ test('trace window: an absent trace file is ok:true with nothing to report', () 
   assert.deepEqual(r.unbudgeted, {});
 });
 
-test('trace window: a terminal with no token figure counts unrecorded, not zero', () => {
-  const fx = root();
+test('trace window: a terminal with no token figure counts unrecorded, not zero', (t) => {
+  const fx = root(t);
   appendEvent(fx.dir, { phase: 1, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor' });
   appendEvent(fx.dir, { phase: 1, family: 'lifecycle', event: 'return', plan: '1', role: 'cad-executor' });
   const r = run(fx, ['trace', 'window']);
@@ -230,8 +231,8 @@ test('trace window: a terminal with no token figure counts unrecorded, not zero'
   assert.equal(r.compared, 0);
 });
 
-test('trace window: a role with no ceiling is counted per role, never skipped', () => {
-  const fx = root();
+test('trace window: a role with no ceiling is counted per role, never skipped', (t) => {
+  const fx = root(t);
   bracket(fx.dir, { phase: 1, plan: '1', role: 'cad-something-else', tokens: 900000 });
   const r = run(fx, ['trace', 'window']);
   assert.equal(r.ok, true);
@@ -239,8 +240,8 @@ test('trace window: a role with no ceiling is counted per role, never skipped', 
   assert.deepEqual(r.unbudgeted, { 'cad-something-else': 1 });
 });
 
-test('trace window: a bad --phase is ok:false / bad-args', () => {
-  const fx = root();
+test('trace window: a bad --phase is ok:false / bad-args', (t) => {
+  const fx = root(t);
   const r = run(fx, ['trace', 'window', '--phase', 'x']);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-args');
@@ -282,8 +283,8 @@ test('trace window: a bad --phase is ok:false / bad-args', () => {
 // below imports, `node --test tests/window-budget.test.mjs` there,
 // then remove the worktree.
 
-test('falsifier: a crossing is reported per role and an under-ceiling dispatch is not (MSR-03)', () => {
-  const fx = root();
+test('falsifier: a crossing is reported per role and an under-ceiling dispatch is not (MSR-03)', (t) => {
+  const fx = root(t);
   bracket(fx.dir, { phase: 1, plan: '1', role: 'cad-executor', tokens: 275285 });
   bracket(fx.dir, { phase: 1, plan: '2', role: 'cad-verifier', tokens: 47148 });
 

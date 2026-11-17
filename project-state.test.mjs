@@ -1,9 +1,9 @@
 // Zero-dep tests for lib/project-state.mjs - the one reader and writer of .planning/records/state.json.
 // Run: node --test tests/project-state.test.mjs
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, statSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, statSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +14,10 @@ import { CURSOR_STATUSES } from '../cadence-core/bin/lib/planning-files.mjs';
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'lib', 'project-state.mjs');
 const TEXT_UTIL = join(dirname(LIB), 'text-util.mjs');
-const tmp = () => mkdtempSync(join(tmpdir(), 'cad-pstate-'));
+// each test's root sits under one per-file root that goes when the file ends
+const TMP = mkdtempSync(join(tmpdir(), 'cad-pstate-'));
+after(() => rmSync(TMP, { recursive: true, force: true }));
+const tmp = () => mkdtempSync(join(TMP, 'root-'));
 
 const NEXT = `${'a long next step, word for word. '.repeat(20)}end`;
 const sample = () => ({
