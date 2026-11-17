@@ -4089,8 +4089,8 @@ test('cad-planner-contract: the planner runs check_brief\'s brief call before it
   assert.ok(wf.slice(start, wf.indexOf('</step>', start)).includes(call),
     'plan.md check_brief no longer runs the brief call, so nothing backs the planner up');
   const planner = flat(doc('skills', 'cad-planner-contract', 'SKILL.md'));
-  assert.ok(planner.includes(call), 'the planner contract does not run the brief call check_brief runs');
-  const rule = planner.slice(planner.lastIndexOf('**', planner.indexOf(call)), planner.indexOf('</plan_output>'));
+  const rule = planner.slice(planner.indexOf('<plan_output>'), planner.indexOf('</plan_output>'));
+  assert.ok(rule.includes(call), 'the planner contract\'s plan_output does not run the brief call check_brief runs');
   assert.match(rule, /before you return/, 'the contract does not run the brief call before the planner returns');
   assert.match(rule, /split that plan's tasks across more plans, sequential where they share declared files/,
     'the contract does not give check_brief\'s split remedy for a brief over its ceiling');
