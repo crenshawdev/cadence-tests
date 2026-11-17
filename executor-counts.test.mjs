@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,9 +43,10 @@ const RETURN = {
   plan: '6', role: 'cad-executor', tokens: 4321, turns: 8, duration_ms: 1000, agent_id: AGENT,
 };
 
-/** A temp dir holding the transcript and a trace whose events are `events`. */
-function fixture(events) {
+/** A temp dir holding the transcript and a trace whose events are `events`, gone when test `t` ends. */
+function fixture(t, events) {
   const dir = mkdtempSync(join(tmpdir(), 'cad-executor-counts-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const lines = [JSON.stringify({ type: 'user', agentId: AGENT, message: { role: 'user', content: 'Phase 1' } })];
   CALLS.forEach(([name, input], i) => {
     lines.push(toolLine(i, name, input));
@@ -65,8 +66,8 @@ function run(argv) {
   return { status: r.status, out: JSON.parse(r.stdout) };
 }
 
-test('the four counts: Grep calls and Bash calls running grep or rg, each Bash call once, and the return\'s figures', () => {
-  const { transcript, trace } = fixture([
+test('the four counts: Grep calls and Bash calls running grep or rg, each Bash call once, and the return\'s figures', (t) => {
+  const { transcript, trace } = fixture(t, [
     { ...RETURN, event: 'worker_cache', tokens: undefined, turns: undefined },
     { ...RETURN, agent_id: 'someone-else', tokens: 1, turns: 1 },
     RETURN,
@@ -79,8 +80,8 @@ test('the four counts: Grep calls and Bash calls running grep or rg, each Bash c
   assert.equal(out.tokens, 4321);
 });
 
-test('a trace with no return for the agent exits non-zero naming the missing return', () => {
-  const { transcript, trace } = fixture([{ ...RETURN, agent_id: 'someone-else' }]);
+test('a trace with no return for the agent exits non-zero naming the missing return', (t) => {
+  const { transcript, trace } = fixture(t, [{ ...RETURN, agent_id: 'someone-else' }]);
   const { status, out } = run(['--transcript', transcript, '--trace', trace]);
   assert.notEqual(status, 0);
   assert.equal(out.ok, false);
@@ -189,8 +190,8 @@ test('the stored after record holds its rows and totals', { skip: !existsSync(AF
   assert.deepEqual(afterProblems(JSON.parse(readFileSync(AFTER, 'utf8'))), []);
 });
 
-test('an unreadable transcript path exits non-zero', () => {
-  const { trace } = fixture([RETURN]);
+test('an unreadable transcript path exits non-zero', (t) => {
+  const { trace } = fixture(t, [RETURN]);
   const { status, out } = run(['--transcript', join(tmpdir(), 'no-such-dir-cad', 'agent-x.jsonl'), '--trace', trace]);
   assert.notEqual(status, 0);
   assert.equal(out.ok, false);

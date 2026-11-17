@@ -33,10 +33,10 @@
 // case that cannot take it - the entry whose flag IS `--dir`, which has to
 // appear bare and alone or the earlier occurrence answers for it - refuses at
 // the argument door before any tree is read.
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -78,6 +78,7 @@ const WELL_FORMED = Object.freeze({
 
 /** A scratch tree, so no invocation can reach this repository's own .planning. */
 const SCRATCH = mkdtempSync(join(tmpdir(), 'cad-adoption-'));
+after(() => rmSync(SCRATCH, { recursive: true, force: true }));
 mkdirSync(join(SCRATCH, '.planning'), { recursive: true });
 const SCRATCH_DIR = join(SCRATCH, '.planning');
 

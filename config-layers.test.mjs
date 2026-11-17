@@ -1,7 +1,7 @@
 // Zero-dep tests for lib/config-layers.mjs and the `config.mjs layers` read behind the /cad-config menu.
 // The lib cases run the real mergeLayers over fixture files, with a small hand-written schema so every
 // expectation is computed by hand. The CLI cases run the shipped schema over temp repos.
-import { test, before } from 'node:test';
+import { after, test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -12,6 +12,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG = join(ROOT, 'cadence-core', 'bin', 'config.mjs');
 const tmp = mkdtempSync(join(tmpdir(), 'cad-layers-'));
+// repoFixture's cli- dirs sit under it, so this one removal takes them too
+after(() => rmSync(tmp, { recursive: true, force: true }));
 const GLOBAL = join(tmp, 'global.json');
 // config-merge reads this at import, so it is set before the dynamic imports below
 process.env.CADENCE_GLOBAL_CONFIG = GLOBAL;

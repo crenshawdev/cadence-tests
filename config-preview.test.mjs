@@ -1,11 +1,11 @@
 // Zero-dep tests for `config.mjs preview` and lib/config-preview.mjs: what a set would do, with nothing written (AC6).
 // The pure cases need no process. The CLI cases run the real command over temp repos with a phase cursor and a plan
 // declaring an auth file, so route's risk floor is raised on the real tree and a scratch copy would report false changes.
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +16,7 @@ import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG = join(ROOT, 'cadence-core', 'bin', 'config.mjs');
 const tmp = mkdtempSync(join(tmpdir(), 'cad-preview-test-'));
+after(() => rmSync(tmp, { recursive: true, force: true }));
 let n = 0;
 
 const AUTH = { review: { triggers: { risk_surface: { surfaces: ['auth'] } } } };
