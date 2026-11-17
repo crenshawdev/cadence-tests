@@ -11,10 +11,10 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PLANNING, makeTree, run, isEntryFile } from './planning.test.mjs';
+import { PLANNING, makeTree, run, isEntryFile, scratch } from './planning.test.mjs';
 // The tasks tier is read back out of a record the task-record seam wrote, so
 // its fixtures come from the arms that own that seam rather than a second
 // copy of them here.
@@ -49,14 +49,14 @@ export function recall(query, dir) {
   return { json: JSON.parse(raw), raw, _exit: code };
 }
 
-test('recall: a matching SUMMARY deviation ranks first, with source and phase', () => {
+test('recall: a matching SUMMARY deviation ranks first, with source and phase', (t) => {
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'Recall' }, { n: 2, name: 'Later' }],
     phases: {
       1: { summaryBody: { deviations: ['tokenkiller saturation race fixed in the guard'] } },
       2: { summaryBody: { deviations: ['unrelated documentation wording tweak'] } },
     },
-  });
+  }, t);
   const r = recall('tokenkiller saturation', dir);
   assert.equal(r.json.ok, true);
   assert.equal(r._exit, 0);
@@ -66,20 +66,20 @@ test('recall: a matching SUMMARY deviation ranks first, with source and phase', 
   assert.match(r.json.results[0].snippet, /tokenkiller/);
 });
 
-test('recall: empty and absent corpus both return ok:true with no results', () => {
+test('recall: empty and absent corpus both return ok:true with no results', (t) => {
   // Absent .planning entirely.
   const gone = recall('anything', join(tmpdir(), 'cad-recall-nonexistent'));
   assert.equal(gone.json.ok, true);
   assert.deepEqual(gone.json.results, []);
   assert.equal(gone._exit, 0);
   // .planning exists (roadmap only) but no SUMMARY/CAPTURE/UAT/CONTEXT corpus.
-  const empty = recall('anything', makeTree({ roadmap: [{ n: 1, name: 'One' }] }));
+  const empty = recall('anything', makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t));
   assert.equal(empty.json.ok, true);
   assert.deepEqual(empty.json.results, []);
   assert.equal(empty._exit, 0);
 });
 
-test('recall: two runs on the same corpus are byte-identical', () => {
+test('recall: two runs on the same corpus are byte-identical', (t) => {
   const dir = makeTree({
     phases: {
       1: { summaryBody: { deviations: ['alpha beta gamma', 'delta epsilon'] },
@@ -87,7 +87,7 @@ test('recall: two runs on the same corpus are byte-identical', () => {
     },
     capture: [{ section: 'Todos', text: 'wire the beta recall path', phase: 1 },
       { section: 'Seeds', text: 'gamma indexing idea' }],
-  });
+  }, t);
   // the first call converts the project and its answer says so, so the compared calls are the ones after it
   recall('beta gamma', dir);
   const a = recall('beta gamma', dir);
@@ -96,34 +96,34 @@ test('recall: two runs on the same corpus are byte-identical', () => {
   assert.ok(a.json.results.length >= 2);
 });
 
-test('recall: durable decisions resurface; phase-local ## Decisions do not', () => {
+test('recall: durable decisions resurface; phase-local ## Decisions do not', (t) => {
   const dir = makeTree({
     phases: {
       1: { durableDecisions: ['use foobar approach'], contextDecisions: ['phase-local baz detail'] },
     },
-  });
+  }, t);
   const durable = recall('foobar', dir);
   assert.ok(durable.json.results.some((r) => r.source === 'phases/1/CONTEXT.md'));
   const local = recall('baz', dir);
   assert.ok(!local.json.results.some((r) => r.source === 'phases/1/CONTEXT.md'));
 });
 
-test('recall: legacy CONTEXT.md with only ## Decisions (no durable heading) still resurfaces', () => {
+test('recall: legacy CONTEXT.md with only ## Decisions (no durable heading) still resurfaces', (t) => {
   const dir = makeTree({
     phases: { 1: { contextDecisions: ['legacy qux decision'] } },
-  });
+  }, t);
   const r = recall('qux', dir);
   assert.ok(r.json.results.some((r) => r.source === 'phases/1/CONTEXT.md'));
 });
 
-test('recall: a present-but-empty ## Durable decisions does NOT fall back to ## Decisions', () => {
+test('recall: a present-but-empty ## Durable decisions does NOT fall back to ## Decisions', (t) => {
   // Constructed directly (not via makeTree's default Durable-first ordering):
   // `sectionBody` only returns the literal empty string "" - as opposed to a
   // truthy whitespace-only "\n" - when the heading is the LAST thing in the
   // file, so this is the shape that actually distinguishes a `durable ===
   // null` / `??` fallback from a naive `!durable` / `durable || ...` one; the
   // latter treats "" as falsy and wrongly falls through to `## Decisions`.
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: {} } });
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: {} } }, t);
   writeFileSync(join(dir, 'phases', '1', 'CONTEXT.md'),
     '# Phase 1 Context\n\n## Decisions\n\n- D-01 (area): phase-local baz detail\n\n' +
     '## Durable decisions\n');
@@ -131,12 +131,12 @@ test('recall: a present-but-empty ## Durable decisions does NOT fall back to ## 
   assert.ok(!r.json.results.some((r) => r.source === 'phases/1/CONTEXT.md'));
 });
 
-test('recall: two runs over a corpus with ## Durable decisions are byte-identical', () => {
+test('recall: two runs over a corpus with ## Durable decisions are byte-identical', (t) => {
   const dir = makeTree({
     phases: {
       1: { durableDecisions: ['alpha beta gamma durable'], contextDecisions: ['delta epsilon local'] },
     },
-  });
+  }, t);
   // the first call converts the project and its answer says so, so the compared calls are the ones after it
   recall('beta gamma', dir);
   const a = recall('beta gamma', dir);
@@ -145,7 +145,7 @@ test('recall: two runs over a corpus with ## Durable decisions are byte-identica
   assert.ok(a.json.results.length >= 1);
 });
 
-test('recall: bare words after the query are joined, not truncated (#47.2)', () => {
+test('recall: bare words after the query are joined, not truncated (#47.2)', (t) => {
   // The corpus separates the two words, so a first-word-only search can only
   // reach phase 1 - the quoted run reaches both.
   const dir = makeTree({
@@ -153,7 +153,7 @@ test('recall: bare words after the query are joined, not truncated (#47.2)', () 
       1: { summaryBody: { deviations: ['decimal cursor carve-out'] } },
       2: { summaryBody: { deviations: ['renumber phases desync report'] } },
     },
-  });
+  }, t);
   recall('decimal phases', dir); // converts the project, and its answer says so
   const bare = recall(['decimal', 'phases'], dir);
   const quoted = recall('decimal phases', dir);
@@ -164,10 +164,10 @@ test('recall: bare words after the query are joined, not truncated (#47.2)', () 
   assert.equal(bare.raw, quoted.raw); // byte-identical to the quoted form
 });
 
-test('recall: a completed capture keeps its phase and gains a closed marker (#47.1)', () => {
+test('recall: a completed capture keeps its phase and gains a closed marker (#47.1)', (t) => {
   // makeTree's capture builder only ever writes `[ ]`, so the checked line is
   // written raw - the shape the builder cannot express.
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   writeFileSync(join(dir, 'CAPTURE.md'),
     '## Todos\n\n- [x] (phase 3) tokenkiller carve-out closed by abc1234\n' +
     '- [ ] (phase 1) tokenkiller live item\n');
@@ -193,8 +193,8 @@ test('recall: a completed capture keeps its phase and gains a closed marker (#47
 // exactly how five filed bullets were lost. A positive-only assertion here
 // would be an inspection dressed as a test.
 
-test('capture -> recall: a bullet written through the seam comes back, with its phase (AC1)', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+test('capture -> recall: a bullet written through the seam comes back, with its phase (AC1)', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   const w = run(['capture', '--kind', 'todo', '--text', 'the zarquon fixture leaks a handle',
     '--phase', '2'], dir);
   assert.equal(w.ok, true, JSON.stringify(w));
@@ -205,8 +205,8 @@ test('capture -> recall: a bullet written through the seam comes back, with its 
   assert.equal(hit.phase, 2);
 });
 
-test('capture -> recall: a seed and a note come back too, unphased', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] });
+test('capture -> recall: a seed and a note come back too, unphased', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }] }, t);
   assert.equal(run(['capture', '--kind', 'seed', '--text', 'a zarquon scanner'], dir).ok, true);
   assert.equal(run(['capture', '--kind', 'note', '--text', 'zarquon bit us again'], dir).ok, true);
   const hits = recall('zarquon', dir).json.results.filter((x) => x.source === 'CAPTURE.md');
@@ -214,7 +214,7 @@ test('capture -> recall: a seed and a note come back too, unphased', () => {
   for (const h of hits) assert.equal(h.phase, undefined);
 });
 
-test('capture -> recall: a bullet under ## Archive is NOT returned (the falsifier)', () => {
+test('capture -> recall: a bullet under ## Archive is NOT returned (the falsifier)', (t) => {
   // Same distinctive term, one bullet through the seam and one written straight
   // into a section the walk does not visit. Only the seam's comes back - so a
   // seam that ever wrote to `## Archive` reddens the row above rather than
@@ -223,7 +223,7 @@ test('capture -> recall: a bullet under ## Archive is NOT returned (the falsifie
   const dir = makeTree({
     roadmap: [{ n: 1, name: 'One' }],
     capture: [{ section: 'Archive', text: 'zarquon retired long ago' }],
-  });
+  }, t);
   assert.match(readFileSync(join(dir, 'CAPTURE.md'), 'utf8'), /## Archive\n\n- zarquon retired long ago/);
   assert.deepEqual(recall('zarquon', dir).json.results, []);
   assert.equal(run(['capture', '--kind', 'todo', '--text', 'zarquon is live again', '--phase', '1'], dir).ok, true);
@@ -232,11 +232,11 @@ test('capture -> recall: a bullet under ## Archive is NOT returned (the falsifie
   assert.match(back[0].snippet, /zarquon is live again/);
 });
 
-test('recall: memory.backend none reports off with empty results, exit 0', () => {
+test('recall: memory.backend none reports off with empty results, exit 0', (t) => {
   const dir = makeTree({
     phases: { 1: { summaryBody: { deviations: ['findable term here'] } } },
     config: { memory: { backend: 'none' } },
-  });
+  }, t);
   const r = recall('findable', dir);
   assert.equal(r.json.ok, true);
   assert.equal(r.json.backend, 'none');
@@ -256,8 +256,8 @@ export function archive(dir, label, rows) {
   return dir;
 }
 
-test('recall: an archived row comes back with its milestone label and its origin', () => {
-  const dir = makeTree({ phases: { 1: { summaryBody: { deviations: ['a live deviation'] } } } });
+test('recall: an archived row comes back with its milestone label and its origin', (t) => {
+  const dir = makeTree({ phases: { 1: { summaryBody: { deviations: ['a live deviation'] } } } }, t);
   archive(dir, 'v3.5.2', [
     '`phases/2/SUMMARY.md`: the zarquon guard fired on a range it did not own',
     '`phases/2.1/UAT.md`: walk the zarquon install from a cold clone',
@@ -281,13 +281,13 @@ test('recall: an archived row comes back with its milestone label and its origin
     'the result contract stays exactly four fields wide');
 });
 
-test('recall: a tree with no ARCHIVE.md answers byte-identically to one that never had it', () => {
+test('recall: a tree with no ARCHIVE.md answers byte-identically to one that never had it', (t) => {
   const spec = {
     phases: { 1: { summaryBody: { deviations: ['alpha beta gamma'] } } },
     capture: [{ section: 'Todos', text: 'wire the beta recall path', phase: 1 }],
   };
-  const bare = recall('beta gamma', makeTree(spec));
-  const empty = recall('beta gamma', archive(makeTree(spec), 'v3.5.2', []));
+  const bare = recall('beta gamma', makeTree(spec, t));
+  const empty = recall('beta gamma', archive(makeTree(spec, t), 'v3.5.2', []));
   assert.equal(bare.raw, empty.raw, 'an ARCHIVE.md with no rows changes no byte');
   // And the archived rows land AFTER the live ones, so no existing corpus INDEX
   // moved: the live hits come back in the same order, the same rows.
@@ -297,17 +297,17 @@ test('recall: a tree with no ARCHIVE.md answers byte-identically to one that nev
   // the numbers here would make an unrelated row added to a project's residue
   // redden this file. What the position guarantees is the tie-break - equal
   // scores resolve by corpus position - which is why the append goes last.
-  const withRows = recall('beta gamma', archive(makeTree(spec), 'v3.5.2',
+  const withRows = recall('beta gamma', archive(makeTree(spec, t), 'v3.5.2',
     ['`phases/9/SUMMARY.md`: an unrelated retired note']));
   assert.deepEqual(withRows.json.results.map((r) => [r.source, r.snippet]),
     bare.json.results.map((r) => [r.source, r.snippet]));
 });
 
-test('recall: two runs over a corpus holding live AND archived rows are byte-identical', () => {
+test('recall: two runs over a corpus holding live AND archived rows are byte-identical', (t) => {
   const dir = makeTree({
     phases: { 1: { summaryBody: { deviations: ['alpha beta gamma'] } } },
     capture: [{ section: 'Seeds', text: 'gamma indexing idea' }],
-  });
+  }, t);
   archive(dir, 'v3.5.2', [
     '`phases/1/SUMMARY.md`: beta gamma from the closed milestone',
     '`phases/1/CONTEXT.md`: D-01 (REC-01): gamma stays flat-ranked',
@@ -320,11 +320,11 @@ test('recall: two runs over a corpus holding live AND archived rows are byte-ide
   assert.ok(a.json.results.length >= 3, JSON.stringify(a.json.results));
 });
 
-test('recall: memory.backend none reads no ARCHIVE.md either', () => {
+test('recall: memory.backend none reads no ARCHIVE.md either', (t) => {
   const dir = makeTree({
     phases: { 1: { summaryBody: { deviations: ['a live deviation'] } } },
     config: { memory: { backend: 'none' } },
-  });
+  }, t);
   archive(dir, 'v3.5.2', ['`phases/2/SUMMARY.md`: the zarquon guard, retired']);
   const r = recall('zarquon', dir);
   assert.equal(r.json.backend, 'none');
@@ -356,8 +356,8 @@ const TASK_TIER_SPEC = {
   capture: [{ section: 'Todos', text: 'wire the beta recall path', phase: 1 }],
 };
 
-test('recall: a task record comes back, sourced by slug and with NO phase field', () => {
-  const dir = taskRecordIn(makeTree(TASK_TIER_SPEC), 'bound-plan-size',
+test('recall: a task record comes back, sourced by slug and with NO phase field', (t) => {
+  const dir = taskRecordIn(makeTree(TASK_TIER_SPEC, t), 'bound-plan-size',
     ['a plan-size ceiling nothing enforced', 'the beta gamma path this task took']);
   const r = recall('beta gamma', dir);
   assert.equal(r.json.ok, true);
@@ -370,9 +370,9 @@ test('recall: a task record comes back, sourced by slug and with NO phase field'
     'a task record carries no phase, and an inferred one is worse than none');
 });
 
-test('recall: a tree with no tasks/ answers byte-identically to one with an empty tasks/', () => {
-  const bare = recall('beta gamma', makeTree(TASK_TIER_SPEC));
-  const emptyDir = makeTree(TASK_TIER_SPEC);
+test('recall: a tree with no tasks/ answers byte-identically to one with an empty tasks/', (t) => {
+  const bare = recall('beta gamma', makeTree(TASK_TIER_SPEC, t));
+  const emptyDir = makeTree(TASK_TIER_SPEC, t);
   mkdirSync(join(emptyDir, 'tasks'), { recursive: true });
   const empty = recall('beta gamma', emptyDir);
   assert.equal(bare.raw, empty.raw, 'the tasks walk contributes nothing when it finds nothing');
@@ -382,13 +382,13 @@ test('recall: a tree with no tasks/ answers byte-identically to one with an empt
   // move and are deliberately not asserted - BM25 is corpus-relative, the
   // reasoning the ARCHIVE.md row above states in full.
   const withRecord = recall('beta gamma',
-    taskRecordIn(makeTree(TASK_TIER_SPEC), 'later', ['an unrelated task note']));
+    taskRecordIn(makeTree(TASK_TIER_SPEC, t), 'later', ['an unrelated task note']));
   assert.deepEqual(withRecord.json.results.map((x) => [x.source, x.snippet]),
     bare.json.results.map((x) => [x.source, x.snippet]));
 });
 
-test('recall: two runs over a corpus holding a task record are byte-identical', () => {
-  const dir = taskRecordIn(makeTree(TASK_TIER_SPEC), 'bound-plan-size',
+test('recall: two runs over a corpus holding a task record are byte-identical', (t) => {
+  const dir = taskRecordIn(makeTree(TASK_TIER_SPEC, t), 'bound-plan-size',
     ['a plan-size ceiling nothing enforced', 'the beta gamma path this task took']);
   taskRecordIn(dir, 'another-task', ['a second beta record, sorted after the first']);
   // the first call converts the project and its answer says so, so the compared calls are the ones after it
@@ -399,14 +399,14 @@ test('recall: two runs over a corpus holding a task record are byte-identical', 
   assert.ok(a.json.results.length >= 3, JSON.stringify(a.json.results));
 });
 
-test('recall: a RECORD.md symlinked OUT of the planning root is never indexed', () => {
+test('recall: a RECORD.md symlinked OUT of the planning root is never indexed', (t) => {
   // The lister contains the walk one level past `phaseDirsIn`: the recall tier
   // reads snippets straight from the path it returns, so a cloned repository
   // carrying such a link would otherwise surface an arbitrary readable file.
-  const outside = mkdtempSync(join(tmpdir(), 'cad-recall-outside-'));
+  const outside = scratch('cad-recall-outside-', t);
   const secret = join(outside, 'RECORD.md');
   writeFileSync(secret, '# Task: stolen\n\n## What shipped\n\n- beta gamma secret bytes\n');
-  const dir = makeTree(TASK_TIER_SPEC);
+  const dir = makeTree(TASK_TIER_SPEC, t);
   mkdirSync(join(dir, 'tasks', 'leaky'), { recursive: true });
   symlinkSync(secret, join(dir, 'tasks', 'leaky', 'RECORD.md'));
   const r = recall('beta gamma', dir);
@@ -414,10 +414,10 @@ test('recall: a RECORD.md symlinked OUT of the planning root is never indexed', 
   assert.equal(r.json.results.some((x) => x.source.startsWith('tasks/')), false);
 });
 
-test('task-record -> recall: a record written by the seam is found by what it says', () => {
+test('task-record -> recall: a record written by the seam is found by what it says', (t) => {
   // The round trip both halves of D-09 exist for: the writer's `## What shipped`
   // heading and the walk's reader are one fact, and this is where they meet.
-  const { root, dir, shas } = taskRepo(TASK_COMMITS);
+  const { root, dir, shas } = taskRepo(TASK_COMMITS, {}, t);
   runIn(root, ['task-record', '--slug', 'bound-plan-size', '--base', `${shas[0]}^`,
     '--head', shas[1], '--text', 'A ceiling on plan size, enforced at the gate.'], dir);
   const r = recall('ceiling plan size gate', dir);
@@ -440,8 +440,8 @@ function filed(dir, rows) {
   return dir;
 }
 
-test('recall: a filed issue comes back by its title, sourced FILED.md', () => {
-  const dir = makeTree({ phases: { 1: { summaryBody: { deviations: ['a live deviation'] } } } });
+test('recall: a filed issue comes back by its title, sourced FILED.md', (t) => {
+  const dir = makeTree({ phases: { 1: { summaryBody: { deviations: ['a live deviation'] } } } }, t);
   filed(dir, [
     '2026-08-25 forgejo acme/widget 0123456789abcdef: [cadence 0123456789abcdef] '
       + 'the redaction window clips a credential before its at sign',
@@ -454,34 +454,34 @@ test('recall: a filed issue comes back by its title, sourced FILED.md', () => {
   assert.equal(hit.phase, undefined);
 });
 
-test('recall: a tree with no FILED.md answers byte-identically to one that never had it', () => {
+test('recall: a tree with no FILED.md answers byte-identically to one that never had it', (t) => {
   const spec = {
     phases: { 1: { summaryBody: { deviations: ['alpha beta gamma'] } } },
     capture: [{ section: 'Todos', text: 'wire the beta recall path', phase: 1 }],
   };
-  const bare = recall('beta gamma', makeTree(spec));
-  const empty = recall('beta gamma', filed(makeTree(spec), []));
+  const bare = recall('beta gamma', makeTree(spec, t));
+  const empty = recall('beta gamma', filed(makeTree(spec, t), []));
   assert.equal(bare.raw, empty.raw, 'a FILED.md with no rows changes no byte');
   // And the filed rows land AFTER the live ones, so no existing corpus INDEX
   // moved: the live hits come back in the same order, the same rows. Their
   // SCORES do move and are deliberately not asserted, for the reason the
   // ARCHIVE.md arm above states.
-  const withRows = recall('beta gamma', filed(makeTree(spec),
+  const withRows = recall('beta gamma', filed(makeTree(spec, t),
     ['2026-08-25 github acme/widget 00112233445566aa: [cadence 00112233445566aa] an unrelated filed note']));
   assert.deepEqual(withRows.json.results.map((r) => [r.source, r.snippet]),
     bare.json.results.map((r) => [r.source, r.snippet]));
 });
 
-test('recall: a note in FILED.md that is not a row mints no corpus entry', () => {
-  const dir = makeTree({ phases: { 1: { summaryBody: { deviations: ['a live deviation'] } } } });
+test('recall: a note in FILED.md that is not a row mints no corpus entry', (t) => {
+  const dir = makeTree({ phases: { 1: { summaryBody: { deviations: ['a live deviation'] } } } }, t);
   plantFile(join(recordsDir(dir), 'FILED.md'),
     '# Filed\n\nsomeone wrote a paragraph about zebrafish here.\n\n- not a row either\n');
   const r = recall('zebrafish', dir);
   assert.deepEqual(r.json.results.filter((x) => x.source === 'FILED.md'), []);
 });
 
-test('recall: two runs over a corpus holding a filed row are byte-identical', () => {
-  const dir = makeTree({ phases: { 1: { summaryBody: { deviations: ['alpha beta gamma'] } } } });
+test('recall: two runs over a corpus holding a filed row are byte-identical', (t) => {
+  const dir = makeTree({ phases: { 1: { summaryBody: { deviations: ['alpha beta gamma'] } } } }, t);
   filed(dir, ['2026-08-25 gitlab acme/widget aabbccddeeff0011: [cadence aabbccddeeff0011] beta gamma pointer']);
   // the first call converts the project and its answer says so, so the compared calls are the ones after it
   recall('beta gamma', dir);
@@ -492,14 +492,14 @@ test('recall: two runs over a corpus holding a filed row are byte-identical', ()
 // (D-04). `phase` is `Number(n)`, so a `phases/08/` the loose filter admitted
 // indexed under `phase: 8` and returned a DIFFERENT phase's evidence as this
 // phase's. A legal `phases/1.10/` is still corpus.
-test('recall: a zero-padded phase directory is not corpus, and 1.10 still is', () => {
+test('recall: a zero-padded phase directory is not corpus, and 1.10 still is', (t) => {
   const dir = makeTree({
     phases: {
       8: { summaryBody: { deviations: ['the legal eight carries alpha'] } },
       '08': { summaryBody: { deviations: ['the padded eight carries zarquon'] } },
       '1.10': { summaryBody: { deviations: ['sub-phase ten carries zarquon too'] } },
     },
-  });
+  }, t);
   const r = recall('zarquon', dir);
   assert.equal(r.json.ok, true, r.raw);
   const sources = r.json.results.map((x) => x.source);
