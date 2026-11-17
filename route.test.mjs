@@ -1604,7 +1604,7 @@ test('nothing fires `deferred` on its own - no schema default names it', () => {
     assert.notEqual(spec.default, 'deferred',
       `${key} defaults to deferred. Nothing fires it on its own this cycle (D-03): it is `
       + 'reachable by a config-set review.triggers.<t>.gate alone, and moving a default '
-      + 'carries README.md, METHOD.md, docs/WORKFLOW.md and .planning/DOCS-CLAIMS.md with it.');
+      + 'carries README.md, docs/METHOD.md, docs/WORKFLOW.md and .planning/DOCS-CLAIMS.md with it.');
   }
 
   // 2. What a resolve actually RETURNS with no config layer pinning a gate -

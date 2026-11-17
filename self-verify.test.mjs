@@ -188,7 +188,7 @@ function ladderSkills() {
 /**
  * A full-tree fixture: has `.claude-plugin/plugin.json` (the isFullTree
  * marker) plus every always-expected input (#44) - the six core surface
- * dirs (workflows/ at plugin root among them), `cadence-core/bin/weight-budgets.json`, `INTERNALS.md`, and the whole
+ * dirs (workflows/ at plugin root among them), `cadence-core/bin/weight-budgets.json`, `docs/INTERNALS.md`, and the whole
  * rung ladder RUNG_FILES names with a budget row per file - so a test can
  * delete/rename exactly one and assert the gate catches it, without the other
  * rows accumulating unrelated missing-input noise.
@@ -219,7 +219,8 @@ function fullFixture(t) {
   }
   writeFileSync(join(root, 'cadence-core', 'bin', 'weight-budgets.json'),
     JSON.stringify({ budgets }, null, 2));
-  writeFileSync(join(root, 'INTERNALS.md'), 'Read the code: `cadence-core/config.schema.json`.\n');
+  mkdirSync(join(root, 'docs'), { recursive: true });
+  writeFileSync(join(root, 'docs', 'INTERNALS.md'), 'Read the code: `cadence-core/config.schema.json`.\n');
   // A reach row per key of the schema this fixture just copied, all
   // `universal` - generated rather than spelled so a full-tree row breaks
   // exactly the one thing it is about instead of also reporting 72 missing
@@ -571,7 +572,7 @@ test('#49.1: a symlink cycle under agents/ is reported loudly too', (t) => {
 
 test('#49.1: a malformed weight-budgets.json reports one problem instead of collapsing the run', (t) => {
   // The walkers were guarded, but the reads that run AFTER the walk were not.
-  // An unreadable or malformed weight-budgets.json / INTERNALS.md unwound
+  // An unreadable or malformed weight-budgets.json / docs/INTERNALS.md unwound
   // run() and the dispatch catch flattened it to {ok:false,reason:'internal'}
   // with `problems` absent - the same #49.1 collapse, one check later.
   const root = fullFixture(t);
@@ -582,20 +583,20 @@ test('#49.1: a malformed weight-budgets.json reports one problem instead of coll
     && p.file === 'cadence-core/bin/weight-budgets.json').length, 1);
 });
 
-test('#49.1: an unreadable INTERNALS.md is reported exactly once, not twice', {
+test('#49.1: an unreadable docs/INTERNALS.md is reported exactly once, not twice', {
   skip: typeof process.getuid === 'function' && process.getuid() === 0
     ? 'root bypasses mode bits' : false,
 }, (t) => {
   const root = fullFixture(t);
-  const internals = join(root, 'INTERNALS.md');
+  const internals = join(root, 'docs', 'INTERNALS.md');
   chmodSync(internals, 0o000);
   try {
     const r = run(['--root', root]);
     assert.equal(r.reason, undefined);
-    // mdFiles yields INTERNALS.md too, so the 3b read-guard must NOT push a
+    // mdFiles yields docs/INTERNALS.md too, so the 3b read-guard must NOT push a
     // second entry - one broken file, one problem.
     assert.equal(r.problems.filter((p) => p.kind === 'unreadable-surface'
-      && p.file === 'INTERNALS.md').length, 1);
+      && p.file === join('docs', 'INTERNALS.md')).length, 1);
   } finally {
     chmodSync(internals, 0o644);
   }
@@ -641,7 +642,7 @@ test('a symlinked directory is not descended, so a cycle lints each file once', 
     && p.file === 'skills/a/SKILL.md').length, 1);
 });
 
-test('INTERNALS.md: a backticked repo path that does not exist is flagged; a real one and a glob are not', (t) => {
+test('docs/INTERNALS.md: a backticked repo path that does not exist is flagged; a real one and a glob are not', (t) => {
   const root = tempRoot(t, 'cad-selfverify-');
   for (const d of ['cadence-core/workflows', 'cadence-core/references',
     'cadence-core/templates', 'skills', 'agents']) {
@@ -650,7 +651,8 @@ test('INTERNALS.md: a backticked repo path that does not exist is flagged; a rea
   cpSync(join(REPO, 'cadence-core', 'config.schema.json'),
     join(root, 'cadence-core', 'config.schema.json'));
   // config.schema.json exists in the fixture; a bogus path and a glob do not.
-  writeFileSync(join(root, 'INTERNALS.md'),
+  mkdirSync(join(root, 'docs'), { recursive: true });
+  writeFileSync(join(root, 'docs', 'INTERNALS.md'),
     'Read the code: `cadence-core/config.schema.json`, the `*-decision.mjs` cores, '
     + 'and `cadence-core/bin/does-not-exist.mjs`.\n');
   const p = run(['--root', root]).problems;
@@ -680,12 +682,12 @@ test('a full tree with a core surface dir renamed away fails ok:false naming it'
   assert.ok(hit, JSON.stringify(r.problems));
 });
 
-test('a full tree missing INTERNALS.md fails ok:false naming it', (t) => {
+test('a full tree missing docs/INTERNALS.md fails ok:false naming it', (t) => {
   const root = fullFixture(t);
-  rmSync(join(root, 'INTERNALS.md'));
+  rmSync(join(root, 'docs', 'INTERNALS.md'));
   const r = run(['--root', root]);
   assert.equal(r.ok, false);
-  const hit = r.problems.find((p) => p.kind === 'missing-input' && p.file === 'INTERNALS.md');
+  const hit = r.problems.find((p) => p.kind === 'missing-input' && p.file === 'docs/INTERNALS.md');
   assert.ok(hit, JSON.stringify(r.problems));
 });
 
@@ -1141,7 +1143,7 @@ test('check 8e: the live table files none, and the CLI names both new checks in 
 
 test('a minimal (non-full-tree) fixture omitting optional inputs stays free of missing-input problems', (t) => {
   // The plain fixture() helper never creates .claude-plugin/plugin.json and
-  // never creates weight-budgets.json/INTERNALS.md - it must NOT be treated
+  // never creates weight-budgets.json/docs/INTERNALS.md - it must NOT be treated
   // as a broken full tree; that is what distinguishes a real install from a
   // minimal test fixture (D-03).
   const root = fixture(t, 'nothing special here\n');

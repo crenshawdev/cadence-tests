@@ -221,11 +221,11 @@ test('plan authority: Action never invents, Verify decides, in all five document
   const planner = doc('skills', 'cad-planner-contract', 'SKILL.md');
   const executor = doc('skills', 'cad-executor-contract', 'SKILL.md');
   const checker = doc('skills', 'cad-plan-checker-contract', 'SKILL.md');
-  const method = doc('METHOD.md');
+  const method = doc('docs', 'METHOD.md');
 
   // Nothing may re-acquire the demand that produced the guesses.
   for (const [name, text] of [['templates/PLAN.md', template],
-    ['cad-planner-contract', planner], ['METHOD.md', method]]) {
+    ['cad-planner-contract', planner], ['docs/METHOD.md', method]]) {
     assert.doesNotMatch(text, /identifiers,\s*signatures/,
       `${name} asks for identifiers and signatures again - the planner cannot know them`);
   }
@@ -247,7 +247,7 @@ test('plan authority: Action never invents, Verify decides, in all five document
     'the plan checker no longer weighs Verify as the task authority');
 
   // The taxonomy that let unplanned code through as "trivial" stays deleted.
-  for (const [name, text] of [['cad-executor-contract', executor], ['METHOD.md', method]]) {
+  for (const [name, text] of [['cad-executor-contract', executor], ['docs/METHOD.md', method]]) {
     assert.doesNotMatch(text, /\*\*Trivial\b/,
       `${name} re-grew the trivial bucket, which sorted departures by shape rather than authorization`);
     assert.doesNotMatch(text, /input validation, error handling/,

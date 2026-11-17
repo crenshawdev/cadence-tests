@@ -2055,10 +2055,10 @@ test('scanDeclared: no signal this face returns anywhere contains "changed line"
 test('scanDeclared: a DOCUMENT body is prose - the same bytes are code under a source path', () => {
   // The mention-level raise, in one row. This body carries two real constructs;
   // under a documentation extension it is a file DESCRIBING them, which is what
-  // METHOD.md does and what raised five of this repository's phases.
+  // docs/METHOD.md does and what raised five of this repository's phases.
   const body = `${DESTRUCTIVE_LINE}\nconst read = (s) => ${PARSE_CALL}(s);\n`;
   const scope = ['destructive', 'untrusted_input'];
-  for (const doc of ['METHOD.md', 'docs/guide.markdown', 'notes.mdx',
+  for (const doc of ['docs/METHOD.md', 'docs/guide.markdown', 'notes.mdx',
     'CHANGELOG.txt', 'docs/index.rst', 'docs/index.adoc', 'DOCS/UPPER.MD']) {
     assert.deepEqual(scanDeclared([{ path: doc, body }], scope).matches, [], doc);
   }
@@ -2093,9 +2093,9 @@ test('scanDeclared: the document rule is scoped to THIS face - scanDiff still re
   // MENTION, never a path exemption - stays in force. The two faces are given
   // the same construct in the same file, and only the plan-time one is silent.
   const scope = ['destructive'];
-  assert.deepEqual(scanDiff(diffOf('METHOD.md', [DESTRUCTIVE_LINE]), scope).matches
+  assert.deepEqual(scanDiff(diffOf('docs/METHOD.md', [DESTRUCTIVE_LINE]), scope).matches
     .map((m) => m.category), ['destructive']);
-  assert.deepEqual(scanDeclared([{ path: 'METHOD.md', body: `${DESTRUCTIVE_LINE}\n` }],
+  assert.deepEqual(scanDeclared([{ path: 'docs/METHOD.md', body: `${DESTRUCTIVE_LINE}\n` }],
     scope).matches, []);
 });
 

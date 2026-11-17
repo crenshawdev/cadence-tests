@@ -790,9 +790,9 @@ test('the permissions pages, the run record page and INTERNALS name only reviews
   for (const f of [['docs', 'guide', 'reference', 'permissions.md'], ['docs', 'PERMISSIONS.md'], ['docs', 'guide', 'how-it-works', 'records.md']]) {
     assert.doesNotMatch(read(...f), /analyzer/i, f.join('/'));
   }
-  const para = read('INTERNALS.md').split('\n').find((l) => l.startsWith('The plugin root has a `workflows/` directory'));
-  assert.ok(para, 'INTERNALS.md has the workflows/ paragraph');
-  assert.doesNotMatch(para, /analyzer/i, 'INTERNALS.md workflows/ paragraph');
+  const para = read('docs', 'INTERNALS.md').split('\n').find((l) => l.startsWith('The plugin root has a `workflows/` directory'));
+  assert.ok(para, 'docs/INTERNALS.md has the workflows/ paragraph');
+  assert.doesNotMatch(para, /analyzer/i, 'docs/INTERNALS.md workflows/ paragraph');
 });
 
 // --- code-map: one reader per module -----------------------------------------------------------------------------
