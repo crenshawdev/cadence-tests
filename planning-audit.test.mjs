@@ -463,25 +463,23 @@ test('audit: the SAME tagged version with every phase complete is the interrupte
   assert.equal(r.version_drift, undefined);
 });
 
-test('audit: a phase whose checklist holds only a blocked item does not hold the cycle open', () => {
-  // `blocked` is TERMINAL (verify.md) and `uatComplete` refuses it, so this
-  // phase can never derive complete. Under a complete-only exemption the gate
-  // would FAIL forever with "complete the close" unreachable as a remedy.
+test('audit: a blocked item beside settled ones still holds the cycle open', () => {
+  // the next /cad-verify puts a `blocked` item to the user, so it's answerable, not parked
   const dir = taggedTree({
     roadmap: [{ n: 1, name: 'One', checked: true }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'], summary: true,
-      uat: [{ status: 'pass' }, { status: 'blocked', reason: 'needs the device' }] } },
+      uat: [{ status: 'pass' }, { status: 'skipped', reason: 'no device' },
+        { status: 'blocked', reason: 'needs the device' }] } },
     reqs: [['AUD-01', 1, 'Complete']],
   }, { version: 'v9.9.0', tags: ['v9.9.0'] });
   const r = run(['audit'], dir);
   assert.equal(r.ok, true);
-  assert.equal(r.version_drift, undefined);
+  assert.deepEqual(r.version_drift,
+    { doc_version: 'v9.9.0', published_as: 'v9.9.0', cycle_state: 'open' });
 });
 
 test('audit: one still-answerable item beside a blocked one keeps the cycle open', () => {
-  // The complement of the case above: `pending` is what "still being worked
-  // under a published number" looks like, and the blocked item beside it
-  // changes nothing.
+  // `pending` is what "still being worked under a published number" looks like
   const dir = taggedTree({
     roadmap: [{ n: 1, name: 'One', checked: false }],
     phases: { 1: { plan: true, planReqs: ['AUD-01'], summary: true,
