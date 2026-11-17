@@ -163,8 +163,9 @@ function repoWithBrokenHead(t, opts) {
 /** A directory holding ONLY a symlink to the real `git`. A case about an
  *  ABSENT forge CLI cannot inherit the dev box's PATH - `gh` and `tea` are
  *  installed at /usr/bin here - so `bare: true` builds the child's PATH out of
- *  the stub dir plus this one, and nothing else resolves. */
-const GIT_ONLY = (() => {
+ *  the stub dir plus this one, and nothing else resolves. Exported because
+ *  forge.test.mjs needs the same directory for the same reason. */
+export const GIT_ONLY = (() => {
   const dir = mkdtempSync(join(tmpdir(), 'cad-ic-git-'));
   for (const d of (process.env.PATH || '').split(':')) {
     if (!d) continue;

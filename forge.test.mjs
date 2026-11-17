@@ -6,21 +6,22 @@
 // what exercises the PRODUCTION resolver (lib/on-path.mjs reads no Cadence
 // override, deliberately) rather than a test-only branch beside it.
 //
-// `stub` is IMPORTED from issue-check.test.mjs rather than copied: that file
-// exports it for exactly this reuse, and every stub it writes appends its own
-// name to $CAD_SPAWN_MARKER, which is what turns "no forge CLI was spawned"
-// (AC1) into an assertion about the filesystem instead of about an empty list.
+// `stub` and `GIT_ONLY` are IMPORTED from issue-check.test.mjs rather than
+// copied: that file exports them for exactly this reuse, and every stub it
+// writes appends its own name to $CAD_SPAWN_MARKER, which is what turns "no
+// forge CLI was spawned" (AC1) into an assertion about the filesystem instead
+// of about an empty list.
 // Importing a test file REGISTERS its arms in the importing process, which is
 // why that file binds `test` to a no-op unless it is itself the entry file.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, statSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { stub } from './issue-check.test.mjs';
+import { stub, GIT_ONLY } from './issue-check.test.mjs';
 
 const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'forge.mjs');
 /** A user-global layer that does not exist, so a developer's own
@@ -54,25 +55,12 @@ function repoWithOrigin(t, originUrl, gitConfig = {}) {
   return dir;
 }
 
-/** A directory holding ONLY a symlink to the real `git`. The child's PATH is
- *  built out of the stub dir plus this one and nothing else, because `gh` and
- *  `tea` are installed at /usr/bin on this dev box and inheriting the real PATH
+/** A PATH holding the stubs named in `stubs`, the real `git` (GIT_ONLY, a dir
+ *  holding only a symlink to it), and NOTHING else that resolves. `gh` and
+ *  `tea` are installed at /usr/bin on this dev box, so inheriting the real PATH
  *  would make "none installed" unprovable - while a PATH with no `git` at all
  *  would make the origin-derived defaults unprovable in the other direction.
- *  issue-check.test.mjs builds the same directory for the same reason. */
-const GIT_ONLY = (() => {
-  const dir = mkdtempSync(join(tmpdir(), 'cad-fg-git-'));
-  for (const d of (process.env.PATH || '').split(':')) {
-    if (!d) continue;
-    try { statSync(join(d, 'git')); symlinkSync(join(d, 'git'), join(dir, 'git')); return dir; }
-    catch { /* next */ }
-  }
-  throw new Error('no git on PATH to link');
-})();
-after(() => rmSync(GIT_ONLY, { recursive: true, force: true }));
-
-/** A PATH holding the stubs named in `stubs`, the real `git`, and NOTHING else
- *  that resolves. `node` is invoked by absolute path for the same reason. */
+ *  `node` is invoked by absolute path for the same reason. */
 function run(t, args, { stubs = [], gitConfig = null, dir = null, marker = null,
   argvLog = null, stubOpts = {} } = {}) {
   const stubDir = mkdtempSync(join(tmpdir(), 'cad-fg-bin-'));
@@ -278,38 +266,40 @@ test('no subcommand at all is the same usage refusal', (t) => {
 
 // --- the two defaults the user CONFIRMS rather than retypes (AC3) -----------
 
+/** `detect` over a fresh repository whose origin is `originUrl`, `bin` stubbed. */
+function detectOrigin(t, originUrl, bin) {
+  const dir = repoWithOrigin(t, originUrl);
+  return run(t, ['detect', '--dir', dir], { stubs: [bin], dir });
+}
+
 test('detect: a split SSH endpoint offers the slug and NO provider', (t) => {
   // The shape this repository itself has. `classifyOrigin` parses the slug off
   // any origin that carries two path segments, but it recognizes a provider for
   // the github.com and gitlab.com suffixes alone (CONTEXT D-07), so a
   // self-hosted forge offers a slug to confirm and nothing marked
   // `(recommended)`.
-  const dir = repoWithOrigin(t, 'ssh://git@ssh.jcrenshaw.dev:2222/crenshawdev/cadence.git');
-  const { envelope } = run(t, ['detect', '--dir', dir], { stubs: ['tea'], dir });
+  const { envelope } = detectOrigin(t, 'ssh://git@ssh.jcrenshaw.dev:2222/crenshawdev/cadence.git', 'tea');
   assert.equal(envelope.action, 'ask');
   assert.equal(envelope.defaults.repo, 'crenshawdev/cadence');
   assert.equal(envelope.defaults.provider, null);
 });
 
-test('detect: a gitlab origin offers BOTH defaults, subgroup path intact', (t) => {
-  const dir = repoWithOrigin(t, 'https://gitlab.com/g/sub/r.git');
-  const { envelope } = run(t, ['detect', '--dir', dir], { stubs: ['glab'], dir });
-  assert.equal(envelope.defaults.provider, 'gitlab');
-  assert.equal(envelope.defaults.repo, 'g/sub/r');
-});
-
-test('detect: a github origin offers both defaults', (t) => {
-  const dir = repoWithOrigin(t, 'git@github.com:org/repo.git');
-  const { envelope } = run(t, ['detect', '--dir', dir], { stubs: ['gh'], dir });
-  assert.equal(envelope.defaults.provider, 'github');
-  assert.equal(envelope.defaults.repo, 'org/repo');
-});
+for (const [name, originUrl, bin, provider, repo] of [
+  ['detect: a gitlab origin offers BOTH defaults, subgroup path intact',
+    'https://gitlab.com/g/sub/r.git', 'glab', 'gitlab', 'g/sub/r'],
+  ['detect: a github origin offers both defaults', 'git@github.com:org/repo.git', 'gh', 'github', 'org/repo'],
+]) {
+  test(name, (t) => {
+    const { envelope } = detectOrigin(t, originUrl, bin);
+    assert.equal(envelope.defaults.provider, provider);
+    assert.equal(envelope.defaults.repo, repo);
+  });
+}
 
 test('detect: NO host default is ever offered', (t) => {
   // CONTEXT D-08. The classifier holds a host on this very origin - the SSH
   // endpoint - and the envelope must not carry it as an answer to confirm.
-  const dir = repoWithOrigin(t, 'ssh://git@ssh.jcrenshaw.dev:2222/crenshawdev/cadence.git');
-  const { envelope } = run(t, ['detect', '--dir', dir], { stubs: ['tea'], dir });
+  const { envelope } = detectOrigin(t, 'ssh://git@ssh.jcrenshaw.dev:2222/crenshawdev/cadence.git', 'tea');
   assert.deepEqual(Object.keys(envelope.defaults).sort(), ['provider', 'repo']);
   assert.equal(envelope.host, null);
   assert.equal(JSON.stringify(envelope).includes('ssh.jcrenshaw.dev'), false,
@@ -320,8 +310,7 @@ test('detect: a slug failing the grammar yields NO slug default, not raw text', 
   // The value comes off `.git/config` and the setup step interpolates it into
   // the shell line that persists it. A hostile origin gets no pre-filled
   // answer, and it is not repaired into one either.
-  const dir = repoWithOrigin(t, 'https://github.com/org/repo;$(id)');
-  const { envelope } = run(t, ['detect', '--dir', dir], { stubs: ['gh'], dir });
+  const { envelope } = detectOrigin(t, 'https://github.com/org/repo;$(id)', 'gh');
   assert.equal(envelope.action, 'ask');
   assert.equal(envelope.defaults.repo, null);
   assert.equal(envelope.defaults.provider, 'github', 'the two defaults are independent');
@@ -329,8 +318,7 @@ test('detect: a slug failing the grammar yields NO slug default, not raw text', 
 });
 
 test('detect: a repository with NO origin offers no defaults and still asks', (t) => {
-  const dir = repoWithOrigin(t, null);
-  const { status, envelope } = run(t, ['detect', '--dir', dir], { stubs: ['gh'], dir });
+  const { status, envelope } = detectOrigin(t, null, 'gh');
   assert.equal(status, 0);
   assert.equal(envelope.action, 'ask');
   assert.deepEqual(envelope.defaults, { provider: null, repo: null });
@@ -432,25 +420,36 @@ test('create: the gitlab arm records its own grammar, --remoteName and all', (t)
 const TEA_LOGINS = '[{"name":"forge.example.com","url":"https://forge.example.com",'
   + '"ssh_host":"ssh.example.com","user":"jc","default":"false"}]';
 
+/** A confirmed forgejo `create` of `repo` wired to `url`, with tea answering
+ *  `login`: the run, its dir and url, and the argv lines the stubs recorded.
+ *  `dir` and `log` are fresh per call unless the case shares its own. */
+function forgejoCreate(t, repo, url,
+  { login = TEA_LOGINS, dir = planningRoot(t), log = argvLog(t), mk = null } = {}) {
+  const res = run(t,
+    ['create', '--provider', 'forgejo', '--repo', repo, '--confirmed',
+      '--remote-url', url, '--dir', dir],
+    { stubs: ['tea', 'git'], dir, argvLog: log, marker: mk, stubOpts: { tea: { login } } },
+  );
+  return { ...res, dir, url, calls: calls(log) };
+}
+
+/** A create that went through: the login probe, `createLine`, then origin wired. */
+function assertCreated(res, createLine, msg) {
+  assert.equal(res.envelope.ok, true, msg);
+  assert.deepEqual(res.calls, [
+    'tea login list --output json',
+    createLine,
+    `git -C ${res.dir} remote add origin ${res.url}`,
+  ], msg);
+}
+
 test('create: the forgejo arm asks tea who it is, then records the org grammar', (t) => {
   // The owner here is NOT the login user, so `--owner` is what the flag means:
   // tea resolves it as an ORGANIZATION. The login list comes first, because the
   // argv cannot be built without it, and `--login` names the same login the
   // question was answered about.
-  const log = argvLog(t);
-  const dir = planningRoot(t);
-  const url = 'https://forge.example.com/o/r.git';
-  const { envelope } = run(t,
-    ['create', '--provider', 'forgejo', '--repo', 'o/r', '--confirmed',
-      '--remote-url', url, '--dir', dir],
-    { stubs: ['tea', 'git'], dir, argvLog: log, stubOpts: { tea: { login: TEA_LOGINS } } },
-  );
-  assert.equal(envelope.ok, true);
-  assert.deepEqual(calls(log), [
-    'tea login list --output json',
-    'tea repos create --name r --owner o --login forge.example.com --private',
-    `git -C ${dir} remote add origin ${url}`,
-  ]);
+  assertCreated(forgejoCreate(t, 'o/r', 'https://forge.example.com/o/r.git'),
+    'tea repos create --name r --owner o --login forge.example.com --private');
 });
 
 test('create: a repository under the LOGIN USER is created with no --owner at all', (t) => {
@@ -459,21 +458,9 @@ test('create: a repository under the LOGIN USER is created with no --owner at al
   // with `Error: GetOrgByName`, and the same create without the flag exits 0.
   // An argv-recording stub cannot fail that way - it never reaches a server -
   // so the assertion has to be about the argv the login answer produces.
-  const log = argvLog(t);
-  const dir = planningRoot(t);
-  const url = 'https://forge.example.com/jc/r.git';
-  const { envelope } = run(t,
-    ['create', '--provider', 'forgejo', '--repo', 'jc/r', '--confirmed',
-      '--remote-url', url, '--dir', dir],
-    { stubs: ['tea', 'git'], dir, argvLog: log, stubOpts: { tea: { login: TEA_LOGINS } } },
-  );
-  assert.equal(envelope.ok, true);
-  assert.equal(envelope.owner, 'jc');
-  assert.deepEqual(calls(log), [
-    'tea login list --output json',
-    'tea repos create --name r --login forge.example.com --private',
-    `git -C ${dir} remote add origin ${url}`,
-  ]);
+  const res = forgejoCreate(t, 'jc/r', 'https://forge.example.com/jc/r.git');
+  assert.equal(res.envelope.owner, 'jc');
+  assertCreated(res, 'tea repos create --name r --login forge.example.com --private');
 });
 
 /** Two Forgejo instances on ONE hostname, told apart by nothing but the port
@@ -497,20 +484,9 @@ test('create: two logins on ONE hostname are told apart by the PORT the url name
     for (const order of ['as printed', 'reversed']) {
       const records = order === 'reversed'
         ? TEA_LOGINS_TWO_PORTS.slice().reverse() : TEA_LOGINS_TWO_PORTS;
-      const log = argvLog(t);
-      const dir = planningRoot(t);
-      const url = `https://forge.example.com:${port}/jc/r.git`;
-      const { envelope } = run(t,
-        ['create', '--provider', 'forgejo', '--repo', 'jc/r', '--confirmed',
-          '--remote-url', url, '--dir', dir],
-        { stubs: ['tea', 'git'], dir, argvLog: log, stubOpts: { tea: { login: JSON.stringify(records) } } },
-      );
-      assert.equal(envelope.ok, true, `${port} / ${order}`);
-      assert.deepEqual(calls(log), [
-        'tea login list --output json',
-        `tea repos create --name r --login prod-${port} --private`,
-        `git -C ${dir} remote add origin ${url}`,
-      ], `${port} / ${order}`);
+      const res = forgejoCreate(t, 'jc/r', `https://forge.example.com:${port}/jc/r.git`,
+        { login: JSON.stringify(records) });
+      assertCreated(res, `tea repos create --name r --login prod-${port} --private`, `${port} / ${order}`);
     }
   }
 });
@@ -524,20 +500,8 @@ test('create: the scheme default port is the SAME endpoint, never a mismatch', (
     { name: 'other-3000', url: 'https://forge.example.com:3000', ssh_host: 'forge.example.com', user: 'jc' },
     { name: 'web', url: 'https://forge.example.com:443', ssh_host: 'forge.example.com', user: 'jc' },
   ];
-  const log = argvLog(t);
-  const dir = planningRoot(t);
-  const url = 'https://forge.example.com/jc/r.git';
-  const { envelope } = run(t,
-    ['create', '--provider', 'forgejo', '--repo', 'jc/r', '--confirmed',
-      '--remote-url', url, '--dir', dir],
-    { stubs: ['tea', 'git'], dir, argvLog: log, stubOpts: { tea: { login: JSON.stringify(records) } } },
-  );
-  assert.equal(envelope.ok, true);
-  assert.deepEqual(calls(log), [
-    'tea login list --output json',
-    'tea repos create --name r --login web --private',
-    `git -C ${dir} remote add origin ${url}`,
-  ]);
+  assertCreated(forgejoCreate(t, 'jc/r', 'https://forge.example.com/jc/r.git', { login: JSON.stringify(records) }),
+    'tea repos create --name r --login web --private');
 });
 
 test('create: an SSH remote still resolves its login - its port is not an API port', (t) => {
@@ -546,41 +510,24 @@ test('create: an SSH remote still resolves its login - its port is not an API po
   // has nothing to be compared against on the login record, so the hostname
   // decides alone exactly as it did before ports were carried at all - reading
   // 2222 as a mismatch against the API's 443 would refuse the shape that works.
-  const log = argvLog(t);
-  const dir = planningRoot(t);
-  const url = 'ssh://git@ssh.example.com:2222/jc/r.git';
-  const { envelope } = run(t,
-    ['create', '--provider', 'forgejo', '--repo', 'jc/r', '--confirmed',
-      '--remote-url', url, '--dir', dir],
-    { stubs: ['tea', 'git'], dir, argvLog: log, stubOpts: { tea: { login: TEA_LOGINS } } },
-  );
-  assert.equal(envelope.ok, true);
-  assert.deepEqual(calls(log), [
-    'tea login list --output json',
-    'tea repos create --name r --login forge.example.com --private',
-    `git -C ${dir} remote add origin ${url}`,
-  ]);
+  assertCreated(forgejoCreate(t, 'jc/r', 'ssh://git@ssh.example.com:2222/jc/r.git'),
+    'tea repos create --name r --login forge.example.com --private');
 });
 
 test('create: no tea login for the instance refuses, and creates NOTHING', (t) => {
   // The login is what the argv depends on, so an unresolvable one is a refusal
   // rather than a fallback - the fallback is the argv that already failed live.
   // The probe DID run; the create did not, which is what the log proves.
-  const log = argvLog(t);
-  const dir = planningRoot(t);
   const elsewhere = '[{"name":"other.example.com","url":"https://other.example.com",'
     + '"ssh_host":"other.example.com","user":"jc"}]';
-  const { status, envelope } = run(t,
-    ['create', '--provider', 'forgejo', '--repo', 'jc/r', '--confirmed',
-      '--remote-url', 'https://forge.example.com/jc/r.git', '--dir', dir],
-    { stubs: ['tea', 'git'], dir, argvLog: log, stubOpts: { tea: { login: elsewhere } } },
-  );
+  const res = forgejoCreate(t, 'jc/r', 'https://forge.example.com/jc/r.git', { login: elsewhere });
+  const { status, envelope } = res;
   assert.equal(status, 1);
   assert.equal(envelope.ok, false);
   assert.equal(envelope.detail, null);
   assert.ok(envelope.hint && envelope.hint.length > 0);
   assert.match(envelope.reason, /forge\.example\.com/);
-  assert.deepEqual(calls(log), ['tea login list --output json']);
+  assert.deepEqual(res.calls, ['tea login list --output json']);
 });
 
 test('create: an UNREADABLE login list refuses the same way, leaking none of it', (t) => {
@@ -597,11 +544,8 @@ test('create: an UNREADABLE login list refuses the same way, leaking none of it'
     `[{"name":"forge.example.com","user":"","token":"${secret}"}]`,
   ];
   for (const body of bodies) {
-    const { status, envelope } = run(t,
-      ['create', '--provider', 'forgejo', '--repo', 'jc/r', '--confirmed',
-        '--remote-url', 'https://forge.example.com/jc/r.git', '--dir', dir],
-      { stubs: ['tea', 'git'], dir, argvLog: log, stubOpts: { tea: { login: body } } },
-    );
+    const { status, envelope } = forgejoCreate(t, 'jc/r', 'https://forge.example.com/jc/r.git',
+      { login: body, dir, log });
     assert.equal(status, 1, body);
     assert.equal(envelope.ok, false, body);
     assert.equal(envelope.detail, null, body);
@@ -616,16 +560,10 @@ test('create: a login NAME that would read as a flag is skipped, not sanitized',
   // These are bytes a CLI printed at us, and a value opening on `-` is the one
   // way an untrusted string changes what an argument vector means. No login is
   // usable here, so the refusal fires and the create never runs.
-  const log = argvLog(t);
-  const dir = planningRoot(t);
   const hostile = '[{"name":"--config=/tmp/x","url":"https://forge.example.com","user":"jc"}]';
-  const { envelope } = run(t,
-    ['create', '--provider', 'forgejo', '--repo', 'jc/r', '--confirmed',
-      '--remote-url', 'https://forge.example.com/jc/r.git', '--dir', dir],
-    { stubs: ['tea', 'git'], dir, argvLog: log, stubOpts: { tea: { login: hostile } } },
-  );
-  assert.equal(envelope.ok, false);
-  assert.deepEqual(calls(log), ['tea login list --output json']);
+  const res = forgejoCreate(t, 'jc/r', 'https://forge.example.com/jc/r.git', { login: hostile });
+  assert.equal(res.envelope.ok, false);
+  assert.deepEqual(res.calls, ['tea login list --output json']);
 });
 
 test('create: the two arms that need no login never ask for one', (t) => {
@@ -875,100 +813,65 @@ const portedRoot = (t) => planningRoot(t, {
   forge_provider: 'forgejo', forge_repo: 'o/r', forge_host: 'forge.example.com:3001',
 });
 
+/** The one tea login on that ported instance. */
+const PORTED_LOGIN = JSON.stringify(
+  [{ name: 'ported', url: 'https://forge.example.com:3001', ssh_host: 'forge.example.com', user: 'jc' }]);
+
+/** A port refusal: exit 1, the reason names `want` and `got`, and nothing at all
+ *  ran - not the login probe, not the create, not git. */
+function assertPortRefused(res, mk, want, got) {
+  assert.equal(res.status, 1);
+  assert.equal(res.envelope.ok, false);
+  assert.match(res.envelope.reason, want);
+  assert.match(res.envelope.reason, got);
+  assert.deepEqual(res.calls, []);
+  assert.equal(spawned(mk), '');
+}
+
 test('create: an http(s) --remote-url on the WRONG port refuses, naming both', (t) => {
   // GH-103: `create` took the URL's correctness on the caller's word, so an
   // `origin` that answers nothing was wired in silence. `https://h` means 443
   // here - the scheme's default is a port, not an absence.
-  const log = argvLog(t);
   const mk = marker(t);
-  const dir = portedRoot(t);
-  const { status, envelope } = run(t,
-    ['create', '--provider', 'forgejo', '--repo', 'o/r', '--confirmed',
-      '--remote-url', 'https://forge.example.com/o/r.git', '--dir', dir],
-    { stubs: ['tea', 'git'], dir, argvLog: log, marker: mk, stubOpts: { tea: { login: TEA_LOGINS } } },
-  );
-  assert.equal(status, 1);
-  assert.equal(envelope.ok, false);
-  assert.match(envelope.reason, /3001/);
-  assert.match(envelope.reason, /443/);
-  // Nothing at all ran: not the login probe, not the create, not git.
-  assert.deepEqual(calls(log), []);
-  assert.equal(spawned(mk), '');
+  const res = forgejoCreate(t, 'o/r', 'https://forge.example.com/o/r.git', { dir: portedRoot(t), mk });
+  assertPortRefused(res, mk, /3001/, /443/);
 });
 
 test('create: an scp --remote-url refuses naming the 22 it implies', (t) => {
   // The scp form's colon separates host from PATH: it has no port syntax, so it
   // can never name the instance the user configured. The refusal is ESCAPABLE -
   // the hint names the two explicit spellings that pass.
-  const log = argvLog(t);
   const mk = marker(t);
-  const dir = portedRoot(t);
-  const { status, envelope } = run(t,
-    ['create', '--provider', 'forgejo', '--repo', 'o/r', '--confirmed',
-      '--remote-url', 'git@forge.example.com:o/r.git', '--dir', dir],
-    { stubs: ['tea', 'git'], dir, argvLog: log, marker: mk, stubOpts: { tea: { login: TEA_LOGINS } } },
-  );
-  assert.equal(status, 1);
-  assert.equal(envelope.ok, false);
-  assert.match(envelope.reason, /3001/);
-  assert.match(envelope.reason, /22/);
-  assert.match(envelope.hint, /ssh:\/\//);
-  assert.match(envelope.hint, /https:\/\//);
-  assert.deepEqual(calls(log), []);
-  assert.equal(spawned(mk), '');
+  const res = forgejoCreate(t, 'o/r', 'git@forge.example.com:o/r.git', { dir: portedRoot(t), mk });
+  assertPortRefused(res, mk, /3001/, /22/);
+  assert.match(res.envelope.hint, /ssh:\/\//);
+  assert.match(res.envelope.hint, /https:\/\//);
 });
 
 test('create: a URL naming the configured port reaches the create', (t) => {
-  const log = argvLog(t);
-  const dir = portedRoot(t);
-  const url = 'https://forge.example.com:3001/o/r.git';
-  const records = [{ name: 'ported', url: 'https://forge.example.com:3001', ssh_host: 'forge.example.com', user: 'jc' }];
-  const { envelope } = run(t,
-    ['create', '--provider', 'forgejo', '--repo', 'o/r', '--confirmed', '--remote-url', url, '--dir', dir],
-    { stubs: ['tea', 'git'], dir, argvLog: log, stubOpts: { tea: { login: JSON.stringify(records) } } },
-  );
-  assert.equal(envelope.ok, true);
-  assert.deepEqual(calls(log), [
-    'tea login list --output json',
-    'tea repos create --name r --owner o --login ported --private',
-    `git -C ${dir} remote add origin ${url}`,
-  ]);
+  const res = forgejoCreate(t, 'o/r', 'https://forge.example.com:3001/o/r.git',
+    { dir: portedRoot(t), login: PORTED_LOGIN });
+  assertCreated(res, 'tea repos create --name r --owner o --login ported --private');
   // A torn config layer during the one face that MUTATES must not be silent.
-  assert.ok(Array.isArray(envelope.warnings));
+  assert.ok(Array.isArray(res.envelope.warnings));
 });
 
 test('create: an SSH port over a non-http scheme is ACCEPTED, never compared', (t) => {
   // An SSH port and a web port are different endpoints of ONE instance, which
   // is the mistake httpPortOf's header exists to record.
-  const log = argvLog(t);
-  const dir = portedRoot(t);
-  const url = 'ssh://git@forge.example.com:2222/o/r.git';
-  const records = [{ name: 'ported', url: 'https://forge.example.com:3001', ssh_host: 'forge.example.com', user: 'jc' }];
-  const { envelope } = run(t,
-    ['create', '--provider', 'forgejo', '--repo', 'o/r', '--confirmed', '--remote-url', url, '--dir', dir],
-    { stubs: ['tea', 'git'], dir, argvLog: log, stubOpts: { tea: { login: JSON.stringify(records) } } },
-  );
-  assert.equal(envelope.ok, true);
-  assert.deepEqual(calls(log), [
-    'tea login list --output json',
-    'tea repos create --name r --owner o --login ported --private',
-    `git -C ${dir} remote add origin ${url}`,
-  ]);
+  assertCreated(forgejoCreate(t, 'o/r', 'ssh://git@forge.example.com:2222/o/r.git',
+    { dir: portedRoot(t), login: PORTED_LOGIN }),
+  'tea repos create --name r --owner o --login ported --private');
 });
 
 test('create: a --remote-url on a DIFFERENT host is not compared at all', (t) => {
   // The split-endpoint deployment this repository itself has. Refusing it would
   // refuse a shape that works.
-  const log = argvLog(t);
-  const dir = portedRoot(t);
-  const url = 'https://ssh.example.com/o/r.git';
   const records = [{ name: 'ported', url: 'https://ssh.example.com', ssh_host: 'ssh.example.com', user: 'jc' }];
-  const { envelope } = run(t,
-    ['create', '--provider', 'forgejo', '--repo', 'o/r', '--confirmed', '--remote-url', url, '--dir', dir],
-    { stubs: ['tea', 'git'], dir, argvLog: log, stubOpts: { tea: { login: JSON.stringify(records) } } },
-  );
-  assert.equal(envelope.ok, true);
-  assert.equal(calls(log).length, 3);
+  const res = forgejoCreate(t, 'o/r', 'https://ssh.example.com/o/r.git',
+    { dir: portedRoot(t), login: JSON.stringify(records) });
+  assert.equal(res.envelope.ok, true);
+  assert.equal(res.calls.length, 3);
 });
 
 test('create: a MIXED-CASE persisted host still refuses the wrong port', (t) => {
@@ -976,41 +879,21 @@ test('create: a MIXED-CASE persisted host still refuses the wrong port', (t) => 
   // the persisted hostname verbatim, so one capital letter in git.forge_host
   // skipped the refusal entirely and wired an origin on 443 against an instance
   // serving 3001. Case is a spelling of one host, never a second host.
-  const log = argvLog(t);
   const mk = marker(t);
   const dir = planningRoot(t, {
     forge_provider: 'forgejo', forge_repo: 'o/r', forge_host: 'Forge.Example.COM:3001',
   });
-  const { status, envelope } = run(t,
-    ['create', '--provider', 'forgejo', '--repo', 'o/r', '--confirmed',
-      '--remote-url', 'https://forge.example.com/o/r.git', '--dir', dir],
-    { stubs: ['tea', 'git'], dir, argvLog: log, marker: mk, stubOpts: { tea: { login: TEA_LOGINS } } },
-  );
-  assert.equal(status, 1);
-  assert.equal(envelope.ok, false);
-  assert.match(envelope.reason, /3001/);
-  assert.match(envelope.reason, /443/);
-  assert.deepEqual(calls(log), []);
-  assert.equal(spawned(mk), '');
+  const res = forgejoCreate(t, 'o/r', 'https://forge.example.com/o/r.git', { dir, mk });
+  assertPortRefused(res, mk, /3001/, /443/);
 });
 
 test('create: a PORTLESS or null git.forge_host fires nothing at all', (t) => {
   // What keeps github and gitlab out of this entirely - their host key is null
   // by contract - and what keeps every existing create arm byte for byte.
   for (const forge_host of [null, 'forge.example.com']) {
-    const log = argvLog(t);
     const dir = planningRoot(t, { forge_provider: 'forgejo', forge_repo: 'o/r', forge_host });
-    const url = 'git@forge.example.com:o/r.git';
-    const { envelope } = run(t,
-      ['create', '--provider', 'forgejo', '--repo', 'o/r', '--confirmed', '--remote-url', url, '--dir', dir],
-      { stubs: ['tea', 'git'], dir, argvLog: log, stubOpts: { tea: { login: TEA_LOGINS } } },
-    );
-    assert.equal(envelope.ok, true, String(forge_host));
-    assert.deepEqual(calls(log), [
-      'tea login list --output json',
-      'tea repos create --name r --owner o --login forge.example.com --private',
-      `git -C ${dir} remote add origin ${url}`,
-    ], String(forge_host));
+    assertCreated(forgejoCreate(t, 'o/r', 'git@forge.example.com:o/r.git', { dir }),
+      'tea repos create --name r --owner o --login forge.example.com --private', String(forge_host));
   }
 });
 

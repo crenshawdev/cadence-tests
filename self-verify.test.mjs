@@ -266,18 +266,18 @@ test('a bare dotted token OUTSIDE a URL is still flagged - the mask is bounded t
     && x.detail === 'git.jcrenshaw.dev'), JSON.stringify(p));
 });
 
+/** Whether a fixture carrying `prose` reports `--items` as an unknown flag. */
+const itemsFlagged = (t, prose) => run(['--root', fixture(t, prose)]).problems
+  .some((x) => x.kind === 'unknown-flag' && /--items/.test(x.detail));
+
 test('a phantom flag on a real subcommand is flagged (the --items regression)', (t) => {
-  const root = fixture(t,
-    'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" uat refresh --phase 1 --items -\n');
-  const p = run(['--root', root]).problems;
-  assert.ok(p.some((x) => x.kind === 'unknown-flag' && /--items/.test(x.detail)));
+  assert.ok(itemsFlagged(t,
+    'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" uat refresh --phase 1 --items -\n'));
 });
 
 test('#50: a CRLF backslash continuation joins like an LF one (the --items regression, CRLF spelling)', (t) => {
-  const root = fixture(t,
-    'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" uat refresh --phase 1 \\\r\n  --items -\r\n');
-  const p = run(['--root', root]).problems;
-  assert.ok(p.some((x) => x.kind === 'unknown-flag' && /--items/.test(x.detail)));
+  assert.ok(itemsFlagged(t,
+    'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" uat refresh --phase 1 \\\r\n  --items -\r\n'));
 });
 
 test('#50: an EVEN backslash run does NOT continue the line - the next line is a separate command (D-15 parity)', (t) => {
@@ -287,10 +287,8 @@ test('#50: an EVEN backslash run does NOT continue the line - the next line is a
   // never wrote. This rule used to be shared with the git rails, which carried
   // it as escape state in a shell tokenizer; that tokenizer is deleted and
   // self-verify's prose join is now its only home.
-  const root = fixture(t,
-    'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" uat refresh --phase 1 \\\\\n--items -\n');
-  const p = run(['--root', root]).problems;
-  assert.ok(!p.some((x) => x.kind === 'unknown-flag' && /--items/.test(x.detail)));
+  assert.ok(!itemsFlagged(t,
+    'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" uat refresh --phase 1 \\\\\n--items -\n'));
 });
 
 test('the weight.mjs contract entry has teeth: a phantom flag on `resident` is flagged', (t) => {
@@ -870,11 +868,15 @@ test('check 7c: Write granted and Edit/MultiEdit denied yields no problem', (t) 
   assert.ok(!run(['--root', root]).problems.some((x) => x.kind === 'verifier-write-grant'));
 });
 
-test('check 7c: Write missing from tools: is flagged (bare cad-verifier)', (t) => {
-  const root = verifierFixture(t, 'Read, Bash', 'Edit, MultiEdit', 'cad-verifier');
-  const p = run(['--root', root]).problems;
+/** A verifier named `name` with no Write in tools: is flagged on agents/v.md. */
+function assertWriteMissing(t, name) {
+  const p = run(['--root', verifierFixture(t, 'Read, Bash', 'Edit, MultiEdit', name)]).problems;
   assert.ok(p.some((x) => x.kind === 'verifier-write-grant' && x.file === 'agents/v.md'
     && /Write not in tools:/.test(x.detail)), JSON.stringify(p));
+}
+
+test('check 7c: Write missing from tools: is flagged (bare cad-verifier)', (t) => {
+  assertWriteMissing(t, 'cad-verifier');
 });
 
 test('check 7c: a QUOTED verifier name is still checked', (t) => {
@@ -882,10 +884,7 @@ test('check 7c: a QUOTED verifier name is still checked', (t) => {
   // `"cad-verifier"` matches no arm and the whole check skips silently while
   // lib/rung-agent.mjs still routes the file by its FILENAME - a silent skip in
   // the only mechanical backstop.
-  const root = verifierFixture(t, 'Read, Bash', 'Edit, MultiEdit', '"cad-verifier"');
-  const p = run(['--root', root]).problems;
-  assert.ok(p.some((x) => x.kind === 'verifier-write-grant' && x.file === 'agents/v.md'
-    && /Write not in tools:/.test(x.detail)), JSON.stringify(p));
+  assertWriteMissing(t, '"cad-verifier"');
 });
 
 test('check 7c: Edit missing from disallowedTools: is flagged', (t) => {
@@ -935,6 +934,9 @@ test('check 7c: a non-verifier agent without Write yields no problem', (t) => {
 
 // --- check 8: the rung ladder, RUNG_FILES <-> agents/ (STK-02) ---
 
+/** The problems a tree carrying only these `agents` files reports. */
+const agentsOnly = (t, agents) => run(['--root', fixtureWith(t, { agents })]).problems;
+
 test('check 8: a rung file the map names that is not on disk is missing-rung-agent', (t) => {
   // The map is now the whole expectation: every rung is reachable by config
   // (`roles.<role>.effort` names any of the five), so a file RUNG_FILES states
@@ -966,10 +968,7 @@ test('check 8: a fixture with no plugin manifest is lenient about the ladder', (
   // cannot supply its own the way it supplies its own schema - held against a
   // tree carrying one agent file it would report the other twenty-nine absent,
   // about a tree that never claimed to carry a ladder.
-  const root = fixtureWith(t, {
-    agents: { 'cad-verifier.md': rungAgentText('cad-verifier', 'high') },
-  });
-  const p = run(['--root', root]).problems;
+  const p = agentsOnly(t, { 'cad-verifier.md': rungAgentText('cad-verifier', 'high') });
   assert.deepEqual(p.filter((x) => x.kind === 'missing-rung-agent'), [], JSON.stringify(p));
 });
 
@@ -978,11 +977,8 @@ test('check 8 (reverse): a rung file the map does not name is undeclared-rung-ag
   // carry. `cad-planner`'s high rung is the UNSUFFIXED cad-planner.md, so a
   // cad-planner-high.md is standing context in every main-session prompt that
   // nothing can ever dispatch, and the fix is to delete it or file it.
-  const root = fixtureWith(t, {
-    agents: { 'cad-planner-high.md': rungAgentText('cad-planner-high', 'high') },
-  });
-  const hit = run(['--root', root]).problems.find((x) => x.kind === 'undeclared-rung-agent'
-    && x.file === 'agents/cad-planner-high.md');
+  const hit = agentsOnly(t, { 'cad-planner-high.md': rungAgentText('cad-planner-high', 'high') })
+    .find((x) => x.kind === 'undeclared-rung-agent' && x.file === 'agents/cad-planner-high.md');
   assert.ok(hit, 'no undeclared-rung-agent for agents/cad-planner-high.md');
   assert.match(hit.detail, /agents\/cad-planner\.md/);
   assert.match(hit.detail, /maps no file to this one/);
@@ -992,20 +988,14 @@ test('check 8 (reverse): a MAPPED rung file is left alone whatever config reache
   // The half that is deliberately gone (D-03), now that there is no cell to
   // reach a rung at all: `max` IS cad-verifier's rung in lib/rung-agent.mjs,
   // and a ladder complete on disk is the ordinary state, not a fault.
-  const root = fixtureWith(t, {
-    agents: { 'cad-verifier-max.md': rungAgentText('cad-verifier-max', 'max') },
-  });
-  const p = run(['--root', root]).problems;
+  const p = agentsOnly(t, { 'cad-verifier-max.md': rungAgentText('cad-verifier-max', 'max') });
   assert.deepEqual(p.filter((x) => x.kind === 'undeclared-rung-agent'), [], JSON.stringify(p));
 });
 
 test('check 8 (reverse): an UNSUFFIXED agent file the map names nowhere is NOT flagged', (t) => {
   // The reverse direction must not creep into a blanket map-membership rule -
   // that would outlaw the one-off agent D-04 keeps legal.
-  const root = fixtureWith(t, {
-    agents: { 'cad-oneoff.md': '---\nname: cad-oneoff\ntools: Read\n---\nbody\n' },
-  });
-  const p = run(['--root', root]).problems;
+  const p = agentsOnly(t, { 'cad-oneoff.md': '---\nname: cad-oneoff\ntools: Read\n---\nbody\n' });
   assert.deepEqual(p.filter((x) => x.kind === 'undeclared-rung-agent'), [], JSON.stringify(p));
 });
 
@@ -2386,36 +2376,58 @@ test('check 2: a script with no bare form still reports one', (t) => {
 // walk reaches the rule, that the envelope names it, and that a site the
 // register does not classify comes back as a problem rather than as silence.
 
+// Checks 19 and 20 share one CLI-wiring shape, so they share these four.
+
+/** A synthetic x.md carrying `prose` gets exactly one `kind` problem, its detail
+ *  matching `detail`, from a run whose `checked` matches `checked`. */
+function assertUnregistered(t, prose, checked, kind, detail) {
+  const j = run(['--root', fixture(t, prose)]);
+  assert.match(j.checked, checked);
+  const hits = j.problems.filter((p) => p.kind === kind);
+  assert.equal(hits.length, 1, JSON.stringify(j.problems));
+  assert.equal(hits[0].file, 'cadence-core/workflows/x.md');
+  assert.match(hits[0].detail, detail);
+}
+
+/** A registered `file` carrying `line` gets exactly one `kind` problem, pointing at conventions.md. */
+function assertRegisteredInline(t, file, line, kind) {
+  const root = fixture(t, 'nothing to see\n');
+  writeFileSync(join(root, file), line);
+  const hits = run(['--root', root]).problems.filter((p) => p.kind === kind);
+  assert.equal(hits.length, 1, JSON.stringify(hits));
+  assert.equal(hits[0].file, file);
+  assert.match(hits[0].detail, /conventions\.md/);
+}
+
+/** Prose that merely names the thing reports no kind under `prefix`. */
+function assertQuiet(t, prose, prefix) {
+  assert.deepEqual(run(['--root', fixture(t, prose)]).problems
+    .filter((p) => p.kind.startsWith(prefix)), []);
+}
+
+/** The LIVE tree reports none of `kinds`. */
+function assertLiveClean(kinds) {
+  const p = run(['--root', REPO]).problems;
+  for (const kind of kinds) assert.deepEqual(p.filter((x) => x.kind === kind), []);
+}
+
 test('check 19: a prescribed value no register row classifies is reported', (t) => {
   // `cadence-core/workflows/x.md` is a synthetic surface, so nothing in the
   // shipped register speaks for it - which is exactly site seventeen.
-  const root = fixture(t, 'close it with `--detail "<whatever the agent said>"` on that line\n');
-  const j = run(['--root', root]);
-  assert.match(j.checked, /text-transport/);
-  const hits = j.problems.filter((p) => p.kind === 'text-transport-unregistered');
-  assert.equal(hits.length, 1, JSON.stringify(j.problems));
-  assert.equal(hits[0].file, 'cadence-core/workflows/x.md');
-  assert.match(hits[0].detail, /whatever the agent said/);
+  assertUnregistered(t, 'close it with `--detail "<whatever the agent said>"` on that line\n',
+    /text-transport/, 'text-transport-unregistered', /whatever the agent said/);
 });
 
 test('check 19: a registered caller-derived site reports the inline form', (t) => {
   // Synthetic prose at a REGISTERED path: the row is the shipped one, so this
   // proves the register the CLI reads is the register the module ships - not a
   // fixture's own copy of it.
-  const root = fixture(t, 'nothing to see\n');
-  writeFileSync(join(root, 'cadence-core', 'workflows', 'verify-deep.md'),
-    'close the bracket with --detail "<what failed>" when it failed\n');
-  const hits = run(['--root', root]).problems
-    .filter((p) => p.kind === 'text-transport-inline');
-  assert.equal(hits.length, 1, JSON.stringify(hits));
-  assert.equal(hits[0].file, 'cadence-core/workflows/verify-deep.md');
-  assert.match(hits[0].detail, /conventions\.md/);
+  assertRegisteredInline(t, 'cadence-core/workflows/verify-deep.md',
+    'close the bracket with --detail "<what failed>" when it failed\n', 'text-transport-inline');
 });
 
 test('check 19: prose that merely names a flag stays green through the CLI', (t) => {
-  const root = fixture(t, 'OMIT `--detail` for a `PLAN COMPLETE` return; carry it otherwise.\n');
-  assert.deepEqual(run(['--root', root]).problems
-    .filter((p) => p.kind.startsWith('text-transport-')), []);
+  assertQuiet(t, 'OMIT `--detail` for a `PLAN COMPLETE` return; carry it otherwise.\n', 'text-transport-');
 });
 
 test('check 19: the LIVE tree is clean of all three text-transport codes', () => {
@@ -2424,10 +2436,7 @@ test('check 19: the LIVE tree is clean of all three text-transport codes', () =>
   // what makes a reintroduced inline site redden the suite as well as the
   // linter, so a site that goes back to `--detail "<...>"` cannot ship on a
   // green `node --test`.
-  const p = run(['--root', REPO]).problems;
-  assert.deepEqual(p.filter((x) => x.kind === 'text-transport-inline'), []);
-  assert.deepEqual(p.filter((x) => x.kind === 'text-transport-unregistered'), []);
-  assert.deepEqual(p.filter((x) => x.kind === 'text-transport-unclear'), []);
+  assertLiveClean(['text-transport-inline', 'text-transport-unregistered', 'text-transport-unclear']);
 });
 
 // --- check 20: bulk tool output rides a file ---------------------------------
@@ -2440,32 +2449,19 @@ test('check 20: a registered site back on the transcript reports the inline kind
   // Synthetic prose at a REGISTERED path: the row is the shipped one, so this
   // proves the register the CLI reads is the register the module ships - not a
   // fixture's own copy of it.
-  const root = fixture(t, 'nothing to see\n');
-  writeFileSync(join(root, 'cadence-core', 'references', 'triage-gate-blocking.md'),
-    'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" trace render --phase <N>\n');
-  const hits = run(['--root', root]).problems
-    .filter((p) => p.kind === 'bulk-output-inline');
-  assert.equal(hits.length, 1, JSON.stringify(hits));
-  assert.equal(hits[0].file, 'cadence-core/references/triage-gate-blocking.md');
-  assert.match(hits[0].detail, /conventions\.md/);
+  assertRegisteredInline(t, 'cadence-core/references/triage-gate-blocking.md',
+    'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" trace render --phase <N>\n', 'bulk-output-inline');
 });
 
 test('check 20: a prescribed bulk call no register row classifies is reported', (t) => {
   // `cadence-core/workflows/x.md` is a synthetic surface, so nothing in the
   // shipped register speaks for it - which is exactly the new site.
-  const root = fixture(t, 'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" trace render --all\n');
-  const j = run(['--root', root]);
-  assert.match(j.checked, /bulk-output/);
-  const hits = j.problems.filter((p) => p.kind === 'bulk-output-unregistered');
-  assert.equal(hits.length, 1, JSON.stringify(j.problems));
-  assert.equal(hits[0].file, 'cadence-core/workflows/x.md');
-  assert.match(hits[0].detail, /--all/);
+  assertUnregistered(t, 'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" trace render --all\n',
+    /bulk-output/, 'bulk-output-unregistered', /--all/);
 });
 
 test('check 20: prose that merely names a bulk call stays green through the CLI', (t) => {
-  const root = fixture(t, 'a worker with none of them is what `trace render` reports as unpaired.\n');
-  assert.deepEqual(run(['--root', root]).problems
-    .filter((p) => p.kind.startsWith('bulk-output-')), []);
+  assertQuiet(t, 'a worker with none of them is what `trace render` reports as unpaired.\n', 'bulk-output-');
 });
 
 test('check 20: the LIVE tree is clean of all three bulk-output codes', () => {
@@ -2473,10 +2469,7 @@ test('check 20: the LIVE tree is clean of all three bulk-output codes', () => {
   // TREE passes it, which is the half a fixture can never state - and it is
   // what makes a site that goes back to reading a 68,044 B render into the
   // transcript redden the suite as well as the linter.
-  const p = run(['--root', REPO]).problems;
-  assert.deepEqual(p.filter((x) => x.kind === 'bulk-output-inline'), []);
-  assert.deepEqual(p.filter((x) => x.kind === 'bulk-output-unregistered'), []);
-  assert.deepEqual(p.filter((x) => x.kind === 'bulk-output-unclear'), []);
+  assertLiveClean(['bulk-output-inline', 'bulk-output-unregistered', 'bulk-output-unclear']);
 });
 
 // --- check 21: the scratch file belongs to this run --------------------------
