@@ -19,10 +19,10 @@
 // also REGISTERS its arms in the importing process, so `test` is bound to a
 // no-op unless this module IS the entry file - the discipline
 // config-seams.test.mjs states at length, for the same reason.
-import { test as nodeTest } from 'node:test';
+import { test as nodeTest, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, existsSync, statSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, chmodSync, existsSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,7 +32,20 @@ import { isEntryFile } from './planning.test.mjs';
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 
 const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'issue-check.mjs');
-const NO_GLOBAL = join(mkdtempSync(join(tmpdir(), 'cad-ic-')), 'no-global.json');
+const NO_GLOBAL_ROOT = mkdtempSync(join(tmpdir(), 'cad-ic-'));
+const NO_GLOBAL = join(NO_GLOBAL_ROOT, 'no-global.json');
+// the real `after`, not the shim: an importer made these two on load and owns them too
+after(() => {
+  rmSync(NO_GLOBAL_ROOT, { recursive: true, force: true });
+  rmSync(GIT_ONLY, { recursive: true, force: true });
+});
+
+/** A mkdtemp root that goes when test `t` ends. */
+function tmp(t, prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
 
 const GH_BODY = '[{"number":42,"state":"OPEN"},{"number":47,"state":"CLOSED"},{"number":99,"state":"OPEN"}]';
 const GLAB_BODY = '[{"id":1,"iid":42,"state":"opened"},{"id":2,"iid":47,"state":"closed"},{"id":3,"iid":99,"state":"opened"}]';
@@ -108,8 +121,8 @@ function forgeFor(originUrl) {
  *  a provider - so a case that wants an unconfigured repository, or a record
  *  that disagrees with the remote, says so and every other case reads as it
  *  always did. `forge: null` suppresses the derivation outright. */
-function repo({ originUrl, commits = [], gitConfig = {}, forge }) {
-  const dir = mkdtempSync(join(tmpdir(), 'cad-ic-repo-'));
+function repo(t, { originUrl, commits = [], gitConfig = {}, forge }) {
+  const dir = tmp(t, 'cad-ic-repo-');
   mkdirSync(join(dir, '.planning'), { recursive: true });
   const derived = forge === null ? {} : (forge || forgeFor(originUrl));
   const git = gitConfig.forge_provider !== undefined ? gitConfig : { ...derived, ...gitConfig };
@@ -138,8 +151,8 @@ function repo({ originUrl, commits = [], gitConfig = {}, forge }) {
 
 /** `repo()` with HEAD pointing at a branch that does not exist, so `main`
  *  still resolves to a commit while `git log main..HEAD` fails. */
-function repoWithBrokenHead(opts) {
-  const dir = repo(opts);
+function repoWithBrokenHead(t, opts) {
+  const dir = repo(t, opts);
   execFileSync('git', ['-C', dir, 'symbolic-ref', 'HEAD', 'refs/heads/no-such-branch'], {
     stdio: 'ignore',
     env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
@@ -166,8 +179,8 @@ const GIT_ONLY = (() => {
  *  a degraded report. `stubs` are built into a fresh dir prepended to the
  *  child's PATH; `cwd` defaults to a directory that is NOT the repo, so nothing
  *  can pass by inferring the repository from the process cwd. */
-function seamRun(args, { stubs = {}, cwd = tmpdir(), marker = null, argvLog = null, bare = false } = {}) {
-  const stubDir = mkdtempSync(join(tmpdir(), 'cad-ic-bin-'));
+function seamRun(t, args, { stubs = {}, cwd = tmpdir(), marker = null, argvLog = null, bare = false } = {}) {
+  const stubDir = tmp(t, 'cad-ic-bin-');
   for (const [name, opts] of Object.entries(stubs)) stub(stubDir, name, opts);
   const env = {
     ...process.env,
@@ -185,7 +198,7 @@ function seamRun(args, { stubs = {}, cwd = tmpdir(), marker = null, argvLog = nu
 }
 
 /** seamRun's envelope alone, for the cases that do not assert the status. */
-function seam(args, opts) { return seamRun(args, opts).envelope; }
+function seam(t, args, opts) { return seamRun(t, args, opts).envelope; }
 
 const COMMITS = ['feat: first cut (#42)', 'fix: closes #47', 'docs: mention #42 again', 'chore: fixes #99'];
 
@@ -206,9 +219,9 @@ const HOSTS = [
 ];
 
 for (const [name, originUrl, host, stubs] of HOSTS) {
-  test(`${name}: the report names each referenced issue with its state, plus the open list`, () => {
-    const dir = repo({ originUrl, commits: COMMITS });
-    const r = seam(['check', '--dir', dir, '--base', 'main'], { stubs });
+  test(`${name}: the report names each referenced issue with its state, plus the open list`, (t) => {
+    const dir = repo(t, { originUrl, commits: COMMITS });
+    const r = seam(t, ['check', '--dir', dir, '--base', 'main'], { stubs });
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.equal(r.action, 'report', JSON.stringify(r));
     assert.equal(r.host, host);
@@ -233,9 +246,9 @@ for (const [name, originUrl, host, stubs] of HOSTS) {
 
 const SPLIT_ORIGIN = 'ssh://git@ssh.example.com:2222/org/repo.git';
 
-test('forgejo: an SSH host that differs from the login host still reports', () => {
-  const dir = repo({ originUrl: SPLIT_ORIGIN, commits: COMMITS });
-  const r = seam(['check', '--dir', dir, '--base', 'main'],
+test('forgejo: an SSH host that differs from the login host still reports', (t) => {
+  const dir = repo(t, { originUrl: SPLIT_ORIGIN, commits: COMMITS });
+  const r = seam(t, ['check', '--dir', dir, '--base', 'main'],
     { stubs: { tea: { body: TEA_BODY, login: TEA_LOGINS } }, bare: true });
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.action, 'report', JSON.stringify(r));
@@ -250,27 +263,27 @@ test('forgejo: an SSH host that differs from the login host still reports', () =
   assert.deepEqual(r.warnings, []);
 });
 
-test('a branch referencing NO issue still reports the open list as the fallback', () => {
-  const dir = repo({ originUrl: 'https://github.com/org/repo.git', commits: ['chore: no refs here'] });
-  const r = seam(['check', '--dir', dir, '--base', 'main'], { stubs: { gh: { body: GH_BODY } } });
+test('a branch referencing NO issue still reports the open list as the fallback', (t) => {
+  const dir = repo(t, { originUrl: 'https://github.com/org/repo.git', commits: ['chore: no refs here'] });
+  const r = seam(t, ['check', '--dir', dir, '--base', 'main'], { stubs: { gh: { body: GH_BODY } } });
   assert.equal(r.action, 'report');
   assert.deepEqual(r.referenced, []);
   assert.deepEqual(r.open, [42, 99]);
 });
 
-test('a protected_branches naming NO branch still names the referenced issues (GRD-01, D-02)', () => {
+test('a protected_branches naming NO branch still names the referenced issues (GRD-01, D-02)', (t) => {
   // With no --base and no git.base_branch, the base falls back to
   // resolveProtectedBranches(git)[0] and is spent on `git log <base>..HEAD`.
   // `""` used to resolve to [""], so the range became `..HEAD`, git read the
   // empty side as HEAD, the log came back empty and the report named NO issue
   // while still answering ok:true - a silently empty report, not a failure.
   // Assert the NUMBERS: the pre-fix tree also answers action "report".
-  const dir = repo({
+  const dir = repo(t, {
     originUrl: 'https://github.com/org/repo.git',
     commits: COMMITS,
     gitConfig: { protected_branches: '' },
   });
-  const r = seam(['check', '--dir', dir], { stubs: { gh: { body: GH_BODY } } });
+  const r = seam(t, ['check', '--dir', dir], { stubs: { gh: { body: GH_BODY } } });
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.action, 'report', JSON.stringify(r));
   assert.deepEqual(r.referenced, [
@@ -280,14 +293,14 @@ test('a protected_branches naming NO branch still names the referenced issues (G
 
 // --- the call is bound to the repository --dir names ------------------------
 
-test('the forge call names the --dir repo, not the one the process cwd sits in', () => {
+test('the forge call names the --dir repo, not the one the process cwd sits in', (t) => {
   // A cwd-only implementation passes an assertion about the emitted numbers,
   // because a PATH stub ignores its cwd. So the selector is asserted directly
   // against the argv the stub recorded.
-  const target = repo({ originUrl: 'https://github.com/target-org/target-repo.git', commits: COMMITS });
-  const elsewhere = repo({ originUrl: 'https://github.com/other-org/other-repo.git', commits: ['chore: x'] });
-  const argvLog = join(mkdtempSync(join(tmpdir(), 'cad-ic-argv-')), 'argv.log');
-  const r = seam(['check', '--dir', target, '--base', 'main'],
+  const target = repo(t, { originUrl: 'https://github.com/target-org/target-repo.git', commits: COMMITS });
+  const elsewhere = repo(t, { originUrl: 'https://github.com/other-org/other-repo.git', commits: ['chore: x'] });
+  const argvLog = join(tmp(t, 'cad-ic-argv-'), 'argv.log');
+  const r = seam(t, ['check', '--dir', target, '--base', 'main'],
     { stubs: { gh: { body: GH_BODY } }, cwd: elsewhere, argvLog });
   assert.equal(r.action, 'report');
   assert.equal(r.repo, 'target-org/target-repo');
@@ -303,16 +316,16 @@ test('the forge call names the --dir repo, not the one the process cwd sits in',
 // recorded command line, byte for byte, for the two hosts whose binding did not
 // change. A regression here is a flag that leaked across rows.
 
-test('the github and gitlab argv are byte-identical to what they were', () => {
+test('the github and gitlab argv are byte-identical to what they were', (t) => {
   for (const [originUrl, stubs, expected] of [
     ['https://github.com/org/repo.git', { gh: { body: GH_BODY } },
       'gh issue list --repo org/repo --state all --json number,state --limit 200'],
     ['git@gitlab.com:org/repo.git', { glab: { body: GLAB_BODY } },
       'glab issue list --repo org/repo --all --output json --per-page 100'],
   ]) {
-    const dir = repo({ originUrl, commits: COMMITS });
-    const argvLog = join(mkdtempSync(join(tmpdir(), 'cad-ic-argv-')), 'argv.log');
-    const r = seam(['check', '--dir', dir, '--base', 'main'], { stubs, argvLog });
+    const dir = repo(t, { originUrl, commits: COMMITS });
+    const argvLog = join(tmp(t, 'cad-ic-argv-'), 'argv.log');
+    const r = seam(t, ['check', '--dir', dir, '--base', 'main'], { stubs, argvLog });
     assert.equal(r.action, 'report', JSON.stringify(r));
     assert.deepEqual(readFileSync(argvLog, 'utf8').trim().split('\n'), [expected]);
   }
@@ -320,10 +333,10 @@ test('the github and gitlab argv are byte-identical to what they were', () => {
 
 // --- the call bound ---------------------------------------------------------
 
-test('a forge CLI that never returns is killed at the bound and the land continues', () => {
-  const dir = repo({ originUrl: 'https://github.com/org/repo.git', commits: COMMITS });
+test('a forge CLI that never returns is killed at the bound and the land continues', (t) => {
+  const dir = repo(t, { originUrl: 'https://github.com/org/repo.git', commits: COMMITS });
   const started = Date.now();
-  const r = seam(['check', '--dir', dir, '--base', 'main', '--timeout-ms', '500'],
+  const r = seam(t, ['check', '--dir', dir, '--base', 'main', '--timeout-ms', '500'],
     { stubs: { gh: { body: GH_BODY, sleep: 30 } } });
   const elapsed = Date.now() - started;
   assert.equal(r.ok, true);
@@ -336,16 +349,16 @@ test('a forge CLI that never returns is killed at the bound and the land continu
 
 // --- a flag-shaped or unresolvable base never reaches git (phase 1 D-01, D-10) ---
 
-test('a committed git.base_branch shaped like a flag skips, and writes no file', () => {
+test('a committed git.base_branch shaped like a flag skips, and writes no file', (t) => {
   // `--output=<path>` in `git log <base>..HEAD` makes git WRITE <path>..HEAD, so
   // the assertion is on the filesystem: the unfixed seam leaves that file behind.
-  const out = join(mkdtempSync(join(tmpdir(), 'cad-ic-out-')), 'victim');
+  const out = join(tmp(t, 'cad-ic-out-'), 'victim');
   const base = `--output=${out}`;
-  const dir = repo({
+  const dir = repo(t, {
     originUrl: GH_REPO, commits: COMMITS,
     gitConfig: { forge_provider: 'github', forge_repo: 'owner/name', base_branch: base },
   });
-  const { status, envelope: r } = seamRun(['check', '--dir', dir], { stubs: { gh: { body: GH_BODY } } });
+  const { status, envelope: r } = seamRun(t, ['check', '--dir', dir], { stubs: { gh: { body: GH_BODY } } });
   assert.equal(status, 0);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.action, 'skip', JSON.stringify(r));
@@ -356,30 +369,30 @@ test('a committed git.base_branch shaped like a flag skips, and writes no file',
   assert.equal(existsSync(`${out}..HEAD`), false, `${out}..HEAD was written`);
 });
 
-test('a committed git.base_branch naming no commit skips, naming the base', () => {
-  const dir = repo({
+test('a committed git.base_branch naming no commit skips, naming the base', (t) => {
+  const dir = repo(t, {
     originUrl: GH_REPO, commits: COMMITS,
     gitConfig: { forge_provider: 'github', forge_repo: 'owner/name', base_branch: 'no-such-branch' },
   });
-  const r = seam(['check', '--dir', dir], { stubs: { gh: { body: GH_BODY } } });
+  const r = seam(t, ['check', '--dir', dir], { stubs: { gh: { body: GH_BODY } } });
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.action, 'skip', JSON.stringify(r));
   assert.match(r.reason, /base "no-such-branch" names no commit/, r.reason);
 });
 
-test('a base carrying a newline is JSON-quoted, so the reason stays one line', () => {
-  const dir = repo({
+test('a base carrying a newline is JSON-quoted, so the reason stays one line', (t) => {
+  const dir = repo(t, {
     originUrl: GH_REPO, commits: COMMITS,
     gitConfig: { forge_provider: 'github', forge_repo: 'owner/name', base_branch: 'x\nforged line' },
   });
-  const r = seam(['check', '--dir', dir], { stubs: { gh: { body: GH_BODY } } });
+  const r = seam(t, ['check', '--dir', dir], { stubs: { gh: { body: GH_BODY } } });
   assert.equal(r.action, 'skip', JSON.stringify(r));
   assert.ok(!r.reason.includes('\n'), r.reason);
   assert.ok(r.reason.includes('"x\\nforged line"'), r.reason);
 });
 
-test('unknown subcommand: usage', () => {
-  const r = seam(['frobnicate']);
+test('unknown subcommand: usage', (t) => {
+  const r = seam(t, ['frobnicate']);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'usage');
 });
@@ -404,8 +417,8 @@ const TEA_FULL_PAGE = JSON.stringify(
 // except the key set to false, which is `off`: the user's own switch is not a
 // degradation, and cad-land prints nothing for it.
 const DEGRADATIONS = [
-  ['the key is off', /issue_check is off/, () => ({
-    args: ['check', '--dir', repo({ originUrl: GH_REPO, commits: COMMITS, gitConfig: { issue_check: false } }), '--base', 'main'],
+  ['the key is off', /issue_check is off/, (t) => ({
+    args: ['check', '--dir', repo(t, { originUrl: GH_REPO, commits: COMMITS, gitConfig: { issue_check: false } }), '--base', 'main'],
     opts: { stubs: ALL_STUBS },
   }), 'off'],
   // ONE arm where there were two. `no origin remote` and `unrecognized host`
@@ -413,43 +426,43 @@ const DEGRADATIONS = [
   // user acts on; this says which keys to set (phase 1 D-01). A repository
   // WITH a perfectly good origin lands here when the record is unset, which is
   // the whole point: config decides, not the remote.
-  ['no forge configured', /no forge configured \(git\.forge_provider, git\.forge_repo unset/, () => ({
-    args: ['check', '--dir', repo({ originUrl: GH_REPO, commits: COMMITS, forge: null }), '--base', 'main'],
+  ['no forge configured', /no forge configured \(git\.forge_provider, git\.forge_repo unset/, (t) => ({
+    args: ['check', '--dir', repo(t, { originUrl: GH_REPO, commits: COMMITS, forge: null }), '--base', 'main'],
     opts: { stubs: ALL_STUBS },
   })],
   // A CONFIGURED forgejo record with tea present and answering - no login for
   // the persisted instance host is its own reason, because the fix is a login.
-  ['no tea login', /tea holds no login/, () => ({
-    args: ['check', '--dir', repo({ originUrl: FORGE_REPO, commits: COMMITS }), '--base', 'main'],
+  ['no tea login', /tea holds no login/, (t) => ({
+    args: ['check', '--dir', repo(t, { originUrl: FORGE_REPO, commits: COMMITS }), '--base', 'main'],
     opts: { stubs: { tea: { body: TEA_BODY, login: '[]' } }, bare: true },
   })],
-  ['the resolved binary is absent', /gh CLI is not on PATH/, () => ({
-    args: ['check', '--dir', repo({ originUrl: GH_REPO, commits: COMMITS }), '--base', 'main'],
+  ['the resolved binary is absent', /gh CLI is not on PATH/, (t) => ({
+    args: ['check', '--dir', repo(t, { originUrl: GH_REPO, commits: COMMITS }), '--base', 'main'],
     opts: { bare: true },
   })],
-  ['the CLI exits nonzero', /exited nonzero/, () => ({
-    args: ['check', '--dir', repo({ originUrl: GH_REPO, commits: COMMITS }), '--base', 'main'],
+  ['the CLI exits nonzero', /exited nonzero/, (t) => ({
+    args: ['check', '--dir', repo(t, { originUrl: GH_REPO, commits: COMMITS }), '--base', 'main'],
     opts: { stubs: { gh: { code: 1, stderr: 'gh: could not authenticate' } } },
   })],
   // Exit ZERO, and a response that filled its page: a truncated read and an
   // empty tracker carry the same records, so this may not reach the partition.
-  ['a response truncated at the page limit', /filled the 50-row page/, () => ({
-    args: ['check', '--dir', repo({ originUrl: FORGE_REPO, commits: COMMITS }), '--base', 'main'],
+  ['a response truncated at the page limit', /filled the 50-row page/, (t) => ({
+    args: ['check', '--dir', repo(t, { originUrl: FORGE_REPO, commits: COMMITS }), '--base', 'main'],
     opts: { stubs: { tea: { body: TEA_FULL_PAGE, login: TEA_LOGINS } }, bare: true },
   })],
-  ['a response with a renamed field', /no readable number\/state/, () => ({
-    args: ['check', '--dir', repo({ originUrl: GH_REPO, commits: COMMITS }), '--base', 'main'],
+  ['a response with a renamed field', /no readable number\/state/, (t) => ({
+    args: ['check', '--dir', repo(t, { originUrl: GH_REPO, commits: COMMITS }), '--base', 'main'],
     opts: { stubs: { gh: { body: '[{"id":42,"status":"OPEN"}]' } } },
   })],
   // A --base this repo does not have is refused before any git log runs (phase 1
   // D-01, D-10): the base check answers first and names the base.
-  ['the base names no commit', /base "no-such-ref" names no commit/, () => ({
-    args: ['check', '--dir', repo({ originUrl: GH_REPO, commits: COMMITS }), '--base', 'no-such-ref'],
+  ['the base names no commit', /base "no-such-ref" names no commit/, (t) => ({
+    args: ['check', '--dir', repo(t, { originUrl: GH_REPO, commits: COMMITS }), '--base', 'no-such-ref'],
     opts: { stubs: ALL_STUBS },
   })],
   // The ref scan itself: a base that DOES resolve, over a HEAD git cannot read.
-  ['the ref scan fails', /could not be read/, () => ({
-    args: ['check', '--dir', repoWithBrokenHead({ originUrl: GH_REPO, commits: COMMITS }), '--base', 'main'],
+  ['the ref scan fails', /could not be read/, (t) => ({
+    args: ['check', '--dir', repoWithBrokenHead(t, { originUrl: GH_REPO, commits: COMMITS }), '--base', 'main'],
     opts: { stubs: ALL_STUBS },
   })],
 ];
@@ -457,9 +470,9 @@ const DEGRADATIONS = [
 const SEEN_REASONS = new Map();
 
 for (const [name, pattern, build, action = 'skip'] of DEGRADATIONS) {
-  test(`degrades in ONE line: ${name}`, () => {
-    const { args, opts } = build();
-    const { status, envelope } = seamRun(args, opts);
+  test(`degrades in ONE line: ${name}`, (t) => {
+    const { args, opts } = build(t);
+    const { status, envelope } = seamRun(t, args, opts);
     assert.equal(status, 0, `${name} must not fail the land`);
     assert.equal(envelope.ok, true, JSON.stringify(envelope));
     assert.equal(envelope.action, action, JSON.stringify(envelope));
@@ -483,11 +496,11 @@ for (const [name, pattern, build, action = 'skip'] of DEGRADATIONS) {
 // both sides - what the seam must do when tea holds no login at all, and what
 // it must do for an origin no login names.
 
-test('an EMPTY tea login list skips on the existing line, and queries nothing', () => {
-  const dir = repo({ originUrl: FORGE_REPO, commits: COMMITS });
-  const marker = join(mkdtempSync(join(tmpdir(), 'cad-ic-mark-')), 'spawned.log');
-  const argvLog = join(mkdtempSync(join(tmpdir(), 'cad-ic-argv-')), 'argv.log');
-  const { status, envelope } = seamRun(['check', '--dir', dir, '--base', 'main'],
+test('an EMPTY tea login list skips on the existing line, and queries nothing', (t) => {
+  const dir = repo(t, { originUrl: FORGE_REPO, commits: COMMITS });
+  const marker = join(tmp(t, 'cad-ic-mark-'), 'spawned.log');
+  const argvLog = join(tmp(t, 'cad-ic-argv-'), 'argv.log');
+  const { status, envelope } = seamRun(t, ['check', '--dir', dir, '--base', 'main'],
     { stubs: { tea: { body: TEA_BODY, login: '[]' } }, bare: true, marker, argvLog });
   assert.equal(status, 0, 'a tea holding no login must not fail the land');
   assert.equal(envelope.ok, true, JSON.stringify(envelope));
@@ -502,7 +515,7 @@ test('an EMPTY tea login list skips on the existing line, and queries nothing', 
     ['tea login list --output json'], readFileSync(argvLog, 'utf8'));
 });
 
-test('an origin NO login names skips, and asks tea nothing about it', () => {
+test('an origin NO login names skips, and asks tea nothing about it', (t) => {
   // The guard, and the reason it is not the host rule that was deleted twice.
   // `--remote origin` binds tea to the checkout's own remote ("Discover Gitea
   // login from remote"), but tea does NOT refuse when no login matches: it
@@ -512,9 +525,9 @@ test('an origin NO login names skips, and asks tea nothing about it', () => {
   // therefore declines to ask unless some login NAMES this host. That question
   // is equality, never a shared-suffix reading, which is why it needs no
   // vendored public suffix list.
-  const dir = repo({ originUrl: 'https://git.stranger.org/org/repo.git', commits: COMMITS });
-  const argvLog = join(mkdtempSync(join(tmpdir(), 'cad-ic-argv-')), 'argv.log');
-  const { status, envelope } = seamRun(['check', '--dir', dir, '--base', 'main'],
+  const dir = repo(t, { originUrl: 'https://git.stranger.org/org/repo.git', commits: COMMITS });
+  const argvLog = join(tmp(t, 'cad-ic-argv-'), 'argv.log');
+  const { status, envelope } = seamRun(t, ['check', '--dir', dir, '--base', 'main'],
     { stubs: { tea: { body: TEA_BODY, login: TEA_LOGINS } }, bare: true, argvLog });
   assert.equal(status, 0, 'a stranger host must not fail the land');
   assert.equal(envelope.action, 'skip', JSON.stringify(envelope));
@@ -529,7 +542,7 @@ test('an origin NO login names skips, and asks tea nothing about it', () => {
   assert.equal(lines.filter((l) => l.startsWith('tea login list')).length, 1, lines.join('\n'));
 });
 
-test('a persisted host a login NAMES is bound with --login <that login\'s name>', () => {
+test('a persisted host a login NAMES is bound with --login <that login\'s name>', (t) => {
   // The other side of the guard, rebound. The persisted host here is the SSH
   // endpoint the user confirmed; the login that serves it is named
   // `forge.example.com` and carries that endpoint in `ssh_host`. `--login`
@@ -537,9 +550,9 @@ test('a persisted host a login NAMES is bound with --login <that login\'s name>'
   // not the host that resolved it - a distinction only an argv assertion can
   // make, and one that a `--remote origin` call could never have got wrong
   // because it named no login at all.
-  const dir = repo({ originUrl: SPLIT_ORIGIN, commits: COMMITS });
-  const argvLog = join(mkdtempSync(join(tmpdir(), 'cad-ic-argv-')), 'argv.log');
-  const { status, envelope } = seamRun(['check', '--dir', dir, '--base', 'main'],
+  const dir = repo(t, { originUrl: SPLIT_ORIGIN, commits: COMMITS });
+  const argvLog = join(tmp(t, 'cad-ic-argv-'), 'argv.log');
+  const { status, envelope } = seamRun(t, ['check', '--dir', dir, '--base', 'main'],
     { stubs: { tea: { body: TEA_BODY, login: TEA_LOGINS } }, bare: true, argvLog });
   assert.equal(status, 0);
   assert.equal(envelope.action, 'report', JSON.stringify(envelope));
@@ -570,7 +583,7 @@ const TWO_LOGINS = JSON.stringify([
   { name: 'forge.example.com', url: 'https://forge.example.com', ssh_host: 'ssh.example.com', user: 't' },
 ]);
 
-test('forgejo: every call names the login the persisted host resolves, and no other', () => {
+test('forgejo: every call names the login the persisted host resolves, and no other', (t) => {
   // Two logins configured, and the FIRST one is a stranger. tea resolves an
   // unqualified `--repo <owner>/<name>` in config FILE ORDER, so an unbound
   // query would answer from `evil.example.net` - another server's issues,
@@ -579,12 +592,12 @@ test('forgejo: every call names the login the persisted host resolves, and no ot
   // hands it to `teaLoginNameForHost`, which is what lets the call be made with
   // no remote present at all. The seam's job is to put the flag on EVERY call
   // it makes, list and resolve alike.
-  const dir = repo({
+  const dir = repo(t, {
     originUrl: SPLIT_ORIGIN,
     commits: [...COMMITS, 'chore: mentions #4242, which never existed'],
   });
-  const argvLog = join(mkdtempSync(join(tmpdir(), 'cad-ic-argv-')), 'argv.log');
-  const r = seam(['check', '--dir', dir, '--base', 'main'], {
+  const argvLog = join(tmp(t, 'cad-ic-argv-'), 'argv.log');
+  const r = seam(t, ['check', '--dir', dir, '--base', 'main'], {
     stubs: { tea: { body: TEA_OPEN_BODY, login: TWO_LOGINS, issue: { 47: '{"index":47,"state":"closed"}' } } },
     bare: true, argvLog,
   });
@@ -602,13 +615,13 @@ test('forgejo: every call names the login the persisted host resolves, and no ot
   assert.equal(queries.filter((q) => q.startsWith('tea issues list')).length, 1, lines.join('\n'));
 });
 
-test('forgejo: a number the open list missed resolves, or is named unresolved', () => {
-  const dir = repo({
+test('forgejo: a number the open list missed resolves, or is named unresolved', (t) => {
+  const dir = repo(t, {
     originUrl: FORGE_REPO,
     commits: [...COMMITS, 'chore: mentions #4242, which never existed'],
   });
-  const argvLog = join(mkdtempSync(join(tmpdir(), 'cad-ic-argv-')), 'argv.log');
-  const r = seam(['check', '--dir', dir, '--base', 'main'], {
+  const argvLog = join(tmp(t, 'cad-ic-argv-'), 'argv.log');
+  const r = seam(t, ['check', '--dir', dir, '--base', 'main'], {
     stubs: { tea: { body: TEA_OPEN_BODY, login: TEA_LOGINS, issue: { 47: '{"index":47,"state":"closed"}' } } },
     bare: true, argvLog,
   });
@@ -633,14 +646,14 @@ test('forgejo: a number the open list missed resolves, or is named unresolved', 
   ], lines.join('\n'));
 });
 
-test('forgejo: the resolve stops at its cap, and the remainder are unresolved', () => {
+test('forgejo: the resolve stops at its cap, and the remainder are unresolved', (t) => {
   const refs = [201, 202, 203, 204, 205, 206, 207, 208];
   // The stub would answer `closed` for ALL eight, so the cap is the only thing
   // that can make the last three unresolved.
   const issue = Object.fromEntries(refs.map((n) => [n, `{"index":${n},"state":"closed"}`]));
-  const dir = repo({ originUrl: FORGE_REPO, commits: refs.map((n) => `chore: touches #${n}`) });
-  const argvLog = join(mkdtempSync(join(tmpdir(), 'cad-ic-argv-')), 'argv.log');
-  const r = seam(['check', '--dir', dir, '--base', 'main'], {
+  const dir = repo(t, { originUrl: FORGE_REPO, commits: refs.map((n) => `chore: touches #${n}`) });
+  const argvLog = join(tmp(t, 'cad-ic-argv-'), 'argv.log');
+  const r = seam(t, ['check', '--dir', dir, '--base', 'main'], {
     stubs: { tea: { body: '[{"index":"42","state":"open"}]', login: TEA_LOGINS, issue } },
     bare: true, argvLog,
   });
@@ -662,16 +675,16 @@ test('forgejo: the resolve stops at its cap, and the remainder are unresolved', 
 // that answers inside the per-call bound and exits nonzero was never marked
 // timed out and every one of the cap's calls cost the caller its own bound.
 
-test('the per-issue resolves share ONE wall-clock budget, not one bound each', () => {
+test('the per-issue resolves share ONE wall-clock budget, not one bound each', (t) => {
   const refs = [301, 302, 303, 304, 305, 306, 307, 308];
-  const dir = repo({ originUrl: FORGE_REPO, commits: refs.map((n) => `chore: touches #${n}`) });
-  const argvLog = join(mkdtempSync(join(tmpdir(), 'cad-ic-argv-')), 'argv.log');
+  const dir = repo(t, { originUrl: FORGE_REPO, commits: refs.map((n) => `chore: touches #${n}`) });
+  const argvLog = join(tmp(t, 'cad-ic-argv-'), 'argv.log');
   const started = Date.now();
   // `issue: {}` answers no number, so every resolve is the slow nonzero exit a
   // real tracker gives for an issue that is not there. Not `bare`: the stub
   // needs /usr/bin/sleep, and prepending the stub dir already wins over any
   // real `tea`.
-  const run = seamRun(['check', '--dir', dir, '--base', 'main', '--timeout-ms', '2000'], {
+  const run = seamRun(t, ['check', '--dir', dir, '--base', 'main', '--timeout-ms', '2000'], {
     stubs: { tea: { body: TEA_OPEN_BODY, login: TEA_LOGINS, issue: {}, issueSleep: 1 } },
     argvLog,
   });
@@ -690,15 +703,15 @@ test('the per-issue resolves share ONE wall-clock budget, not one bound each', (
     `the whole resolve phase must fit inside the single stated budget: ${elapsed}ms`);
 });
 
-test('a FAST nonzero resolve does not stop the loop: the numbers behind it still resolve', () => {
+test('a FAST nonzero resolve does not stop the loop: the numbers behind it still resolve', (t) => {
   // D-11. The shipped cap fixture cannot prove this and neither can the
   // resolve fixture above: in both, the number the stub exits 1 for is the LAST
   // one, so a loop that broke on any nonzero exit would still pass them. Here
   // the unanswered number comes FIRST, which is the ordinary case - tea exits 1
   // for an issue that is not there, and a land may reference several of those.
   const refs = [401, 402, 403];
-  const dir = repo({ originUrl: FORGE_REPO, commits: refs.map((n) => `chore: touches #${n}`) });
-  const r = seam(['check', '--dir', dir, '--base', 'main'], {
+  const dir = repo(t, { originUrl: FORGE_REPO, commits: refs.map((n) => `chore: touches #${n}`) });
+  const r = seam(t, ['check', '--dir', dir, '--base', 'main'], {
     stubs: { tea: {
       body: TEA_OPEN_BODY, login: TEA_LOGINS,
       issue: { 402: '{"index":402,"state":"closed"}', 403: '{"index":403,"state":"open"}' },
@@ -713,16 +726,16 @@ test('a FAST nonzero resolve does not stop the loop: the numbers behind it still
   ], JSON.stringify(r));
 });
 
-test('a budget spent mid-loop is still a report: real states behind it, unresolved ahead', () => {
+test('a budget spent mid-loop is still a report: real states behind it, unresolved ahead', (t) => {
   // D-15. The budget is a bound on the land's cost, never a failure of it: the
   // envelope is the same one every other path emits, and the numbers the loop
   // never reached carry `unresolved` - never `not-found`, which would be an
   // affirmative claim about input this seam could not read.
   const refs = [501, 502, 503, 504, 505, 506, 507, 508];
-  const dir = repo({ originUrl: FORGE_REPO, commits: refs.map((n) => `chore: touches #${n}`) });
+  const dir = repo(t, { originUrl: FORGE_REPO, commits: refs.map((n) => `chore: touches #${n}`) });
   // 501 answers at once; every later number is the slow nonzero exit, so the
   // budget runs out with real state already collected and most refs untouched.
-  const run = seamRun(['check', '--dir', dir, '--base', 'main', '--timeout-ms', '2000'], {
+  const run = seamRun(t, ['check', '--dir', dir, '--base', 'main', '--timeout-ms', '2000'], {
     stubs: { tea: {
       body: TEA_OPEN_BODY, login: TEA_LOGINS,
       issue: { 501: '{"index":501,"state":"closed"}' }, issueSleep: 1,
@@ -738,14 +751,14 @@ test('a budget spent mid-loop is still a report: real states behind it, unresolv
   assert.deepEqual(run.envelope.warnings, []);
 });
 
-test('the key-off arm spawns NO forge CLI at all, not merely an empty report', () => {
+test('the key-off arm spawns NO forge CLI at all, not merely an empty report', (t) => {
   // A test reading only the reason and the empty list also passes an
   // implementation that probed `tea login list` before consulting the key. So
   // every stub on PATH appends its name to a marker file, and the assertion is
   // that the file was never created.
-  const dir = repo({ originUrl: FORGE_REPO, commits: COMMITS, gitConfig: { issue_check: false } });
-  const marker = join(mkdtempSync(join(tmpdir(), 'cad-ic-mark-')), 'spawned.log');
-  const r = seam(['check', '--dir', dir, '--base', 'main'], { stubs: ALL_STUBS, marker });
+  const dir = repo(t, { originUrl: FORGE_REPO, commits: COMMITS, gitConfig: { issue_check: false } });
+  const marker = join(tmp(t, 'cad-ic-mark-'), 'spawned.log');
+  const r = seam(t, ['check', '--dir', dir, '--base', 'main'], { stubs: ALL_STUBS, marker });
   // `off`, never `skip`: SKILL.md step 1 prints every skip reason verbatim, so
   // an off switch answering `skip` would print a tracker line on every land -
   // which is exactly what the key is set to false to stop.
@@ -756,14 +769,14 @@ test('the key-off arm spawns NO forge CLI at all, not merely an empty report', (
 
   // The control: the same repo with the key ON does reach a stub, so the
   // assertion above is about the key and not about a marker that never works.
-  const on = repo({ originUrl: FORGE_REPO, commits: COMMITS });
-  const marker2 = join(mkdtempSync(join(tmpdir(), 'cad-ic-mark-')), 'spawned.log');
-  seam(['check', '--dir', on, '--base', 'main'], { stubs: ALL_STUBS, marker: marker2 });
+  const on = repo(t, { originUrl: FORGE_REPO, commits: COMMITS });
+  const marker2 = join(tmp(t, 'cad-ic-mark-'), 'spawned.log');
+  seam(t, ['check', '--dir', on, '--base', 'main'], { stubs: ALL_STUBS, marker: marker2 });
   assert.equal(existsSync(marker2), true);
   assert.match(readFileSync(marker2, 'utf8'), /tea/);
 });
 
-test('a token-carrying CLI stderr never reaches the envelope, in ANY shape', () => {
+test('a token-carrying CLI stderr never reaches the envelope, in ANY shape', (t) => {
   // EXP-01, tightened: redactUrl covers a credential in URL POSITION, so the
   // three shapes below would have travelled through it untouched. The seam
   // therefore carries NO third-party stderr at all - the reason line already
@@ -775,8 +788,8 @@ test('a token-carrying CLI stderr never reaches the envelope, in ANY shape', () 
     'stillnotarealtoken',     // a bare forge token
     'notarealbearertokenvalue',     // an Authorization header
   ];
-  const dir = repo({ originUrl: GH_REPO, commits: COMMITS });
-  const r = seam(['check', '--dir', dir, '--base', 'main'], {
+  const dir = repo(t, { originUrl: GH_REPO, commits: COMMITS });
+  const r = seam(t, ['check', '--dir', dir, '--base', 'main'], {
     stubs: { gh: { code: 1, stderr: [
       'fatal: https://x-access-token:notarealurltoken@github.com/org/repo.git rejected',
       'GITHUB_TOKEN=alsonotarealtoken',
@@ -799,9 +812,9 @@ test('a token-carrying CLI stderr never reaches the envelope, in ANY shape', () 
 // degraded report to hand back. Nothing spawns - asserted through the same
 // marker file the issue_check:false arm uses.
 for (const [label, dirArgs] of [['an EMPTY', ['--dir', '']], ['a VALUELESS', ['--dir']]]) {
-  test(`check: ${label} --dir refuses by name, exit 1, no forge CLI spawned`, () => {
-    const marker = join(mkdtempSync(join(tmpdir(), 'cad-ic-mark-')), 'spawned.log');
-    const { status, envelope } = seamRun(['check', ...dirArgs, '--base', 'main'],
+  test(`check: ${label} --dir refuses by name, exit 1, no forge CLI spawned`, (t) => {
+    const marker = join(tmp(t, 'cad-ic-mark-'), 'spawned.log');
+    const { status, envelope } = seamRun(t, ['check', ...dirArgs, '--base', 'main'],
       { stubs: ALL_STUBS, marker });
     assert.equal(envelope.ok, false);
     // The e.seam catch arm, not the generic one: the thrown refusal object
@@ -815,12 +828,12 @@ for (const [label, dirArgs] of [['an EMPTY', ['--dir', '']], ['a VALUELESS', ['-
   });
 }
 
-test('check: a malformed --timeout-ms still runs on the default, unlike --dir', () => {
+test('check: a malformed --timeout-ms still runs on the default, unlike --dir', (t) => {
   // D-01 names --dir and nothing else. --timeout-ms keeps its stated fallback:
   // this seam may never make an unbounded call, and refusing here would fail a
   // land over a flag the caller could simply have omitted.
-  const dir = repo({ originUrl: GH_REPO, commits: COMMITS });
-  const { status, envelope } = seamRun(['check', '--dir', dir, '--base', 'main', '--timeout-ms', 'abc'],
+  const dir = repo(t, { originUrl: GH_REPO, commits: COMMITS });
+  const { status, envelope } = seamRun(t, ['check', '--dir', dir, '--base', 'main', '--timeout-ms', 'abc'],
     { stubs: { gh: { body: GH_BODY } } });
   assert.equal(envelope.ok, true);
   assert.equal(status, 0);
@@ -842,13 +855,13 @@ const CONFIGURED_FORGEJO = {
   forge_provider: 'forgejo', forge_repo: 'org/repo', forge_host: 'forge.example.com',
 };
 
-test('AC4: with the forge keys set and NO origin, forgejo still reports, bound by --login', () => {
-  const dir = repo({ originUrl: null, commits: COMMITS, forge: CONFIGURED_FORGEJO });
+test('AC4: with the forge keys set and NO origin, forgejo still reports, bound by --login', (t) => {
+  const dir = repo(t, { originUrl: null, commits: COMMITS, forge: CONFIGURED_FORGEJO });
   // Belt and braces: the fixture must really have no remote, or this proves
   // nothing about a repository that lost one.
   assert.equal(execFileSync('git', ['-C', dir, 'remote'], { encoding: 'utf8' }).trim(), '');
-  const argvLog = join(mkdtempSync(join(tmpdir(), 'cad-ic-argv-')), 'argv.log');
-  const { status, envelope } = seamRun(['check', '--dir', dir, '--base', 'main'],
+  const argvLog = join(tmp(t, 'cad-ic-argv-'), 'argv.log');
+  const { status, envelope } = seamRun(t, ['check', '--dir', dir, '--base', 'main'],
     { stubs: { tea: { body: TEA_BODY, login: URL_MATCHED_LOGIN } }, bare: true, argvLog });
   assert.equal(status, 0);
   assert.equal(envelope.action, 'report', JSON.stringify(envelope));
@@ -866,14 +879,14 @@ test('AC4: with the forge keys set and NO origin, forgejo still reports, bound b
   assert.ok(!list[0].includes('--remote'), list[0]);
 });
 
-test('AC4: the same repository whose host NO login serves skips, and asks tea nothing', () => {
+test('AC4: the same repository whose host NO login serves skips, and asks tea nothing', (t) => {
   // The guard survives the rebind: `tea` does not refuse an unqualified call,
   // it falls back to config order and answers for a repository it has never
   // heard of, exit 0, with its NOTE on the stderr this seam discards. So the
   // seam declines to ask, and the line points at the fix, which is a login.
-  const dir = repo({ originUrl: null, commits: COMMITS, forge: CONFIGURED_FORGEJO });
-  const argvLog = join(mkdtempSync(join(tmpdir(), 'cad-ic-argv-')), 'argv.log');
-  const { status, envelope } = seamRun(['check', '--dir', dir, '--base', 'main'], {
+  const dir = repo(t, { originUrl: null, commits: COMMITS, forge: CONFIGURED_FORGEJO });
+  const argvLog = join(tmp(t, 'cad-ic-argv-'), 'argv.log');
+  const { status, envelope } = seamRun(t, ['check', '--dir', dir, '--base', 'main'], {
     stubs: { tea: { body: TEA_BODY, login: '[{"name":"other","url":"https://other.example","ssh_host":"other.example"}]' } },
     bare: true, argvLog,
   });
@@ -886,13 +899,13 @@ test('AC4: the same repository whose host NO login serves skips, and asks tea no
   assert.deepEqual(readFileSync(argvLog, 'utf8').trim().split('\n'), ['tea login list --output json']);
 });
 
-test('AC4: a repository with a WORKING origin but no forge keys names the keys to set', () => {
+test('AC4: a repository with a WORKING origin but no forge keys names the keys to set', (t) => {
   // The other direction, and the one that makes "config is authoritative" a
   // claim rather than a slogan: a perfectly classifiable github origin is not
   // consulted at all. The old seam reported this repository's tracker.
-  const dir = repo({ originUrl: GH_REPO, commits: COMMITS, forge: null });
-  const marker = join(mkdtempSync(join(tmpdir(), 'cad-ic-mark-')), 'spawned.log');
-  const { status, envelope } = seamRun(['check', '--dir', dir, '--base', 'main'],
+  const dir = repo(t, { originUrl: GH_REPO, commits: COMMITS, forge: null });
+  const marker = join(tmp(t, 'cad-ic-mark-'), 'spawned.log');
+  const { status, envelope } = seamRun(t, ['check', '--dir', dir, '--base', 'main'],
     { stubs: ALL_STUBS, marker });
   assert.equal(status, 0);
   assert.equal(envelope.action, 'skip', JSON.stringify(envelope));
@@ -906,15 +919,15 @@ test('AC4: a repository with a WORKING origin but no forge keys names the keys t
     `an unconfigured repository spawned: ${existsSync(marker) ? readFileSync(marker, 'utf8') : ''}`);
 });
 
-test('AC4: a github record with NO origin reports too, and never touches tea', () => {
+test('AC4: a github record with NO origin reports too, and never touches tea', (t) => {
   // `git.forge_host` is null here and that is not a gap - github's host is
   // fixed - so the record is complete and the login probe never runs.
-  const dir = repo({
+  const dir = repo(t, {
     originUrl: null, commits: COMMITS,
     forge: { forge_provider: 'github', forge_repo: 'org/repo' },
   });
-  const argvLog = join(mkdtempSync(join(tmpdir(), 'cad-ic-argv-')), 'argv.log');
-  const { envelope } = seamRun(['check', '--dir', dir, '--base', 'main'],
+  const argvLog = join(tmp(t, 'cad-ic-argv-'), 'argv.log');
+  const { envelope } = seamRun(t, ['check', '--dir', dir, '--base', 'main'],
     { stubs: ALL_STUBS, argvLog });
   assert.equal(envelope.action, 'report', JSON.stringify(envelope));
   assert.equal(envelope.host, null);
@@ -924,8 +937,8 @@ test('AC4: a github record with NO origin reports too, and never touches tea', (
 
 // P4-04: the `base..HEAD` log read had Node's 1 MiB default buffer, so a long branch history overflowed it and the
 // tracker report was skipped as an unreadable log, with no hint that the branch was only long.
-test('a base..HEAD log over 1 MiB is read, so the report gets past the log step', () => {
-  const dir = repo({ originUrl: 'https://github.com/org/repo.git', commits: ['feat: first cut (#42)'] });
+test('a base..HEAD log over 1 MiB is read, so the report gets past the log step', (t) => {
+  const dir = repo(t, { originUrl: 'https://github.com/org/repo.git', commits: ['feat: first cut (#42)'] });
   const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
   const body = `${'x'.repeat(79)}\n`.repeat(51);
   let stream = '';
@@ -939,7 +952,7 @@ test('a base..HEAD log over 1 MiB is read, so the report gets past the log step'
   execFileSync('git', ['-C', dir, 'reset', '-q', '--hard', 'work'], { env, stdio: 'ignore' });
   const logBytes = execFileSync('git', ['-C', dir, 'log', 'main..HEAD', '--format=%B'], { env, maxBuffer: 1 << 26 }).length;
   assert.ok(logBytes > 1048576, `the fixture log is ${logBytes} bytes, not over 1 MiB`);
-  const r = seam(['check', '--dir', dir, '--base', 'main'], { bare: true });
+  const r = seam(t, ['check', '--dir', dir, '--base', 'main'], { bare: true });
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.doesNotMatch(r.reason, /could not be read/, r.reason);
   assert.match(r.reason, /gh CLI is not on PATH/, r.reason);
