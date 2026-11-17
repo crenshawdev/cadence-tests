@@ -8,10 +8,10 @@
 // the file, because /cad-report reads it back into a model's context) and the
 // guarded-append posture copied from lib/trace.mjs (symlink refused, cap
 // enforced before the write, a reason returned and never thrown).
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, existsSync, statSync,
+  mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, symlinkSync, existsSync, statSync,
   appendFileSync, readdirSync, linkSync, utimesSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,9 +27,10 @@ import { statePath } from '../cadence-core/bin/lib/project-state.mjs';
 import { stampState, treeOf, v40Project } from './planning.test.mjs';
 
 const TS = '2026-08-14T00:00:00.000Z';
-// stamped, since appendRead writes nothing into a project with no valid state
-const tmp = () => {
+// stamped, since appendRead writes nothing into a project with no valid state; gone when test `t` ends
+const tmp = (t) => {
   const d = mkdtempSync(join(tmpdir(), 'cad-reads-'));
+  t.after(() => rmSync(d, { recursive: true, force: true }));
   stampState(d);
   return d;
 };
@@ -179,8 +180,8 @@ test('an unserializable response leaves bytes absent rather than throwing', () =
 
 // --- the guarded append -----------------------------------------------------
 
-test('the first write creates the file and round-trips', () => {
-  const d = tmp();
+test('the first write creates the file and round-trips', (t) => {
+  const d = tmp(t);
   const res = appendRead(d, { ts: TS, tool: 'Read', agent: 'coordinator', target: '/a' });
   assert.equal(res.written, true);
   const lines = readFileSync(readsPath(d), 'utf8').trim().split('\n');
@@ -188,15 +189,15 @@ test('the first write creates the file and round-trips', () => {
   assert.equal(JSON.parse(lines[0]).target, '/a');
 });
 
-test('appends accumulate rather than replacing', () => {
-  const d = tmp();
+test('appends accumulate rather than replacing', (t) => {
+  const d = tmp(t);
   for (let i = 0; i < 3; i++) appendRead(d, { ts: TS, tool: 'Read', target: `/f${i}` });
   const lines = readFileSync(readsPath(d), 'utf8').trim().split('\n');
   assert.equal(lines.length, 3);
 });
 
-test('a symlinked reads file is refused, appending nothing', () => {
-  const d = tmp();
+test('a symlinked reads file is refused, appending nothing', (t) => {
+  const d = tmp(t);
   const decoy = join(d, 'elsewhere.jsonl');
   writeFileSync(decoy, '');
   symlinkSync(decoy, readsPath(d));
@@ -206,16 +207,18 @@ test('a symlinked reads file is refused, appending nothing', () => {
   assert.equal(readFileSync(decoy, 'utf8'), '', 'the link target was written through');
 });
 
-test('a symlinked records folder is refused, and the first write lands inside the records folder', () => {
+test('a symlinked records folder is refused, and the first write lands inside the records folder', (t) => {
   const d = mkdtempSync(join(tmpdir(), 'cad-reads-'));
+  t.after(() => rmSync(d, { recursive: true, force: true }));
   const outside = mkdtempSync(join(tmpdir(), 'cad-outside-'));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
   symlinkSync(outside, recordsDir(d));
   const res = appendRead(d, { ts: TS, tool: 'Read', target: '/a' });
   assert.deepEqual(res, { written: false, reason: 'symlinked-records' });
   assert.deepEqual(readdirSync(outside), []);
 
   // the stamp made the folder; an unstamped one is never created, see the no-valid-state tests
-  const fresh = tmp();
+  const fresh = tmp(t);
   assert.equal(appendRead(fresh, { ts: TS, tool: 'Read', target: '/a' }).written, true);
   assert.equal(existsSync(readsPath(fresh)), true);
   assert.equal(existsSync(join(fresh, 'reads.jsonl')), false);
@@ -223,9 +226,9 @@ test('a symlinked records folder is refused, and the first write lands inside th
 
 // --- no valid state, nothing written (D-10) ---
 
-test('appendRead: an unstamped v4.0 project and a state file that does not parse each get no-valid-state and stay byte-identical', () => {
-  const unstamped = v40Project();
-  const torn = tmp();
+test('appendRead: an unstamped v4.0 project and a state file that does not parse each get no-valid-state and stay byte-identical', (t) => {
+  const unstamped = v40Project(t);
+  const torn = tmp(t);
   writeFileSync(statePath(torn), '{torn');
   for (const d of [unstamped, torn]) {
     const before = treeOf(d);
@@ -250,8 +253,8 @@ function padToReadsBound(d) {
 /** Every line of the live record, parsed. @param {string} d */
 const liveLines = (d) => readFileSync(readsPath(d), 'utf8').trim().split('\n');
 
-test('a record at the bound ROTATES and the append lands, rather than reporting a cap', () => {
-  const d = tmp();
+test('a record at the bound ROTATES and the append lands, rather than reporting a cap', (t) => {
+  const d = tmp(t);
   appendRead(d, { ts: TS, tool: 'Read', target: '/before-the-cut' });
   padToReadsBound(d);
 
@@ -277,12 +280,12 @@ test('a record at the bound ROTATES and the append lands, rather than reporting 
 /** Every file in the planning root named after the reads record. @param {string} d */
 const readsSiblings = (d) => readdirSync(recordsDir(d)).filter((f) => f.startsWith('reads')).sort();
 
-test('the marker SEALS the generation it carried away, in bytes', () => {
+test('the marker SEALS the generation it carried away, in bytes', (t) => {
   // `carried_bytes` is how much of the generation this cut accounted for. The
   // eviction of a leftover generation is its only consumer: everything past
   // that offset arrived after the cut stopped accounting and is the tail no
   // rotation ever carried.
-  const d = tmp();
+  const d = tmp(t);
   appendRead(d, { ts: TS, tool: 'Read', target: '/before-the-cut' });
   padToReadsBound(d);
   assert.equal(appendRead(d, { ts: TS, tool: 'Read', target: '/after-the-cut' }).written, true);
@@ -296,8 +299,8 @@ test('the marker SEALS the generation it carried away, in bytes', () => {
   assert.deepEqual(Object.keys(marker), ['ts', 'event', 'file', 'carried_bytes']);
 });
 
-test('the SECOND rotation evicts the generation the first one left', () => {
-  const d = tmp();
+test('the SECOND rotation evicts the generation the first one left', (t) => {
+  const d = tmp(t);
   appendRead(d, { ts: TS, tool: 'Read', target: '/gen-one' });
   padToReadsBound(d);
   assert.equal(appendRead(d, { ts: TS, tool: 'Read', target: '/gen-two' }).written, true);
@@ -317,13 +320,13 @@ test('the SECOND rotation evicts the generation the first one left', () => {
   assert.equal(sibling.includes('/gen-one'), false, 'the first generation survived in the sibling');
 });
 
-test('a record that only reached the generation SURVIVES the second rotation (AC1)', () => {
+test('a record that only reached the generation SURVIVES the second rotation (AC1)', (t) => {
   // The two-step loss D-05 names. This record has no carry-back, so a writer
   // that appended during a claim window is only in the sibling - the bar the
   // race row accepts. The SECOND rotation evicts that sibling and unlinks it,
   // and the record is in neither file with nothing said. The writer about to
   // destroy the generation finishes the carry the first cut never made.
-  const d = tmp();
+  const d = tmp(t);
   appendRead(d, { ts: TS, tool: 'Read', target: '/gen-one' });
   padToReadsBound(d);
   assert.equal(appendRead(d, { ts: TS, tool: 'Read', target: '/gen-two' }).written, true);
@@ -350,11 +353,11 @@ test('a record that only reached the generation SURVIVES the second rotation (AC
   assert.ok(live.split('\n').some((l) => l && JSON.parse(l).target === '/raced-the-cut'));
 });
 
-test('a rescue that cannot READ states the bytes it did not carry, rather than nothing', () => {
+test('a rescue that cannot READ states the bytes it did not carry, rather than nothing', (t) => {
   // The goal is a tail that is complete OR a shortfall that is stated. A rescue
   // that fails before it reads a byte still knows the size past the seal, so
   // that is what it reports - and the rotation still rotated.
-  const d = tmp();
+  const d = tmp(t);
   const marker = { ts: TS, event: 'record_rotated', file: 'reads.1.jsonl', carried_bytes: 0 };
   writeFileSync(readsPath(d), `${JSON.stringify(marker)}\n`);
   padToReadsBound(d);
@@ -371,13 +374,13 @@ test('a rescue that cannot READ states the bytes it did not carry, rather than n
   assert.equal(res.shortfall, unreadable, 'the cut tail was not stated in bytes');
 });
 
-test('a generation whose marker carries NO seal states an UNKNOWN shortfall, not silence', () => {
+test('a generation whose marker carries NO seal states an UNKNOWN shortfall, not silence', (t) => {
   // The pre-upgrade shape, and the one that fires on the FIRST rotation after an
   // upgrade rather than only in theory: a generation sealed by the code that
   // shipped before `carried_bytes`. No offset can be guessed, so nothing is
   // rescued - but the generation is destroyed either way, and destroying it with
   // no field at all is the one silence the `shortfall` contract forbids.
-  const d = tmp();
+  const d = tmp(t);
   // A v3.7.7-shaped marker: the rotation marker, with the field this phase added
   // absent. A corrupt marker line reaches the same arm by the same route -
   // neither yields a number.
@@ -394,8 +397,8 @@ test('a generation whose marker carries NO seal states an UNKNOWN shortfall, not
   assert.equal(res.shortfall, null, 'an unguessable seal states the unknown, never a byte count');
 });
 
-test('a leftover sibling beside a record UNDER the bound is left exactly where it is', () => {
-  const d = tmp();
+test('a leftover sibling beside a record UNDER the bound is left exactly where it is', (t) => {
+  const d = tmp(t);
   // The interleaving this refuses: another writer rotated while this one was
   // still holding the stat that decided to rotate. Carrying the fresh record
   // away would destroy the generation that writer just made.
@@ -441,8 +444,8 @@ function readsWriter(dir, name) {
   });
 }
 
-test('writers racing at the bound leave ONE generation, no claim and no record lost', async () => {
-  const d = tmp();
+test('writers racing at the bound leave ONE generation, no claim and no record lost', async (t) => {
+  const d = tmp(t);
   appendRead(d, { ts: TS, tool: 'Read', target: '/before-the-race' });
   padToReadsBound(d);
   const names = ['w0', 'w1', 'w2', 'w3', 'w4', 'w5'];
@@ -497,8 +500,8 @@ function killedReadsClaim(d, agoMs) {
 /** @param {string} f */
 const idOf = (f) => { const st = statSync(f); return `${st.dev}:${st.ino}`; };
 
-test('an ABANDONED claim is reclaimed rather than disabling rotation forever', () => {
-  const d = tmp();
+test('an ABANDONED claim is reclaimed rather than disabling rotation forever', (t) => {
+  const d = tmp(t);
   // Twice the 30 s staleness budget the rotation states.
   killedReadsClaim(d, 60_000);
 
@@ -511,8 +514,8 @@ test('an ABANDONED claim is reclaimed rather than disabling rotation forever', (
   assert.ok(readFileSync(readsPath(d), 'utf8').includes('/after-the-reclaim'));
 });
 
-test('a LIVE claim is left standing, at the cost of one deferred rotation', () => {
-  const d = tmp();
+test('a LIVE claim is left standing, at the cost of one deferred rotation', (t) => {
+  const d = tmp(t);
   killedReadsClaim(d, 0);
   const stamped = statSync(readsClaimPath(d)).mtimeMs;
 
@@ -525,8 +528,8 @@ test('a LIVE claim is left standing, at the cost of one deferred rotation', () =
   assert.equal(statSync(readsClaimPath(d)).mtimeMs, stamped, 'a loser refreshed the claim');
 });
 
-test('a claim carrying NO sidecar at all reads as live, the same way', () => {
-  const d = tmp();
+test('a claim carrying NO sidecar at all reads as live, the same way', (t) => {
+  const d = tmp(t);
   killedReadsClaim(d, null);
   const res = appendRead(d, { ts: TS, tool: 'Read', target: '/no-sidecar' });
   assert.equal(res.written, true);
@@ -535,13 +538,13 @@ test('a claim carrying NO sidecar at all reads as live, the same way', () => {
   assert.equal(existsSync(readsClaimPath(d)), false, 'a loser published a stamp it does not own');
 });
 
-test('an eviction that cannot CONFIRM its claim puts the generation back (AC3)', () => {
+test('an eviction that cannot CONFIRM its claim puts the generation back (AC3)', (t) => {
   // The leftover-generation arm used to skip the confirm on the grounds that
   // its own discriminator answered - but that discriminator is read BEFORE the
   // eviction rename, so a writer that linked in between has a live claim
   // renamed away with nothing to put it back, and the cost is the whole record
   // rather than one deferred rotation (D-02).
-  const d = tmp();
+  const d = tmp(t);
   appendRead(d, { ts: TS, tool: 'Read', target: '/before-the-eviction' });
   padToReadsBound(d);
   // A leftover generation an earlier rotation left...
@@ -561,8 +564,8 @@ test('an eviction that cannot CONFIRM its claim puts the generation back (AC3)',
     "the writer's own record is not in the live record");
 });
 
-test('a COMPLETED rotation leaves its sidecar behind, inert, and does not rotate again', () => {
-  const d = tmp();
+test('a COMPLETED rotation leaves its sidecar behind, inert, and does not rotate again', (t) => {
+  const d = tmp(t);
   appendRead(d, { ts: TS, tool: 'Read', target: '/gen-one' });
   padToReadsBound(d);
   assert.equal(appendRead(d, { ts: TS, tool: 'Read', target: '/gen-two' }).written, true);
@@ -575,8 +578,8 @@ test('a COMPLETED rotation leaves its sidecar behind, inert, and does not rotate
   assert.deepEqual(liveLines(d).length, 3, 'the live record is not marker + two appends');
 });
 
-test('a single record that reaches the bound by itself is refused, never rotated', () => {
-  const d = tmp();
+test('a single record that reaches the bound by itself is refused, never rotated', (t) => {
+  const d = tmp(t);
   appendRead(d, { ts: TS, tool: 'Read', target: '/a' });
   const before = statSync(readsPath(d)).size;
 
@@ -599,12 +602,12 @@ function sizedRead(d, bytes) {
   return appendRead(d, { ts: TS, tool: 'Read', agent: 'coordinator', target: 'y'.repeat(n) });
 }
 
-test('a record with no room BESIDE the marker is refused, not rotated for (AC2)', () => {
+test('a record with no room BESIDE the marker is refused, not rotated for (AC2)', (t) => {
   // The rotation always writes its marker into the fresh record too, so a
   // record that fits under the bound alone but not beside the marker used to
   // rotate and then land a file over its bound on the first write (measured
   // 2026-08-30: 74 B over). It is refused now - the deliberate band D-09 names.
-  const d = tmp();
+  const d = tmp(t);
   appendRead(d, { ts: TS, tool: 'Read', target: '/before' });
   padToReadsBound(d);
   const before = readFileSync(readsPath(d), 'utf8');
@@ -616,7 +619,7 @@ test('a record with no room BESIDE the marker is refused, not rotated for (AC2)'
   assert.deepEqual(readsSiblings(d), ['reads.jsonl'], 'nothing was rotated');
 });
 
-test('a record that DOES fit beside the marker rotates under the bound (AC2)', () => {
+test('a record that DOES fit beside the marker rotates under the bound (AC2)', (t) => {
   // ONE BYTE inside the reserve, which is the tightest admission there is. The
   // reserve is an upper BOUND rather than a measurement, so a real marker is
   // narrower than it by the digits `carried_bytes` does not use - which is why
@@ -625,7 +628,7 @@ test('a record that DOES fit beside the marker rotates under the bound (AC2)', (
     `${JSON.stringify({ ts: TS, event: 'record_rotated', file: 'reads.1.jsonl', carried_bytes: MAX_READS_BYTES })}\n`,
   ), 'the reserve is narrower than a real marker at the bound');
 
-  const d = tmp();
+  const d = tmp(t);
   appendRead(d, { ts: TS, tool: 'Read', target: '/before' });
   padToReadsBound(d);
   assert.equal(sizedRead(d, MAX_READS_BYTES - READS_MARKER_BYTES - 1).written, true,
@@ -635,8 +638,8 @@ test('a record that DOES fit beside the marker rotates under the bound (AC2)', (
     `the rotation's FIRST write left the record ${statSync(readsPath(d)).size - MAX_READS_BYTES} B over its bound`);
 });
 
-test('a bad record is refused by reason, never thrown', () => {
-  const d = tmp();
+test('a bad record is refused by reason, never thrown', (t) => {
+  const d = tmp(t);
   for (const bad of [null, undefined, 'str', 42, []]) {
     const res = appendRead(d, bad);
     assert.equal(res.written, false);
@@ -763,8 +766,8 @@ test('ordinary commands still bill correctly after hardening', () => {
 // distinction are only worth testing against a real tree.
 const isFile = (p) => { try { return statSync(p).isFile(); } catch { return false; } };
 
-function fixture() {
-  const root = tmp();
+function fixture(t) {
+  const root = tmp(t);
   mkdirSync(join(root, 'src'), { recursive: true });
   mkdirSync(join(root, 'docs'), { recursive: true });
   writeFileSync(join(root, 'src', 'app.mjs'), 'x');
@@ -773,8 +776,8 @@ function fixture() {
   return root;
 }
 
-test('a Bash command yields the in-repo files it names, relative to the root', () => {
-  const root = fixture();
+test('a Bash command yields the in-repo files it names, relative to the root', (t) => {
+  const root = fixture(t);
   assert.deepEqual(
     filesOf('sed -n 1,20p src/app.mjs', { root, isFile }),
     [join('src', 'app.mjs')],
@@ -785,8 +788,8 @@ test('a Bash command yields the in-repo files it names, relative to the root', (
   );
 });
 
-test('a secret in the command line is not a file, so it cannot be recorded', () => {
-  const root = fixture();
+test('a secret in the command line is not a file, so it cannot be recorded', (t) => {
+  const root = fixture(t);
   const cmds = [
     'curl -H "Authorization: Bearer fake-key-XXXX" https://api.example.com',
     'export API_KEY=fake-key-XXXX && node src/app.mjs',
@@ -809,24 +812,24 @@ test('a secret in the command line is not a file, so it cannot be recorded', () 
   );
 });
 
-test('a path outside the project is refused however real it is', () => {
-  const root = fixture();
-  const outside = tmp();
+test('a path outside the project is refused however real it is', (t) => {
+  const root = fixture(t);
+  const outside = tmp(t);
   writeFileSync(join(outside, 'credentials'), 'x');
   assert.deepEqual(filesOf(`cat ${join(outside, 'credentials')}`, { root, isFile }), []);
   assert.deepEqual(filesOf('cat /etc/hostname /etc/passwd', { root, isFile }), []);
   assert.deepEqual(filesOf('cat ../../../etc/passwd', { root, isFile }), []);
 });
 
-test('a directory is not a read, and a nonexistent path is not a file', () => {
-  const root = fixture();
+test('a directory is not a read, and a nonexistent path is not a file', (t) => {
+  const root = fixture(t);
   assert.deepEqual(filesOf('ls src', { root, isFile }), []);
   assert.deepEqual(filesOf('ls src/', { root, isFile }), []);
   assert.deepEqual(filesOf('cat src/nope.mjs', { root, isFile }), []);
 });
 
-test('quoted, expanded or globbed tokens are content and never candidates', () => {
-  const root = fixture();
+test('quoted, expanded or globbed tokens are content and never candidates', (t) => {
+  const root = fixture(t);
   assert.deepEqual(filesOf('cat "src/app.mjs"', { root, isFile }), []);
   assert.deepEqual(filesOf('cat $FILE', { root, isFile }), []);
   assert.deepEqual(filesOf('cat src/*.mjs', { root, isFile }), []);
@@ -834,22 +837,22 @@ test('quoted, expanded or globbed tokens are content and never candidates', () =
   assert.deepEqual(filesOf('cat $(ls src/app.mjs)', { root, isFile }), []);
 });
 
-test('a heredoc body cannot contribute a path, matching programOf', () => {
-  const root = fixture();
+test('a heredoc body cannot contribute a path, matching programOf', (t) => {
+  const root = fixture(t);
   const cmd = 'python3 - <<EOF\nopen("src/app.mjs")\nEOF';
   assert.deepEqual(filesOf(cmd, { root, isFile }), []);
 });
 
-test('relative tokens resolve against the calls own cwd, not just the root', () => {
-  const root = fixture();
+test('relative tokens resolve against the calls own cwd, not just the root', (t) => {
+  const root = fixture(t);
   assert.deepEqual(
     filesOf('cat app.mjs', { root, cwd: join(root, 'src'), isFile }),
     [join('src', 'app.mjs')],
   );
 });
 
-test('the per-call file cap bounds a sweep', () => {
-  const root = tmp();
+test('the per-call file cap bounds a sweep', (t) => {
+  const root = tmp(t);
   const names = [];
   for (let i = 0; i < MAX_FILES_PER_CALL + 5; i++) {
     names.push(`f${i}.txt`);
@@ -866,8 +869,8 @@ test('with no opts the record is byte-identical to what it was before files exis
   assert.ok(!Object.prototype.hasOwnProperty.call(before, 'files'));
 });
 
-test('recordFromHook carries the files through when the caller supplies a root', () => {
-  const root = fixture();
+test('recordFromHook carries the files through when the caller supplies a root', (t) => {
+  const root = fixture(t);
   const r = recordFromHook({
     tool_name: 'Bash',
     cwd: root,
@@ -877,8 +880,8 @@ test('recordFromHook carries the files through when the caller supplies a root',
   assert.deepEqual(r.files, [join('src', 'app.mjs'), join('src', 'util.mjs')]);
 });
 
-test('a Bash call naming no in-repo file carries no files field at all', () => {
-  const root = fixture();
+test('a Bash call naming no in-repo file carries no files field at all', (t) => {
+  const root = fixture(t);
   const r = recordFromHook({
     tool_name: 'Bash', cwd: root, tool_input: { command: 'git status --short' },
   }, TS, { root, isFile });
@@ -895,71 +898,75 @@ test('a Bash call naming no in-repo file carries no files field at all', () => {
 // the whole target is replaced by `outside`, so a home directory or another
 // project's path never reaches a record /cad-report prints.
 
-const PLUGIN = join(tmp(), 'plugin');
+// made once per file, so the file's after() takes it
+const PLUGIN_HOME = mkdtempSync(join(tmpdir(), 'cad-reads-'));
+after(() => rmSync(PLUGIN_HOME, { recursive: true, force: true }));
+stampState(PLUGIN_HOME);
+const PLUGIN = join(PLUGIN_HOME, 'plugin');
 const PLUGIN_REL = '${CLAUDE_PLUGIN_ROOT}';
 
-function classified(tool, ti, over = {}) {
-  const root = over.root || tmp();
+function classified(t, tool, ti, over = {}) {
+  const root = over.root || tmp(t);
   const opts = { root, cwd: root, isFile, pluginRoot: PLUGIN, ...over };
   return recordFromHook({ tool_name: tool, tool_input: ti, cwd: opts.cwd }, TS, opts);
 }
 
-test('a Read outside the project and the plugin records `outside`, not the path', () => {
-  assert.equal(classified('Read', { file_path: '/etc/hosts' }).target, 'outside');
+test('a Read outside the project and the plugin records `outside`, not the path', (t) => {
+  assert.equal(classified(t, 'Read', { file_path: '/etc/hosts' }).target, 'outside');
 });
 
-test('a Read inside the plugin records the path relative to the plugin', () => {
-  const r = classified('Read', { file_path: join(PLUGIN, 'cadence-core', 'references', 'x.md') });
+test('a Read inside the plugin records the path relative to the plugin', (t) => {
+  const r = classified(t, 'Read', { file_path: join(PLUGIN, 'cadence-core', 'references', 'x.md') });
   assert.equal(r.target, PLUGIN_REL + '/cadence-core/references/x.md');
 });
 
-test('a project target is recorded as given, absolute or relative', () => {
-  const root = tmp();
+test('a project target is recorded as given, absolute or relative', (t) => {
+  const root = tmp(t);
   const abs = join(root, 'src', 'a.js');
-  assert.equal(classified('Read', { file_path: abs }, { root }).target, abs);
-  assert.equal(classified('Grep', { path: 'src', pattern: 'x' }, { root }).target, 'src');
+  assert.equal(classified(t, 'Read', { file_path: abs }, { root }).target, abs);
+  assert.equal(classified(t, 'Grep', { path: 'src', pattern: 'x' }, { root }).target, 'src');
 });
 
-test('a relative target that climbs out of the project is outside', () => {
-  assert.equal(classified('Read', { file_path: '../../etc/passwd' }).target, 'outside');
-  assert.equal(classified('Glob', { path: '..' }).target, 'outside');
+test('a relative target that climbs out of the project is outside', (t) => {
+  assert.equal(classified(t, 'Read', { file_path: '../../etc/passwd' }).target, 'outside');
+  assert.equal(classified(t, 'Glob', { path: '..' }).target, 'outside');
 });
 
-test('a home-relative target outside the project is outside, not the cwd-relative path', () => {
+test('a home-relative target outside the project is outside, not the cwd-relative path', (t) => {
   // Claude Code expands a leading `~/` for Glob and Grep, so the target names
   // the home directory, not a `~` directory under the cwd.
-  assert.equal(classified('Grep', { path: '~/clients/acme', pattern: 'x' }).target, 'outside');
-  assert.equal(classified('Glob', { path: '~' }).target, 'outside');
-  assert.equal(classified('Read', { file_path: '~/clients/acme/notes.md' }).target, 'outside');
+  assert.equal(classified(t, 'Grep', { path: '~/clients/acme', pattern: 'x' }).target, 'outside');
+  assert.equal(classified(t, 'Glob', { path: '~' }).target, 'outside');
+  assert.equal(classified(t, 'Read', { file_path: '~/clients/acme/notes.md' }).target, 'outside');
 });
 
-test('a home-relative target that expands into the project is recorded as given', () => {
-  const root = tmp();
+test('a home-relative target that expands into the project is recorded as given', (t) => {
+  const root = tmp(t);
   const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   process.env.HOME = root; process.env.USERPROFILE = root;
   try {
-    assert.equal(classified('Grep', { path: '~/src', pattern: 'x' }, { root }).target, '~/src');
+    assert.equal(classified(t, 'Grep', { path: '~/src', pattern: 'x' }, { root }).target, '~/src');
   } finally {
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 });
 
-test('a failed call whose target is outside records no cause that could carry the path', () => {
-  const r = classified('Read', { file_path: '/home/john/clients/acme/notes.md' }, {});
+test('a failed call whose target is outside records no cause that could carry the path', (t) => {
+  const r = classified(t, 'Read', { file_path: '/home/john/clients/acme/notes.md' }, {});
   assert.equal(r.target, 'outside');
   const failed = recordFromHook({
     tool_name: 'Read',
     tool_input: { file_path: '/home/john/clients/acme/notes.md' },
     tool_response: { isError: true, content: [{ text: '/home/john/clients/acme/notes.md: declined' }] },
-    cwd: tmp(),
-  }, TS, { root: tmp(), cwd: tmp(), isFile, pluginRoot: PLUGIN });
+    cwd: tmp(t),
+  }, TS, { root: tmp(t), cwd: tmp(t), isFile, pluginRoot: PLUGIN });
   assert.equal(failed.target, 'outside');
   assert.equal(failed.is_error, true);
   assert.equal(JSON.stringify(failed).includes('clients'), false);
 });
 
-test('a failed call inside the project keeps its cause', () => {
-  const root = tmp();
+test('a failed call inside the project keeps its cause', (t) => {
+  const root = tmp(t);
   const file = join(root, 'a.md');
   const failed = recordFromHook({
     tool_name: 'Read',
@@ -971,22 +978,22 @@ test('a failed call inside the project keeps its cause', () => {
   assert.equal(failed.error, file + ': declined');
 });
 
-test('a prefix match is on the separator, so a sibling directory is not inside', () => {
-  const root = tmp();
-  assert.equal(classified('Read', { file_path: root + '-sibling/a.md' }, { root }).target, 'outside');
-  assert.equal(classified('Read', { file_path: PLUGIN + '-sibling/a.md' }).target, 'outside');
+test('a prefix match is on the separator, so a sibling directory is not inside', (t) => {
+  const root = tmp(t);
+  assert.equal(classified(t, 'Read', { file_path: root + '-sibling/a.md' }, { root }).target, 'outside');
+  assert.equal(classified(t, 'Read', { file_path: PLUGIN + '-sibling/a.md' }).target, 'outside');
 });
 
-test('a Glob with no path records null, and a plugin root inside the project records as given', () => {
-  assert.equal(classified('Glob', { pattern: '*.md' }).target, null);
-  const root = tmp();
+test('a Glob with no path records null, and a plugin root inside the project records as given', (t) => {
+  assert.equal(classified(t, 'Glob', { pattern: '*.md' }).target, null);
+  const root = tmp(t);
   const inner = join(root, 'vendor', 'plugin');
   const file = join(inner, 'a.md');
-  assert.equal(classified('Read', { file_path: file }, { root, pluginRoot: inner }).target, file);
+  assert.equal(classified(t, 'Read', { file_path: file }, { root, pluginRoot: inner }).target, file);
 });
 
-test('Bash keeps its program as the target under the hook options', () => {
-  const r = classified('Bash', { command: 'cat /etc/hosts' });
+test('Bash keeps its program as the target under the hook options', (t) => {
+  const r = classified(t, 'Bash', { command: 'cat /etc/hosts' });
   assert.equal(r.target, 'cat');
 });
 
@@ -1001,8 +1008,9 @@ test('with no root in the options a target is recorded exactly as before', () =>
 const HOOK = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'read-trace.mjs');
 const REAL_PLUGIN = resolve(dirname(HOOK), '..', '..');
 
-function hookRecords(file_path) {
+function hookRecords(t, file_path) {
   const project = mkdtempSync(join(tmpdir(), 'cad-reads-'));
+  t.after(() => rmSync(project, { recursive: true, force: true }));
   mkdirSync(join(project, '.planning'), { recursive: true });
   stampState(join(project, '.planning'));
   execFileSync(process.execPath, [HOOK], {
@@ -1011,8 +1019,8 @@ function hookRecords(file_path) {
   return readFileSync(join(recordsDir(join(project, '.planning')), 'reads.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 }
 
-test('the hook run against an unstamped v4.0 project leaves .planning byte-identical and exits 0', () => {
-  const dir = v40Project();
+test('the hook run against an unstamped v4.0 project leaves .planning byte-identical and exits 0', (t) => {
+  const dir = v40Project(t);
   const before = treeOf(dir);
   const r = spawnSync(process.execPath, [HOOK], {
     input: JSON.stringify({ tool_name: 'Read', tool_input: { file_path: join(dir, 'ROADMAP.md') }, cwd: dirname(dir) }),
@@ -1022,13 +1030,13 @@ test('the hook run against an unstamped v4.0 project leaves .planning byte-ident
   assert.deepEqual(treeOf(dir), before);
 });
 
-test('the hook records `outside` for a path outside both roots', () => {
-  const [rec] = hookRecords('/etc/hosts');
+test('the hook records `outside` for a path outside both roots', (t) => {
+  const [rec] = hookRecords(t, '/etc/hosts');
   assert.equal(rec.target, 'outside');
 });
 
-test('the hook records a plugin file relative to the plugin it lives in', () => {
-  const [rec] = hookRecords(join(REAL_PLUGIN, 'cadence-core', 'bin', 'read-trace.mjs'));
+test('the hook records a plugin file relative to the plugin it lives in', (t) => {
+  const [rec] = hookRecords(t, join(REAL_PLUGIN, 'cadence-core', 'bin', 'read-trace.mjs'));
   assert.equal(rec.target, PLUGIN_REL + '/cadence-core/bin/read-trace.mjs');
 });
 
@@ -1255,8 +1263,8 @@ const FIXTURES = join(TESTS, 'fixtures');
 const PLANNING = join(HERE, 'planning.mjs');
 
 /** A planning root holding both committed fixtures under their real names. */
-function joinRoot() {
-  const dir = join(tmp(), '.planning');
+function joinRoot(t) {
+  const dir = join(tmp(t), '.planning');
   mkdirSync(recordsDir(dir), { recursive: true });
   writeFileSync(join(recordsDir(dir), 'trace.jsonl'), readFileSync(join(FIXTURES, 'join.trace.jsonl'), 'utf8'));
   writeFileSync(join(recordsDir(dir), 'reads.jsonl'), readFileSync(join(FIXTURES, 'join.reads.jsonl'), 'utf8'));
@@ -1272,8 +1280,8 @@ function seam(dir, args) {
   }
 }
 
-test('seam: `reads --join` reports four figures the fixtures fix exactly', () => {
-  const r = seam(joinRoot(), ['reads', '--join']);
+test('seam: `reads --join` reports four figures the fixtures fix exactly', (t) => {
+  const r = seam(joinRoot(t), ['reads', '--join']);
   assert.equal(r.ok, true);
   assert.equal(r.calls, 8);
   // Two reads land inside exactly one bracket of their role: the verifier's at
@@ -1294,8 +1302,8 @@ test('seam: `reads --join` reports four figures the fixtures fix exactly', () =>
   assert.equal(r.joined + r.ambiguous + r.unjoined + r.floor + r.coordinator + r.unresolved, r.calls);
 });
 
-test('seam: `reads` WITHOUT the flag returns the envelope it always returned', () => {
-  const dir = joinRoot();
+test('seam: `reads` WITHOUT the flag returns the envelope it always returned', (t) => {
+  const dir = joinRoot(t);
   const plain = seam(dir, ['reads']);
   for (const k of ['joined', 'ambiguous', 'unjoined', 'floor', 'coordinator', 'unresolved']) {
     assert.ok(!(k in plain), `${k} rode an unasked-for envelope`);
@@ -1307,8 +1315,8 @@ test('seam: `reads` WITHOUT the flag returns the envelope it always returned', (
   }
 });
 
-test('seam: an empty record still says `no reads recorded yet` under the flag', () => {
-  const dir = join(tmp(), '.planning');
+test('seam: an empty record still says `no reads recorded yet` under the flag', (t) => {
+  const dir = join(tmp(t), '.planning');
   mkdirSync(dir, { recursive: true });
   const r = seam(dir, ['reads', '--join']);
   assert.equal(r.ok, true);
@@ -1428,16 +1436,16 @@ test('in-dispatch: a read joined to no bracket contributes to nothing at all', (
 // recomputes it in prose.
 
 /** A planning root holding the committed reread pair under their real names. */
-function rereadRoot() {
-  const dir = join(tmp(), '.planning');
+function rereadRoot(t) {
+  const dir = join(tmp(t), '.planning');
   mkdirSync(recordsDir(dir), { recursive: true });
   writeFileSync(join(recordsDir(dir), 'trace.jsonl'), readFileSync(join(FIXTURES, 'reread.trace.jsonl'), 'utf8'));
   writeFileSync(join(recordsDir(dir), 'reads.jsonl'), readFileSync(join(FIXTURES, 'reread.reads.jsonl'), 'utf8'));
   return dir;
 }
 
-test('seam: `reads --join` carries the per-role in-dispatch rows the fixtures fix exactly', () => {
-  const r = seam(rereadRoot(), ['reads', '--join']);
+test('seam: `reads --join` carries the per-role in-dispatch rows the fixtures fix exactly', (t) => {
+  const r = seam(rereadRoot(t), ['reads', '--join']);
   assert.equal(r.ok, true);
   assert.equal(r.calls, 17);
   // 10 touches over 3 summed distinct across two non-overlapping brackets.
@@ -1462,8 +1470,8 @@ test('seam: `reads --join` carries the per-role in-dispatch rows the fixtures fi
   assert.equal(r.inDispatch.coordinatorFiles, 1);
 });
 
-test('seam: the join fixtures carry no `files`, so the new key holds NO measurement, never a zero', () => {
-  const r = seam(joinRoot(), ['reads', '--join']);
+test('seam: the join fixtures carry no `files`, so the new key holds NO measurement, never a zero', (t) => {
+  const r = seam(joinRoot(t), ['reads', '--join']);
   assert.equal(r.ok, true);
   for (const row of r.inDispatch.roles) {
     assert.equal(row.ratio, null, `a ratio was invented for ${row.role}: ${JSON.stringify(row)}`);
@@ -1475,11 +1483,11 @@ test('seam: the join fixtures carry no `files`, so the new key holds NO measurem
   assert.equal(r.inDispatch.fileCarrying, 0);
 });
 
-test('seam: `reads` WITHOUT the flag still carries no in-dispatch key at all', () => {
-  const plain = seam(rereadRoot(), ['reads']);
+test('seam: `reads` WITHOUT the flag still carries no in-dispatch key at all', (t) => {
+  const plain = seam(rereadRoot(t), ['reads']);
   assert.equal('inDispatch' in plain, false, 'the in-dispatch fold rode an unasked-for envelope');
   // ...and the absent-file arm returns before the join, as it always has.
-  const empty = join(tmp(), '.planning');
+  const empty = join(tmp(t), '.planning');
   mkdirSync(empty, { recursive: true });
   const none = seam(empty, ['reads', '--join']);
   assert.equal(none.note, 'no reads recorded yet');
@@ -1488,11 +1496,11 @@ test('seam: `reads` WITHOUT the flag still carries no in-dispatch key at all', (
 
 // --- the rotation still reaches the seam, the marker still reaches no fold ----
 
-test('seam: two rotations later, `reads` still reports the cut and bills no marker (AC4)', () => {
+test('seam: two rotations later, `reads` still reports the cut and bills no marker (AC4)', (t) => {
   // This phase changed what the marker carries and what a second rotation does
   // with the generation it destroys, so both halves of the marker's contract
   // are re-proved: it is REPORTED as a rotation, and it is COUNTED as nothing.
-  const dir = join(tmp(), '.planning');
+  const dir = join(tmp(t), '.planning');
   mkdirSync(dir, { recursive: true });
   stampState(dir);
   appendRead(dir, { ts: TS, tool: 'Read', agent: 'coordinator', target: '/gen-one' });

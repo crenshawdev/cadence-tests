@@ -449,7 +449,7 @@ test('a finding whose range does not resolve in this clone is stated unknown, ne
 
 // --- Plan 2 task 7: the task-attributed declared-files edge ----------------
 
-test('a joined entry names the task whose Files: line declared the queried path', (t) => {
+test('a joined entry names the task whose Files: line declared the queried path', () => {
   const { stdout } = run(['cadence-core/bin/lib/capture-file.mjs', '--dir', REPO, '--top', '30']);
   const env = oneJsonLine(stdout);
   const entry = entryFor(env.text, '8e27033805ac8a5886c07ddd61756106538b22e8');
