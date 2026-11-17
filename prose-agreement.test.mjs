@@ -4079,3 +4079,21 @@ test('phase.md: the add arm sends opened_cycle to PROJECT.md ### Active and REQU
   assert.match(instruction, /PROJECT\.md `### Active`/, 'the opened_cycle instruction does not name PROJECT.md ### Active');
   assert.match(instruction, /REQUIREMENTS\.md `## Active`/, 'the opened_cycle instruction does not name REQUIREMENTS.md ## Active');
 });
+
+// a brief a few hundred bytes over used to cost a whole second planner pass, so the planner checks its own
+test('plan-graph.md: the planner runs check_brief\'s brief call before it returns and splits a plan over the ceiling', () => {
+  const call = 'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" brief --phase';
+  const wf = doc('cadence-core', 'workflows', 'plan.md');
+  const start = wf.indexOf('<step name="check_brief">');
+  assert.ok(start > -1, 'plan.md has no check_brief step');
+  assert.ok(wf.slice(start, wf.indexOf('</step>', start)).includes(call),
+    'plan.md check_brief no longer runs the brief call, so nothing backs the planner up');
+  const graph = flat(doc('cadence-core', 'references', 'plan-graph.md'));
+  const at = graph.indexOf('## Brief size');
+  assert.ok(at > -1, 'plan-graph.md has no ## Brief size section');
+  const rule = graph.slice(at);
+  assert.ok(rule.includes(call), 'plan-graph.md\'s Brief size section does not run the brief call check_brief runs');
+  assert.match(rule, /before you return/, 'plan-graph.md does not run the brief call before the planner returns');
+  assert.match(rule, /over its ceiling, split that plan's tasks across more plans/,
+    'plan-graph.md does not split a plan whose brief is over its ceiling');
+});
