@@ -3,17 +3,26 @@
 // land-cleanup.test.mjs: a temp repo root with a .claude-plugin manifest set, a
 // root CHANGELOG.md, and a .planning fixture, driven through the seam with an
 // explicit --date so no clock or live git is needed.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'release-bump.mjs');
 // Hermetic global config (never read the dev's real ~/.claude one).
-const NO_GLOBAL = join(mkdtempSync(join(tmpdir(), 'cad-rb-')), 'no-global.json');
+const NO_GLOBAL_ROOT = mkdtempSync(join(tmpdir(), 'cad-rb-'));
+const NO_GLOBAL = join(NO_GLOBAL_ROOT, 'no-global.json');
+after(() => rmSync(NO_GLOBAL_ROOT, { recursive: true, force: true }));
+
+/** A mkdtemp root that goes when test `t` ends. */
+function tmp(t, prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
 
 const PLUGIN_1_0_0 = {
   name: 'cadence',
@@ -53,8 +62,8 @@ const CHANGELOG = [
  * the fixtures above, null omits, and an object replaces (the sibling arm needs
  * a marketplace.json carrying a `version`, which the shipped one does not).
  */
-function fixture(opts = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'cad-rb-repo-'));
+function fixture(t, opts = {}) {
+  const dir = tmp(t, 'cad-rb-repo-');
   mkdirSync(join(dir, '.claude-plugin'), { recursive: true });
   mkdirSync(join(dir, '.planning'), { recursive: true });
   const plugin = 'plugin' in opts ? opts.plugin : PLUGIN_1_0_0;
@@ -101,8 +110,8 @@ const readRaw = (f) => readFileSync(f, 'utf8');
 
 // --- bump -------------------------------------------------------------------
 
-test('bump: rewrites only version, preserves every other field, scaffolds changelog', () => {
-  const dir = fixture();
+test('bump: rewrites only version, preserves every other field, scaffolds changelog', (t) => {
+  const dir = fixture(t);
   const marketBefore = readRaw(join(dir, '.claude-plugin', 'marketplace.json'));
   const r = seam(['bump', '--dir', dir, '--version', '1.1.0-rc.2', '--date', '2026-07-17']);
   assert.equal(r.ok, true);
@@ -130,8 +139,8 @@ test('bump: rewrites only version, preserves every other field, scaffolds change
   assert.ok(cl.includes('[1.0.0]: https://github.com/crenshawdev/cadence/releases\n'));
 });
 
-test('bump: a second run is a noop, plugin.json and CHANGELOG byte-identical (no double-bump)', () => {
-  const dir = fixture();
+test('bump: a second run is a noop, plugin.json and CHANGELOG byte-identical (no double-bump)', (t) => {
+  const dir = fixture(t);
   seam(['bump', '--dir', dir, '--version', '1.1.0-rc.2', '--date', '2026-07-17']);
   const pluginAfterFirst = readRaw(join(dir, '.claude-plugin', 'plugin.json'));
   const clAfterFirst = readRaw(join(dir, 'CHANGELOG.md'));
@@ -144,19 +153,19 @@ test('bump: a second run is a noop, plugin.json and CHANGELOG byte-identical (no
   assert.equal(readRaw(join(dir, 'CHANGELOG.md')), clAfterFirst);
 });
 
-test('bump: no plugin.json -> skip, nothing written', () => {
-  const dir = fixture({ plugin: null });
+test('bump: no plugin.json -> skip, nothing written', (t) => {
+  const dir = fixture(t, { plugin: null });
   const r = seam(['bump', '--dir', dir, '--date', '2026-07-17']);
   assert.equal(r.ok, true);
   assert.equal(r.action, 'skip');
   assert.equal(r.reason, 'no-plugin-manifest');
 });
 
-test('bump: no --version refuses even while PROJECT.md ### Active names one - the prose arm is gone', () => {
+test('bump: no --version refuses even while PROJECT.md ### Active names one - the prose arm is gone', (t) => {
   // The fixture's `### Active` names `v1.1.0-rc.2`. Against HEAD-before-REL-03
   // that prose supplied the target and the seam bumped; now nothing but the
   // explicit --version can name the shipping number, so this refuses.
-  const dir = fixture();
+  const dir = fixture(t);
   assert.match(readRaw(join(dir, '.planning', 'PROJECT.md')), /v1\.1\.0-rc\.2/,
     'the fixture really does carry a version in ### Active - that is the evidence, not scaffolding');
   const pluginBefore = readRaw(join(dir, '.claude-plugin', 'plugin.json'));
@@ -173,8 +182,8 @@ test('bump: no --version refuses even while PROJECT.md ### Active names one - th
   assert.ok(!readRaw(join(dir, 'CHANGELOG.md')).includes('[null]'));
 });
 
-test('bump: a present-but-unparseable plugin.json refuses, never reads as "not a plugin project"', () => {
-  const dir = fixture();
+test('bump: a present-but-unparseable plugin.json refuses, never reads as "not a plugin project"', (t) => {
+  const dir = fixture(t);
   // A trailing comma: the shape a truncated or hand-edited half-write leaves.
   const mangled = '{\n  "name": "cadence",\n  "version": "1.0.0",\n}\n';
   writeFileSync(join(dir, '.claude-plugin', 'plugin.json'), mangled);
@@ -189,24 +198,24 @@ test('bump: a present-but-unparseable plugin.json refuses, never reads as "not a
   assert.equal(readRaw(join(dir, 'CHANGELOG.md')), clBefore);
 });
 
-test('bump: a success envelope carries a machine reason code plus the human detail', () => {
-  const dir = fixture();
+test('bump: a success envelope carries a machine reason code plus the human detail', (t) => {
+  const dir = fixture(t);
   const r = seam(['bump', '--dir', dir, '--version', '1.1.0-rc.2', '--date', '2026-07-17']);
   assert.equal(r.ok, true);
   assert.equal(r.reason, 'bump', 'reason is a machine token on EVERY path, not a sentence on the ok:true one');
   assert.match(r.detail, /1\.0\.0 -> 1\.1\.0-rc\.2/);
 });
 
-test('bump: --version IS the shipping number, and a leading v is stripped', () => {
-  const dir = fixture({ activeVersion: null });
+test('bump: --version IS the shipping number, and a leading v is stripped', (t) => {
+  const dir = fixture(t, { activeVersion: null });
   const r = seam(['bump', '--dir', dir, '--version', 'v2.0.0', '--date', '2026-07-17']);
   assert.equal(r.action, 'bumped');
   assert.equal(r.target, '2.0.0');
   assert.equal(readJson(join(dir, '.claude-plugin', 'plugin.json')).version, '2.0.0');
 });
 
-test('bump: a target BELOW the manifest version refuses, exit 1, nothing written', () => {
-  const dir = fixture({ plugin: { ...PLUGIN_1_0_0, version: '2.0.0' } });
+test('bump: a target BELOW the manifest version refuses, exit 1, nothing written', (t) => {
+  const dir = fixture(t, { plugin: { ...PLUGIN_1_0_0, version: '2.0.0' } });
   const pluginBefore = readRaw(join(dir, '.claude-plugin', 'plugin.json'));
   const clBefore = readRaw(join(dir, 'CHANGELOG.md'));
 
@@ -219,8 +228,8 @@ test('bump: a target BELOW the manifest version refuses, exit 1, nothing written
   assert.equal(readRaw(join(dir, 'CHANGELOG.md')), clBefore);
 });
 
-test('bump: an unparseable --version refuses, exit 1, nothing written', () => {
-  const dir = fixture();
+test('bump: an unparseable --version refuses, exit 1, nothing written', (t) => {
+  const dir = fixture(t);
   const pluginBefore = readRaw(join(dir, '.claude-plugin', 'plugin.json'));
   const clBefore = readRaw(join(dir, 'CHANGELOG.md'));
 
@@ -233,8 +242,8 @@ test('bump: an unparseable --version refuses, exit 1, nothing written', () => {
   assert.equal(readRaw(join(dir, 'CHANGELOG.md')), clBefore);
 });
 
-test('bump: an unparseable version IN THE MANIFEST refuses, exit 1, nothing written', () => {
-  const dir = fixture({ plugin: { ...PLUGIN_1_0_0, version: '1.0' } });
+test('bump: an unparseable version IN THE MANIFEST refuses, exit 1, nothing written', (t) => {
+  const dir = fixture(t, { plugin: { ...PLUGIN_1_0_0, version: '1.0' } });
   const pluginBefore = readRaw(join(dir, '.claude-plugin', 'plugin.json'));
   const clBefore = readRaw(join(dir, 'CHANGELOG.md'));
 
@@ -247,11 +256,11 @@ test('bump: an unparseable version IN THE MANIFEST refuses, exit 1, nothing writ
   assert.equal(readRaw(join(dir, 'CHANGELOG.md')), clBefore);
 });
 
-test('bump: a SIBLING that would downgrade is recorded as a refusal, not silently written (D-08)', () => {
+test('bump: a SIBLING that would downgrade is recorded as a refusal, not silently written (D-08)', (t) => {
   // The shipped marketplace.json carries no version, so this arm needs a
   // fixture that adds one; a sibling ahead of the target must not be walked
   // backwards, and the primary write has already landed so it records.
-  const dir = fixture({ marketplace: { ...MARKETPLACE, version: '2.0.0' } });
+  const dir = fixture(t, { marketplace: { ...MARKETPLACE, version: '2.0.0' } });
   const marketBefore = readRaw(join(dir, '.claude-plugin', 'marketplace.json'));
 
   const r = seam(['bump', '--dir', dir, '--version', '1.1.0', '--date', '2026-07-17']);
@@ -265,12 +274,12 @@ test('bump: a SIBLING that would downgrade is recorded as a refusal, not silentl
     'the sibling manifest is byte-unchanged');
 });
 
-test('bump: an UNPARSEABLE sibling refuses the whole run, nothing written (D-07)', () => {
+test('bump: an UNPARSEABLE sibling refuses the whole run, nothing written (D-07)', (t) => {
   // The other half of the split D-08 became: a sibling that PARSES and is not
   // upgradeable keeps its ok:true siblings[] row (the case above), while one
   // this seam cannot READ refuses outright - the whole write set is decided
   // before the first write, so there is no landed primary to unwind.
-  const dir = fixture();
+  const dir = fixture(t);
   // A trailing comma: the shape a truncated or hand-edited half-write leaves,
   // the same idiom the primary's unparseable case uses.
   const mangled = '{\n  "name": "cadence",\n  "version": "1.0.0",\n}\n';
@@ -290,14 +299,14 @@ test('bump: an UNPARSEABLE sibling refuses the whole run, nothing written (D-07)
   assert.equal(readRaw(join(dir, 'CHANGELOG.md')), clBefore);
 });
 
-test('bump: a present-but-UNREADABLE CHANGELOG refuses, nothing written (D-09)', () => {
+test('bump: a present-but-UNREADABLE CHANGELOG refuses, nothing written (D-09)', (t) => {
   // A DIRECTORY at CHANGELOG.md - filesystem-shaped and uid-independent, so no
   // chmodSync, which is a silent no-op under a root test runner (D-02). Built
   // by omitting the fixture's changelog and putting a directory in its place.
   // Before this arm, readText's ''-on-failure contract read that as an EMPTY
   // changelog and scaffolded a fresh one over the release history - after the
   // manifest had already been bumped.
-  const dir = fixture({ changelog: null });
+  const dir = fixture(t, { changelog: null });
   mkdirSync(join(dir, 'CHANGELOG.md'));
   const pluginBefore = readRaw(join(dir, '.claude-plugin', 'plugin.json'));
 
@@ -312,7 +321,7 @@ test('bump: a present-but-UNREADABLE CHANGELOG refuses, nothing written (D-09)',
   assert.equal(readJson(join(dir, '.claude-plugin', 'plugin.json')).version, '1.0.0');
 });
 
-test('bump: a NON-REGULAR CHANGELOG that reads CLEANLY still refuses, nothing written', () => {
+test('bump: a NON-REGULAR CHANGELOG that reads CLEANLY still refuses, nothing written', (t) => {
   // The case the DIRECTORY fixture above cannot reach. A directory throws
   // EISDIR, so the catch arm alone answers it; a character device does not
   // throw at all - readFileSync on /dev/null returns '', which is exactly the
@@ -321,7 +330,7 @@ test('bump: a NON-REGULAR CHANGELOG that reads CLEANLY still refuses, nothing wr
   // blocks forever with no writer), which is why the check is on the file's
   // SHAPE and not on whether reading it threw.
   if (!existsSync('/dev/null')) return;
-  const dir = fixture({ changelog: null });
+  const dir = fixture(t, { changelog: null });
   symlinkSync('/dev/null', join(dir, 'CHANGELOG.md'));
   const pluginBefore = readRaw(join(dir, '.claude-plugin', 'plugin.json'));
 
@@ -353,8 +362,8 @@ const STAGED_CHANGELOG = [
   '',
 ].join('\n');
 
-test('bump: one run puts the staged Unreleased body INSIDE the dated section', () => {
-  const dir = fixture({ changelog: STAGED_CHANGELOG });
+test('bump: one run puts the staged Unreleased body INSIDE the dated section', (t) => {
+  const dir = fixture(t, { changelog: STAGED_CHANGELOG });
   const r = seam(['bump', '--dir', dir, '--version', '2.0.0', '--date', '2026-08-03']);
   assert.equal(r.ok, true);
   assert.equal(r.changelog.changed, true);
@@ -370,8 +379,8 @@ test('bump: one run puts the staged Unreleased body INSIDE the dated section', (
   assert.match(cl.slice(iUnrel, iNew), /^## \[Unreleased\]\n\s*\n$/);
 });
 
-test('bump: a second identical run leaves plugin.json and CHANGELOG byte-identical', () => {
-  const dir = fixture({ changelog: STAGED_CHANGELOG });
+test('bump: a second identical run leaves plugin.json and CHANGELOG byte-identical', (t) => {
+  const dir = fixture(t, { changelog: STAGED_CHANGELOG });
   seam(['bump', '--dir', dir, '--version', '2.0.0', '--date', '2026-08-03']);
   const pluginAfterFirst = readRaw(join(dir, '.claude-plugin', 'plugin.json'));
   const clAfterFirst = readRaw(join(dir, 'CHANGELOG.md'));
@@ -383,8 +392,8 @@ test('bump: a second identical run leaves plugin.json and CHANGELOG byte-identic
   assert.equal(readRaw(join(dir, 'CHANGELOG.md')), clAfterFirst);
 });
 
-test('bump: a third run after new content is staged promotes that too', () => {
-  const dir = fixture({ changelog: STAGED_CHANGELOG });
+test('bump: a third run after new content is staged promotes that too', (t) => {
+  const dir = fixture(t, { changelog: STAGED_CHANGELOG });
   seam(['bump', '--dir', dir, '--version', '2.0.0', '--date', '2026-08-03']);
   const staged = readRaw(join(dir, 'CHANGELOG.md')).replace('## [Unreleased]\n', '## [Unreleased]\n\n- a late fix\n');
   writeFileSync(join(dir, 'CHANGELOG.md'), staged);
@@ -398,18 +407,18 @@ test('bump: a third run after new content is staged promotes that too', () => {
     'the late bullet lands inside the dated section, not stranded under Unreleased');
 });
 
-test('bump: an empty Unreleased body reports section_empty so the close authors the notes', () => {
-  const dir = fixture();  // the default CHANGELOG has no Unreleased content
+test('bump: an empty Unreleased body reports section_empty so the close authors the notes', (t) => {
+  const dir = fixture(t);  // the default CHANGELOG has no Unreleased content
   const r = seam(['bump', '--dir', dir, '--version', '2.0.0', '--date', '2026-08-03']);
   assert.equal(r.changelog.changed, true, 'the heading was still scaffolded');
   assert.equal(r.changelog.promoted, false);
   assert.equal(r.changelog.section_empty, true);
 });
 
-test('bump: a version-less PRIMARY manifest refuses, exit 1, nothing written (phase 1 D-01)', () => {
+test('bump: a version-less PRIMARY manifest refuses, exit 1, nothing written (phase 1 D-01)', (t) => {
   const { version, ...noVersion } = PLUGIN_1_0_0;
   assert.equal(version, '1.0.0'); // the field really was there to remove
-  const dir = fixture({ plugin: noVersion, changelog: STAGED_CHANGELOG });
+  const dir = fixture(t, { plugin: noVersion, changelog: STAGED_CHANGELOG });
   const clBefore = readRaw(join(dir, 'CHANGELOG.md'));
   const pluginBefore = readRaw(join(dir, '.claude-plugin', 'plugin.json'));
 
@@ -428,7 +437,7 @@ test('bump: a version-less PRIMARY manifest refuses, exit 1, nothing written (ph
     'the manifest it refused over is byte-identical');
 });
 
-test("bump: THIS repo's own manifest pair still bumps, marketplace.json recorded as skip (D-02)", () => {
+test("bump: THIS repo's own manifest pair still bumps, marketplace.json recorded as skip (D-02)", (t) => {
   // The regression the seam-level refusal must not cause: Cadence's own
   // .claude-plugin/marketplace.json carries no `version` BY DESIGN, so a
   // verdict-level refusal would halt this project's close every cycle. Copied
@@ -440,7 +449,7 @@ test("bump: THIS repo's own manifest pair still bumps, marketplace.json recorded
   assert.equal('version' in realMarket, false, 'marketplace.json carries none - the D-02 premise');
   const above = `${Number(String(realPlugin.version).split('.')[0]) + 1}.0.0`;
 
-  const dir = fixture({ plugin: realPlugin, marketplace: realMarket });
+  const dir = fixture(t, { plugin: realPlugin, marketplace: realMarket });
   const marketBefore = readRaw(join(dir, '.claude-plugin', 'marketplace.json'));
   const { json: r, status } = seamStatus(['bump', '--dir', dir, '--version', above, '--date', '2026-08-03']);
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -455,19 +464,19 @@ test("bump: THIS repo's own manifest pair still bumps, marketplace.json recorded
     'left byte-untouched');
 });
 
-test('bump: changelog.state tells the three states apart by VALUE, not by key presence (D-10)', () => {
+test('bump: changelog.state tells the three states apart by VALUE, not by key presence (D-10)', (t) => {
   // The defect this pins: the three outcomes used to differ only by whether
   // `section_empty` was there at all - absent when CHANGELOG.md was absent,
   // false when it had been read and was fine - and both read falsy, so
   // milestone.md's halt could not tell a project with NO changelog from a clean
   // one and closed as if the notes were fine. All three in one place so the
   // distinguishing is the assertion, not three separate hopes.
-  const absent = seam(['bump', '--dir', fixture({ changelog: null }), '--version', '2.0.0', '--date', '2026-08-03']);
+  const absent = seam(['bump', '--dir', fixture(t, { changelog: null }), '--version', '2.0.0', '--date', '2026-08-03']);
   // Present, read, and nothing left to do: the target IS the manifest version,
   // so the heading already exists and nothing is staged under Unreleased.
-  const clean = seam(['bump', '--dir', fixture(), '--version', '1.0.0', '--date', '2026-08-03']);
+  const clean = seam(['bump', '--dir', fixture(t), '--version', '1.0.0', '--date', '2026-08-03']);
   const { version, ...noVersion } = PLUGIN_1_0_0;
-  const refused = seam(['bump', '--dir', fixture({ plugin: noVersion }), '--version', '2.0.0', '--date', '2026-08-03']);
+  const refused = seam(['bump', '--dir', fixture(t, { plugin: noVersion }), '--version', '2.0.0', '--date', '2026-08-03']);
 
   assert.equal(absent.ok, true, JSON.stringify(absent));
   assert.equal(clean.ok, true, JSON.stringify(clean));
@@ -483,14 +492,14 @@ test('bump: changelog.state tells the three states apart by VALUE, not by key pr
   }
 });
 
-test('bump: --version v refuses by NAMING the raw argument, not as no-target-version (D-06)', () => {
+test('bump: --version v refuses by NAMING the raw argument, not as no-target-version (D-06)', (t) => {
   // Measured before the fix: `--version v` returned
   // {"ok":false,"reason":"no-target-version","target":""} - the leading `v` was
   // stripped, the empty remainder discarded the raw argument, and the seam then
   // reported that no version was given. That is false, and it names nothing the
   // operator can repair.
   for (const arg of ['v', '  v  ']) {
-    const dir = fixture();
+    const dir = fixture(t);
     const pluginBefore = readRaw(join(dir, '.claude-plugin', 'plugin.json'));
     const clBefore = readRaw(join(dir, 'CHANGELOG.md'));
     const { json: r, status } = seamStatus(['bump', '--dir', dir, '--version', arg, '--date', '2026-08-03']);
@@ -505,18 +514,18 @@ test('bump: --version v refuses by NAMING the raw argument, not as no-target-ver
   }
 });
 
-test('bump: the three neighbouring --version spellings keep their own refusals', () => {
+test('bump: the three neighbouring --version spellings keep their own refusals', (t) => {
   // The guard on the arm above: only a value that normalization EMPTIES takes
   // the raw-argument path. `vv` still normalizes to something, an ABSENT
   // --version has no raw value at all, and a blank one never reaches bump().
-  const doubled = seam(['bump', '--dir', fixture(), '--version', 'vv', '--date', '2026-08-03']);
+  const doubled = seam(['bump', '--dir', fixture(t), '--version', 'vv', '--date', '2026-08-03']);
   assert.equal(doubled.reason, 'unparseable-version', JSON.stringify(doubled));
 
-  const absent = seam(['bump', '--dir', fixture(), '--date', '2026-08-03']);
+  const absent = seam(['bump', '--dir', fixture(t), '--date', '2026-08-03']);
   assert.equal(absent.ok, false);
   assert.equal(absent.reason, 'no-target-version', JSON.stringify(absent));
 
-  const blank = seam(['bump', '--dir', fixture(), '--version', '   ', '--date', '2026-08-03']);
+  const blank = seam(['bump', '--dir', fixture(t), '--version', '   ', '--date', '2026-08-03']);
   assert.equal(blank.ok, false);
   assert.equal(blank.reason, 'missing-flag-value', JSON.stringify(blank));
 });
@@ -560,8 +569,8 @@ const BAD_DATES = [
 ];
 
 for (const [value, why] of BAD_DATES) {
-  test(`bump: --date refuses ${why}, writing nothing`, () => {
-    const dir = fixture();
+  test(`bump: --date refuses ${why}, writing nothing`, (t) => {
+    const dir = fixture(t);
     const clBefore = readRaw(join(dir, 'CHANGELOG.md'));
     const manifestBefore = readRaw(join(dir, '.claude-plugin', 'plugin.json'));
 
@@ -580,11 +589,11 @@ for (const [value, why] of BAD_DATES) {
     assert.equal(readRaw(join(dir, '.claude-plugin', 'plugin.json')), manifestBefore);
   });
 
-  test(`bump: --date refuses ${why} on a NON-plugin project too`, () => {
+  test(`bump: --date refuses ${why} on a NON-plugin project too`, (t) => {
     // D-06's stated consequence: the date is validated at the dispatch, so a
     // malformed value no longer hides behind the manifest gate, which answered
     // {"ok":true,"action":"skip","reason":"no-plugin-manifest"} here.
-    const dir = fixture({ plugin: null, marketplace: null });
+    const dir = fixture(t, { plugin: null, marketplace: null });
     const { json, status } = seamStatus(['bump', '--dir', dir, '--version', '1.1.0', '--date', value]);
     assert.equal(json.reason, 'bad-date', JSON.stringify(json));
     assert.equal(json.ok, false);
@@ -599,8 +608,8 @@ for (const [value, why] of BAD_DATES) {
 // absent-vs-empty collapse D-05 refuses for `''`, arriving by the other door.
 // Measured against the pre-fix seam: `bump --version 1.1.0 --date` wrote
 // `## [1.1.0] - <today>` and reported ok:true.
-test('bump: a trailing valueless --date refuses, writing nothing', () => {
-  const dir = fixture();
+test('bump: a trailing valueless --date refuses, writing nothing', (t) => {
+  const dir = fixture(t);
   const clBefore = readRaw(join(dir, 'CHANGELOG.md'));
   const manifestBefore = readRaw(join(dir, '.claude-plugin', 'plugin.json'));
 
@@ -617,23 +626,23 @@ test('bump: a trailing valueless --date refuses, writing nothing', () => {
 // The other half of the same contract: an ABSENT --date still dates today
 // rather than refusing, so the presence test did not turn the default into a
 // requirement. Asserted on the SHAPE of the heading, never on a clock reading.
-test('bump: an ABSENT --date still dates today', () => {
-  const dir = fixture();
+test('bump: an ABSENT --date still dates today', (t) => {
+  const dir = fixture(t);
   const { json, status } = seamStatus(['bump', '--dir', dir, '--version', '1.1.0']);
   assert.equal(json.ok, true, JSON.stringify(json));
   assert.equal(status, 0);
   assert.match(readRaw(join(dir, 'CHANGELOG.md')), /## \[1\.1\.0\] - \d{4}-\d{2}-\d{2}/);
 });
 
-test('bump: a well-formed --date still writes its dated heading', () => {
-  const dir = fixture();
+test('bump: a well-formed --date still writes its dated heading', (t) => {
+  const dir = fixture(t);
   const r = seam(['bump', '--dir', dir, '--version', '1.1.0', '--date', '2026-08-18']);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.match(readRaw(join(dir, 'CHANGELOG.md')), /## \[1\.1\.0\] - 2026-08-18/);
 });
 
-test('bump: an ABSENT --date still dates today - only a PRESENT one is validated', () => {
-  const dir = fixture();
+test('bump: an ABSENT --date still dates today - only a PRESENT one is validated', (t) => {
+  const dir = fixture(t);
   const r = seam(['bump', '--dir', dir, '--version', '1.1.0']);
   assert.equal(r.ok, true, JSON.stringify(r));
   const today = new Date().toISOString().slice(0, 10);

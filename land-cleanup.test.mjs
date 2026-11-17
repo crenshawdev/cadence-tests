@@ -9,21 +9,29 @@
 // review finding, and reading one of those as a live blocker is exactly the
 // behaviour this requirement removed. There is deliberately NO severity
 // fallback for a ruling-less member: it is not a survivor, so it does not halt.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, openSync, closeSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, openSync, closeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'land-cleanup.mjs');
 // Hermetic global config (never read the dev's real ~/.claude one).
-const NO_GLOBAL = join(mkdtempSync(join(tmpdir(), 'cad-lc-')), 'no-global.json');
+const NO_GLOBAL_ROOT = mkdtempSync(join(tmpdir(), 'cad-lc-'));
+const NO_GLOBAL = join(NO_GLOBAL_ROOT, 'no-global.json');
+
+/** A mkdtemp root that goes when test `t` ends. */
+function tmp(t, prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
 
 /** A .planning fixture with the given git config block. */
-function fixture(gitConfig) {
-  const dir = mkdtempSync(join(tmpdir(), 'cad-lc-repo-'));
+function fixture(t, gitConfig) {
+  const dir = tmp(t, 'cad-lc-repo-');
   mkdirSync(join(dir, '.planning'), { recursive: true });
   writeFileSync(join(dir, '.planning', 'config.json'), JSON.stringify({ git: gitConfig }));
   writeFileSync(join(dir, '.planning', 'PROJECT.md'),
@@ -34,8 +42,8 @@ function fixture(gitConfig) {
 
 /** A real git repo (over a .planning fixture) with cadence/<v> merged into main,
  *  so `git branch --merged main` lists it and the reap target resolves for real. */
-function gitFixture(gitConfig) {
-  const dir = fixture(gitConfig);
+function gitFixture(t, gitConfig) {
+  const dir = fixture(t, gitConfig);
   const g = (...a) => execFileSync('git', ['-C', dir, ...a],
     { stdio: 'ignore', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
   g('init', '-q');
@@ -54,9 +62,11 @@ function gitFixture(gitConfig) {
   return dir;
 }
 
-/** A user-global config layer holding `cfg`; returns its path. */
-function globalLayer(cfg) {
-  const file = join(mkdtempSync(join(tmpdir(), 'cad-lc-global-')), 'global.json');
+/** A user-global config layer holding `cfg`; returns its path. Without a `t`
+ *  the caller owns its root, as GLOBAL_ON's file-level `after()` does. */
+function globalLayer(cfg, t) {
+  const root = t ? tmp(t, 'cad-lc-global-') : mkdtempSync(join(tmpdir(), 'cad-lc-global-'));
+  const file = join(root, 'global.json');
   writeFileSync(file, JSON.stringify(cfg));
   return file;
 }
@@ -79,14 +89,18 @@ function seam(args, stdin = '', globalFile = NO_GLOBAL) {
 // layers set git.auto_close, so every arm that is about what halts an
 // unattended close runs with this beside the repo's `true`.
 const GLOBAL_ON = globalLayer({ git: { auto_close: true } });
+after(() => {
+  rmSync(NO_GLOBAL_ROOT, { recursive: true, force: true });
+  rmSync(dirname(GLOBAL_ON), { recursive: true, force: true });
+});
 
 /** `gate` over `dir` with both layers opted in. */
 const gateOn = (dir, stdin) => seam(['gate', '--dir', dir], stdin, GLOBAL_ON);
 
 // --- cleanup ----------------------------------------------------------------
 
-test('cleanup on a repo with the branch merged into base: reap true, return to base', () => {
-  const dir = gitFixture({ base_branch: 'main' });
+test('cleanup on a repo with the branch merged into base: reap true, return to base', (t) => {
+  const dir = gitFixture(t, { base_branch: 'main' });
   const r = seam(['cleanup', '--dir', dir, '--branch', 'cadence/v1.1.0-rc.2']);
   assert.equal(r.ok, true);
   assert.equal(r.action, 'cleanup');
@@ -97,11 +111,11 @@ test('cleanup on a repo with the branch merged into base: reap true, return to b
   assert.equal(r.base, 'main');
 });
 
-test('cleanup --merged true forced but branch not in merged list (deleted at merge): reap false, branch null', () => {
+test('cleanup --merged true forced but branch not in merged list (deleted at merge): reap false, branch null', (t) => {
   // The GitHub auto_close path: gh pr merge --delete-branch removes the branch,
   // so `git branch --merged` no longer lists it and the reap target resolves
   // null, yet the seam forces --merged true. Reap must not fire on a null branch.
-  const dir = gitFixture({ base_branch: 'main' });
+  const dir = gitFixture(t, { base_branch: 'main' });
   // `main` names a commit only in a real repository, so the fixture is one; the
   // merge-time branch deletion is then done for real.
   execFileSync('git', ['-C', dir, 'branch', '-D', 'cadence/v1.1.0-rc.2'], { stdio: 'ignore' });
@@ -113,16 +127,16 @@ test('cleanup --merged true forced but branch not in merged list (deleted at mer
   assert.equal(r.pull, true);
 });
 
-test('cleanup --merged false: cleanup but reap false (never reap an unmerged branch)', () => {
-  const dir = gitFixture({ base_branch: 'main' });
+test('cleanup --merged false: cleanup but reap false (never reap an unmerged branch)', (t) => {
+  const dir = gitFixture(t, { base_branch: 'main' });
   const r = seam(['cleanup', '--dir', dir, '--branch', 'cadence/v1.1.0-rc.2', '--merged', 'false']);
   assert.equal(r.action, 'cleanup');
   assert.equal(r.reap, false);
 });
 
 /** A real repo with `branch` merged into main, and `.planning/config.json` holding `gitConfig` as written. */
-function themedFixture(gitConfig, branch) {
-  const dir = fixture(gitConfig);
+function themedFixture(t, gitConfig, branch) {
+  const dir = fixture(t, gitConfig);
   const g = (...a) => execFileSync('git', ['-C', dir, ...a],
     { stdio: 'ignore', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
   g('init', '-q');
@@ -145,8 +159,8 @@ const PUBLISH = join(dirname(SEAM), 'git-publish.mjs');
 const branchesOf = (dir) => execFileSync('git', ['-C', dir, 'branch', '--format=%(refname:short)'],
   { encoding: 'utf8' }).split('\n').filter(Boolean);
 
-test('cleanup with git.integration_branch_name set and merged: reaps that branch, and git-publish reap deletes it', () => {
-  const dir = themedFixture({ base_branch: 'main', integration_branch_name: 'seldon/hardin' }, 'seldon/hardin');
+test('cleanup with git.integration_branch_name set and merged: reaps that branch, and git-publish reap deletes it', (t) => {
+  const dir = themedFixture(t, { base_branch: 'main', integration_branch_name: 'seldon/hardin' }, 'seldon/hardin');
   const r = seam(['cleanup', '--dir', dir]);
   assert.equal(r.reap, true);
   assert.equal(r.branch, 'seldon/hardin');
@@ -156,30 +170,30 @@ test('cleanup with git.integration_branch_name set and merged: reaps that branch
   assert.ok(!branchesOf(dir).includes('seldon/hardin'));
 });
 
-test('cleanup with the name set but the merged branch a sibling in its namespace: reaps the sibling', () => {
-  const dir = themedFixture({ base_branch: 'main', integration_branch_name: 'seldon/hardin' }, 'seldon/foundation');
+test('cleanup with the name set but the merged branch a sibling in its namespace: reaps the sibling', (t) => {
+  const dir = themedFixture(t, { base_branch: 'main', integration_branch_name: 'seldon/hardin' }, 'seldon/foundation');
   const r = seam(['cleanup', '--dir', dir]);
   assert.equal(r.reap, true);
   assert.equal(r.branch, 'seldon/foundation');
 });
 
-test('cleanup with no name set and a themed branch merged: reaps nothing', () => {
-  const dir = themedFixture({ base_branch: 'main' }, 'seldon/hardin');
+test('cleanup with no name set and a themed branch merged: reaps nothing', (t) => {
+  const dir = themedFixture(t, { base_branch: 'main' }, 'seldon/hardin');
   const r = seam(['cleanup', '--dir', dir]);
   assert.equal(r.reap, false);
   assert.equal(r.branch, null);
 });
 
-test('cleanup with a flag-shaped name in a hand-edited layer: never the branch, named in warnings', () => {
-  const dir = themedFixture({ base_branch: 'main', integration_branch_name: '-D' }, 'cadence/v1.1.0-rc.2');
+test('cleanup with a flag-shaped name in a hand-edited layer: never the branch, named in warnings', (t) => {
+  const dir = themedFixture(t, { base_branch: 'main', integration_branch_name: '-D' }, 'cadence/v1.1.0-rc.2');
   const r = seam(['cleanup', '--dir', dir]);
   assert.notEqual(r.branch, '-D');
   assert.equal(r.branch, 'cadence/v1.1.0-rc.2', 'treated as unset, so the cadence/* default applies');
   assert.ok(r.warnings.some((w) => w.includes('git.integration_branch_name')), JSON.stringify(r.warnings));
 });
 
-test('cleanup --merged true with the named branch already deleted by the host: reaps nothing', () => {
-  const dir = themedFixture({ base_branch: 'main', integration_branch_name: 'seldon/hardin' }, 'seldon/hardin');
+test('cleanup --merged true with the named branch already deleted by the host: reaps nothing', (t) => {
+  const dir = themedFixture(t, { base_branch: 'main', integration_branch_name: 'seldon/hardin' }, 'seldon/hardin');
   execFileSync('git', ['-C', dir, 'branch', '-D', 'seldon/hardin'], { stdio: 'ignore' });
   const r = seam(['cleanup', '--dir', dir, '--merged', 'true']);
   assert.equal(r.reap, false);
@@ -189,8 +203,8 @@ test('cleanup --merged true with the named branch already deleted by the host: r
 const GIT_BRANCH = join(dirname(SEAM), 'git-branch.mjs');
 const CONFIG = join(dirname(SEAM), 'config.mjs');
 
-test('the name is cleared after a confirmed merge: cleanup says so, and the next decide is cadence/<version> again', () => {
-  const dir = themedFixture({ base_branch: 'main', integration_branch_name: 'seldon/hardin' }, 'seldon/hardin');
+test('the name is cleared after a confirmed merge: cleanup says so, and the next decide is cadence/<version> again', (t) => {
+  const dir = themedFixture(t, { base_branch: 'main', integration_branch_name: 'seldon/hardin' }, 'seldon/hardin');
   const env = { ...process.env, CADENCE_GLOBAL_CONFIG: NO_GLOBAL };
   const decideName = () => JSON.parse(execFileSync('node',
     [GIT_BRANCH, 'decide', '--dir', dir, '--branch', 'main'], { encoding: 'utf8', env })).branch;
@@ -202,22 +216,22 @@ test('the name is cleared after a confirmed merge: cleanup says so, and the next
   assert.equal(decideName(), 'cadence/v1.1.0-rc.2');
 });
 
-test('the name stays when the merge is unconfirmed, and with no name nothing clears', () => {
-  const named = themedFixture({ base_branch: 'main', integration_branch_name: 'seldon/hardin' }, 'seldon/hardin');
+test('the name stays when the merge is unconfirmed, and with no name nothing clears', (t) => {
+  const named = themedFixture(t, { base_branch: 'main', integration_branch_name: 'seldon/hardin' }, 'seldon/hardin');
   assert.equal(seam(['cleanup', '--dir', named, '--merged', 'false']).clearIntegrationName, false);
-  const plain = themedFixture({ base_branch: 'main' }, 'cadence/v1.1.0-rc.2');
+  const plain = themedFixture(t, { base_branch: 'main' }, 'cadence/v1.1.0-rc.2');
   assert.equal(seam(['cleanup', '--dir', plain]).clearIntegrationName, false);
 });
 
-test('with on_land_cleanup off a confirmed merge still clears the name', () => {
-  const dir = themedFixture({ base_branch: 'main', on_land_cleanup: false, integration_branch_name: 'seldon/hardin' },
+test('with on_land_cleanup off a confirmed merge still clears the name', (t) => {
+  const dir = themedFixture(t, { base_branch: 'main', on_land_cleanup: false, integration_branch_name: 'seldon/hardin' },
     'seldon/hardin');
   const r = seam(['cleanup', '--dir', dir]);
   assert.equal(r.action, 'skip');
   assert.equal(r.clearIntegrationName, true);
 });
 
-test('a STRING protected_branches resolves base to that branch (#38, COR-01, D-07)', () => {
+test('a STRING protected_branches resolves base to that branch (#38, COR-01, D-07)', (t) => {
   // This seam's own per-consumer proof of the shared coercion
   // (lib/protected-branches.mjs). `base` falls back to protectedBranches[0],
   // so honoring the string form MOVES the base here: "release" resolves base to
@@ -225,7 +239,7 @@ test('a STRING protected_branches resolves base to that branch (#38, COR-01, D-0
   // the pre-fix code dropped the string and reaped against `main`. That is the
   // accepted consequence of one grammar across the four readers (D-07), stated
   // rather than worked around.
-  const dir = fixture({ protected_branches: 'release' });
+  const dir = fixture(t, { protected_branches: 'release' });
   const r = seam(['cleanup', '--dir', dir, '--branch', 'cadence/v1.1.0-rc.2', '--merged', 'true']);
   assert.equal(r.ok, true);
   assert.equal(r.base, 'release');
@@ -234,20 +248,20 @@ test('a STRING protected_branches resolves base to that branch (#38, COR-01, D-0
   assert.equal(forced.base, 'main');
 });
 
-test('a protected_branches naming NO branch resolves base to main (GRD-01, D-02)', () => {
+test('a protected_branches naming NO branch resolves base to main (GRD-01, D-02)', (t) => {
   // The same fallback path as the row above, on the value that used to break
   // it: `""` resolved to [""], so `base` became the empty string and the reap
   // query became `git branch --merged ""` - a query that answers emptily and
   // successfully rather than failing. A value naming no branch is a typo, so
   // the default list applies and base lands on `main` (D-02).
-  const dir = fixture({ protected_branches: '' });
+  const dir = fixture(t, { protected_branches: '' });
   const r = seam(['cleanup', '--dir', dir, '--branch', 'cadence/v1.1.0-rc.2', '--merged', 'true']);
   assert.equal(r.ok, true);
   assert.equal(r.base, 'main');
 });
 
-test('cleanup with git.on_land_cleanup=false: skip, all flags false', () => {
-  const dir = fixture({ base_branch: 'main', on_land_cleanup: false });
+test('cleanup with git.on_land_cleanup=false: skip, all flags false', (t) => {
+  const dir = fixture(t, { base_branch: 'main', on_land_cleanup: false });
   const r = seam(['cleanup', '--dir', dir, '--branch', 'cadence/v1.1.0-rc.2', '--merged', 'true']);
   assert.equal(r.action, 'skip');
   assert.equal(r.returnToBase, false);
@@ -265,8 +279,8 @@ for (const [label, gitConfig, extra, named] of [
   ['--base naming no commit', { base_branch: 'main' }, ['--base', 'no-such-branch'], 'no-such-branch'],
 ]) {
   for (const merged of [[], ['--merged', 'true']]) {
-    test(`cleanup refuses a bad base as a skip: ${label}${merged.length ? ' (--merged true)' : ''}`, () => {
-      const dir = gitFixture(gitConfig);
+    test(`cleanup refuses a bad base as a skip: ${label}${merged.length ? ' (--merged true)' : ''}`, (t) => {
+      const dir = gitFixture(t, gitConfig);
       const r = seam(['cleanup', '--dir', dir, '--branch', 'cadence/v1.1.0-rc.2', ...extra, ...merged]);
       assert.equal(r.ok, true, JSON.stringify(r));
       assert.equal(r.action, 'skip', JSON.stringify(r));
@@ -283,21 +297,21 @@ for (const [label, gitConfig, extra, named] of [
 // the base BEFORE any git command spells it, and `on_land_cleanup: false` is a
 // skip too, so the field is what tells the two apart (a refused base withholds
 // every git command that takes the base; a switched-off cleanup withholds none).
-test('cleanup: a refused base carries baseRefused:true, a switched-off cleanup does not', () => {
-  const refused = seam(['cleanup', '--dir', gitFixture({ base_branch: '--output=x' }), '--merged', 'true']);
+test('cleanup: a refused base carries baseRefused:true, a switched-off cleanup does not', (t) => {
+  const refused = seam(['cleanup', '--dir', gitFixture(t, { base_branch: '--output=x' }), '--merged', 'true']);
   assert.equal(refused.baseRefused, true, JSON.stringify(refused));
-  const off = seam(['cleanup', '--dir', gitFixture({ base_branch: 'main', on_land_cleanup: false }), '--merged', 'true']);
+  const off = seam(['cleanup', '--dir', gitFixture(t, { base_branch: 'main', on_land_cleanup: false }), '--merged', 'true']);
   assert.equal(off.action, 'skip', JSON.stringify(off));
   assert.notEqual(off.baseRefused, true, JSON.stringify(off));
-  const fine = seam(['cleanup', '--dir', gitFixture({ base_branch: 'main' }), '--merged', 'true']);
+  const fine = seam(['cleanup', '--dir', gitFixture(t, { base_branch: 'main' }), '--merged', 'true']);
   assert.notEqual(fine.baseRefused, true, JSON.stringify(fine));
 });
 
 // A base that exists ONLY as origin/<base> is usable: step 4 now asks this seam
 // before `git checkout <base>`, and that checkout creates the local branch from
 // origin/<base>, so refusing it as unresolvable skips a land that used to finish.
-test('cleanup does not refuse a base that resolves only as origin/<base>', () => {
-  const dir = gitFixture({ base_branch: 'trunk' });
+test('cleanup does not refuse a base that resolves only as origin/<base>', (t) => {
+  const dir = gitFixture(t, { base_branch: 'trunk' });
   const sha = execFileSync('git', ['-C', dir, 'rev-parse', 'main'], { encoding: 'utf8' }).trim();
   execFileSync('git', ['-C', dir, 'update-ref', 'refs/remotes/origin/trunk', sha]);
   const r = seam(['cleanup', '--dir', dir, '--branch', 'cadence/v1.1.0-rc.2', '--merged', 'true']);
@@ -307,8 +321,8 @@ test('cleanup does not refuse a base that resolves only as origin/<base>', () =>
   assert.equal(r.base, 'trunk');
 });
 
-test('cleanup still refuses a flag-shaped base even when origin/<base> exists', () => {
-  const dir = gitFixture({ base_branch: '--output=x' });
+test('cleanup still refuses a flag-shaped base even when origin/<base> exists', (t) => {
+  const dir = gitFixture(t, { base_branch: '--output=x' });
   const sha = execFileSync('git', ['-C', dir, 'rev-parse', 'main'], { encoding: 'utf8' }).trim();
   execFileSync('git', ['-C', dir, 'update-ref', 'refs/remotes/origin/--output=x', sha]);
   const r = seam(['cleanup', '--dir', dir, '--branch', 'cadence/v1.1.0-rc.2', '--merged', 'true']);
@@ -318,65 +332,65 @@ test('cleanup still refuses a flag-shaped base even when origin/<base> exists', 
 
 // --- gate -------------------------------------------------------------------
 
-test('gate with a blocker on stdin + git.auto_close=true: halt', () => {
-  const dir = fixture({ auto_close: true });
+test('gate with a blocker on stdin + git.auto_close=true: halt', (t) => {
+  const dir = fixture(t, { auto_close: true });
   const r = gateOn(dir, '{"findings":[{"ruling":"survived","severity":"blocker"}]}');
   assert.equal(r.ok, true);
   assert.equal(r.action, 'halt');
   assert.equal(r.findings.length, 1);
 });
 
-test('gate with only a medium finding: proceed', () => {
+test('gate with only a medium finding: proceed', (t) => {
   // A survivor BELOW the halting pair: `unfixedFromEntries` puts it on `filing`,
   // never on `halting`, so it reaches the user's ask and stops no close.
-  const dir = fixture({ auto_close: true });
+  const dir = fixture(t, { auto_close: true });
   const r = gateOn(dir, '{"findings":[{"ruling":"survived","severity":"medium"}]}');
   assert.equal(r.action, 'proceed');
 });
 
-test('gate with git.auto_close=false + a blocker: proceed (chain not running)', () => {
-  const dir = fixture({ auto_close: false });
+test('gate with git.auto_close=false + a blocker: proceed (chain not running)', (t) => {
+  const dir = fixture(t, { auto_close: false });
   const r = seam(['gate', '--dir', dir], '{"findings":[{"ruling":"survived","severity":"blocker"}]}');
   assert.equal(r.action, 'proceed');
 });
 
-test('gate: auto_close in BOTH layers -> halt', () => {
+test('gate: auto_close in BOTH layers -> halt', (t) => {
   // The one configuration that switches the human off (D-02), so the one where
   // this halt has to stand in for them.
-  const dir = fixture({ auto_close: true });
+  const dir = fixture(t, { auto_close: true });
   const r = gateOn(dir, '{"findings":[{"ruling":"survived","severity":"blocker"}]}');
   assert.equal(r.ok, true);
   assert.equal(r.action, 'halt');
 });
 
-test('gate: auto_close ONLY in the global layer (repo omits) -> proceed', () => {
+test('gate: auto_close ONLY in the global layer (repo omits) -> proceed', (t) => {
   // A user-global value alone authorizes nothing (D-08), so /cad-land's step 3
   // gets ok:false from `git-publish.mjs authorized` and puts the publish ask to
   // a human. The halt replaces only a human who was switched off, and here
   // nobody was. 0b1c322's failure needed the ask and this gate to read two
   // different values; both read lib/repo-auto-close.mjs now.
-  const dir = fixture({ on_land_cleanup: true });
+  const dir = fixture(t, { on_land_cleanup: true });
   const r = seam(['gate', '--dir', dir], '{"findings":[{"ruling":"survived","severity":"blocker"}]}',
-    globalLayer({ git: { auto_close: true } }));
+    globalLayer({ git: { auto_close: true } }, t));
   assert.equal(r.ok, true);
   assert.equal(r.action, 'proceed');
 });
 
-test('gate: repo auto_close:true over a global false -> proceed (repo alone authorizes nothing)', () => {
+test('gate: repo auto_close:true over a global false -> proceed (repo alone authorizes nothing)', (t) => {
   // The converse (D-02): a committed repo value cannot switch the human off on
   // a machine whose user never opted in, so the ask is live and this proceeds.
-  const dir = fixture({ auto_close: true });
+  const dir = fixture(t, { auto_close: true });
   const r = seam(['gate', '--dir', dir], '{"findings":[{"ruling":"survived","severity":"blocker"}]}',
-    globalLayer({ git: { auto_close: false } }));
+    globalLayer({ git: { auto_close: false } }, t));
   assert.equal(r.action, 'proceed');
 });
 
-test('gate: global auto_close:true with repo false -> proceed', () => {
+test('gate: global auto_close:true with repo false -> proceed', (t) => {
   // Neither half alone switches the human off, so the blocker is the user's
   // call at the publish ask rather than a halt.
-  const dir = fixture({ auto_close: false });
+  const dir = fixture(t, { auto_close: false });
   const r = seam(['gate', '--dir', dir], '{"findings":[{"ruling":"survived","severity":"blocker"}]}',
-    globalLayer({ git: { auto_close: true } }));
+    globalLayer({ git: { auto_close: true } }, t));
   assert.equal(r.action, 'proceed');
 });
 
@@ -391,8 +405,8 @@ const UNREADABLE_INPUTS = [
 ];
 
 for (const [name, stdin] of UNREADABLE_INPUTS) {
-  test(`gate under auto_close: ${name} halts with a reason naming it, never "no surviving finding"`, () => {
-    const dir = fixture({ auto_close: true });
+  test(`gate under auto_close: ${name} halts with a reason naming it, never "no surviving finding"`, (t) => {
+    const dir = fixture(t, { auto_close: true });
     const r = gateOn(dir, stdin);
     assert.equal(r.ok, true, 'the advisory envelope is preserved - ok:true with one action');
     assert.equal(r.action, 'halt');
@@ -400,35 +414,35 @@ for (const [name, stdin] of UNREADABLE_INPUTS) {
     assert.ok(r.reason.includes(name), `reason must name the failure: ${r.reason}`);
   });
 
-  test(`gate with auto_close absent: ${name} still proceeds (no unattended chain)`, () => {
-    const dir = fixture({ on_land_cleanup: true });
+  test(`gate with auto_close absent: ${name} still proceeds (no unattended chain)`, (t) => {
+    const dir = fixture(t, { on_land_cleanup: true });
     const r = seam(['gate', '--dir', dir], stdin);
     assert.equal(r.ok, true);
     assert.equal(r.action, 'proceed');
   });
 }
 
-test('gate under auto_close: an EXPLICIT {"findings":[]} is the one spelling that proceeds', () => {
-  const dir = fixture({ auto_close: true });
+test('gate under auto_close: an EXPLICIT {"findings":[]} is the one spelling that proceeds', (t) => {
+  const dir = fixture(t, { auto_close: true });
   const r = gateOn(dir, '{"findings":[]}');
   assert.equal(r.action, 'proceed');
   assert.match(r.reason, /no surviving blocker\/high finding/);
 });
 
-test('gate: a bare JSON array on stdin still reads as the findings list', () => {
-  const dir = fixture({ auto_close: true });
+test('gate: a bare JSON array on stdin still reads as the findings list', (t) => {
+  const dir = fixture(t, { auto_close: true });
   assert.equal(gateOn(dir, '[]').action, 'proceed');
   assert.equal(gateOn(dir, '[{"ruling":"survived","severity":"blocker"}]').action, 'halt');
 });
 
 // --- the seam classifies: what the record says, not what the review claimed ---
 
-test('gate: a usable fix_commit on the same entry flips halt to proceed (LND-02)', () => {
+test('gate: a usable fix_commit on the same entry flips halt to proceed (LND-02)', (t) => {
   // The regression LND-02 exists to close, in its smallest form. The two
   // payloads differ by exactly one key; `unfixedFromEntries` asks for a usable
   // fix commit FIRST and a fixed entry is in none of its three sets, so the
   // work-already-landed entry stops no close.
-  const dir = fixture({ auto_close: true });
+  const dir = fixture(t, { auto_close: true });
   const halts = gateOn(dir, '{"findings":[{"ruling":"survived","severity":"blocker"}]}');
   assert.equal(halts.action, 'halt');
   assert.equal(halts.findings.length, 1);
@@ -439,11 +453,11 @@ test('gate: a usable fix_commit on the same entry flips halt to proceed (LND-02)
   assert.deepEqual(fixed.overridden, [], 'a fixed entry is not a cleared one either (D-05)');
 });
 
-test('gate: a refuted or downgraded ruling stops no close, at any severity', () => {
+test('gate: a refuted or downgraded ruling stops no close, at any severity', (t) => {
   // The other two dispositions the raw-findings union could not see. Both are
   // filed, neither halts - the gate reads the RULING, and the raised severity
   // on a killed finding is not a live one.
-  const dir = fixture({ auto_close: true });
+  const dir = fixture(t, { auto_close: true });
   for (const ruling of ['refuted', 'downgraded']) {
     const r = gateOn(dir,
       `{"findings":[{"ruling":"${ruling}","severity":"blocker"}]}`);
@@ -451,8 +465,8 @@ test('gate: a refuted or downgraded ruling stops no close, at any severity', () 
   }
 });
 
-test('gate: `unruled` is read off the same stdin object, and a malformed one fails CLOSED', () => {
-  const dir = fixture({ auto_close: true });
+test('gate: `unruled` is read off the same stdin object, and a malformed one fails CLOSED', (t) => {
+  const dir = fixture(t, { auto_close: true });
   const named = gateOn(dir,
     '{"findings":[],"unruled":[".planning/phases/9/REVIEW-risk_surface-plan-1.md"]}');
   assert.equal(named.action, 'halt');
@@ -484,12 +498,12 @@ test('gate: `unruled` is read off the same stdin object, and a malformed one fai
   assert.ok(noList.reason.includes('not-a-findings-payload'), noList.reason);
 });
 
-test('gate: no stdin piped at all halts under auto_close, whatever the platform calls it', () => {
+test('gate: no stdin piped at all halts under auto_close, whatever the platform calls it', (t) => {
   // `input` is not passed, and stdin is 'ignore' - the child gets /dev/null on
   // Linux, so the read succeeds and yields "", the stdin-empty arm. The name
   // differs by platform; what must hold on every one of them is that the gate
   // does NOT claim there were no surviving findings.
-  const dir = fixture({ auto_close: true });
+  const dir = fixture(t, { auto_close: true });
   let out;
   try {
     out = execFileSync('node', [SEAM, 'gate', '--dir', dir], {
@@ -504,12 +518,12 @@ test('gate: no stdin piped at all halts under auto_close, whatever the platform 
   assert.ok(/stdin-empty|stdin-unreadable/.test(r.reason), r.reason);
 });
 
-test('gate: a genuinely unreadable stdin is the fourth halting state, named', () => {
+test('gate: a genuinely unreadable stdin is the fourth halting state, named', (t) => {
   // A directory handed in as fd 0: the open succeeds, the read throws EISDIR.
   // This is the one arm `input: ''` and `stdio: 'ignore'` cannot reach - both
   // of those read successfully and land on stdin-empty - so without it the
   // catch that mints `stdin-unreadable` has no seam-level test at all.
-  const dir = fixture({ auto_close: true });
+  const dir = fixture(t, { auto_close: true });
   const fd = openSync(tmpdir(), 'r');
   let out;
   try {
@@ -635,12 +649,12 @@ const V377_RECORD = JSON.parse([
 const V377_HIGH = V377_RECORD.entries.find(
   (e) => e.file === 'cadence-core/bin/lib/adjudication-record.mjs' && e.line === 460);
 
-test('v3.7.7 (a): the ruled record PROCEEDS - the regression LND-02 closes', () => {
+test('v3.7.7 (a): the ruled record PROCEEDS - the regression LND-02 closes', (t) => {
   // The whole requirement in one arm. Under the old gate this exact set halted
   // the close, because the union was of REVIEW findings and a `high` was in it.
   // Read through the RULINGS it is a fixed finding, and a fixed finding stops
   // nothing.
-  const dir = fixture({ auto_close: true });
+  const dir = fixture(t, { auto_close: true });
   const r = gateOn(dir, JSON.stringify({ findings: V377_RECORD.entries }));
   assert.equal(r.action, 'proceed', r.reason);
   assert.deepEqual(r.findings, []);
@@ -654,12 +668,12 @@ test('v3.7.7 (a): the ruled record PROCEEDS - the regression LND-02 closes', () 
   assert.equal(V377_RECORD.round, 2);
 });
 
-test('v3.7.7 (b): delete that ONE key and the same set halts, on that entry alone', () => {
+test('v3.7.7 (b): delete that ONE key and the same set halts, on that entry alone', (t) => {
   // The pair is the falsifier. Stripping `ruling` would not be one:
   // lib/filing-decision.mjs gates the halting set on `ruling === 'survived'`,
   // so a ruling-less entry is not a survivor and the gate proceeds either way -
   // that check passes under both the fixed and the broken predicate.
-  const dir = fixture({ auto_close: true });
+  const dir = fixture(t, { auto_close: true });
   const broken = V377_RECORD.entries.map((e) => {
     if (e !== V377_HIGH) return e;
     const copy = { ...e };
@@ -683,11 +697,11 @@ test('v3.7.7 (b): delete that ONE key and the same set halts, on that entry alon
   assert.equal(r.findings[0].fix_commit, undefined);
 });
 
-test('v3.7.7 (c): the same review with nothing ruling it halts as unruled-review', () => {
+test('v3.7.7 (c): the same review with nothing ruling it halts as unruled-review', (t) => {
   // The fifth state (D-03). Ten of the fifteen REVIEW-risk_surface files in
   // this repo's .planning/ have no sibling record at all, and a deferred fire
   // writes none by design, so the caller names them and the gate stops.
-  const dir = fixture({ auto_close: true });
+  const dir = fixture(t, { auto_close: true });
   const r = gateOn(dir, JSON.stringify({
     findings: V377_REVIEW.findings,
     unruled: ['.planning/phases/2/REVIEW-risk_surface-plan-1.md'],
@@ -706,11 +720,11 @@ test('v3.7.7 (c): the same review with nothing ruling it halts as unruled-review
   assert.equal(unnamed.action, 'proceed', unnamed.reason);
 });
 
-test('v3.7.7 (d): the same high, overridden - named on `overridden`, `action` unmoved', () => {
+test('v3.7.7 (d): the same high, overridden - named on `overridden`, `action` unmoved', (t) => {
   // D-09: an override is a halt a person already cleared, so it is surfaced
   // additively and never folded into `findings`, which would re-add the false
   // halt for the one case somebody already decided.
-  const dir = fixture({ auto_close: true });
+  const dir = fixture(t, { auto_close: true });
   const cleared = { ...V377_HIGH, overridden: true };
   delete cleared.fix_commit;
   const r = gateOn(dir, JSON.stringify({ findings: [cleared] }));
@@ -735,25 +749,25 @@ test('v3.7.7 (d): the same high, overridden - named on `overridden`, `action` un
 
 /** A user-global layer holding raw TEXT, so a truncated body can be written
  *  verbatim and the merge reports the parse failure. */
-function globalText(text) {
-  const file = join(mkdtempSync(join(tmpdir(), 'cad-lc-torn-')), 'g.json');
+function globalText(t, text) {
+  const file = join(tmp(t, 'cad-lc-torn-'), 'g.json');
   writeFileSync(file, text);
   return file;
 }
 
-test('warnings[] rides BOTH land-cleanup envelopes, empty and torn', () => {
+test('warnings[] rides BOTH land-cleanup envelopes, empty and torn', (t) => {
   // Pins the emission itself: stripping `, warnings })` off either emit fails
   // here. The gate arm is the sharper one - a torn layer reads auto_close as
   // absent, which is `false`, which is the arm that does NOT halt on a surviving
   // blocker, so the caller has to be able to tell "no chain is running" from
   // "the file that says so did not parse".
-  const dir = fixture({ base_branch: 'main', auto_close: true });
+  const dir = fixture(t, { base_branch: 'main', auto_close: true });
   const cleanCleanup = seam(['cleanup', '--dir', dir, '--branch', 'cadence/v1.1.0-rc.2', '--merged', 'true']);
   assert.deepEqual(cleanCleanup.warnings, [], 'present as an empty array, not omitted');
   const cleanGate = seam(['gate', '--dir', dir], '{"findings":[{"ruling":"survived","severity":"blocker"}]}');
   assert.deepEqual(cleanGate.warnings, []);
 
-  const torn = globalText('{"git":{"auto_close":true}');
+  const torn = globalText(t, '{"git":{"auto_close":true}');
   const tornCleanup = seam(['cleanup', '--dir', dir, '--branch', 'cadence/v1.1.0-rc.2', '--merged', 'true'], '', torn);
   assert.equal(tornCleanup.ok, true, 'advisory seam: a torn layer never blocks the advice');
   assert.match(tornCleanup.warnings[0], /failed to parse/);
