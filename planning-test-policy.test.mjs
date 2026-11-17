@@ -7,17 +7,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PLANNING, ensureRoadmap } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap, scratch } from './planning.test.mjs';
 import { stub } from './issue-check.test.mjs';
 
 const POLICY = join('.github', 'cadence', 'coverage-policy.json');
 
-/** A project root whose repo config holds `testing` (and `git`, when given). */
-function project(testing, git) {
-  const root = mkdtempSync(join(tmpdir(), 'cad-testpolicy-'));
+/** A project root whose repo config holds `testing` (and `git`, when given), gone when test `t` ends. */
+function project(t, testing, git) {
+  const root = scratch('cad-testpolicy-', t);
   mkdirSync(join(root, '.planning'));
   writeFileSync(join(root, '.planning', 'config.json'),
     JSON.stringify({ ...(testing ? { testing } : {}), ...(git ? { git } : {}) }));
@@ -38,8 +37,8 @@ function policy(args, root, env) {
   return { ...JSON.parse(stdout), _exit: code };
 }
 
-test('render writes the config\'s values with the schema defaults filled, byte-identically on a re-render', () => {
-  const root = project({ scope: 'integrated', coverage: { lines: 90, commands: ['npm run cov -- --lines={lines}'] }, required_jobs: ['test'] });
+test('render writes the config\'s values with the schema defaults filled, byte-identically on a re-render', (t) => {
+  const root = project(t, { scope: 'integrated', coverage: { lines: 90, commands: ['npm run cov -- --lines={lines}'] }, required_jobs: ['test'] });
   const r = policy(['render'], root);
   assert.equal(r.ok, true);
   assert.equal(r.file, POLICY);
@@ -55,8 +54,8 @@ test('render writes the config\'s values with the schema defaults filled, byte-i
   assert.equal(readFileSync(join(root, POLICY), 'utf8'), first);
 });
 
-test('render refuses with a hint when no policy was accepted, and writes nothing', () => {
-  const root = project({ coverage: { lines: 90 } });
+test('render refuses with a hint when no policy was accepted, and writes nothing', (t) => {
+  const root = project(t, { coverage: { lines: 90 } });
   const r = policy(['render'], root);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'no-policy');
@@ -82,8 +81,8 @@ const WORKFLOW = `jobs:
 
 /** A rendered project whose config, file and workflow agree. `workflow` and
  *  `git` override the defaults; `src/a.js` is tracked so the include glob matches. */
-function agreeing({ workflow = WORKFLOW, git = { forge_provider: 'github' }, tracked = true } = {}) {
-  const root = project({
+function agreeing(t, { workflow = WORKFLOW, git = { forge_provider: 'github' }, tracked = true } = {}) {
+  const root = project(t, {
     scope: 'focused',
     coverage: { lines: 90, branches: 80, include: ['src/**'], commands: [COMMAND] },
     required_jobs: ['coverage'],
@@ -99,8 +98,8 @@ function agreeing({ workflow = WORKFLOW, git = { forge_provider: 'github' }, tra
   return root;
 }
 
-test('check passes on an agreeing project and reports whether publishing is authorized here', () => {
-  const root = agreeing();
+test('check passes on an agreeing project and reports whether publishing is authorized here', (t) => {
+  const root = agreeing(t);
   const r = policy(['check'], root);
   assert.deepEqual([r.ok, r.accepted, r.enforcement, r.gate_found, r.problems, r.publish_authorized],
     [true, true, 'available', true, [], false]);
@@ -110,14 +109,14 @@ test('check passes on an agreeing project and reports whether publishing is auth
 
   // Another repository's setting never speaks for this one, even when the
   // environment points git at it (D-02).
-  const other = agreeing();
+  const other = agreeing(t);
   execFileSync('git', ['-C', other, 'config', '--local', 'cadence.publishForVerification', 'true']);
   execFileSync('git', ['-C', root, 'config', '--local', '--unset', 'cadence.publishForVerification']);
   assert.equal(policy(['check'], root, { GIT_DIR: join(other, '.git') }).publish_authorized, false);
 });
 
-test('check fails on a threshold mismatch between the config and the file', () => {
-  const root = agreeing();
+test('check fails on a threshold mismatch between the config and the file', (t) => {
+  const root = agreeing(t);
   const config = join(root, '.planning', 'config.json');
   const edited = JSON.parse(readFileSync(config, 'utf8'));
   edited.testing.coverage.lines = 95;
@@ -128,16 +127,16 @@ test('check fails on a threshold mismatch between the config and the file', () =
   assert.match(r.detail, /testing\.coverage\.lines is 95 in the config and 90 in/);
 });
 
-test('check fails on an accepted command that only a comment holds, and the gate is not found', () => {
-  const root = agreeing({ workflow: WORKFLOW.replace(/^( {10}.*)$/gm, '#$1').replace('- run: >', '- run: echo') });
+test('check fails on an accepted command that only a comment holds, and the gate is not found', (t) => {
+  const root = agreeing(t, { workflow: WORKFLOW.replace(/^( {10}.*)$/gm, '#$1').replace('- run: >', '- run: echo') });
   const r = policy(['check'], root);
   assert.equal(r.ok, false);
   assert.equal(r.gate_found, false);
   assert.match(r.detail, /accepted command "node --test/);
 });
 
-test('check fails when GitHub enforcement has no coverage command while a threshold is above 0', () => {
-  const root = agreeing();
+test('check fails when GitHub enforcement has no coverage command while a threshold is above 0', (t) => {
+  const root = agreeing(t);
   const config = join(root, '.planning', 'config.json');
   const edited = JSON.parse(readFileSync(config, 'utf8'));
   edited.testing.coverage.commands = [];
@@ -149,8 +148,8 @@ test('check fails when GitHub enforcement has no coverage command while a thresh
   assert.match(r.detail, /testing\.coverage\.commands is empty/);
 });
 
-test('check reports enforcement unavailable off GitHub, and names a missing file', () => {
-  const root = agreeing({ git: { forge_provider: 'gitlab' }, workflow: 'jobs: {}\n', tracked: false });
+test('check reports enforcement unavailable off GitHub, and names a missing file', (t) => {
+  const root = agreeing(t, { git: { forge_provider: 'gitlab' }, workflow: 'jobs: {}\n', tracked: false });
   const r = policy(['check'], root);
   assert.deepEqual([r.ok, r.enforcement, r.gate_found], [true, 'unavailable', null]);
   assert.match(r.note, /"gitlab"/);
@@ -160,20 +159,20 @@ test('check reports enforcement unavailable off GitHub, and names a missing file
   assert.match(gone.detail, /coverage-policy\.json is missing/);
 });
 
-test('check fails on a policy file git does not track, because CI and --base cannot read it', () => {
-  const r = policy(['check'], agreeing({ tracked: false }));
+test('check fails on a policy file git does not track, because CI and --base cannot read it', (t) => {
+  const r = policy(['check'], agreeing(t, { tracked: false }));
   assert.deepEqual([r.ok, r.gate_found], [false, false]);
   assert.match(r.detail, /not tracked by git/);
 });
 
-test('check on a project with no accepted policy says so and points at /cad-config --testing', () => {
-  const r = policy(['check'], project(null));
+test('check on a project with no accepted policy says so and points at /cad-config --testing', (t) => {
+  const r = policy(['check'], project(t, null));
   assert.deepEqual([r.ok, r.accepted, r.publish_authorized], [true, false, false]);
   assert.match(r.hint, /\/cad-config --testing/);
 });
 
-test('an unset forge is unanswered, not another forge: check fails and ci-status says what to set', () => {
-  const root = agreeing({ git: { forge_repo: 'o/r' }, workflow: 'jobs: {}\n' });
+test('an unset forge is unanswered, not another forge: check fails and ci-status says what to set', (t) => {
+  const root = agreeing(t, { git: { forge_repo: 'o/r' }, workflow: 'jobs: {}\n' });
   const r = policy(['check'], root);
   assert.deepEqual([r.ok, r.enforcement, r.gate_found], [false, 'unavailable', null]);
   assert.match(r.detail, /git\.forge_provider is unset/);
@@ -184,8 +183,8 @@ test('an unset forge is unanswered, not another forge: check fails and ci-status
 
 // --- check --base: weakening against a ref ----------------------------------
 
-test('check --base names a lowered threshold, a disabled metric and a new exclude, and fails on none of them', () => {
-  const root = agreeing({ tracked: false });
+test('check --base names a lowered threshold, a disabled metric and a new exclude, and fails on none of them', (t) => {
+  const root = agreeing(t, { tracked: false });
   const git = (...a) => execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a]);
   git('commit', '-q', '--allow-empty', '-m', 'before the policy');
   git('tag', 'empty');
@@ -225,15 +224,15 @@ const SHA = 'ace48e6c1f0d';
 const runs = (...rs) => rs.map(([name, status, conclusion]) => JSON.stringify({ name, status, conclusion })).join('\n');
 
 /** A GitHub project with a phase 1 checklist, and `gh` stubbed on PATH to print `body`. */
-function ciProject(body) {
-  const root = project({ scope: 'focused', required_jobs: ['node-test', 'self-verify'] },
+function ciProject(t, body) {
+  const root = project(t, { scope: 'focused', required_jobs: ['node-test', 'self-verify'] },
     { forge_provider: 'github', forge_repo: 'o/r' });
   mkdirSync(join(root, '.planning', 'phases', '1'), { recursive: true });
   ensureRoadmap(join(root, '.planning'));
   writeFileSync(join(root, '.planning', 'phases', '1', 'UAT.md'),
     '---\nstatus: testing\nphase: 1\nupdated: 2026-11-03\n---\n\n## Items\n\n'
     + '### 1. Gate\nexpected: green\nstatus: pending_ci\njob: node-test\ncommit: ace48e6\n\n## Summary\n\ntotal: 1\n');
-  const bin = mkdtempSync(join(tmpdir(), 'cad-ci-bin-'));
+  const bin = scratch('cad-ci-bin-', t);
   stub(bin, 'gh', { body });
   const log = join(bin, 'argv.log');
   return { root, log, env: { PATH: `${bin}:${process.env.PATH}`, CAD_ARGV_LOG: log } };
@@ -246,8 +245,8 @@ function ciStatus({ root, env }, extra = []) {
 const uatStatus = (root) => JSON.parse(execFileSync('node', [PLANNING, 'uat', 'status', '--phase', '1',
   '--dir', join(root, '.planning')], { encoding: 'utf8' }));
 
-test('ci-status passes when every required job succeeded, matrix names included, and the phase records the commit', () => {
-  const p = ciProject(runs(['node-test (22, a)', 'completed', 'success'], ['node-test (24, b)', 'completed', 'success'],
+test('ci-status passes when every required job succeeded, matrix names included, and the phase records the commit', (t) => {
+  const p = ciProject(t, runs(['node-test (22, a)', 'completed', 'success'], ['node-test (24, b)', 'completed', 'success'],
     ['self-verify', 'completed', 'success'], ['node-testing', 'completed', 'failure']));
   const r = ciStatus(p, ['--phase', '1']);
   assert.equal(r.answer, 'pass');
@@ -260,8 +259,8 @@ test('ci-status passes when every required job succeeded, matrix names included,
   assert.equal(after.result, 'partial', 'recording the commit does not settle the pending_ci item');
 });
 
-test('ci-status fails when a required job failed, and records no commit', () => {
-  const p = ciProject(runs(['node-test (22, a)', 'completed', 'success'], ['node-test (24, b)', 'completed', 'failure'],
+test('ci-status fails when a required job failed, and records no commit', (t) => {
+  const p = ciProject(t, runs(['node-test (22, a)', 'completed', 'success'], ['node-test (24, b)', 'completed', 'failure'],
     ['self-verify', 'completed', 'success']));
   const r = ciStatus(p, ['--phase', '1']);
   assert.equal(r.answer, 'fail');
@@ -269,26 +268,26 @@ test('ci-status fails when a required job failed, and records no commit', () => 
   assert.equal(uatStatus(p.root).ci, undefined);
 });
 
-test('ci-status stays pending while a job has no finished run, re-reading under --wait', () => {
-  const p = ciProject(runs(['node-test (22, a)', 'completed', 'success'], ['self-verify', 'in_progress', null]));
+test('ci-status stays pending while a job has no finished run, re-reading under --wait', (t) => {
+  const p = ciProject(t, runs(['node-test (22, a)', 'completed', 'success'], ['self-verify', 'in_progress', null]));
   const r = ciStatus(p, ['--wait', '1']);
   assert.equal(r.answer, 'pending');
   assert.equal(r.ok, true);
   assert.equal(readFileSync(p.log, 'utf8').trim().split('\n').length, 2, 'one read, then one re-read after the bound');
-  assert.equal(ciStatus(ciProject(runs(['self-verify', 'completed', 'success']))).answer, 'pending', 'no run for node-test is not a pass');
+  assert.equal(ciStatus(ciProject(t, runs(['self-verify', 'completed', 'success']))).answer, 'pending', 'no run for node-test is not a pass');
 });
 
 // --- a config that can't answer is not "no policy" ---------------------------
 
-test('a torn config or an invalid scope fails instead of reading as no policy', () => {
-  const torn = project(null);
+test('a torn config or an invalid scope fails instead of reading as no policy', (t) => {
+  const torn = project(t, null);
   writeFileSync(join(torn, '.planning', 'config.json'), '{"testing":{"scope":"focused"');
-  const t = policy(['check'], torn);
-  assert.deepEqual([t.ok, t.reason, t.accepted, t.gate_found], [false, 'config-unreadable', null, null]);
-  assert.deepEqual(t.problems, [t.detail]);
+  const got = policy(['check'], torn);
+  assert.deepEqual([got.ok, got.reason, got.accepted, got.gate_found], [false, 'config-unreadable', null, null]);
+  assert.deepEqual(got.problems, [got.detail]);
   assert.equal(policy(['render'], torn).reason, 'config-unreadable');
 
-  const bogus = project({ scope: 'bogus' });
+  const bogus = project(t, { scope: 'bogus' });
   const b = policy(['check'], bogus);
   assert.deepEqual([b.ok, b.reason], [false, 'invalid-scope']);
   assert.match(b.detail, /"bogus"/);
@@ -310,8 +309,8 @@ function bigIndex(root, dir, count) {
   execFileSync('git', ['-C', root, 'update-index', '--add', '--index-info'], { input: lines.join('') });
 }
 
-test('check does not report a glob matching nothing when the tracked list is over 1 MiB', () => {
-  const root = agreeing();
+test('check does not report a glob matching nothing when the tracked list is over 1 MiB', (t) => {
+  const root = agreeing(t);
   bigIndex(root, 'big', 6000);
   const listed = execFileSync('git', ['-C', root, 'ls-files'], { maxBuffer: 64 << 20 }).length;
   assert.ok(listed > 1024 * 1024, `fixture must pass 1 MiB, got ${listed}`);
@@ -326,8 +325,8 @@ test('check does not report a glob matching nothing when the tracked list is ove
   assert.equal(r.ok, true);
 });
 
-test('check still reports an include glob that no tracked file matches', () => {
-  const root = agreeing();
+test('check still reports an include glob that no tracked file matches', (t) => {
+  const root = agreeing(t);
   const config = join(root, '.planning', 'config.json');
   const edited = JSON.parse(readFileSync(config, 'utf8'));
   edited.testing.coverage.include = ['src/**', 'nowhere/**'];

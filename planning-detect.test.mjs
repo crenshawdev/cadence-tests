@@ -11,19 +11,19 @@
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { PLANNING, run, isEntryFile } from './planning.test.mjs';
+import { PLANNING, run, isEntryFile, scratch } from './planning.test.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 
 // --- detect-commands: the unconfigured static-analysis path (QW-01) ----------
 
-/** A project root holding exactly the named files, one directory deep. */
-function projectTree(files) {
-  const root = mkdtempSync(join(tmpdir(), 'cad-detect-'));
+/** A project root holding exactly the named files, one directory deep, gone when test `t` ends. */
+function projectTree(t, files) {
+  const root = scratch('cad-detect-', t);
   for (const [name, body] of Object.entries(files)) {
     writeFileSync(join(root, name), typeof body === 'string' ? body : JSON.stringify(body));
   }
@@ -43,9 +43,9 @@ function nodeModulesBin(root, tools) {
 /** A directory of executable stubs to prepend to the child's PATH, the way
  *  issue-check.test.mjs injects forge CLIs: the PATH arm is proven by the
  *  production resolver against bytes the fixture wrote. */
-function pathStubs(tools) {
-  const dir = mkdtempSync(join(tmpdir(), 'cad-detect-path-'));
-  for (const t of tools) writeFileSync(join(dir, t), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+function pathStubs(t, tools) {
+  const dir = scratch('cad-detect-path-', t);
+  for (const tool of tools) writeFileSync(join(dir, tool), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   return dir;
 }
 
@@ -86,8 +86,8 @@ function detect(root, { extra = [], reachable = EVERY_TOOL, seam = true, pathDir
   }
 }
 
-test('detect-commands: a package.json lint script is the command', () => {
-  const r = detect(projectTree({ 'package.json': { scripts: { lint: 'eslint .' } } }));
+test('detect-commands: a package.json lint script is the command', (t) => {
+  const r = detect(projectTree(t, { 'package.json': { scripts: { lint: 'eslint .' } } }));
   assert.equal(r.ok, true);
   assert.equal(r.lint, 'npm run lint');
   assert.equal(r.typecheck, null);
@@ -95,49 +95,49 @@ test('detect-commands: a package.json lint script is the command', () => {
   assert.equal(r.source.typecheck, null);
 });
 
-test('detect-commands: both package.json typecheck spellings', () => {
-  assert.equal(detect(projectTree({ 'package.json': { scripts: { typecheck: 'tsc' } } })).typecheck,
+test('detect-commands: both package.json typecheck spellings', (t) => {
+  assert.equal(detect(projectTree(t, { 'package.json': { scripts: { typecheck: 'tsc' } } })).typecheck,
     'npm run typecheck');
-  assert.equal(detect(projectTree({ 'package.json': { scripts: { 'type-check': 'tsc' } } })).typecheck,
+  assert.equal(detect(projectTree(t, { 'package.json': { scripts: { 'type-check': 'tsc' } } })).typecheck,
     'npm run type-check');
 });
 
-test('detect-commands: Cargo.toml answers both slots', () => {
-  const r = detect(projectTree({ 'Cargo.toml': '[package]\nname = "x"\n' }));
+test('detect-commands: Cargo.toml answers both slots', (t) => {
+  const r = detect(projectTree(t, { 'Cargo.toml': '[package]\nname = "x"\n' }));
   assert.equal(r.lint, 'cargo clippy --all-targets -- -D warnings');
   assert.equal(r.typecheck, 'cargo check --all-targets');
   assert.equal(r.source.lint, 'Cargo.toml');
 });
 
-test('detect-commands: pyproject.toml answers per TABLE, not per file', () => {
-  const ruff = detect(projectTree({ 'pyproject.toml': '[tool.ruff]\nline-length = 100\n' }));
+test('detect-commands: pyproject.toml answers per TABLE, not per file', (t) => {
+  const ruff = detect(projectTree(t, { 'pyproject.toml': '[tool.ruff]\nline-length = 100\n' }));
   assert.equal(ruff.lint, 'ruff check .');
   assert.equal(ruff.typecheck, null);          // no [tool.mypy table
-  const mypy = detect(projectTree({ 'pyproject.toml': '[tool.mypy]\nstrict = true\n' }));
+  const mypy = detect(projectTree(t, { 'pyproject.toml': '[tool.mypy]\nstrict = true\n' }));
   assert.equal(mypy.lint, null);
   assert.equal(mypy.typecheck, 'mypy .');
   // A pyproject with neither table names neither command.
-  const bare = detect(projectTree({ 'pyproject.toml': '[project]\nname = "x"\n' }));
+  const bare = detect(projectTree(t, { 'pyproject.toml': '[project]\nname = "x"\n' }));
   assert.equal(bare.lint, null);
   assert.equal(bare.typecheck, null);
 });
 
-test('detect-commands: go.mod answers both slots', () => {
-  const r = detect(projectTree({ 'go.mod': 'module example.com/x\n' }));
+test('detect-commands: go.mod answers both slots', (t) => {
+  const r = detect(projectTree(t, { 'go.mod': 'module example.com/x\n' }));
   assert.equal(r.lint, 'go vet ./...');
   assert.equal(r.typecheck, 'go build ./...');
 });
 
-test('detect-commands: an eslint config, flat or legacy, is the last lint arm', () => {
-  assert.equal(detect(projectTree({ 'eslint.config.mjs': 'export default [];\n' })).lint,
+test('detect-commands: an eslint config, flat or legacy, is the last lint arm', (t) => {
+  assert.equal(detect(projectTree(t, { 'eslint.config.mjs': 'export default [];\n' })).lint,
     'eslint .');
-  const legacy = detect(projectTree({ '.eslintrc.json': '{}' }));
+  const legacy = detect(projectTree(t, { '.eslintrc.json': '{}' }));
   assert.equal(legacy.lint, 'eslint .');
   assert.equal(legacy.source.lint, '.eslintrc.json');
 });
 
-test('detect-commands: the project\'s own script beats a tool config in the same tree', () => {
-  const r = detect(projectTree({
+test('detect-commands: the project\'s own script beats a tool config in the same tree', (t) => {
+  const r = detect(projectTree(t, {
     'package.json': { scripts: { lint: 'biome check .', typecheck: 'tsc -p .' } },
     'eslint.config.js': 'module.exports = [];\n',
     'tsconfig.json': '{}',
@@ -148,39 +148,39 @@ test('detect-commands: the project\'s own script beats a tool config in the same
   assert.equal(r.source.typecheck, 'package.json');
 });
 
-test('detect-commands: two EXACT tsconfig names, each with the form that points at it', () => {
-  const plain = detect(projectTree({ 'tsconfig.json': '{}' }));
+test('detect-commands: two EXACT tsconfig names, each with the form that points at it', (t) => {
+  const plain = detect(projectTree(t, { 'tsconfig.json': '{}' }));
   assert.equal(plain.typecheck, 'tsc --noEmit');
   assert.equal(plain.source.typecheck, 'tsconfig.json');
 
   // `tsc --noEmit` ignores a config it is not pointed at, so the CI name
   // brings the `-p` form that does point at it - a fixed literal, never a
   // command built out of the matched file name.
-  const ci = detect(projectTree({ 'tsconfig.ci.json': '{}' }));
+  const ci = detect(projectTree(t, { 'tsconfig.ci.json': '{}' }));
   assert.equal(ci.typecheck, 'tsc -p tsconfig.ci.json');
   assert.equal(ci.source.typecheck, 'tsconfig.ci.json');
 });
 
-test('detect-commands: a tree carrying BOTH tsconfigs answers with the project\'s own', () => {
+test('detect-commands: a tree carrying BOTH tsconfigs answers with the project\'s own', (t) => {
   // Order, not coincidence: `tsconfig.json` is the project's own typecheck and
   // the CI file is the narrower one, so the second arm must never shadow the
   // first.
-  const both = detect(projectTree({ 'tsconfig.json': '{}', 'tsconfig.ci.json': '{}' }));
+  const both = detect(projectTree(t, { 'tsconfig.json': '{}', 'tsconfig.ci.json': '{}' }));
   assert.equal(both.typecheck, 'tsc --noEmit');
   assert.equal(both.source.typecheck, 'tsconfig.json');
 });
 
-test('detect-commands: a NEAR-miss tsconfig name still matches nothing', () => {
+test('detect-commands: a NEAR-miss tsconfig name still matches nothing', (t) => {
   // The glob this pair still refuses. `tsconfig.build.json` is an ordinary
   // third spelling and names no command, which is what keeps "two exact names"
   // a rule rather than a description of today's tree.
-  const other = detect(projectTree({ 'tsconfig.build.json': '{}' }));
+  const other = detect(projectTree(t, { 'tsconfig.build.json': '{}' }));
   assert.equal(other.typecheck, null);
   assert.equal(other.source.typecheck, null);
 });
 
-test('detect-commands: nothing detected is ok:true with both null', () => {
-  const r = detect(projectTree({ 'README.md': '# x\n' }));
+test('detect-commands: nothing detected is ok:true with both null', (t) => {
+  const r = detect(projectTree(t, { 'README.md': '# x\n' }));
   assert.equal(r.ok, true);
   assert.equal(r.lint, null);
   assert.equal(r.typecheck, null);
@@ -188,8 +188,8 @@ test('detect-commands: nothing detected is ok:true with both null', () => {
   assert.equal('warnings' in r, false);
 });
 
-test('detect-commands: a malformed package.json warns and contributes nothing', () => {
-  const r = detect(projectTree({ 'package.json': '{ "scripts": ' }));
+test('detect-commands: a malformed package.json warns and contributes nothing', (t) => {
+  const r = detect(projectTree(t, { 'package.json': '{ "scripts": ' }));
   assert.equal(r.ok, true);
   assert.equal(r.lint, null);
   assert.equal(r.typecheck, null);
@@ -197,20 +197,20 @@ test('detect-commands: a malformed package.json warns and contributes nothing', 
   assert.match(r.warnings[0], /package\.json failed to parse/);
 });
 
-test('detect-commands: a malformed package.json does not block a later arm', () => {
-  const r = detect(projectTree({ 'package.json': 'not json', 'go.mod': 'module x\n' }));
+test('detect-commands: a malformed package.json does not block a later arm', (t) => {
+  const r = detect(projectTree(t, { 'package.json': 'not json', 'go.mod': 'module x\n' }));
   assert.equal(r.lint, 'go vet ./...');
   assert.equal(r.warnings.length, 1);
 });
 
-test('detect-commands: a scripts block that is not an object is not read as one', () => {
-  const r = detect(projectTree({ 'package.json': { scripts: ['lint'] } }));
+test('detect-commands: a scripts block that is not an object is not read as one', (t) => {
+  const r = detect(projectTree(t, { 'package.json': { scripts: ['lint'] } }));
   assert.equal(r.lint, null);
   assert.equal(r.typecheck, null);
 });
 
-test('detect-commands: the root is read one directory deep, never recursively', () => {
-  const root = projectTree({ 'README.md': '# x\n' });
+test('detect-commands: the root is read one directory deep, never recursively', (t) => {
+  const root = projectTree(t, { 'README.md': '# x\n' });
   mkdirSync(join(root, 'sub'));
   writeFileSync(join(root, 'sub', 'package.json'), JSON.stringify({ scripts: { lint: 'x' } }));
   const r = detect(root);
@@ -225,12 +225,12 @@ test('detect-commands: an unlistable root is ok:false, never a silent nothing', 
 
 // --- detect-commands: a command is named only when it can be RUN (RCH-01) ----
 
-test('detect-commands: an unreachable winning arm nulls its slot and never falls through', () => {
+test('detect-commands: an unreachable winning arm nulls its slot and never falls through', (t) => {
   // The measured shape D-05 refuses: `[tool.ruff]` names the lint arm, `go.mod`
   // sits below it, and ruff is absent. Falling through would tell this project
   // to run `go vet ./...` - a linter its maintainers did not choose, over a
   // language the change may not touch.
-  const r = detect(projectTree({
+  const r = detect(projectTree(t, {
     'pyproject.toml': '[tool.ruff]\nline-length = 100\n',
     'go.mod': 'module example.com/x\n',
   }), { reachable: 'go' });
@@ -246,25 +246,25 @@ test('detect-commands: an unreachable winning arm nulls its slot and never falls
   assert.equal(r.source.typecheck, 'go.mod');
 });
 
-test('detect-commands: no arm emits npx (audit W12)', () => {
+test('detect-commands: no arm emits npx (audit W12)', (t) => {
   // `npx <tool>` with no local install fetches the package from the registry,
   // and this answer is run before every commit. Every arm, under the override
   // and under the live probe, names the tool itself.
   const tree = { 'eslint.config.js': 'module.exports = [];\n', 'tsconfig.json': '{}' };
-  const viaOverride = detect(projectTree(tree));
-  const live = detect(nodeModulesBin(projectTree(tree), ['eslint', 'tsc']), { reachable: null });
+  const viaOverride = detect(projectTree(t, tree));
+  const live = detect(nodeModulesBin(projectTree(t, tree), ['eslint', 'tsc']), { reachable: null });
   for (const r of [viaOverride, live]) {
     assert.equal(JSON.stringify(r).includes('npx'), false, JSON.stringify(r));
   }
 });
 
-test('detect-commands: eslint and tsc in node_modules/.bin are named by that path', () => {
+test('detect-commands: eslint and tsc in node_modules/.bin are named by that path', (t) => {
   // The LIVE probe, out of stubs the fixture wrote: the shape of a JS project
   // with its linter and compiler installed as dependencies and neither on PATH.
   // The path is relative, because every other arm already assumes the executor
   // runs from the project root and an absolute one would carry this machine
   // into the envelope.
-  const root = nodeModulesBin(projectTree({
+  const root = nodeModulesBin(projectTree(t, {
     'eslint.config.js': 'module.exports = [];\n',
     'tsconfig.json': '{}',
   }), ['eslint', 'tsc']);
@@ -275,7 +275,7 @@ test('detect-commands: eslint and tsc in node_modules/.bin are named by that pat
   assert.equal('warnings' in r, false, JSON.stringify(r.warnings));
 
   // The CI-file arm keeps its own arguments behind the same path.
-  const ci = detect(nodeModulesBin(projectTree({ 'tsconfig.ci.json': '{}' }), ['tsc']),
+  const ci = detect(nodeModulesBin(projectTree(t, { 'tsconfig.ci.json': '{}' }), ['tsc']),
     { reachable: null });
   assert.equal(ci.typecheck, 'node_modules/.bin/tsc -p tsconfig.ci.json', JSON.stringify(ci));
   assert.equal(ci.source.typecheck, 'tsconfig.ci.json');
@@ -286,11 +286,11 @@ test('detect-commands: eslint and tsc in node_modules/.bin are named by that pat
   // stated rather than discovered.
 });
 
-test('detect-commands: a CI-file tree with typescript installed but no .bin link runs that tsc through node', () => {
+test('detect-commands: a CI-file tree with typescript installed but no .bin link runs that tsc through node', (t) => {
   // Without this the arm offers the bare tsc off PATH, which can be another
   // version from the one the project pinned - the case on this repo's own box.
   const tree = () => {
-    const root = projectTree({ 'tsconfig.ci.json': '{}' });
+    const root = projectTree(t, { 'tsconfig.ci.json': '{}' });
     mkdirSync(join(root, 'node_modules', 'typescript', 'bin'), { recursive: true });
     writeFileSync(join(root, 'node_modules', 'typescript', 'bin', 'tsc'), '#!/usr/bin/env node\n');
     return root;
@@ -303,30 +303,30 @@ test('detect-commands: a CI-file tree with typescript installed but no .bin link
   const linked = detect(nodeModulesBin(tree(), ['tsc']));
   assert.equal(linked.typecheck, 'tsc -p tsconfig.ci.json', JSON.stringify(linked));
 
-  const neither = detect(projectTree({ 'tsconfig.ci.json': '{}' }));
+  const neither = detect(projectTree(t, { 'tsconfig.ci.json': '{}' }));
   assert.equal(neither.typecheck, 'tsc -p tsconfig.ci.json', JSON.stringify(neither));
 });
 
-test('detect-commands: a tool only on PATH is named bare', () => {
+test('detect-commands: a tool only on PATH is named bare', (t) => {
   // No node_modules at all, and a tsc stub on the child's PATH: the production
   // resolver answers from bytes the fixture wrote.
-  const r = detect(projectTree({ 'tsconfig.json': '{}' }),
-    { reachable: null, pathDir: pathStubs(['tsc']) });
+  const r = detect(projectTree(t, { 'tsconfig.json': '{}' }),
+    { reachable: null, pathDir: pathStubs(t, ['tsc']) });
   assert.equal(r.typecheck, 'tsc --noEmit', JSON.stringify(r));
   assert.equal(r.source.typecheck, 'tsconfig.json');
 });
 
-test('detect-commands: a tool in both places is named by its node_modules/.bin path', () => {
+test('detect-commands: a tool in both places is named by its node_modules/.bin path', (t) => {
   // The project's pinned copy is the one its CI runs, so it beats whatever
   // version sits on PATH.
-  const root = nodeModulesBin(projectTree({ 'tsconfig.json': '{}' }), ['tsc']);
-  const r = detect(root, { reachable: null, pathDir: pathStubs(['tsc']) });
+  const root = nodeModulesBin(projectTree(t, { 'tsconfig.json': '{}' }), ['tsc']);
+  const r = detect(root, { reachable: null, pathDir: pathStubs(t, ['tsc']) });
   assert.equal(r.typecheck, 'node_modules/.bin/tsc --noEmit', JSON.stringify(r));
 });
 
-test('detect-commands: a tool in neither place nulls its slot and names the tool', () => {
+test('detect-commands: a tool in neither place nulls its slot and names the tool', (t) => {
   const tree = { 'eslint.config.mjs': 'export default [];\n', 'tsconfig.json': '{}' };
-  const r = detect(projectTree(tree), { reachable: 'npm' });
+  const r = detect(projectTree(t, tree), { reachable: 'npm' });
   assert.equal(r.lint, null);
   assert.equal(r.typecheck, null);
   assert.deepEqual(r.source, { lint: null, typecheck: null });
@@ -336,34 +336,34 @@ test('detect-commands: a tool in neither place nulls its slot and names the tool
     JSON.stringify(r.warnings));
 });
 
-test('detect-commands: only eslint and tsc are taken from node_modules/.bin', () => {
+test('detect-commands: only eslint and tsc are taken from node_modules/.bin', (t) => {
   // A cloned repo can commit its own node_modules. A `node_modules/.bin/cargo`
   // must not stand in for the user's cargo: the answer is the PATH one, or
   // null, and never the fixture's path.
-  const root = nodeModulesBin(projectTree({ 'Cargo.toml': '[package]\nname = "x"\n' }), ['cargo']);
+  const root = nodeModulesBin(projectTree(t, { 'Cargo.toml': '[package]\nname = "x"\n' }), ['cargo']);
   const r = detect(root, { reachable: null });
   for (const slot of [r.lint, r.typecheck]) {
     assert.equal(String(slot).startsWith('node_modules/'), false, JSON.stringify(r));
   }
 });
 
-test('detect-commands: an EMPTY reachable set means nothing is reachable', () => {
+test('detect-commands: an EMPTY reachable set means nothing is reachable', (t) => {
   // The `||` hazard, pinned: an empty override is falsy, so a seam that read it
   // through `|| probe` would silently run the live probe and answer about the
   // machine. The fixture's own node_modules/.bin would otherwise resolve tsc,
   // which is exactly what makes this row discriminating.
-  const root = nodeModulesBin(projectTree({ 'tsconfig.ci.json': '{}' }), ['tsc']);
+  const root = nodeModulesBin(projectTree(t, { 'tsconfig.ci.json': '{}' }), ['tsc']);
   const r = detect(root, { reachable: '' });
   assert.equal(r.typecheck, null, JSON.stringify(r));
   assert.equal(r.source.typecheck, null);
 });
 
-test('detect-commands: the reachable set WITHOUT the sentinel is ignored', () => {
+test('detect-commands: the reachable set WITHOUT the sentinel is ignored', (t) => {
   // The gate EXP-01 asks for: this variable decides which static-analysis
   // command an executor is told to run, so a repo-supplied .envrc setting it
   // must change nothing. Same fixture and same empty value as the row above,
   // which answered `null` there and answers the live probe here.
-  const root = nodeModulesBin(projectTree({ 'tsconfig.ci.json': '{}' }), ['tsc']);
+  const root = nodeModulesBin(projectTree(t, { 'tsconfig.ci.json': '{}' }), ['tsc']);
   const r = detect(root, { reachable: '', seam: false });
   assert.equal(r.typecheck, 'node_modules/.bin/tsc -p tsconfig.ci.json', JSON.stringify(r));
 });
@@ -400,19 +400,19 @@ for (const cmd of ['detect-commands', 'detect-surfaces']) {
   }
 }
 
-test('detect-commands: a real --root still answers about THAT tree', () => {
+test('detect-commands: a real --root still answers about THAT tree', (t) => {
   // Through `detect` rather than `runPlanning` - the argv is the same, and the
   // helper pins the reachable set so this row asserts WHICH tree was read
   // rather than whether the machine running the suite has npm (RCH-01, D-11).
-  const root = projectTree({ 'package.json': { scripts: { lint: 'eslint .' } } });
+  const root = projectTree(t, { 'package.json': { scripts: { lint: 'eslint .' } } });
   const r = detect(root);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.root, root);
   assert.equal(r.lint, 'npm run lint');
 });
 
-test('detect-surfaces: a real --root still answers about THAT tree', () => {
-  const root = projectTree({ 'package.json': { dependencies: { stripe: '^1' } } });
+test('detect-surfaces: a real --root still answers about THAT tree', (t) => {
+  const root = projectTree(t, { 'package.json': { dependencies: { stripe: '^1' } } });
   const r = runPlanning('detect-surfaces', '--root', root);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.root, root);
