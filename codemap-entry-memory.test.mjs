@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,9 +22,10 @@ function cli(root, heapMiB, ...args) {
     { cwd: root, encoding: 'utf8', stdio: 'pipe' }));
 }
 
-/** A repository of MODULES directories, each its own module, scanned, with a stale padded entry written for every one. */
-function padded() {
+/** A repository of MODULES directories, each its own module, scanned, with a stale padded entry written for every one; gone when test `t` ends. */
+function padded(t) {
   const root = mkdtempSync(join(tmpdir(), 'cad-mem-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const git = (...a) => execFileSync('git', ['-C', root, ...a], { encoding: 'utf8', stdio: 'pipe' });
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');
   for (let i = 0; i < MODULES; i++) {
@@ -39,8 +40,8 @@ function padded() {
   return root;
 }
 
-test('status and scan classify padded entries one at a time and survive a heap that cannot hold them all', () => {
-  const root = padded();
+test('status and scan classify padded entries one at a time and survive a heap that cannot hold them all', (t) => {
+  const root = padded(t);
   const status = cli(root, 450, 'status');
   assert.equal(status.ok, true);
   assert.equal(status.stale, MODULES);

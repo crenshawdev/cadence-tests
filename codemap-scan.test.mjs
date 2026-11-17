@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,9 +16,16 @@ const PLANNING = join(ROOT, 'cadence-core', 'bin', 'planning.mjs');
 const { cut, partition, entryFile, ENTRY_FILE, startsNoReader } = await import(
   join(ROOT, 'cadence-core', 'bin', 'lib', 'codemap-partition.mjs'));
 
-/** A scratch repository holding `files` (path -> text), committed. */
-function repo(files = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'cad-map-'));
+/** A temp directory under `prefix`, gone when test `t` ends. */
+function scratch(t, prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+/** A scratch repository holding `files` (path -> text), committed, gone when test `t` ends. */
+function repo(t, files = {}) {
+  const root = scratch(t, 'cad-map-');
   const git = (...a) => execFileSync('git', ['-C', root, ...a], { encoding: 'utf8', stdio: 'pipe' });
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');
   for (const [p, text] of Object.entries(files)) {
@@ -42,8 +49,8 @@ const index = (root) => JSON.parse(readFileSync(join(root, '.planning', 'records
 const rowOf = (root, path) => index(root).rows.filter((r) => r.path === path);
 const hashOf = (text) => execFileSync('git', ['hash-object', '--stdin'], { input: text, encoding: 'utf8' }).trim();
 
-test('every tracked path gets exactly one row, a space and non-UTF-8 bytes included', () => {
-  const { root, git } = repo({ 'a.js': 'a\n', 'dir/with space.txt': 'x\n', 'dir/b.md': '# b\n' });
+test('every tracked path gets exactly one row, a space and non-UTF-8 bytes included', (t) => {
+  const { root, git } = repo(t, { 'a.js': 'a\n', 'dir/with space.txt': 'x\n', 'dir/b.md': '# b\n' });
   writeFileSync(Buffer.concat([Buffer.from(root + '/caf'), Buffer.from([0xe9]), Buffer.from('.txt')]), 'latin\n');
   git('add', '-A');
   const r = codemap(root, 'scan');
@@ -60,8 +67,8 @@ test('every tracked path gets exactly one row, a space and non-UTF-8 bytes inclu
   assert.match(odd[0].hash, /^[0-9a-f]{40}/);
 });
 
-test('an unstaged edit takes the working-tree hash, not the index hash', () => {
-  const { root, git } = repo({ 'a.js': 'one\n', 'b.js': 'two\n' });
+test('an unstaged edit takes the working-tree hash, not the index hash', (t) => {
+  const { root, git } = repo(t, { 'a.js': 'one\n', 'b.js': 'two\n' });
   writeFileSync(join(root, 'a.js'), 'one edited\n');
   codemap(root, 'scan');
   const [a] = rowOf(root, 'a.js');
@@ -71,8 +78,8 @@ test('an unstaged edit takes the working-tree hash, not the index hash', () => {
   assert.equal(rowOf(root, 'b.js')[0].hash, git('ls-files', '-s', 'b.js').split(/\s+/)[1], 'a clean path keeps its index hash');
 });
 
-test('a path with a merge conflict is listed once, with the hash of what is on disk', () => {
-  const { root, git } = repo({ 'c.txt': 'base\n' });
+test('a path with a merge conflict is listed once, with the hash of what is on disk', (t) => {
+  const { root, git } = repo(t, { 'c.txt': 'base\n' });
   const base = git('branch', '--show-current').trim();
   git('checkout', '-q', '-b', 'other'); writeFileSync(join(root, 'c.txt'), 'theirs\n'); git('commit', '-qam', 'theirs');
   git('checkout', '-q', base); writeFileSync(join(root, 'c.txt'), 'ours\n'); git('commit', '-qam', 'ours');
@@ -84,9 +91,9 @@ test('a path with a merge conflict is listed once, with the hash of what is on d
   assert.equal(rows[0].hash, git('hash-object', 'c.txt').trim());
 });
 
-test('a symlink gets a hash of its link text, and what it points at is never opened', () => {
-  const { root, git } = repo({ 'a.js': 'a\n' });
-  const fifo = join(mkdtempSync(join(tmpdir(), 'cad-map-out-')), 'pipe');
+test('a symlink gets a hash of its link text, and what it points at is never opened', (t) => {
+  const { root, git } = repo(t, { 'a.js': 'a\n' });
+  const fifo = join(scratch(t, 'cad-map-out-'), 'pipe');
   execFileSync('mkfifo', [fifo]);
   symlinkSync('/etc/hostname', join(root, 'link'));
   git('add', 'link'); git('commit', '-qm', 'link');
@@ -100,16 +107,16 @@ test('a symlink gets a hash of its link text, and what it points at is never ope
   assert.equal(row.bytes, fifo.length);
 });
 
-test('a tracked path whose file is gone keeps its row with no hash', () => {
-  const { root } = repo({ 'a.js': 'a\n', 'b.js': 'b\n' });
+test('a tracked path whose file is gone keeps its row with no hash', (t) => {
+  const { root } = repo(t, { 'a.js': 'a\n', 'b.js': 'b\n' });
   execFileSync('rm', [join(root, 'b.js')]);
   const r = codemap(root, 'scan');
   assert.equal(r.missing, 1);
   assert.deepEqual(rowOf(root, 'b.js').map((x) => [x.kind, x.hash]), [['missing', null]]);
 });
 
-test('binary and over-cap files hold a hash and bytes, and the kind says why', () => {
-  const { root } = repo({ 'a.js': 'a\n' });
+test('binary and over-cap files hold a hash and bytes, and the kind says why', (t) => {
+  const { root } = repo(t, { 'a.js': 'a\n' });
   writeFileSync(join(root, 'img.bin'), Buffer.from([1, 2, 0, 3]));
   writeFileSync(join(root, 'big.txt'), 'x'.repeat(1024 * 1024 + 1));
   execFileSync('git', ['-C', root, 'add', '-A']);
@@ -121,9 +128,9 @@ test('binary and over-cap files hold a hash and bytes, and the kind says why', (
   assert.match(big.hash, /^[0-9a-f]{40}$/);
 });
 
-test('a tracked .planning/records/codemap symlink is refused and its target stays empty', () => {
-  const out = mkdtempSync(join(tmpdir(), 'cad-map-target-'));
-  const { root } = repo({ 'a.js': 'a\n' });
+test('a tracked .planning/records/codemap symlink is refused and its target stays empty', (t) => {
+  const out = scratch(t, 'cad-map-target-');
+  const { root } = repo(t, { 'a.js': 'a\n' });
   mkdirSync(join(root, '.planning', 'records'), { recursive: true });
   symlinkSync(out, join(root, '.planning', 'records', 'codemap'));
   execFileSync('git', ['-C', root, 'add', '-f', '.planning/records/codemap']);
@@ -133,16 +140,16 @@ test('a tracked .planning/records/codemap symlink is refused and its target stay
   assert.deepEqual(readdirSync(out), []);
 });
 
-test('a directory that is not a repository answers ok:false', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'cad-map-nogit-'));
+test('a directory that is not a repository answers ok:false', (t) => {
+  const dir = scratch(t, 'cad-map-nogit-');
   const r = codemap(dir, 'scan');
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'no-git');
   assert.equal(existsSync(join(dir, '.planning')), false, 'nothing was written');
 });
 
-test('git add .planning never stages the map, and a nested rule is what ignores it', () => {
-  const { root, git } = repo({ 'a.js': 'a\n', '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
+test('git add .planning never stages the map, and a nested rule is what ignores it', (t) => {
+  const { root, git } = repo(t, { 'a.js': 'a\n', '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
   assert.equal(codemap(root, 'scan').ok, true);
   git('add', '.planning');
   assert.equal(git('status', '--short').split('\n').filter((l) => l.includes('.planning/records/codemap')).length, 0);
@@ -150,8 +157,8 @@ test('git add .planning never stages the map, and a nested rule is what ignores 
   assert.equal(readFileSync(join(root, '.planning', 'records', 'codemap', '.gitignore'), 'utf8'), '*\n');
 });
 
-test('a root below the repository top level lists paths relative to itself', () => {
-  const { root } = repo({ 'top.js': 't\n', 'sub/in.js': 'i\n', 'sub/deep/d.js': 'd\n' });
+test('a root below the repository top level lists paths relative to itself', (t) => {
+  const { root } = repo(t, { 'top.js': 't\n', 'sub/in.js': 'i\n', 'sub/deep/d.js': 'd\n' });
   const sub = join(root, 'sub');
   const r = codemap(sub, 'scan', join(sub, '.planning'));
   assert.equal(r.ok, true);
@@ -265,10 +272,10 @@ test('an entry file name is derived by hash, so no module name can reach index.j
 const modulesOf = (root) => index(root).modules;
 const mapFile = (root, f) => join(root, '.planning', 'records', 'codemap', f);
 
-test('scan stores the module list, and a removed last file removes its module and its entry file', () => {
+test('scan stores the module list, and a removed last file removes its module and its entry file', (t) => {
   // 100 KiB each, so the two directories cannot share one 128 KiB module
   const big = 'x'.repeat(100 * 1024);
-  const { root, git } = repo({ 'a/1.js': big, 'b/2.js': big, '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
+  const { root, git } = repo(t, { 'a/1.js': big, 'b/2.js': big, '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
   const first = codemap(root, 'scan');
   assert.equal(first.modules, 3);
   assert.equal(first.no_reader, 1);
@@ -284,8 +291,8 @@ test('scan stores the module list, and a removed last file removes its module an
   assert.equal(modulesOf(root).some((m) => m.name === gone.name), false);
 });
 
-test('deleting index.json re-cuts, and an entry file no module names is gone after the scan', () => {
-  const { root } = repo({ 'a/1.js': 'a\n', 'b/2.js': 'b\n' });
+test('deleting index.json re-cuts, and an entry file no module names is gone after the scan', (t) => {
+  const { root } = repo(t, { 'a/1.js': 'a\n', 'b/2.js': 'b\n' });
   codemap(root, 'scan');
   const before = modulesOf(root);
   const orphan = mapFile(root, entryFile('no such module'));
@@ -296,8 +303,8 @@ test('deleting index.json re-cuts, and an entry file no module names is gone aft
   assert.equal(existsSync(orphan), false);
 });
 
-test('a torn index.json is a fresh cut, not a failure', () => {
-  const { root } = repo({ 'a/1.js': 'a\n' });
+test('a torn index.json is a fresh cut, not a failure', (t) => {
+  const { root } = repo(t, { 'a/1.js': 'a\n' });
   codemap(root, 'scan');
   writeFileSync(mapFile(root, 'index.json'), '{"modules": [');
   assert.equal(codemap(root, 'scan').modules, 1);
@@ -306,13 +313,13 @@ test('a torn index.json is a fresh cut, not a failure', () => {
 // --- status: built, stale, unbuilt, and no reader --------------------------------------------------------------------
 
 const KB = (n) => 'x'.repeat(n * 1024);
-/** a/ holds 80 KiB of text and a binary file, b/ holds 100 KiB, so the two are separate modules; .planning has its own */
-function mapped() {
-  const t = repo({ 'a/1.js': KB(50), 'a/2.js': KB(30), 'b/3.js': KB(100), '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
-  writeFileSync(join(t.root, 'a', 'img.bin'), Buffer.from([0, 1, 2]));
-  t.git('add', '-A'); t.git('commit', '-q', '-m', 'more');
-  assert.equal(codemap(t.root, 'scan').modules, 3);
-  return t;
+/** a/ holds 80 KiB of text and a binary file, b/ holds 100 KiB, so the two are separate modules; .planning has its own; gone when `t` ends */
+function mapped(t) {
+  const r = repo(t, { 'a/1.js': KB(50), 'a/2.js': KB(30), 'b/3.js': KB(100), '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
+  writeFileSync(join(r.root, 'a', 'img.bin'), Buffer.from([0, 1, 2]));
+  r.git('add', '-A'); r.git('commit', '-q', '-m', 'more');
+  assert.equal(codemap(r.root, 'scan').modules, 3);
+  return r;
 }
 const moduleHolding = (root, path) => modulesOf(root).find((m) => m.paths.includes(path));
 /** Writes an entry for each named module (default all) from the hashes the last scan recorded. */
@@ -323,8 +330,8 @@ function build(root, names = modulesOf(root).map((m) => m.name)) {
   }
 }
 
-test('status reads only the edited file\'s module as stale, and undoing the edit returns it to built', () => {
-  const { root } = mapped();
+test('status reads only the edited file\'s module as stale, and undoing the edit returns it to built', (t) => {
+  const { root } = mapped(t);
   build(root);
   const clean = codemap(root, 'status');
   assert.deepEqual([clean.built, clean.stale, clean.unbuilt, clean.no_reader], [2, 0, 0, 1]);
@@ -335,8 +342,8 @@ test('status reads only the edited file\'s module as stale, and undoing the edit
   assert.equal(codemap(root, 'status').stale, 0);
 });
 
-test('a committed edit with an entry built from the new hash reads built', () => {
-  const { root, git } = mapped();
+test('a committed edit with an entry built from the new hash reads built', (t) => {
+  const { root, git } = mapped(t);
   writeFileSync(join(root, 'a', '1.js'), KB(50) + 'z');
   git('commit', '-qam', 'edit');
   codemap(root, 'scan');
@@ -346,8 +353,8 @@ test('a committed edit with an entry built from the new hash reads built', () =>
   assert.deepEqual([r.built, r.stale], [2, 0]);
 });
 
-test('a file added to a built module and one removed from it both read stale', () => {
-  const { root, git } = mapped();
+test('a file added to a built module and one removed from it both read stale', (t) => {
+  const { root, git } = mapped(t);
   build(root);
   writeFileSync(join(root, 'a', 'new.js'), 'n\n');
   git('add', 'a/new.js');
@@ -358,8 +365,8 @@ test('a file added to a built module and one removed from it both read stale', (
   assert.deepEqual(codemap(root, 'status').stale_modules, [moduleHolding(root, 'a/1.js').name]);
 });
 
-test('a module with no entry or a torn one reads unbuilt, never stale, and a no-reader module is in neither list', () => {
-  const { root } = mapped();
+test('a module with no entry or a torn one reads unbuilt, never stale, and a no-reader module is in neither list', (t) => {
+  const { root } = mapped(t);
   build(root, [moduleHolding(root, 'a/1.js').name]);
   let r = codemap(root, 'status');
   assert.deepEqual([r.built, r.stale, r.unbuilt, r.unbuilt_modules], [1, 0, 1, [moduleHolding(root, 'b/3.js').name]]);
@@ -370,8 +377,8 @@ test('a module with no entry or a torn one reads unbuilt, never stale, and a no-
   assert.ok(!r.unbuilt_modules.includes(planning) && !r.stale_modules.includes(planning));
 });
 
-test('scan prices a launch by the stale and unbuilt modules and the text bytes a reader would open', () => {
-  const { root } = mapped();
+test('scan prices a launch by the stale and unbuilt modules and the text bytes a reader would open', (t) => {
+  const { root } = mapped(t);
   let r = codemap(root, 'scan');
   assert.deepEqual([r.modules, r.readers, r.reader_bytes], [3, 2, (50 + 30 + 100) * 1024], 'no entries: every reader module, text only');
   assert.equal(r.bytes, (50 + 30 + 100) * 1024 + 3 + 22, 'the total counts every byte, the picture and ROADMAP.md too');
@@ -382,8 +389,8 @@ test('scan prices a launch by the stale and unbuilt modules and the text bytes a
   assert.deepEqual([r.readers, r.reader_bytes], [1, (50 + 30) * 1024 + 1], 'the binary file in that module is not counted');
 });
 
-test('status with no index answers ok:false, names codemap scan, and writes nothing', () => {
-  const { root } = repo({ 'a.js': 'a\n' });
+test('status with no index answers ok:false, names codemap scan, and writes nothing', (t) => {
+  const { root } = repo(t, { 'a.js': 'a\n' });
   const r = codemap(root, 'status');
   assert.equal(r.ok, false);
   assert.match(r.hint, /codemap scan/);
@@ -409,8 +416,8 @@ const FIXTURE = {
   'torn.json': '{"a":',
 };
 
-test('scan places every file of five languages in one module and each text file holds its names', () => {
-  const { root, git } = repo(FIXTURE);
+test('scan places every file of five languages in one module and each text file holds its names', (t) => {
+  const { root, git } = repo(t, FIXTURE);
   writeFileSync(join(root, 'blob.bin'), Buffer.from([0, 1, 2, 3]));
   symlinkSync('lib.js', join(root, 'link.js'));
   git('add', '-A'); git('commit', '-q', '-m', 'more');
@@ -439,9 +446,9 @@ test('scan places every file of five languages in one module and each text file 
   assert.equal(of('link.js').symbols, undefined, 'a symlink holds none');
 });
 
-test('every name lib/rung-agent.mjs exports appears on its row', async () => {
+test('every name lib/rung-agent.mjs exports appears on its row', async (t) => {
   const real = join(ROOT, 'cadence-core', 'bin', 'lib', 'rung-agent.mjs');
-  const { root } = repo({ 'lib/rung-agent.mjs': readFileSync(real, 'utf8') });
+  const { root } = repo(t, { 'lib/rung-agent.mjs': readFileSync(real, 'utf8') });
   codemap(root, 'scan');
   const held = new Set(names(rowOf(root, 'lib/rung-agent.mjs')[0]));
   const exported = Object.keys(await import(real));
@@ -461,8 +468,8 @@ test('a megabyte of hostile text finishes quickly in every reader', () => {
   }
 });
 
-test('skim.mjs is untouched: it still refuses a .rs file', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'cad-map-skim-'));
+test('skim.mjs is untouched: it still refuses a .rs file', (t) => {
+  const dir = scratch(t, 'cad-map-skim-');
   writeFileSync(join(dir, 'x.rs'), 'fn main() {}\n');
   let out;
   try { out = execFileSync('node', [join(ROOT, 'cadence-core', 'bin', 'skim.mjs'), join(dir, 'x.rs')], { encoding: 'utf8', stdio: 'pipe' }); } catch (e) { out = e.stdout; }
@@ -471,9 +478,9 @@ test('skim.mjs is untouched: it still refuses a .rs file', () => {
 
 // --- the risk review's fixes -------------------------------------------------------------------------------------------
 
-test('a dirty file under a clean filter is hashed on its raw bytes and no filter program runs', () => {
-  const marker = join(mkdtempSync(join(tmpdir(), 'cad-map-ran-')), 'ran');
-  const { root, git } = repo({ 'a.js': 'one\n', '.gitattributes': '*.js filter=pwn\n' });
+test('a dirty file under a clean filter is hashed on its raw bytes and no filter program runs', (t) => {
+  const marker = join(scratch(t, 'cad-map-ran-'), 'ran');
+  const { root, git } = repo(t, { 'a.js': 'one\n', '.gitattributes': '*.js filter=pwn\n' });
   git('config', 'filter.pwn.clean', `touch ${marker}; cat`);
   writeFileSync(join(root, 'a.js'), 'one edited\n');
   codemap(root, 'scan');
@@ -481,8 +488,8 @@ test('a dirty file under a clean filter is hashed on its raw bytes and no filter
   assert.equal(rowOf(root, 'a.js')[0].hash, git('hash-object', '--no-filters', 'a.js').trim());
 });
 
-test('a dirty file under a root below the top level gets its own hash, not a same-named top-level file\'s', () => {
-  const { root } = repo({ 'a.txt': 'top\n', 'sub/a.txt': 'sub\n', 'sub/b.txt': 'b\n' });
+test('a dirty file under a root below the top level gets its own hash, not a same-named top-level file\'s', (t) => {
+  const { root } = repo(t, { 'a.txt': 'top\n', 'sub/a.txt': 'sub\n', 'sub/b.txt': 'b\n' });
   const sub = join(root, 'sub');
   writeFileSync(join(sub, 'a.txt'), 'sub edited\n');
   writeFileSync(join(sub, 'b.txt'), 'b edited\n');
@@ -493,8 +500,8 @@ test('a dirty file under a root below the top level gets its own hash, not a sam
   assert.equal(rows.find((x) => x.path === 'b.txt').hash, real('b.txt'), 'with no same-named file at the top it is not null');
 });
 
-test('a symlink where the map\'s .gitignore goes is replaced and never read through', () => {
-  const { root } = repo({ 'a.js': 'a\n' });
+test('a symlink where the map\'s .gitignore goes is replaced and never read through', (t) => {
+  const { root } = repo(t, { 'a.js': 'a\n' });
   assert.equal(codemap(root, 'scan').ok, true);
   const target = join(root, '.planning', 'x');
   writeFileSync(target, '*\n');
@@ -512,8 +519,8 @@ test('a whitespace run of a megabyte inside one JS line finishes quickly', () =>
   assert.ok(Date.now() - start < 5000, `took ${Date.now() - start} ms`);
 });
 
-test('an assume-unchanged or skip-worktree file that was edited takes its working-tree hash', () => {
-  const { root, git } = repo({ 'a.js': 'a\n', 'b.js': 'b\n' });
+test('an assume-unchanged or skip-worktree file that was edited takes its working-tree hash', (t) => {
+  const { root, git } = repo(t, { 'a.js': 'a\n', 'b.js': 'b\n' });
   git('update-index', '--assume-unchanged', 'a.js');
   git('update-index', '--skip-worktree', 'b.js');
   writeFileSync(join(root, 'a.js'), 'a edited\n');
@@ -523,8 +530,8 @@ test('an assume-unchanged or skip-worktree file that was edited takes its workin
   assert.equal(rowOf(root, 'b.js')[0].hash, git('hash-object', 'b.js').trim());
 });
 
-test('a non-UTF-8 .planning path stays out of code modules, and a non-UTF-8 .js path still holds its symbols', () => {
-  const { root, git } = repo({ 'a.js': 'a\n', '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
+test('a non-UTF-8 .planning path stays out of code modules, and a non-UTF-8 .js path still holds its symbols', (t) => {
+  const { root, git } = repo(t, { 'a.js': 'a\n', '.planning/ROADMAP.md': '# Roadmap\n\n## Phases\n\n' });
   const odd = (dir, ext) => Buffer.concat([Buffer.from(`${root}/${dir}caf`), Buffer.from([0xe9]), Buffer.from(ext)]);
   writeFileSync(odd('.planning/', '.md'), '# note\n');
   writeFileSync(odd('', '.js'), 'export const beta = 1;\n');
@@ -536,9 +543,9 @@ test('a non-UTF-8 .planning path stays out of code modules, and a non-UTF-8 .js 
   assert.deepEqual(names(rowOf(root, '"caf\\351.js"')[0]), ['beta']);
 });
 
-test('a trailing slash on --dir does not follow a tracked .planning symlink out of the repository', () => {
-  const out = mkdtempSync(join(tmpdir(), 'cad-map-target-'));
-  const { root, git } = repo({ 'a.js': 'a\n' });
+test('a trailing slash on --dir does not follow a tracked .planning symlink out of the repository', (t) => {
+  const out = scratch(t, 'cad-map-target-');
+  const { root, git } = repo(t, { 'a.js': 'a\n' });
   symlinkSync(out, join(root, '.planning'));
   git('add', '.planning'); git('commit', '-qm', 'link');
   const r = codemap(root, 'scan', `${join(root, '.planning')}/`);
@@ -547,9 +554,9 @@ test('a trailing slash on --dir does not follow a tracked .planning symlink out 
   assert.deepEqual(readdirSync(out), []);
 });
 
-test('a module whose files are all gone from the working tree reads stale', () => {
+test('a module whose files are all gone from the working tree reads stale', (t) => {
   const big = 'x'.repeat(100 * 1024);
-  const { root } = repo({ 'a/1.js': big, 'b/2.js': big });
+  const { root } = repo(t, { 'a/1.js': big, 'b/2.js': big });
   codemap(root, 'scan');
   build(root);
   execFileSync('rm', [join(root, 'b', '2.js')]);
@@ -561,8 +568,8 @@ test('a markdown file with CRLF line endings holds its headings', () => {
   assert.deepEqual(symbolsFor('x.md', '# Title\r\n\r\n## Sub\r\ntext\r\n').map((s) => s.name), ['Title', 'Sub']);
 });
 
-test('an index just past 64 MiB is still read by status', () => {
-  const { root } = repo({ 'a.js': 'a\n' });
+test('an index just past 64 MiB is still read by status', (t) => {
+  const { root } = repo(t, { 'a.js': 'a\n' });
   codemap(root, 'scan');
   const file = mapFile(root, 'index.json');
   writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), pad: 'x'.repeat(64 * 1024 * 1024 + 1) }));
@@ -571,8 +578,8 @@ test('an index just past 64 MiB is still read by status', () => {
   assert.equal(r.unbuilt, 1);
 });
 
-test('scan refuses when the repository tracks files under the map and writes nothing', () => {
-  const { root, git } = repo({ 'a.js': 'a\n', '.planning/records/codemap/index.json': '{"mine": true}\n' });
+test('scan refuses when the repository tracks files under the map and writes nothing', (t) => {
+  const { root, git } = repo(t, { 'a.js': 'a\n', '.planning/records/codemap/index.json': '{"mine": true}\n' });
   const r = codemap(root, 'scan');
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'tracked-map');
@@ -595,9 +602,9 @@ test('a new file does not join a module that is one file over the ceiling', () =
 
 // --- the second risk review's fixes ------------------------------------------------------------------------------------
 
-test('no clean filter runs on a scan or a status, unedited or after a same-size edit, and a clean row equals its index hash', () => {
-  const marker = join(mkdtempSync(join(tmpdir(), 'cad-map-ran-')), 'ran');
-  const { root, git } = repo({ 'a.js': 'one\n', 'b.js': 'bee\n', '.gitattributes': '*.js filter=pwn\n' });
+test('no clean filter runs on a scan or a status, unedited or after a same-size edit, and a clean row equals its index hash', (t) => {
+  const marker = join(scratch(t, 'cad-map-ran-'), 'ran');
+  const { root, git } = repo(t, { 'a.js': 'one\n', 'b.js': 'bee\n', '.gitattributes': '*.js filter=pwn\n' });
   git('config', 'filter.pwn.clean', `touch ${marker}; cat`);
   for (const sub of ['scan', 'status']) {
     assert.equal(codemap(root, sub).ok, true);
@@ -614,7 +621,7 @@ test('no clean filter runs on a scan or a status, unedited or after a same-size 
 
 test('an unreadable file keeps a null hash and the files after it in the batch are still hashed', (t) => {
   if (process.getuid && process.getuid() === 0) return t.skip('root reads a chmod 000 file');
-  const { root, git } = repo({ 'a.txt': 'a\n', 'b.txt': 'b\n', 'c.txt': 'c\n' });
+  const { root, git } = repo(t, { 'a.txt': 'a\n', 'b.txt': 'b\n', 'c.txt': 'c\n' });
   chmodSync(join(root, 'b.txt'), 0);
   try {
     codemap(root, 'scan');
@@ -623,8 +630,8 @@ test('an unreadable file keeps a null hash and the files after it in the batch a
   } finally { chmodSync(join(root, 'b.txt'), 0o644); }
 });
 
-test('a clean symlink hashes its link text to the index hash, and a dirty one to the hash of its new text', () => {
-  const { root, git } = repo({ 'a.js': 'a\n' });
+test('a clean symlink hashes its link text to the index hash, and a dirty one to the hash of its new text', (t) => {
+  const { root, git } = repo(t, { 'a.js': 'a\n' });
   symlinkSync('a.js', join(root, 'ok')); symlinkSync('a.js', join(root, 'moved'));
   git('add', '-A'); git('commit', '-qm', 'links');
   execFileSync('rm', [join(root, 'moved')]);
@@ -645,8 +652,8 @@ test('a long comment or string line does not change what skim sees below it', ()
   assert.ok(!of(`const n = 0;${' '.repeat(2001)}/*\nexport function phantom() {}\n*/\n`).includes('phantom'));
 });
 
-test('an index over 128 MiB is named by status and is a fresh cut for scan', () => {
-  const { root } = repo({ 'a.js': 'a\n' });
+test('an index over 128 MiB is named by status and is a fresh cut for scan', (t) => {
+  const { root } = repo(t, { 'a.js': 'a\n' });
   codemap(root, 'scan');
   truncateSync(mapFile(root, 'index.json'), 128 * 1024 * 1024 + 1);
   const r = codemap(root, 'status');
