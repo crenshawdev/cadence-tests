@@ -4079,3 +4079,19 @@ test('phase.md: the add arm sends opened_cycle to PROJECT.md ### Active and REQU
   assert.match(instruction, /PROJECT\.md `### Active`/, 'the opened_cycle instruction does not name PROJECT.md ### Active');
   assert.match(instruction, /REQUIREMENTS\.md `## Active`/, 'the opened_cycle instruction does not name REQUIREMENTS.md ## Active');
 });
+
+// a brief a few hundred bytes over used to cost a whole second planner pass, so the planner checks its own
+test('cad-planner-contract: the planner runs check_brief\'s brief call before it returns and splits a plan over the ceiling', () => {
+  const call = 'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/planning.mjs" brief --phase';
+  const wf = doc('cadence-core', 'workflows', 'plan.md');
+  const start = wf.indexOf('<step name="check_brief">');
+  assert.ok(start > -1, 'plan.md has no check_brief step');
+  assert.ok(wf.slice(start, wf.indexOf('</step>', start)).includes(call),
+    'plan.md check_brief no longer runs the brief call, so nothing backs the planner up');
+  const planner = flat(doc('skills', 'cad-planner-contract', 'SKILL.md'));
+  assert.ok(planner.includes(call), 'the planner contract does not run the brief call check_brief runs');
+  const rule = planner.slice(planner.lastIndexOf('**', planner.indexOf(call)), planner.indexOf('</plan_output>'));
+  assert.match(rule, /before you return/, 'the contract does not run the brief call before the planner returns');
+  assert.match(rule, /split that plan's tasks across more plans, sequential where they share declared files/,
+    'the contract does not give check_brief\'s split remedy for a brief over its ceiling');
+});
