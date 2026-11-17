@@ -70,8 +70,8 @@ test('the 12 review gate, tier and effort questions are 12 different texts, each
 });
 
 // D-13: the roles interview /cad-new-project runs asks the schema's 13 questions, so an edit to one copy alone shows here.
-test('the roles interview in config.md asks the schema\'s 13 roles questions word for word', () => {
-  const md = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'workflows', 'config.md'), 'utf8');
+test('the roles interview in config-roles.md asks the schema\'s 13 roles questions word for word', () => {
+  const md = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'workflows', 'config-roles.md'), 'utf8');
   const interview = md.slice(md.indexOf('## Roles interview'), md.indexOf('## Stakes migration')).replace(/\s+/g, ' ');
   const roles = ['cad-planner', 'cad-assumptions-analyzer', 'cad-verifier', 'cad-reviewer', 'cad-executor', 'cad-plan-checker'];
   const keys = [...roles.flatMap((r) => [`roles.${r}.model`, `roles.${r}.effort`]), 'review.triggers.risk_surface.waive_routing_floor'];

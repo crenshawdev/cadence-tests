@@ -2496,9 +2496,9 @@ test('IVW-01: both risk-surface interview sites carry the ask-user rules, and th
         '## risk_surface detection', 'references/risk-surface.md'),
     },
     {
-      where: 'workflows/config.md `## Risk surfaces (`--surfaces`)`',
-      text: section(doc('cadence-core', 'workflows', 'config.md'),
-        '## Risk surfaces', 'workflows/config.md'),
+      where: 'workflows/config-surfaces.md `## Risk surfaces (`--surfaces`)`',
+      text: section(doc('cadence-core', 'workflows', 'config-surfaces.md'),
+        '## Risk surfaces', 'workflows/config-surfaces.md'),
     },
   ];
 
@@ -2521,11 +2521,11 @@ test('IVW-01: both risk-surface interview sites carry the ask-user rules, and th
   // way to see it, and nothing else holds the sentence - /code/cadence returns
   // `inconclusive: true` with `evidenced: []`, so the callout cannot fire on
   // the only tree the human check runs against.
-  const surfacesSite = SITES.find((s) => s.where.startsWith('workflows/config.md'));
+  const surfacesSite = SITES.find((s) => s.where.startsWith('workflows/config-surfaces.md'));
   assert.ok(surfacesSite, 'the `--surfaces` site left the SITES list');
   const surfaces = flat(surfacesSite.text);
   assert.match(surfaces, /call(?:s|ing)? out every evidenced category the answered set does not contain/i,
-    'workflows/config.md `## Risk surfaces`: dropped the clause that every evidenced '
+    'workflows/config-surfaces.md `## Risk surfaces`: dropped the clause that every evidenced '
     + 'category the answered set does not cover is called out');
 
   // The code side of the same cap. A site can render at most what the builder

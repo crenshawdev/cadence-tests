@@ -127,6 +127,58 @@ const REGISTER_SOURCE = `export const DEFERRED_READS = Object.freeze([
     read_paragraphs: 1,
     file: 'cadence-core/workflows/plan.md',
   }),
+  Object.freeze({
+    // one site: the route, the walk's pick and the menu are three doors into the one section
+    skill: 'cad-config',
+    reference: 'workflows/config-surfaces.md',
+    anchors: Object.freeze(['Risk surfaces (\`--surfaces\`)']),
+    read_paragraphs: 1,
+    file: 'cadence-core/workflows/config.md',
+  }),
+  Object.freeze({
+    skill: 'cad-config',
+    reference: 'workflows/config-testing.md',
+    anchors: Object.freeze(['Testing policy (\`--testing\`)']),
+    read_paragraphs: 1,
+    file: 'cadence-core/workflows/config.md',
+  }),
+  Object.freeze({
+    // the front doors Read the arm's own file, so setup never opens config.md for it
+    skill: 'cad-new-project',
+    reference: 'workflows/config-testing.md',
+    anchors: Object.freeze(['testing_policy']),
+    read_paragraphs: 1,
+    file: 'cadence-core/workflows/new-project.md',
+  }),
+  Object.freeze({
+    skill: 'cad-adopt',
+    reference: 'workflows/config-testing.md',
+    anchors: Object.freeze(['testing_policy']),
+    read_paragraphs: 1,
+    file: 'cadence-core/workflows/adopt.md',
+  }),
+  Object.freeze({
+    // two arms, one file: each arm keeps its own Read so a deleted one fails on its own
+    skill: 'cad-config',
+    reference: 'workflows/config-roles.md',
+    anchors: Object.freeze(['Roles interview (\`--roles\`)', 'Stakes migration (a retired routing key is still on disk)']),
+    read_paragraphs: 2,
+    file: 'cadence-core/workflows/config.md',
+  }),
+  Object.freeze({
+    skill: 'cad-new-project',
+    reference: 'workflows/config-roles.md',
+    anchors: Object.freeze(['setup(4)']),
+    read_paragraphs: 1,
+    file: 'cadence-core/workflows/new-project.md',
+  }),
+  Object.freeze({
+    skill: 'cad-adopt',
+    reference: 'workflows/config-roles.md',
+    anchors: Object.freeze(['setup(3)']),
+    read_paragraphs: 1,
+    file: 'cadence-core/workflows/adopt.md',
+  }),
 ]);`;
 
 test('register: the surviving cut rows are byte-identical, and the register is exactly the rows the cuts made', () => {
@@ -136,15 +188,17 @@ test('register: the surviving cut rows are byte-identical, and the register is e
   // alone passes an edited, reordered or retargeted row. Two `cad-land` rows
   // left in v3.2.0 with `pre_ship`: the skill fires no review and triages
   // nothing now, so review-triggers.md and triage-gate.md are consulted from
-  // it at no step at all.
+  // it at no step at all. Seven came in when config.md's Risk surfaces, Testing
+  // policy and Roles arms moved to cold files: /cad-config Reads each arm's file,
+  // and /cad-new-project and /cad-adopt Read the testing and roles files they reach.
   const src = readFileSync(join(HERE, 'lib', 'deferred-reads.mjs'), 'utf8');
   const start = src.indexOf('export const DEFERRED_READS');
   assert.ok(start >= 0, 'the register export must be findable by name');
   const end = src.indexOf(']);', start);
   assert.ok(end > start, 'the register export must close with `]);`');
   assert.equal(src.slice(start, end + 3), REGISTER_SOURCE);
-  // CADENCE-CENSUS: deferred-reads-register | asserts: the register is exactly 10 rows, byte-identical to the export's own source
-  assert.equal(DEFERRED_READS.length, 10);
+  // CADENCE-CENSUS: deferred-reads-register | asserts: the register is exactly 17 rows, byte-identical to the export's own source
+  assert.equal(DEFERRED_READS.length, 17);
 });
 
 // --- AC3: a contract skill's own step ------------------------------------------
