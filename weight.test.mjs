@@ -392,6 +392,18 @@ test('paths: a registered file missing on disk refuses and names it, never count
   assert.equal(j.paths, undefined);
 });
 
+test('paths: a register file that climbs out, newline-split or plain, is malformed before anything is opened', () => {
+  // the newline one slipped a `.*` lookahead that stopped at the line break
+  for (const file of ['a\n/../x', '../x']) {
+    const root = pathsFixture('cad-paths-escape-', [
+      { command: 'cad-x', variant: 'ordinary', files: [file], baseline: 1 },
+    ]);
+    const j = paths(root);
+    assert.equal(j.ok, false, JSON.stringify(file));
+    assert.equal(j.reason, 'path-register-malformed', `${JSON.stringify(file)}: ${JSON.stringify(j)}`);
+  }
+});
+
 // --- flag values: absent is not the same as present-with-no-value -----------
 // The regression these pin: a caller passing an unset `$TREE` produced
 // `--root` with nothing after it, which read as ABSENT and fell back to the
