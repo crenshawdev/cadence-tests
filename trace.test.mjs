@@ -9,11 +9,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import {
-  mkdtempSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, readdirSync,
+  mkdirSync, writeFileSync, readFileSync, appendFileSync, readdirSync,
   copyFileSync, symlinkSync, lstatSync, existsSync, chmodSync, accessSync, constants,
   statSync, linkSync, utimesSync, rmSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
@@ -24,7 +23,7 @@ import {
 } from '../cadence-core/bin/lib/trace.mjs';
 import { STEP_WINDOW } from '../cadence-core/bin/lib/trace.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
-import { ensureRoadmap, stampState, treeOf, v40Project } from './planning.test.mjs';
+import { ensureRoadmap, scratch, stampState, treeOf, v40Project } from './planning.test.mjs';
 import { statePath } from '../cadence-core/bin/lib/project-state.mjs';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
@@ -33,8 +32,8 @@ const PLANNING = join(HERE, 'planning.mjs');
 const REPO = join(HERE, '..', '..');
 
 /** A fresh, empty planning root, stamped: the appender writes nothing into a project with no valid state. */
-function root() {
-  const dir = join(mkdtempSync(join(tmpdir(), 'cad-trace-')), '.planning');
+function root(t) {
+  const dir = join(scratch('cad-trace-', t), '.planning');
   mkdirSync(dir, { recursive: true });
   stampState(dir);
   return dir;
@@ -55,8 +54,8 @@ const lines = (dir) => readFileSync(tracePath(dir), 'utf8')
 
 // --- the derived correlation id (D-06) ---------------------------------------
 
-test('correlationId: two calls in the same phase with an anchor derive the same id', () => {
-  const dir = root();
+test('correlationId: two calls in the same phase with an anchor derive the same id', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   assert.equal(correlationId(dir, 1), '1-abc1234');
   assert.equal(correlationId(dir, 1), correlationId(dir, 1));
@@ -64,16 +63,16 @@ test('correlationId: two calls in the same phase with an anchor derive the same 
   assert.equal(correlationId(dir, '1'), '1-abc1234');
 });
 
-test('correlationId: with NO anchor both calls fall back to the phase alone', () => {
-  const dir = root();
+test('correlationId: with NO anchor both calls fall back to the phase alone', (t) => {
+  const dir = root(t);
   assert.equal(correlationId(dir, 2), '2');
   appendEvent(dir, { phase: 2, family: 'routing', event: 'resolve' });
   assert.equal(correlationId(dir, 2), '2');
   assert.equal(correlationId(dir, 2), correlationId(dir, 2));
 });
 
-test('correlationId: the id changes when the anchor sha changes (a re-run)', () => {
-  const dir = root();
+test('correlationId: the id changes when the anchor sha changes (a re-run)', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'aaa1111' });
   const first = correlationId(dir, 1);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'bbb2222' });
@@ -83,16 +82,16 @@ test('correlationId: the id changes when the anchor sha changes (a re-run)', () 
   assert.notEqual(first, second);
 });
 
-test('correlationId: another phase\'s anchor never answers for this phase', () => {
-  const dir = root();
+test('correlationId: another phase\'s anchor never answers for this phase', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   assert.equal(correlationId(dir, 2), '2');
 });
 
-test('the anchor event carries the id it anchors, not the phase-only fallback', () => {
+test('the anchor event carries the id it anchors, not the phase-only fallback', (t) => {
   // Otherwise the lifecycle family splits across two ids and "all four families
   // under ONE correlation id" is unreachable by construction.
-  const dir = root();
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   appendEvent(dir, { phase: 1, family: 'routing', event: 'resolve' });
   const corrs = [...new Set(lines(dir).map((e) => e.corr))];
@@ -101,16 +100,16 @@ test('the anchor event carries the id it anchors, not the phase-only fallback', 
 
 // --- the append contract (D-07) ----------------------------------------------
 
-test('appendEvent: keys land in the fixed order, one JSON object per line', () => {
-  const dir = root();
+test('appendEvent: keys land in the fixed order, one JSON object per line', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'dispatch', plan: '1' });
   const [e] = lines(dir);
   assert.deepEqual(Object.keys(e), ['corr', 'phase', 'ts', 'family', 'event', 'plan']);
   assert.match(e.ts, /^\d{4}-\d{2}-\d{2}T/);
 });
 
-test('appendEvent: an interleaved write sequence keeps every event, in order', () => {
-  const dir = root();
+test('appendEvent: an interleaved write sequence keeps every event, in order', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   // Two "concurrent producers" writing between each other's appends: the append
   // mode is what makes this lossless, where a read-modify-write would drop one.
@@ -178,8 +177,8 @@ function killedClaim(dir, agoMs) {
   utimesSync(rotationClaimPath(dir), at, at);
 }
 
-test('appendEvent: a record at the bound rotates, and the append lands', () => {
-  const dir = root();
+test('appendEvent: a record at the bound rotates, and the append lands', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   // Under the bound before the append, over it with the append: the trigger is
   // "this line would reach the bound", not "the file already did".
@@ -210,12 +209,12 @@ test('appendEvent: a record at the bound rotates, and the append lands', () => {
   assert.equal(renderTrace(dir, 1).capped, false);
 });
 
-test('appendEvent: the rotation marker SEALS the generation it carried away', () => {
+test('appendEvent: the rotation marker SEALS the generation it carried away', (t) => {
   // `carried_bytes` is what tells the writer that destroys this generation
   // where this cut stopped accounting. A sealed size that did not match the
   // file would send that writer's rescue at the wrong offset, so it is
   // asserted against `statSync` of the sibling rather than against a constant.
-  const dir = root();
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   padToBound(dir);
   assert.equal(appendEvent(dir, { phase: 1, family: 'routing', event: 'resolve' }).written, true);
@@ -235,13 +234,13 @@ test('appendEvent: the rotation marker SEALS the generation it carried away', ()
   assert.equal(r.counts.lifecycle, lines(dir).filter((e) => e.family === 'lifecycle').length);
 });
 
-test('appendEvent: a completed rotation RELEASES the claim and leaves the sidecar inert', () => {
+test('appendEvent: a completed rotation RELEASES the claim and leaves the sidecar inert', (t) => {
   // The positive `rotateTrace`'s `finally` owes (TRC-09). The rotation the row
   // above exercises, read for the one thing that row cannot see: whether the
   // claim was let go. A sibling that still shared the live record's inode
   // satisfies every size and content assertion in this file and is a STANDING
   // claim - the very state a killed rotation leaves behind.
-  const dir = root();
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   padToBound(dir);
   assert.equal(appendEvent(dir, { phase: 1, family: 'routing', event: 'resolve' }).written, true);
@@ -263,9 +262,9 @@ test('appendEvent: a completed rotation RELEASES the claim and leaves the sideca
   assert.deepEqual(siblings(dir), ROTATED_SET);
 });
 
-test('appendEvent: an ABANDONED claim is reclaimed and the record rotates (TRC-09)', () => {
+test('appendEvent: an ABANDONED claim is reclaimed and the record rotates (TRC-09)', (t) => {
   // 60 s dates the claim clear of the 30 s bound with margin on either side.
-  const dir = root();
+  const dir = root(t);
   killedClaim(dir, 60_000);
 
   const res = appendEvent(dir, { phase: 1, family: 'routing', event: 'resolve' });
@@ -290,8 +289,8 @@ test('appendEvent: an ABANDONED claim is reclaimed and the record rotates (TRC-0
   assert.deepEqual(siblings(dir), ROTATED_SET);
 });
 
-test('appendEvent: after the reclaim the next append stops paying the budget', () => {
-  const dir = root();
+test('appendEvent: after the reclaim the next append stops paying the budget', (t) => {
+  const dir = root(t);
   killedClaim(dir, 60_000);
   assert.equal(appendEvent(dir, { phase: 1, family: 'routing', event: 'resolve' }).written, true);
   assert.equal(statSync(tracePath(dir)).nlink, 1, 'a claim is still standing on the record');
@@ -306,7 +305,7 @@ test('appendEvent: after the reclaim the next append stops paying the budget', (
   assert.ok(ms < 50, `the append still paid the rotation budget: ${ms}ms`);
 });
 
-test('appendEvent: a losing append does NOT restart the abandoned claim clock (TRC-09)', () => {
+test('appendEvent: a losing append does NOT restart the abandoned claim clock (TRC-09)', (t) => {
   // The reclaim's evidence is the sidecar's age, and the stamp that dates a
   // claim is written BEFORE the link - so every append that loses the claim had
   // just overwritten the only evidence the dead claimant left. On a record
@@ -314,7 +313,7 @@ test('appendEvent: a losing append does NOT restart the abandoned claim clock (T
   // append, and the abandoned claim never ages into a reclaim at all: the
   // permanent disable TRC-09 exists to remove, on exactly the busy record it
   // exists for.
-  const dir = root();
+  const dir = root(t);
   killedClaim(dir, 20_000);
   const before = statSync(rotationClaimPath(dir)).mtimeMs;
 
@@ -335,12 +334,12 @@ test('appendEvent: a losing append does NOT restart the abandoned claim clock (T
   assert.equal(statSync(tracePath(dir)).nlink, 1, 'the abandoned claim was never reclaimed');
 });
 
-test('appendEvent: a losing append leaves a sidecar-less claim sidecar-less (D-02)', () => {
+test('appendEvent: a losing append leaves a sidecar-less claim sidecar-less (D-02)', (t) => {
   // The same restore, on the arm where there was nothing to restore. A claim
   // taken before TRC-09 shipped carries no sidecar, D-02 reads that as LIVE,
   // and a losing append that left its own stamp behind would date a live claim
   // it does not hold - handing the next reader a 30 s countdown to breaking it.
-  const dir = root();
+  const dir = root(t);
   killedClaim(dir, null);
   assert.equal(appendEvent(dir, { phase: 1, family: 'routing', event: 'resolve' }).written, true);
   assert.equal(statSync(tracePath(dir)).nlink, 2, 'the claim was evicted on missing evidence');
@@ -348,7 +347,7 @@ test('appendEvent: a losing append leaves a sidecar-less claim sidecar-less (D-0
     'the losing append dated a claim it never held');
 });
 
-test('rotateTrace: a claim whose sidecar reads LIVE is left standing (TRC-09)', async () => {
+test('rotateTrace: a claim whose sidecar reads LIVE is left standing (TRC-09)', async (t) => {
   // The other side of the discriminator, and the reason it is a sidecar at all.
   // Breaking a claim a rotation is genuinely holding costs the whole record,
   // not one rotation: the holder's `readFileSync(sibling)` then returns ENOENT,
@@ -359,7 +358,7 @@ test('rotateTrace: a claim whose sidecar reads LIVE is left standing (TRC-09)', 
   // `rotateTrace` DIRECTLY rather than through `appendEvent`, the way the
   // stale-stat row above does, so what is asserted is the rotation's own answer.
   const { rotateTrace } = await import('../cadence-core/bin/lib/trace.mjs');
-  const dir = root();
+  const dir = root(t);
   killedClaim(dir, 0);
   const live = readFileSync(tracePath(dir), 'utf8');
 
@@ -373,13 +372,13 @@ test('rotateTrace: a claim whose sidecar reads LIVE is left standing (TRC-09)', 
   assert.equal(siblings(dir).filter((e) => e.includes('.evict.')).length, 0);
 });
 
-test('rotateTrace: a claim with NO sidecar at all is left standing (TRC-09)', async () => {
+test('rotateTrace: a claim with NO sidecar at all is left standing (TRC-09)', async (t) => {
   // D-02's fail-live posture, and today's behaviour deliberately preserved
   // rather than new behaviour: a claim taken by the code that shipped before
   // TRC-09 carries no sidecar, and missing evidence must read as LIVE. It is
   // what makes the change safe to ship before every claim in the wild has one.
   const { rotateTrace } = await import('../cadence-core/bin/lib/trace.mjs');
-  const dir = root();
+  const dir = root(t);
   killedClaim(dir, null);
 
   assert.deepEqual(rotateTrace(dir, 120), { rotated: false });
@@ -388,7 +387,7 @@ test('rotateTrace: a claim with NO sidecar at all is left standing (TRC-09)', as
   assert.equal(held.nlink, 2, 'the claim was evicted on missing evidence');
 });
 
-test('appendEvent: a LEFTOVER eviction that cannot confirm its claim puts the generation back (D-02)', () => {
+test('appendEvent: a LEFTOVER eviction that cannot confirm its claim puts the generation back (D-02)', (t) => {
   // The leftover arm's own discriminator - `rotationInFlight` - is read BEFORE
   // the eviction rename, so a writer that links in between has a LIVE claim
   // renamed away with nothing to put it back. That costs the whole record, not
@@ -397,7 +396,7 @@ test('appendEvent: a LEFTOVER eviction that cannot confirm its claim puts the ge
   // Driven by a sidecar path `publish` cannot write, which is the same answer a
   // stolen claim gives: this call cannot prove the claim it is about to break
   // is its own.
-  const dir = root();
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   padToBound(dir);
   assert.equal(appendEvent(dir, { phase: 1, family: 'routing', event: 'resolve', writer: 'a' }).written, true);
@@ -419,8 +418,8 @@ test('appendEvent: a LEFTOVER eviction that cannot confirm its claim puts the ge
     "the writer's own event is not in the live record");
 });
 
-test('appendEvent: a record already PAST the bound rotates, and its sibling keeps the excess', () => {
-  const dir = root();
+test('appendEvent: a record already PAST the bound rotates, and its sibling keeps the excess', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   appendFileSync(tracePath(dir), `${'x'.repeat(MAX_TRACE_BYTES * 2)}\n`);
   const carried = readFileSync(tracePath(dir), 'utf8');
@@ -437,8 +436,8 @@ test('appendEvent: a record already PAST the bound rotates, and its sibling keep
     'the file rotation PRODUCED must be under the bound');
 });
 
-test('appendEvent: the run in flight keeps its corr and its brackets across a rotation', () => {
-  const dir = root();
+test('appendEvent: the run in flight keeps its corr and its brackets across a rotation', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: DISPATCH, plan: 1, role: 'cad-executor' });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'return', plan: 1, role: 'cad-executor', tokens: 10 });
@@ -456,13 +455,13 @@ test('appendEvent: the run in flight keeps its corr and its brackets across a ro
   assert.equal(under(after), 1);
 });
 
-test('appendEvent: a tail bigger than the bound is carried anyway, never refused', () => {
+test('appendEvent: a tail bigger than the bound is carried anyway, never refused', (t) => {
   // The degenerate arm: one run has written a bound's worth of its OWN events
   // since its own anchor, so nothing post-anchor may be dropped - every line
   // is a bracket half AC2 counts. Rotation carries them and lets the fresh
   // record sit over the bound rather than refusing the append or dropping a
   // half.
-  const dir = root();
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   let bulk = '';
   let n = 0;
@@ -485,8 +484,8 @@ test('appendEvent: a tail bigger than the bound is carried anyway, never refused
     'a bracket half of the run in flight was dropped to fit the bound');
 });
 
-test('appendEvent: a record with no anchor carries nothing forward', () => {
-  const dir = root();
+test('appendEvent: a record with no anchor carries nothing forward', (t) => {
+  const dir = root(t);
   padToBound(dir);
   const res = appendEvent(dir, { phase: 7, family: 'routing', event: 'resolve' });
   assert.equal(res.written, true);
@@ -528,8 +527,8 @@ function writer(dir, name) {
   });
 }
 
-test('appendEvent: writers racing at the bound leave ONE generation and lose no event', async () => {
-  const dir = root();
+test('appendEvent: writers racing at the bound leave ONE generation and lose no event', async (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   padToBound(dir);
   const names = ['w0', 'w1', 'w2', 'w3', 'w4', 'w5'];
@@ -559,8 +558,8 @@ test('appendEvent: writers racing at the bound leave ONE generation and lose no 
   assert.equal(JSON.parse(rotated.split('\n')[0]).event, ANCHOR);
 });
 
-test('appendEvent: a second append after a rotation does not rotate again', async () => {
-  const dir = root();
+test('appendEvent: a second append after a rotation does not rotate again', async (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   padToBound(dir);
   assert.equal(appendEvent(dir, { phase: 1, family: 'routing', event: 'resolve', writer: 'a' }).written, true);
@@ -573,7 +572,7 @@ test('appendEvent: a second append after a rotation does not rotate again', asyn
   assert.deepEqual(siblings(dir), ROTATED_SET);
 });
 
-test('appendEvent: a writer holding a STALE stat is refused the claim, not corrected after it', async () => {
+test('appendEvent: a writer holding a STALE stat is refused the claim, not corrected after it', async (t) => {
   // The interleaving `EEXIST` alone cannot see, forced deterministically. A
   // rotates and writes a fresh live file; B is still holding the stat that sent
   // it to rotate, and calls the claim on a live path that exists again. A
@@ -581,7 +580,7 @@ test('appendEvent: a writer holding a STALE stat is refused the claim, not corre
   // A's event carried off into the sibling, and exactly one sibling still on
   // disk so a count would call it healthy. The claim must REFUSE.
   const { rotateTrace } = await import('../cadence-core/bin/lib/trace.mjs');
-  const dir = root();
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   padToBound(dir);
   assert.equal(appendEvent(dir, { phase: 1, family: 'routing', event: 'resolve', writer: 'a' }).written, true);
@@ -597,11 +596,11 @@ test('appendEvent: a writer holding a STALE stat is refused the claim, not corre
   assert.deepEqual(siblings(dir), ROTATED_SET);
 });
 
-test('appendEvent: a SECOND rotation replaces the generation, so the pair stays bounded', () => {
+test('appendEvent: a SECOND rotation replaces the generation, so the pair stays bounded', (t) => {
   // D-05's other half: the rotated path is fixed, so there is never a
   // `trace.2.jsonl` - and the record has to be able to rotate twice, or the
   // live file grows without a bound after the first cut.
-  const dir = root();
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   padToBound(dir);
   assert.equal(appendEvent(dir, { phase: 1, family: 'routing', event: 'resolve', writer: 'a' }).written, true);
@@ -639,12 +638,12 @@ const carrying = (f, writer) => (existsSync(f)
   ? readFileSync(f, 'utf8').split('\n').filter((l) => l.includes(`"${writer}"`)).length
   : 0);
 
-test('appendEvent: a second rotation carries back the event that only reached the generation', () => {
+test('appendEvent: a second rotation carries back the event that only reached the generation', (t) => {
   // The two-step loss (D-05). Rotation 1's carry-back stops the instant the
   // sibling stops growing, so a writer that appended into the old inode a
   // moment later left its bytes ONLY in the generation. Rotation 2 destroys
   // that generation - and before this phase the event was then in NEITHER file.
-  const dir = root();
+  const dir = root(t);
   rotatedOnce(dir);
   appendFileSync(rotatedTracePath(dir), planted('racer'));
 
@@ -661,12 +660,12 @@ test('appendEvent: a second rotation carries back the event that only reached th
   assert.deepEqual(siblings(dir), ROTATED_SET);
 });
 
-test('appendEvent: the rescue never puts back a line the live record already carries', () => {
+test('appendEvent: the rescue never puts back a line the live record already carries', (t) => {
   // Rotation 1's own carry-back leaves a duplicate copy in the generation on
   // purpose - "a duplicate copy in a file nothing reads costs nothing". The
   // rescue reads that same delta, and a second copy in the LIVE record is not
   // free: a bracket half counted twice changes what `renderTrace` reports.
-  const dir = root();
+  const dir = root(t);
   rotatedOnce(dir);
   const dup = readFileSync(tracePath(dir), 'utf8').split('\n')
     .filter(Boolean).find((l) => l.includes('"writer":"a"'));
@@ -680,13 +679,13 @@ test('appendEvent: the rescue never puts back a line the live record already car
     'the rescue re-appended a line the record already held');
 });
 
-test('rotateTrace: a rescue that cannot READ the generation STATES the tail it cut', async () => {
+test('rotateTrace: a rescue that cannot READ the generation STATES the tail it cut', async (t) => {
   // A rescue that fails must not be SILENT. It never changes whether the
   // rotation rotated - `reason` is for a rotation that failed outright - but
   // the bytes it could not carry are stated, and they come off the stat rather
   // than off a read that never established a count.
   const { rotateTrace } = await import('../cadence-core/bin/lib/trace.mjs');
-  const dir = root();
+  const dir = root(t);
   rotatedOnce(dir);
   appendFileSync(rotatedTracePath(dir), planted('racer'));
 
@@ -712,14 +711,14 @@ test('rotateTrace: a rescue that cannot READ the generation STATES the tail it c
     'fixture: the shortfall must be stating a tail that really was cut');
 });
 
-test('rotateTrace: a generation whose marker carries NO seal states an UNKNOWN shortfall', async () => {
+test('rotateTrace: a generation whose marker carries NO seal states an UNKNOWN shortfall', async (t) => {
   // The pre-upgrade shape, and the one that fires on the FIRST rotation after
   // an upgrade rather than only in theory: a generation sealed by the code that
   // shipped before `carried_bytes`. No offset can be guessed, so nothing is
   // rescued - but the generation is destroyed either way, and destroying it
   // with no field at all is the one silence the `shortfall` contract forbids.
   const { rotateTrace } = await import('../cadence-core/bin/lib/trace.mjs');
-  const dir = root();
+  const dir = root(t);
   rotatedOnce(dir);
   appendFileSync(rotatedTracePath(dir), planted('racer'));
 
@@ -749,8 +748,8 @@ test('rotateTrace: a generation whose marker carries NO seal states an UNKNOWN s
 // --- the rotation, on both reader envelopes (D-06) ---------------------------
 
 /** A planning root whose record has just rotated, with `plan` paired under it. */
-function rotatedRoot() {
-  const dir = root();
+function rotatedRoot(t) {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: DISPATCH, plan: 1, role: 'cad-executor' });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'return', plan: 1, role: 'cad-executor', tokens: 10 });
@@ -760,16 +759,16 @@ function rotatedRoot() {
   return dir;
 }
 
-test('renderTrace: a record that never rotated carries no rotation key at all', () => {
-  const dir = root();
+test('renderTrace: a record that never rotated carries no rotation key at all', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   const r = renderTrace(dir, 1);
   assert.equal('rotated' in r, false,
     'a record that never rotated must render byte-identically for every reader');
 });
 
-test('renderTrace: after a rotation the envelope names the sibling, and capped is false', () => {
-  const dir = rotatedRoot();
+test('renderTrace: after a rotation the envelope names the sibling, and capped is false', (t) => {
+  const dir = rotatedRoot(t);
   const r = renderTrace(dir, 1);
   assert.deepEqual(Object.keys(r.rotated).sort(), ['file', 'ts']);
   assert.equal(r.rotated.file, rotatedTracePath(dir));
@@ -781,8 +780,8 @@ test('renderTrace: after a rotation the envelope names the sibling, and capped i
   assert.equal(r.file, tracePath(dir));
 });
 
-test('renderTrace: the rotation reports on the RECORD, not on the --phase scope', () => {
-  const dir = rotatedRoot();
+test('renderTrace: the rotation reports on the RECORD, not on the --phase scope', (t) => {
+  const dir = rotatedRoot(t);
   // A phase that never appears in the record at all. The cut took events of
   // EVERY phase away, so the answer cannot depend on which one was asked about.
   const r = renderTrace(dir, 9);
@@ -791,8 +790,8 @@ test('renderTrace: the rotation reports on the RECORD, not on the --phase scope'
   assert.equal(renderTrace(dir).rotated.file, rotatedTracePath(dir), 'unscoped too');
 });
 
-test('seam: trace render and trace suggest each name their record and report the rotation', () => {
-  const clean = root();
+test('seam: trace render and trace suggest each name their record and report the rotation', (t) => {
+  const clean = root(t);
   appendEvent(clean, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   appendEvent(clean, { phase: 1, family: 'outcome', event: 'rearm', detail: 'risk_surface' });
 
@@ -806,7 +805,7 @@ test('seam: trace render and trace suggest each name their record and report the
   // suggest's thin-record discriminator is untouched by the new keys.
   assert.equal(cleanSuggest.events_read, 2);
 
-  const dir = rotatedRoot();
+  const dir = rotatedRoot(t);
   const render = run(dir, ['trace', 'render', '--phase', '1']);
   const suggest = run(dir, ['trace', 'suggest']);
   assert.equal(render.file, tracePath(dir));
@@ -819,12 +818,12 @@ test('seam: trace render and trace suggest each name their record and report the
   assert.equal(run(dir, ['trace', 'render', '--phase', '9']).rotated.file, rotatedTracePath(dir));
 });
 
-test('seam: after a SECOND cut both envelopes still report the rotation, and the marker pairs with nothing', () => {
+test('seam: after a SECOND cut both envelopes still report the rotation, and the marker pairs with nothing', (t) => {
   // This phase changed what the marker carries and what a second rotation does
   // with the generation it destroys, so the guard is over the seam: a rotation
   // that happened is still visible on both readers, and nothing new leaks into
   // either envelope.
-  const dir = root();
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: DISPATCH, plan: 1, role: 'cad-executor' });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'return', plan: 1, role: 'cad-executor', tokens: 10 });
@@ -857,8 +856,8 @@ test('seam: after a SECOND cut both envelopes still report the rotation, and the
   assert.deepEqual(render.unpaired, []);
 });
 
-test('appendEvent: one line that reaches the bound by itself is refused, and nothing moves', () => {
-  const dir = root();
+test('appendEvent: one line that reaches the bound by itself is refused, and nothing moves', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   const before = readFileSync(tracePath(dir), 'utf8');
   const res = appendEvent(dir, { phase: 1, family: 'routing', event: 'resolve', detail: 'y'.repeat(MAX_TRACE_BYTES) });
@@ -881,12 +880,12 @@ function sized(dir, bytes) {
   return appendEvent(dir, { phase: 7, family: 'routing', event: 'resolve', detail: 'y'.repeat(n) });
 }
 
-test('appendEvent: an event with no room BESIDE the marker is refused, not rotated for', () => {
+test('appendEvent: an event with no room BESIDE the marker is refused, not rotated for', (t) => {
   // The rotation always writes its marker into the fresh record too, so an
   // event that fits under the bound alone but not beside the marker used to
   // rotate and then land a record over its bound on the first write (measured
   // 2026-08-30: 105 B over). It is refused now - the deliberate band D-09 names.
-  const dir = root();
+  const dir = root(t);
   padToBound(dir);
   const before = readFileSync(tracePath(dir), 'utf8');
 
@@ -897,11 +896,11 @@ test('appendEvent: an event with no room BESIDE the marker is refused, not rotat
   assert.deepEqual(siblings(dir), ['trace.jsonl'], 'nothing was rotated');
 });
 
-test('appendEvent: an event that DOES fit beside the marker rotates under the bound (AC2)', () => {
+test('appendEvent: an event that DOES fit beside the marker rotates under the bound (AC2)', (t) => {
   // The reserve has to be the line the rotation actually writes, so the size
   // this row admits is MEASURED off a real rotation rather than assumed: same
   // record size, same absent anchor, so the same marker.
-  const probe = root();
+  const probe = root(t);
   padToBound(probe);
   assert.equal(appendEvent(probe, { phase: 7, family: 'routing', event: 'resolve' }).written, true);
   const line = readFileSync(tracePath(probe), 'utf8').split('\n').find((l) => l.includes(ROTATION));
@@ -909,7 +908,7 @@ test('appendEvent: an event that DOES fit beside the marker rotates under the bo
   const owed = Buffer.byteLength(`${line}\n`);
 
   // One byte inside the new threshold, which is the tightest admission there is.
-  const dir = root();
+  const dir = root(t);
   padToBound(dir);
   assert.equal(sized(dir, MAX_TRACE_BYTES - owed - 1).written, true,
     'the reserve is wider than the marker the rotation writes');
@@ -918,8 +917,8 @@ test('appendEvent: an event that DOES fit beside the marker rotates under the bo
     `the rotation's FIRST write left the record ${statSync(tracePath(dir)).size - MAX_TRACE_BYTES} B over its bound`);
 });
 
-test('renderTrace: an oversized file is read bounded, not whole', () => {
-  const dir = root();
+test('renderTrace: an oversized file is read bounded, not whole', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   // Four times the cap of syntactically VALID events. Whole-file reads count
   // them all; a bounded read cannot, because it never sees past the ceiling.
@@ -941,10 +940,10 @@ test('renderTrace: an oversized file is read bounded, not whole', () => {
   assert.equal(r.counts.lifecycle, 1, 'the head is kept, so the anchor survives');
 });
 
-test('appendEvent: an unwritable planning root returns written:false and throws nothing', () => {
+test('appendEvent: an unwritable planning root returns written:false and throws nothing', (t) => {
   // .planning is a REGULAR FILE, so every fs call under it fails ENOTDIR for
   // any uid - deterministic where a chmod is not (a root test runner ignores it).
-  const base = mkdtempSync(join(tmpdir(), 'cad-trace-bad-'));
+  const base = scratch('cad-trace-bad-', t);
   const dir = join(base, '.planning');
   writeFileSync(dir, 'not a directory');
   const res = appendEvent(dir, { phase: 1, family: 'routing', event: 'resolve' });
@@ -956,16 +955,16 @@ test('appendEvent: an unwritable planning root returns written:false and throws 
   assert.deepEqual(r.counts, { routing: 0, provider: 0, lifecycle: 0, outcome: 0 });
 });
 
-test('appendEvent: a non-object event is refused rather than written', () => {
-  const dir = root();
+test('appendEvent: a non-object event is refused rather than written', (t) => {
+  const dir = root(t);
   assert.deepEqual(appendEvent(dir, null), { written: false, reason: 'bad-event' });
   assert.deepEqual(appendEvent(dir, ['x']), { written: false, reason: 'bad-event' });
 });
 
 // --- the reader ---------------------------------------------------------------
 
-test('renderTrace: an absent trace file is an empty render, never an error', () => {
-  const dir = root();
+test('renderTrace: an absent trace file is an empty render, never an error', (t) => {
+  const dir = root(t);
   const r = renderTrace(dir, 1);
   assert.deepEqual(r.counts, { routing: 0, provider: 0, lifecycle: 0, outcome: 0 });
   assert.deepEqual(r.events, []);
@@ -974,8 +973,8 @@ test('renderTrace: an absent trace file is an empty render, never an error', () 
   assert.equal(r.corr, '1');
 });
 
-test('renderTrace: an unpaired dispatch is reported, a paired one is not', () => {
-  const dir = root();
+test('renderTrace: an unpaired dispatch is reported, a paired one is not', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'dispatch', plan: '1' });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'dispatch', plan: '2' });
@@ -984,8 +983,8 @@ test('renderTrace: an unpaired dispatch is reported, a paired one is not', () =>
   assert.deepEqual(r.unpaired.map((u) => u.plan), ['1']);
 });
 
-test('renderTrace: checkpoint and escalation close a bracket too', () => {
-  const dir = root();
+test('renderTrace: checkpoint and escalation close a bracket too', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'dispatch', plan: '1' });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'checkpoint', plan: '1' });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'dispatch', plan: 'cad-verifier' });
@@ -993,18 +992,18 @@ test('renderTrace: checkpoint and escalation close a bracket too', () => {
   assert.deepEqual(renderTrace(dir, 1).unpaired, []);
 });
 
-test('renderTrace: a role-keyed worker pairs on its own key, not with a plan number', () => {
-  const dir = root();
+test('renderTrace: a role-keyed worker pairs on its own key, not with a plan number', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'dispatch', plan: '1' });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'return', plan: 'cad-verifier' });
   assert.deepEqual(renderTrace(dir, 1).unpaired.map((u) => u.plan), ['1']);
 });
 
-test('renderTrace: a re-run never pairs across runs, and unpaired names the run', () => {
+test('renderTrace: a re-run never pairs across runs, and unpaired names the run', (t) => {
   // Phase 1 runs TWICE at different shas. Run 1 strands plan 1; run 2 brackets
   // plan 1 cleanly. The header promises a re-run starts a NEW id, so run 2's
   // `return` may not reach back and close run 1's dispatch.
-  const dir = root();
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'aaa' });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'dispatch', plan: '1' });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'bbb' });
@@ -1017,8 +1016,8 @@ test('renderTrace: a re-run never pairs across runs, and unpaired names the run'
   assert.deepEqual(r.unpaired.map((u) => u.corr).filter((c) => c === '1-bbb'), []);
 });
 
-test('renderTrace: a PRE-ANCHOR event joins its phase\'s next anchor at read time', () => {
-  const dir = root();
+test('renderTrace: a PRE-ANCHOR event joins its phase\'s next anchor at read time', (t) => {
+  const dir = root(t);
   // /cad-plan's resolves are written before /cad-execute writes the anchor, so
   // they took the bare `<phase>` form while everything after it took
   // `<phase>-<sha>` - one phase, two ids, and the record joined nothing across
@@ -1042,13 +1041,13 @@ test('renderTrace: a PRE-ANCHOR event joins its phase\'s next anchor at read tim
   assert.deepEqual(renderTrace(dir, 2).events.map((e) => e.corr), ['2']);
 });
 
-test('renderTrace: events after a NO-SHA anchor stay with that run, never the next', () => {
+test('renderTrace: events after a NO-SHA anchor stay with that run, never the next', (t) => {
   // A no-sha anchor derives the bare form, so its run's events legitimately
   // carry `"1"` - indistinguishable at the corr field from the NEXT run's
   // pre-anchor events. Repairing them forward would let run 2's terminal pair
   // with and fund run 1's dispatch; the fence is that a bare event whose most
   // recent PRECEDING anchor is bare is already correct as written.
-  const dir = root();
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: ANCHOR });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor' });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: ANCHOR, sha: 'bbb' });
@@ -1062,14 +1061,14 @@ test('renderTrace: events after a NO-SHA anchor stay with that run, never the ne
     "the stray terminal funds no bracket - run 1's dispatch stays unrecorded");
 });
 
-test('renderTrace: the U+0000 worker separator keeps two SHIFTED brackets apart', () => {
+test('renderTrace: the U+0000 worker separator keeps two SHIFTED brackets apart', (t) => {
   // The source of that separator was two literal NUL bytes until DFC-01 turned
   // them into `\0` escapes, and nothing pinned it: deleting the separator, or
   // swapping it for a character a corr/phase/plan value may itself contain,
   // changes the key only for inputs whose parts CONCATENATE alike. Both rows
   // below join to "abcp", so an unseparated key pairs a dispatch with a foreign
   // return and reports a clean run; a separated one leaves the dispatch open.
-  const dir = root();
+  const dir = root(t);
   appendFileSync(tracePath(dir),
     `${JSON.stringify({ corr: 'a', phase: 'bc', plan: 'p', family: 'lifecycle', event: DISPATCH })}\n`
     + `${JSON.stringify({ corr: 'ab', phase: 'c', plan: 'p', family: 'lifecycle', event: TERMINAL[0] })}\n`);
@@ -1077,8 +1076,8 @@ test('renderTrace: the U+0000 worker separator keeps two SHIFTED brackets apart'
   assert.deepEqual(r.unpaired.map((u) => [u.corr, u.phase, u.plan]), [['a', 'bc', 'p']]);
 });
 
-test('renderTrace: a malformed line is skipped and counted, the rest still read', () => {
-  const dir = root();
+test('renderTrace: a malformed line is skipped and counted, the rest still read', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'routing', event: 'resolve' });
   appendFileSync(tracePath(dir), 'not json\n');
   appendEvent(dir, { phase: 1, family: 'outcome', event: 'uat_verdict' });
@@ -1088,8 +1087,8 @@ test('renderTrace: a malformed line is skipped and counted, the rest still read'
   assert.equal(r.counts.outcome, 1);
 });
 
-test('renderTrace: --phase restricts the record to that phase', () => {
-  const dir = root();
+test('renderTrace: --phase restricts the record to that phase', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'routing', event: 'resolve' });
   appendEvent(dir, { phase: 2, family: 'routing', event: 'resolve' });
   assert.equal(renderTrace(dir, 1).counts.routing, 1);
@@ -1099,8 +1098,8 @@ test('renderTrace: --phase restricts the record to that phase', () => {
 
 // --- the seam -----------------------------------------------------------------
 
-test('seam: append then render joins both events under the derived id', () => {
-  const dir = root();
+test('seam: append then render joins both events under the derived id', (t) => {
+  const dir = root(t);
   const a = run(dir, ['trace', 'append', '--phase', '1', '--family', 'lifecycle',
     '--event', 'phase_start', '--sha', 'abc1234']);
   assert.equal(a.ok, true);
@@ -1118,8 +1117,8 @@ test('seam: append then render joins both events under the derived id', () => {
   assert.deepEqual(r.unpaired.map((u) => u.plan), ['1']);
 });
 
-test('seam: every family is accepted and nothing else is', () => {
-  const dir = root();
+test('seam: every family is accepted and nothing else is', (t) => {
+  const dir = root(t);
   for (const family of FAMILIES) {
     assert.equal(run(dir, ['trace', 'append', '--phase', '1',
       '--family', family, '--event', 'e']).ok, true, family);
@@ -1129,15 +1128,15 @@ test('seam: every family is accepted and nothing else is', () => {
   assert.equal(bad.reason, 'bad-args');
 });
 
-test('seam: a malformed call is ok:false, an unwritten append is ok:true', () => {
-  const dir = root();
+test('seam: a malformed call is ok:false, an unwritten append is ok:true', (t) => {
+  const dir = root(t);
   assert.equal(run(dir, ['trace', 'append', '--family', 'routing', '--event', 'e']).reason,
     'bad-args');
   assert.equal(run(dir, ['trace', 'append', '--phase', '1', '--family', 'routing']).reason,
     'bad-args');
   assert.equal(run(dir, ['trace', 'nonsense']).reason, 'usage');
 
-  const base = mkdtempSync(join(tmpdir(), 'cad-trace-seam-'));
+  const base = scratch('cad-trace-seam-', t);
   const bad = join(base, '.planning');
   writeFileSync(bad, 'not a directory');
   const r = run(bad, ['trace', 'append', '--phase', '1', '--family', 'routing', '--event', 'e']);
@@ -1146,11 +1145,11 @@ test('seam: a malformed call is ok:false, an unwritten append is ok:true', () =>
   assert.equal(r.reason, 'ENOTDIR');
 });
 
-test('seam: 1.1 and 1.10 are two phases, not one trace key (D-02)', () => {
+test('seam: 1.1 and 1.10 are two phases, not one trace key (D-02)', (t) => {
   // The defect recalled from phase 1's queue: `--phase` was read as a NUMBER, so
   // `1.10` normalized to `1.1` and both sub-phases shared one key and one
   // correlation id - the record joined two phases into one story.
-  const dir = root();
+  const dir = root(t);
   const a = run(dir, ['trace', 'append', '--phase', '1.1', '--family', 'lifecycle',
     '--event', 'phase_start', '--sha', 'aaa1111']);
   const b = run(dir, ['trace', 'append', '--phase', '1.10', '--family', 'lifecycle',
@@ -1169,8 +1168,8 @@ test('seam: 1.1 and 1.10 are two phases, not one trace key (D-02)', () => {
   assert.equal(one.events[0].phase, '1.1');
 });
 
-test('seam: render on an absent trace file is ok:true with an empty record', () => {
-  const dir = root();
+test('seam: render on an absent trace file is ok:true with an empty record', (t) => {
+  const dir = root(t);
   const r = run(dir, ['trace', 'render', '--phase', '1']);
   assert.equal(r.ok, true);
   assert.deepEqual(r.brackets, []);
@@ -1195,8 +1194,8 @@ function billed(dir, plan, role, a, b, tokens, event = 'return') {
   appendEvent(dir, { phase: 9, family: 'lifecycle', event, plan, role, tokens, ts: at(b) });
 }
 
-test('renderTrace: every PAIRED bracket is exposed as a row, unpaired ones are not', () => {
-  const dir = root();
+test('renderTrace: every PAIRED bracket is exposed as a row, unpaired ones are not', (t) => {
+  const dir = root(t);
   billed(dir, '1', 'cad-executor', 0, 4, 100);
   billed(dir, '2', 'cad-reviewer', 2, 5, 50, 'checkpoint');
   appendEvent(dir, { phase: 9, family: 'lifecycle', event: DISPATCH, plan: '3', role: 'cad-planner', ts: at(6) });
@@ -1210,8 +1209,8 @@ test('renderTrace: every PAIRED bracket is exposed as a row, unpaired ones are n
   assert.deepEqual(r.unpaired.map((u) => u.plan), ['3']);
 });
 
-test('renderTrace: a bracket row bills the DISPATCH\'s role, like `roles` does', () => {
-  const dir = root();
+test('renderTrace: a bracket row bills the DISPATCH\'s role, like `roles` does', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 9, family: 'lifecycle', event: DISPATCH, plan: '1', role: 'cad-executor', ts: at(0) });
   appendEvent(dir, { phase: 9, family: 'lifecycle', event: 'return', plan: '1', role: 'cad-reviewer', tokens: 7, ts: at(1) });
   const r = renderTrace(dir, 9);
@@ -1220,8 +1219,8 @@ test('renderTrace: a bracket row bills the DISPATCH\'s role, like `roles` does',
   assert.equal(r.mismatched.length, 1);
 });
 
-test('renderTrace: a bracket whose timestamps cannot be read reports ms null, never 0', () => {
-  const dir = root();
+test('renderTrace: a bracket whose timestamps cannot be read reports ms null, never 0', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 9, family: 'lifecycle', event: DISPATCH, plan: '1', role: 'r', ts: 'not-a-time' });
   appendEvent(dir, { phase: 9, family: 'lifecycle', event: 'return', plan: '1', role: 'r', ts: at(3) });
   const r = renderTrace(dir, 9);
@@ -1231,8 +1230,8 @@ test('renderTrace: a bracket whose timestamps cannot be read reports ms null, ne
   assert.equal(r.brackets[0].tokens, null);
 });
 
-test('seam: the DEFAULT render carries bracket rows and outcomes, never the event array', () => {
-  const dir = root();
+test('seam: the DEFAULT render carries bracket rows and outcomes, never the event array', (t) => {
+  const dir = root(t);
   billed(dir, '1', 'cad-executor', 0, 4, 100);
   appendEvent(dir, { phase: 9, family: 'outcome', event: 'gate', detail: 'risk_surface', ts: at(5) });
   appendEvent(dir, { phase: 9, family: 'routing', event: 'resolve', ts: at(6) });
@@ -1247,8 +1246,8 @@ test('seam: the DEFAULT render carries bracket rows and outcomes, never the even
   assert.deepEqual(r.roles, { 'cad-executor': { dispatches: 1, tokens: 100 } });
 });
 
-test('seam: triage-gate\'s `rearm` lookup still finds its event in the bounded response', () => {
-  const dir = root();
+test('seam: triage-gate\'s `rearm` lookup still finds its event in the bounded response', (t) => {
+  const dir = root(t);
   // The one-re-arm cap on the only BLOCKING trigger reads this payload for a
   // `rearm` outcome under the current `corr`. A tail-N bound would drop it
   // behind the phase's lifecycle traffic and the cap would fail OPEN.
@@ -1261,8 +1260,8 @@ test('seam: triage-gate\'s `rearm` lookup still finds its event in the bounded r
   assert.equal(rearm[0].detail, 'risk_surface');
 });
 
-test('seam: --events hands back the raw array the two in-process readers use', () => {
-  const dir = root();
+test('seam: --events hands back the raw array the two in-process readers use', (t) => {
+  const dir = root(t);
   billed(dir, '1', 'cad-executor', 0, 4, 100);
   appendEvent(dir, { phase: 9, family: 'outcome', event: 'gate', ts: at(5) });
   const full = run(dir, ['trace', 'render', '--phase', '9', '--events']);
@@ -1297,8 +1296,8 @@ function provider(dir, m, usage, extra) {
   });
 }
 
-test('seam: the default render folds what the providers said the reviews cost', () => {
-  const dir = root();
+test('seam: the default render folds what the providers said the reviews cost', (t) => {
+  const dir = root(t);
   provider(dir, 0, { input: 900, output: 100 });
   provider(dir, 1, { input: 400, output: 60 });
   const r = run(dir, ['trace', 'render', '--phase', '9']);
@@ -1309,8 +1308,8 @@ test('seam: the default render folds what the providers said the reviews cost', 
   assert.ok(!('events' in r), JSON.stringify(Object.keys(r)));
 });
 
-test('seam: a scope holding no provider call carries no provider_spend key', () => {
-  const dir = root();
+test('seam: a scope holding no provider call carries no provider_spend key', (t) => {
+  const dir = root(t);
   billed(dir, '1', 'cad-executor', 0, 4, 100);
   const r = run(dir, ['trace', 'render', '--phase', '9']);
   assert.equal('provider_spend' in r, false,
@@ -1318,8 +1317,8 @@ test('seam: a scope holding no provider call carries no provider_spend key', () 
   assert.deepEqual(r.counts, { routing: 0, provider: 0, lifecycle: 2, outcome: 0 });
 });
 
-test('seam: a provider call whose event carried no usage is unrecorded, never zero', () => {
-  const dir = root();
+test('seam: a provider call whose event carried no usage is unrecorded, never zero', (t) => {
+  const dir = root(t);
   provider(dir, 0, { input: 900, output: 100 });
   provider(dir, 1);
   // A foreign producer's non-number is refused the way a string `tokens` on a
@@ -1329,16 +1328,16 @@ test('seam: a provider call whose event carried no usage is unrecorded, never ze
     { calls: 3, tokens: 1000, unrecorded: 2 });
 });
 
-test('seam: a scope whose every provider call reported nothing shows no total', () => {
-  const dir = root();
+test('seam: a scope whose every provider call reported nothing shows no total', (t) => {
+  const dir = root(t);
   provider(dir, 0);
   assert.deepEqual(run(dir, ['trace', 'render', '--phase', '9']).provider_spend,
     { calls: 1, unrecorded: 1 },
     'no `tokens: 0` - every event written before the seam read usage would price at nothing');
 });
 
-test('seam: a model listing and a debug consult are provider calls, not reviews', () => {
-  const dir = root();
+test('seam: a model listing and a debug consult are provider calls, not reviews', (t) => {
+  const dir = root(t);
   provider(dir, 0, { input: 900, output: 100 });
   // Both cost money and neither is a review: `detect-models` lists a provider's
   // model ids and `consult` is `/cad-debug`'s dead-end second opinion. Folded
@@ -1352,8 +1351,8 @@ test('seam: a model listing and a debug consult are provider calls, not reviews'
   assert.equal(r.counts.provider, 3);
 });
 
-test('seam: a scope holding no review call carries no provider_spend key', () => {
-  const dir = root();
+test('seam: a scope holding no review call carries no provider_spend key', (t) => {
+  const dir = root(t);
   provider(dir, 0, { input: 4000, output: 40 }, { command: 'detect-models' });
   // No `command` at all: this figure prices only a call it can NAME, and no
   // event carrying `usage` predates that field.
@@ -1364,8 +1363,8 @@ test('seam: a scope holding no review call carries no provider_spend key', () =>
   assert.equal(r.counts.provider, 2);
 });
 
-test('seam: a review refused before the request was sent is not a call', () => {
-  const dir = root();
+test('seam: a review refused before the request was sent is not a call', (t) => {
+  const dir = root(t);
   provider(dir, 0, { input: 900, output: 100 });
   for (const [i, outcome] of ['no-key', 'bad-provider', 'bad-args', 'bad-payload', 'over-cap'].entries()) {
     provider(dir, i + 1, null, { outcome });
@@ -1375,8 +1374,8 @@ test('seam: a review refused before the request was sent is not a call', () => {
     'no `unrecorded: 5` - nothing left the machine on those, so their cost is not unknown, it is nothing');
 });
 
-test('seam: a review that reached the wire and failed still cost something', () => {
-  const dir = root();
+test('seam: a review that reached the wire and failed still cost something', (t) => {
+  const dir = root(t);
   // D-04: usage is recorded on the degraded outcomes that still burned the
   // call, and an `http` refusal has nothing to read but did reach a provider.
   provider(dir, 0, { input: 900, output: 100 }, { outcome: 'bad-json' });
@@ -1386,8 +1385,8 @@ test('seam: a review that reached the wire and failed still cost something', () 
     { calls: 3, tokens: 1000, unrecorded: 2 });
 });
 
-test('render: provider usage reaches no roles total, with or without it (D-01)', () => {
-  const dir = root();
+test('render: provider usage reaches no roles total, with or without it (D-01)', (t) => {
+  const dir = root(t);
   billed(dir, '1', 'cad-reviewer', 0, 4, 100);
   appendEvent(dir, {
     phase: 9, family: 'provider', event: 'request', command: 'review', role: 'cad-reviewer',
@@ -1410,8 +1409,8 @@ function traceBytes(dir) {
   try { return readFileSync(tracePath(dir), 'utf8'); } catch { return null; }
 }
 
-test('seam: --role and --tokens ride one lifecycle event, tokens as a NUMBER', () => {
-  const dir = root();
+test('seam: --role and --tokens ride one lifecycle event, tokens as a NUMBER', (t) => {
+  const dir = root(t);
   const r = run(dir, ['trace', 'append', '--phase', '4', '--family', 'lifecycle',
     '--event', 'return', '--plan', '1', '--role', 'cad-executor', '--tokens', '12345']);
   assert.equal(r.ok, true);
@@ -1425,8 +1424,8 @@ test('seam: --role and --tokens ride one lifecycle event, tokens as a NUMBER', (
   assert.match(traceBytes(dir), /"tokens":12345/);
 });
 
-test('seam: --plan and --role are two separate fields on the same event', () => {
-  const dir = root();
+test('seam: --plan and --role are two separate fields on the same event', (t) => {
+  const dir = root(t);
   run(dir, ['trace', 'append', '--phase', '4', '--family', 'lifecycle',
     '--event', 'dispatch', '--plan', '2', '--role', 'cad-executor', '--read', 'PLAN.md']);
   const [e] = lines(dir);
@@ -1437,13 +1436,13 @@ test('seam: --plan and --role are two separate fields on the same event', () => 
   assert.equal(e.role, 'cad-executor');
 });
 
-test('seam: --tokens accepts the comma grouping this plugin prints figures in', () => {
+test('seam: --tokens accepts the comma grouping this plugin prints figures in', (t) => {
   // lib/trace.mjs's TOKEN PROVENANCE contract prints `cad-planner 146,405` in
   // the grouped form, and that header is the one surface stating what a real
   // figure looks like, so the grouped form is the transcription the prose
   // models. Refusing it dropped the whole append and stranded the worker
   // unpaired, which is worse than the recording error it was refusing.
-  const dir = root();
+  const dir = root(t);
   const r = run(dir, ['trace', 'append', '--phase', '4', '--family', 'lifecycle',
     '--event', 'return', '--plan', '1', '--role', 'cad-planner', '--tokens', '146,405']);
   assert.equal(r.ok, true);
@@ -1452,8 +1451,8 @@ test('seam: --tokens accepts the comma grouping this plugin prints figures in', 
   assert.equal(typeof e.tokens, 'number');
 });
 
-test('seam: a malformed --tokens appends NOTHING at all', () => {
-  const dir = root();
+test('seam: a malformed --tokens appends NOTHING at all', (t) => {
+  const dir = root(t);
   for (const bad of ['abc', '-1', '1.5', '', '1,2,3', '146,40']) {
     const before = traceBytes(dir);
     const r = run(dir, ['trace', 'append', '--phase', '4', '--family', 'lifecycle',
@@ -1474,8 +1473,8 @@ test('seam: a malformed --tokens appends NOTHING at all', () => {
   assert.equal(traceBytes(dir), null);
 });
 
-test('seam: --tokens lands identically on return, checkpoint and escalation', () => {
-  const dir = root();
+test('seam: --tokens lands identically on return, checkpoint and escalation', (t) => {
+  const dir = root(t);
   for (const event of TERMINAL) {
     const r = run(dir, ['trace', 'append', '--phase', '4', '--family', 'lifecycle',
       '--event', event, '--plan', 'cad-planner', '--role', 'cad-planner', '--tokens', '7']);
@@ -1488,8 +1487,8 @@ test('seam: --tokens lands identically on return, checkpoint and escalation', ()
   assert.deepEqual(written.map((e) => e.tokens), TERMINAL.map(() => 7));
 });
 
-test('seam: --tokens 0 is a recorded figure, not an omission', () => {
-  const dir = root();
+test('seam: --tokens 0 is a recorded figure, not an omission', (t) => {
+  const dir = root(t);
   run(dir, ['trace', 'append', '--phase', '4', '--family', 'lifecycle',
     '--event', 'return', '--plan', '1', '--role', 'cad-executor', '--tokens', '0']);
   const [e] = lines(dir);
@@ -1497,8 +1496,8 @@ test('seam: --tokens 0 is a recorded figure, not an omission', () => {
   assert.ok('tokens' in e);
 });
 
-test('seam: --raised rides an adjudication event as a NUMBER', () => {
-  const dir = root();
+test('seam: --raised rides an adjudication event as a NUMBER', (t) => {
+  const dir = root(t);
   const r = run(dir, ['trace', 'append', '--phase', '1', '--family', 'outcome',
     '--event', 'adjudication', '--detail', 'plan: 0 survivors; voices openai',
     '--survivors', '0', '--downgraded', '0', '--refuted', '0', '--raised', '9']);
@@ -1512,8 +1511,8 @@ test('seam: --raised rides an adjudication event as a NUMBER', () => {
   assert.match(traceBytes(dir), /"raised":9/);
 });
 
-test('seam: --raised 0 is a recorded figure, not an omission', () => {
-  const dir = root();
+test('seam: --raised 0 is a recorded figure, not an omission', (t) => {
+  const dir = root(t);
   run(dir, ['trace', 'append', '--phase', '1', '--family', 'outcome',
     '--event', 'adjudication', '--detail', 'plan: 0 survivors',
     '--survivors', '0', '--downgraded', '0', '--refuted', '0', '--raised', '0']);
@@ -1524,8 +1523,8 @@ test('seam: --raised 0 is a recorded figure, not an omission', () => {
   assert.ok('raised' in e);
 });
 
-test('seam: an append with no --raised is byte-identical to today\'s', () => {
-  const dir = root();
+test('seam: an append with no --raised is byte-identical to today\'s', (t) => {
+  const dir = root(t);
   run(dir, ['trace', 'append', '--phase', '1', '--family', 'outcome',
     '--event', 'adjudication', '--detail', 'plan: 2 survivors',
     '--survivors', '2', '--downgraded', '0', '--refuted', '0']);
@@ -1533,8 +1532,8 @@ test('seam: an append with no --raised is byte-identical to today\'s', () => {
   assert.equal('raised' in e, false, JSON.stringify(e));
 });
 
-test('seam: a malformed --raised appends NOTHING at all', () => {
-  const dir = root();
+test('seam: a malformed --raised appends NOTHING at all', (t) => {
+  const dir = root(t);
   // No comma-grouping exception here, unlike `--tokens`: a finding count is
   // never PRINTED grouped, so `1,234` is a typo rather than a transcription.
   for (const bad of ['abc', '-1', '1.5', '', '1,234']) {
@@ -1568,8 +1567,8 @@ test('seam: a malformed --raised appends NOTHING at all', () => {
 // writer never emits proves nothing about the writer.
 
 /** A scratch git repo with `.planning/phases/<phase>/` and two commits. */
-function fireRepo(phase = 2) {
-  const repo = mkdtempSync(join(tmpdir(), 'cad-fire-'));
+function fireRepo(t, phase = 2) {
+  const repo = scratch('cad-fire-', t);
   const git = (...args) => execFileSync('git', ['-C', repo, ...args],
     { encoding: 'utf8', stdio: 'pipe' }).trim();
   git('init', '-q');
@@ -1646,8 +1645,8 @@ const receipt = (extra, event = 'adjudication', ends = { base: 'HEAD~1', head: '
   '--family', 'outcome', '--event', event, '--trigger', 'plan', '--plan', '1',
   '--base', ends.base, '--sha', ends.head, ...extra];
 
-test('seam: the three settled counts ride an outcome event as NUMBERS', () => {
-  const dir = root();
+test('seam: the three settled counts ride an outcome event as NUMBERS', (t) => {
+  const dir = root(t);
   const r = run(dir, receipt(['--survivors', '2', '--downgraded', '1', '--refuted', '6']));
   assert.equal(r.ok, true, JSON.stringify(r));
   const [e] = lines(dir);
@@ -1659,8 +1658,8 @@ test('seam: the three settled counts ride an outcome event as NUMBERS', () => {
   assert.match(traceBytes(dir), /"survivors":2/);
 });
 
-test('seam: a settled count of 0 is a recorded figure, an absent one omits the key', () => {
-  const dir = root();
+test('seam: a settled count of 0 is a recorded figure, an absent one omits the key', (t) => {
+  const dir = root(t);
   run(dir, receipt(['--survivors', '0', '--downgraded', '0', '--refuted', '9']));
   const [e] = lines(dir);
   // `0 survivors of 9` and "nobody counted" are different fires, and the key is
@@ -1668,7 +1667,7 @@ test('seam: a settled count of 0 is a recorded figure, an absent one omits the k
   assert.equal(e.survivors, 0);
   assert.ok('survivors' in e);
 
-  const other = root();
+  const other = root(t);
   // On `rearm` rather than `adjudication`: what this half proves is that an
   // append carrying no settled figure writes none of the keys, and a re-arm is
   // the shipped receipt that carries none by contract.
@@ -1679,9 +1678,9 @@ test('seam: a settled count of 0 is a recorded figure, an absent one omits the k
   }
 });
 
-test('seam: a malformed settled count appends NOTHING at all', () => {
+test('seam: a malformed settled count appends NOTHING at all', (t) => {
   for (const flag of ['--survivors', '--downgraded', '--refuted', '--round']) {
-    const dir = root();
+    const dir = root(t);
     // `--round` is not itself one of the three settled figures, so its receipts
     // carry one: the subject of every row here is the malformed VALUE, and a
     // settle receipt naming no figure at all is a different call entirely.
@@ -1707,8 +1706,8 @@ test('seam: a malformed settled count appends NOTHING at all', () => {
   }
 });
 
-test('recount: counts matching the record\'s rulings append normally', () => {
-  const { repo, dir, base, head } = fireRepo();
+test('recount: counts matching the record\'s rulings append normally', (t) => {
+  const { repo, dir, base, head } = fireRepo(t);
   const written = fireRecord(repo, dir, { rulings: ['survived', 'refuted', 'downgraded', 'refuted'] });
   assert.deepEqual(written.counts, { raised: 4, survived: 1, downgraded: 1, refuted: 2 });
   const r = run(dir, receipt(['--survivors', '1', '--downgraded', '1', '--refuted', '2'], undefined, { base, head }));
@@ -1717,8 +1716,8 @@ test('recount: counts matching the record\'s rulings append normally', () => {
   assert.deepEqual([e.survivors, e.downgraded, e.refuted], [1, 1, 2]);
 });
 
-test('recount: a --survivors one higher than the rulings is REFUSED, trace untouched', () => {
-  const { repo, dir, base, head } = fireRepo();
+test('recount: a --survivors one higher than the rulings is REFUSED, trace untouched', (t) => {
+  const { repo, dir, base, head } = fireRepo(t);
   fireRecord(repo, dir, { rulings: ['survived', 'refuted', 'downgraded', 'refuted'] });
   // One receipt already on disk, so the assertion is that the file is
   // byte-identical afterwards rather than merely absent.
@@ -1735,8 +1734,8 @@ test('recount: a --survivors one higher than the rulings is REFUSED, trace untou
   assert.equal(traceBytes(dir), before);
 });
 
-test('recount: the same call against a fire with NO record appends and stores the flags', () => {
-  const { dir, base, head } = fireRepo();
+test('recount: the same call against a fire with NO record appends and stores the flags', (t) => {
+  const { dir, base, head } = fireRepo(t);
   // The check is a cross-artifact guard, never a requirement that a record
   // exist: a fire predating the format, and the advisory arm that writes none,
   // both reach this arm.
@@ -1746,16 +1745,16 @@ test('recount: the same call against a fire with NO record appends and stores th
   assert.deepEqual([e.survivors, e.downgraded, e.refuted], [2, 1, 2]);
 });
 
-test('recount: a partial count set is stored unchecked - there is nothing to recount', () => {
-  const { repo, dir, base, head } = fireRepo();
+test('recount: a partial count set is stored unchecked - there is nothing to recount', (t) => {
+  const { repo, dir, base, head } = fireRepo(t);
   fireRecord(repo, dir, { rulings: ['survived', 'refuted'] });
   const r = run(dir, receipt(['--survivors', '9'], undefined, { base, head }));
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(lines(dir)[0].survivors, 9);
 });
 
-test('recount: the ROUND decides which record is read, so a re-arm cannot pass on round one', () => {
-  const { repo, dir, base, head } = fireRepo();
+test('recount: the ROUND decides which record is read, so a re-arm cannot pass on round one', (t) => {
+  const { repo, dir, base, head } = fireRepo(t);
   // DIFFERENT rulings per round, which is what makes the round load-bearing:
   // against identical rounds a wrong resolution passes on a coincidence.
   fireRecord(repo, dir, { rulings: ['survived', 'refuted', 'refuted'] });
@@ -1779,8 +1778,8 @@ test('recount: the ROUND decides which record is read, so a re-arm cannot pass o
   assert.equal(traceBytes(dir), before);
 });
 
-test('recount: a fire with no --plan resolves its record by trigger and head sha', () => {
-  const { repo, dir, base, head } = fireRepo();
+test('recount: a fire with no --plan resolves its record by trigger and head sha', (t) => {
+  const { repo, dir, base, head } = fireRepo(t);
   // `/cad-debug`, `/cad-task` and `/cad-verify` fire without a plan, and their
   // discriminator is `<command>-<short head sha>` - so the receipt matches on
   // the trigger, the round and the head the discriminator ends with.
@@ -1797,8 +1796,8 @@ test('recount: a fire with no --plan resolves its record by trigger and head sha
   assert.equal(good.ok, true, JSON.stringify(good));
 });
 
-test('recount: a record that is not readable as JSON is refused, never appended past', () => {
-  const { repo, dir, base, head } = fireRepo();
+test('recount: a record that is not readable as JSON is refused, never appended past', (t) => {
+  const { repo, dir, base, head } = fireRepo(t);
   const written = fireRecord(repo, dir, { rulings: ['survived'] });
   // Truncated or edited - which is the tampering the cross-check exists to
   // surface, so appending a figure nothing can check would bury it.
@@ -1817,8 +1816,8 @@ test('recount: a record that is not readable as JSON is refused, never appended 
 // three ranges: A..B and B..C differ at both ends, A..C and B..C share a head.
 
 /** fireRepo plus a third commit, answering the three full shas A, B and C. */
-function rangeRepo() {
-  const { repo, dir } = fireRepo();
+function rangeRepo(t) {
+  const { repo, dir } = fireRepo(t);
   const git = (...args) => execFileSync('git', ['-C', repo, ...args],
     { encoding: 'utf8', stdio: 'pipe' }).trim();
   writeFileSync(join(repo, 'src.js'), 'let x = 3;\n');
@@ -1837,8 +1836,8 @@ const rangeReceipt = (base, head, [s, d, r], extra = []) => ['trace', 'append', 
   '--base', base, '--sha', head, '--survivors', String(s), '--downgraded', String(d),
   '--refuted', String(r), ...extra];
 
-test('range: two round-1 fires of one plan resolve each receipt to its own range\'s record', () => {
-  const { repo, dir, a, b, c } = rangeRepo();
+test('range: two round-1 fires of one plan resolve each receipt to its own range\'s record', (t) => {
+  const { repo, dir, a, b, c } = rangeRepo(t);
   fireRecord(repo, dir, { trigger: 'risk_surface', discriminator: rangeName(a, b),
     base: a, head: b, rulings: ['survived', 'refuted'] });
   fireRecord(repo, dir, { trigger: 'risk_surface', discriminator: rangeName(b, c),
@@ -1857,8 +1856,8 @@ test('range: two round-1 fires of one plan resolve each receipt to its own range
   assert.match(wrong2.detail, new RegExp(rangeName(b, c)));
 });
 
-test('range: a receipt whose two ends match no record appends with its counts unchecked', () => {
-  const { repo, dir, a, b, c } = rangeRepo();
+test('range: a receipt whose two ends match no record appends with its counts unchecked', (t) => {
+  const { repo, dir, a, b, c } = rangeRepo(t);
   fireRecord(repo, dir, { trigger: 'risk_surface', discriminator: rangeName(a, b),
     base: a, head: b, rulings: ['survived'] });
   fireRecord(repo, dir, { trigger: 'risk_surface', discriminator: rangeName(b, c),
@@ -1868,8 +1867,8 @@ test('range: a receipt whose two ends match no record appends with its counts un
   assert.equal(lines(dir)[0].survivors, 7);
 });
 
-test('range: two ranges sharing a head each resolve their own record, never by the head alone', () => {
-  const { repo, dir, a, b, c } = rangeRepo();
+test('range: two ranges sharing a head each resolve their own record, never by the head alone', (t) => {
+  const { repo, dir, a, b, c } = rangeRepo(t);
   fireRecord(repo, dir, { trigger: 'risk_surface', discriminator: rangeName(a, c),
     base: a, head: c, rulings: ['survived', 'survived'] });
   fireRecord(repo, dir, { trigger: 'risk_surface', discriminator: rangeName(b, c),
@@ -1880,8 +1879,8 @@ test('range: two ranges sharing a head each resolve their own record, never by t
   assert.equal(run(dir, rangeReceipt(b, c, [2, 0, 0])).reason, 'count-disagreement');
 });
 
-test('range: a legacy plan-1 record is read only for a receipt whose two ends match its ids', () => {
-  const { repo, dir, a, b, c } = rangeRepo();
+test('range: a legacy plan-1 record is read only for a receipt whose two ends match its ids', (t) => {
+  const { repo, dir, a, b, c } = rangeRepo(t);
   // the old grammar beside the new: plan-1 stores A..B, and a second fire of plan 1 runs over B..C
   fireRecord(repo, dir, { trigger: 'risk_surface', discriminator: 'plan-1',
     base: a, head: b, rulings: ['survived'] });
@@ -1895,8 +1894,8 @@ test('range: a legacy plan-1 record is read only for a receipt whose two ends ma
   assert.equal(run(dir, rangeReceipt(a, b, [1, 0, 0])).ok, true);
 });
 
-test('range: a `<base>-<head>-r2` record is never a range record, with or without --round 2', () => {
-  const { repo, dir, a, b } = rangeRepo();
+test('range: a `<base>-<head>-r2` record is never a range record, with or without --round 2', (t) => {
+  const { repo, dir, a, b } = rangeRepo(t);
   fireRecord(repo, dir, { trigger: 'risk_surface', discriminator: rangeName(a, b),
     base: a, head: b, round: 2, rulings: ['survived'] });
   for (const extra of [[], ['--round', '2']]) {
@@ -1927,8 +1926,8 @@ test('range: a `<base>-<head>-r2` record is never a range record, with or withou
 // `RECORDED_TOOLS` is the same five) and so structurally cannot show a write.
 // That is the accepted weakness, recorded rather than papered over.
 
-test('the fix commit falls inside a SECOND cad-executor bracket under the plan key', () => {
-  const { repo, dir } = fireRepo(2);
+test('the fix commit falls inside a SECOND cad-executor bracket under the plan key', (t) => {
+  const { repo, dir } = fireRepo(t, 2);
   const git = (...args) => execFileSync('git', ['-C', repo, ...args],
     { encoding: 'utf8', stdio: 'pipe' }).trim();
   const K = '1';
@@ -1975,7 +1974,7 @@ test('the fix commit falls inside a SECOND cad-executor bracket under the plan k
     + 'the record does not place the fix inside a worker\'s dispatch');
 });
 
-test('seam: a bare or blank --role appends NOTHING at all', () => {
+test('seam: a bare or blank --role appends NOTHING at all', (t) => {
   // REVERSES this row's earlier guarantee, which was that a bare `--role` wrote
   // the event with no `role` key rather than the literal `true`. Dropping the
   // key was the wrong half of the fix: measured 2026-08-19, `trace append
@@ -1987,7 +1986,7 @@ test('seam: a bare or blank --role appends NOTHING at all', () => {
   // `--reviewer` and `--trigger` are, and it now carries their disposition:
   // ARG-06/D-05 declares `bare: 'refuse'` for all four on this subcommand and
   // this body reads that declaration rather than restating it.
-  const dir = root();
+  const dir = root(t);
   for (const args of [['--role'], ['--role', ''], ['--role', '  ']]) {
     const r = run(dir, ['trace', 'append', '--phase', '4', '--family', 'lifecycle',
       '--event', 'return', '--plan', '1', ...args]);
@@ -1997,13 +1996,13 @@ test('seam: a bare or blank --role appends NOTHING at all', () => {
   assert.equal(traceBytes(dir), null);
 });
 
-test('seam: a bare --plan, --sha or --base still appends, key omitted', () => {
+test('seam: a bare --plan, --sha or --base still appends, key omitted', (t) => {
   // The OTHER half of D-05, pinned beside the refusal above so the two
   // dispositions this one body runs cannot silently collapse into each other.
   // These three declare `bare: 'fallback'`: the flag reads as absent and the
   // caller's own key-omission answers. Making them refuse would start refusing
   // every shipped `trace close` written without them.
-  const dir = root();
+  const dir = root(t);
   const closed = run(dir, ['trace', 'close', '--phase', '4', '--role', 'cad-executor',
     '--tokens', '12', '--plan']);
   assert.equal(closed.ok, true, JSON.stringify(closed));
@@ -2021,11 +2020,11 @@ test('seam: a bare --plan, --sha or --base still appends, key omitted', () => {
   assert.equal(e.role, 'cad-executor');
 });
 
-test('seam: --reviewer stores the reviewer that ACTUALLY ran, as a string', () => {
+test('seam: --reviewer stores the reviewer that ACTUALLY ran, as a string', (t) => {
   // RVW-02: two fires of one trigger - one cross-model, one subagent - were the
   // same shape in the record. Nothing refuses a dispatch to a reviewer outside
   // the resolved set (D-07), so this field is the whole enforcement.
-  const dir = root();
+  const dir = root(t);
   const r = run(dir, ['trace', 'append', '--phase', '4', '--family', 'lifecycle',
     '--event', 'dispatch', '--plan', 'cad-reviewer', '--role', 'cad-reviewer',
     '--reviewer', 'claude-subagent']);
@@ -2038,11 +2037,11 @@ test('seam: --reviewer stores the reviewer that ACTUALLY ran, as a string', () =
   assert.equal(e.role, 'cad-reviewer');
 });
 
-test('seam: a bare or blank --reviewer appends NOTHING at all', () => {
+test('seam: a bare or blank --reviewer appends NOTHING at all', (t) => {
   // A bare flag parses as boolean `true` and would store the literal `true` as
   // a reviewer name - a complete-looking record naming a backend that does not
   // exist, which is worse than the missing field it was standing in for.
-  const dir = root();
+  const dir = root(t);
   for (const args of [['--reviewer'], ['--reviewer', ''], ['--reviewer', '  ']]) {
     const r = run(dir, ['trace', 'append', '--phase', '4', '--family', 'lifecycle',
       '--event', 'dispatch', '--plan', 'cad-reviewer', '--role', 'cad-reviewer', ...args]);
@@ -2052,13 +2051,13 @@ test('seam: a bare or blank --reviewer appends NOTHING at all', () => {
   assert.equal(traceBytes(dir), null);
 });
 
-test('seam: --trigger stores the review trigger an event belongs to, as a string', () => {
+test('seam: --trigger stores the review trigger an event belongs to, as a string', (t) => {
   // GAT-04/D-12: an `outcome` receipt is only joinable to the fire that
   // produced it if the trigger it names is STRUCTURED. Measured on this
   // repository's 35 `outcome/adjudication` events the trigger is spelled four
   // different ways inside the free-text `--detail`, and lib/trace-suggest.mjs
   // discards that text entirely.
-  const dir = root();
+  const dir = root(t);
   const r = run(dir, ['trace', 'append', '--phase', '1', '--family', 'outcome',
     '--event', 'adjudication', '--plan', '2', '--trigger', 'risk_surface',
     '--survivors', '1', '--downgraded', '0', '--refuted', '0',
@@ -2073,7 +2072,7 @@ test('seam: --trigger stores the review trigger an event belongs to, as a string
   assert.equal(e.plan, '2');
 });
 
-test('seam: --trigger is stored VERBATIM, trimmed, with no vocabulary of its own', () => {
+test('seam: --trigger is stored VERBATIM, trimmed, with no vocabulary of its own', (t) => {
   // Event-agnostic like every other flag IN THIS SEAM: planning/trace.mjs
   // couples no flag to an event NAME and mints no refusal keyed to one. A
   // trigger the seam does not recognise is the caller's business, exactly as
@@ -2085,19 +2084,19 @@ test('seam: --trigger is stored VERBATIM, trimmed, with no vocabulary of its own
   // lib/arg-contract.mjs's `PRESENCE_RULES` - which is why the call below
   // carries all three. The two layers are the point: the seam stays
   // event-agnostic, the declaration at the door holds the event knowledge.
-  const dir = root();
+  const dir = root(t);
   run(dir, ['trace', 'append', '--phase', '1', '--family', 'outcome',
     '--event', 'gate_pass', '--survivors', '0', '--downgraded', '0', '--refuted', '0',
     '--trigger', '  risk_surface  ']);
   assert.equal(lines(dir)[0].trigger, 'risk_surface');
 });
 
-test('seam: a bare or blank --trigger appends NOTHING at all', () => {
+test('seam: a bare or blank --trigger appends NOTHING at all', (t) => {
   // A bare flag parses as boolean `true` and would store the literal `true` as
   // a trigger name - a receipt that joins to a fire nobody made, which is worse
   // than the missing field it stands in for. Nothing is appended, the rule
   // `--tokens`, `--raised` and `--reviewer` already hold.
-  const dir = root();
+  const dir = root(t);
   for (const args of [['--trigger'], ['--trigger', ''], ['--trigger', '  ']]) {
     const r = run(dir, ['trace', 'append', '--phase', '1', '--family', 'outcome',
       '--event', 'adjudication', '--plan', '2',
@@ -2108,8 +2107,8 @@ test('seam: a bare or blank --trigger appends NOTHING at all', () => {
   assert.equal(traceBytes(dir), null);
 });
 
-test('seam: an append with no --trigger is byte-identical to today\'s', () => {
-  const dir = root();
+test('seam: an append with no --trigger is byte-identical to today\'s', (t) => {
+  const dir = root(t);
   run(dir, ['trace', 'append', '--phase', '1', '--family', 'outcome',
     '--event', 'adjudication', '--detail', 'plan: 2 survivors',
     '--survivors', '2', '--downgraded', '0', '--refuted', '0']);
@@ -2134,15 +2133,15 @@ const settle = (...extra) => ['trace', 'append', '--phase', '1', '--family', 'ou
   '--survivors', '0', '--downgraded', '0', '--refuted', '0', ...extra];
 
 /** A phase whose window has already re-anchored: two `phase_start` lines. */
-function reAnchored() {
-  const dir = root();
+function reAnchored(t) {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'aaa1111' });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'bbb2222' });
   return dir;
 }
 
-test('seam: --anchor stamps the receipt with the window it names, not the newest one', () => {
-  const dir = reAnchored();
+test('seam: --anchor stamps the receipt with the window it names, not the newest one', (t) => {
+  const dir = reAnchored(t);
   const r = run(dir, settle('--anchor', 'aaa1111'));
   assert.equal(r.ok, true, JSON.stringify(r));
   const e = lines(dir).at(-1);
@@ -2153,17 +2152,17 @@ test('seam: --anchor stamps the receipt with the window it names, not the newest
   assert.equal(correlationId(dir, 1), '1-bbb2222', 'the newest anchor is still the run\'s own');
 });
 
-test('seam: the same receipt WITHOUT --anchor takes the newest anchor, as it always did', () => {
-  const dir = reAnchored();
+test('seam: the same receipt WITHOUT --anchor takes the newest anchor, as it always did', (t) => {
+  const dir = reAnchored(t);
   assert.equal(run(dir, settle()).ok, true);
   const e = lines(dir).at(-1);
   assert.equal(e.corr, '1-bbb2222');
 });
 
-test('seam: a bare or blank --anchor appends NOTHING at all', () => {
+test('seam: a bare or blank --anchor appends NOTHING at all', (t) => {
   // The `--trigger` disposition and for its reason: a blank anchor would read
   // as "no anchor" while the caller believes the receipt was bound to a window.
-  const dir = root();
+  const dir = root(t);
   for (const extra of [['--anchor'], ['--anchor', ''], ['--anchor', '  ']]) {
     const r = run(dir, settle(...extra));
     assert.equal(r.ok, false, JSON.stringify(extra));
@@ -2172,12 +2171,12 @@ test('seam: a bare or blank --anchor appends NOTHING at all', () => {
   assert.equal(traceBytes(dir), null);
 });
 
-test('seam: render still lists the flagged event - the pre-anchor repair leaves it alone', () => {
+test('seam: render still lists the flagged event - the pre-anchor repair leaves it alone', (t) => {
   // D-11: the repair at lib/trace.mjs fires only where `e.corr === <phase>`,
   // the BARE form, so an event carrying an explicit earlier id is not rewritten
   // forward onto the newest anchor - which is the one way shape (a) could have
   // been silently undone by a reader.
-  const dir = reAnchored();
+  const dir = reAnchored(t);
   assert.equal(run(dir, settle('--anchor', 'aaa1111')).ok, true);
   const rendered = run(dir, ['trace', 'render', '--phase', '1', '--events']);
   assert.equal(rendered.ok, true, JSON.stringify(rendered));
@@ -2186,8 +2185,8 @@ test('seam: render still lists the flagged event - the pre-anchor repair leaves 
   assert.equal(receipt.corr, '1-aaa1111');
 });
 
-test('seam: --anchor rides no other event - an append without it is byte-identical', () => {
-  const dir = root();
+test('seam: --anchor rides no other event - an append without it is byte-identical', (t) => {
+  const dir = root(t);
   run(dir, ['trace', 'append', '--phase', '1', '--family', 'outcome',
     '--event', 'adjudication', '--detail', 'plan: 2 survivors',
     '--survivors', '2', '--downgraded', '0', '--refuted', '0']);
@@ -2214,8 +2213,8 @@ const override = (sha, ...extra) => ['trace', 'append', '--phase', '1', '--famil
 const HEAD_A = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const HEAD_B = 'cccccccccccccccccccccccccccccccccccccccc';
 
-test('seam: two receipts on ONE authorization carry the same id', () => {
-  const dir = root();
+test('seam: two receipts on ONE authorization carry the same id', (t) => {
+  const dir = root(t);
   assert.equal(run(dir, override(HEAD_A, '--authorization-id', 'auth-7')).ok, true);
   assert.equal(run(dir, override(HEAD_B, '--authorization-id', 'auth-7')).ok, true);
   const [first, second] = lines(dir);
@@ -2226,27 +2225,27 @@ test('seam: two receipts on ONE authorization carry the same id', () => {
   assert.notEqual(first.sha, second.sha);
 });
 
-test('seam: two receipts on TWO authorizations carry different ids', () => {
-  const dir = root();
+test('seam: two receipts on TWO authorizations carry different ids', (t) => {
+  const dir = root(t);
   assert.equal(run(dir, override(HEAD_A, '--authorization-id', 'auth-7')).ok, true);
   assert.equal(run(dir, override(HEAD_B, '--authorization-id', 'auth-8')).ok, true);
   const [first, second] = lines(dir);
   assert.notEqual(first.authorization_id, second.authorization_id);
 });
 
-test('seam: an append with no --authorization-id carries NO such key at all', () => {
+test('seam: an append with no --authorization-id carries NO such key at all', (t) => {
   // Absence, never an empty string: every event written before this flag
   // existed carries no key, and a stored `''` would read as a labelled one.
-  const dir = root();
+  const dir = root(t);
   assert.equal(run(dir, override(HEAD_A)).ok, true);
   const [e] = lines(dir);
   assert.equal('authorization_id' in e, false, JSON.stringify(e));
 });
 
-test('seam: a bare or blank --authorization-id appends NOTHING at all', () => {
+test('seam: a bare or blank --authorization-id appends NOTHING at all', (t) => {
   // The `--agent-id` disposition and for its reason: a blank id would read as
   // "no id" while the caller believes the receipt was labelled.
-  const dir = root();
+  const dir = root(t);
   for (const extra of [['--authorization-id'], ['--authorization-id', ''],
     ['--authorization-id', '  ']]) {
     const r = run(dir, override(HEAD_A, ...extra));
@@ -2256,14 +2255,14 @@ test('seam: a bare or blank --authorization-id appends NOTHING at all', () => {
   assert.equal(traceBytes(dir), null);
 });
 
-test('seam: the authorization id is stored TRIMMED - a padded copy is one decision', () => {
-  const dir = root();
+test('seam: the authorization id is stored TRIMMED - a padded copy is one decision', (t) => {
+  const dir = root(t);
   assert.equal(run(dir, override(HEAD_A, '--authorization-id', '  auth-7  ')).ok, true);
   assert.equal(lines(dir)[0].authorization_id, 'auth-7');
 });
 
-test('seam: --read stores a comma-separated set as an array, verbatim', () => {
-  const dir = root();
+test('seam: --read stores a comma-separated set as an array, verbatim', (t) => {
+  const dir = root(t);
   const r = run(dir, ['trace', 'append', '--phase', '4', '--family', 'lifecycle',
     '--event', 'dispatch', '--plan', 'cad-planner', '--role', 'cad-planner',
     '--read', 'a.md,b.md,c.md']);
@@ -2272,15 +2271,15 @@ test('seam: --read stores a comma-separated set as an array, verbatim', () => {
   assert.deepEqual(rendered.events[0].read, ['a.md', 'b.md', 'c.md']);
 });
 
-test('seam: --read trims whitespace and drops empty segments', () => {
-  const dir = root();
+test('seam: --read trims whitespace and drops empty segments', (t) => {
+  const dir = root(t);
   run(dir, ['trace', 'append', '--phase', '4', '--family', 'lifecycle',
     '--event', 'dispatch', '--plan', 'p', '--read', 'a.md, ,b.md,']);
   assert.deepEqual(lines(dir)[0].read, ['a.md', 'b.md']);
 });
 
-test('seam: an empty --read appends nothing', () => {
-  const dir = root();
+test('seam: an empty --read appends nothing', (t) => {
+  const dir = root(t);
   // A bare `--read` (boolean true) and an empty string are both almost always
   // an unset `"$PATHS"`; recording a complete-looking dispatch with no
   // read-set is the failure this refusal exists against.
@@ -2293,8 +2292,8 @@ test('seam: an empty --read appends nothing', () => {
   assert.equal(traceBytes(dir), null);
 });
 
-test('seam: --read stores what it was handed, existence unchecked', () => {
-  const dir = root();
+test('seam: --read stores what it was handed, existence unchecked', (t) => {
+  const dir = root(t);
   // The grammar admits a path, a glob, or a non-path reference the worker
   // resolves for itself - stored verbatim, with no existence check, no
   // normalization and no byte measurement.
@@ -2312,8 +2311,8 @@ test('seam: --read stores what it was handed, existence unchecked', () => {
 // `trace close` takes both off the site: the family is fixed and the arm is
 // inferred from `--detail`.
 
-test('seam: a close with no --detail writes the `return` arm', () => {
-  const dir = root();
+test('seam: a close with no --detail writes the `return` arm', (t) => {
+  const dir = root(t);
   const r = run(dir, ['trace', 'close', '--phase', '4', '--plan', '1',
     '--role', 'cad-executor']);
   assert.equal(r.ok, true);
@@ -2327,8 +2326,8 @@ test('seam: a close with no --detail writes the `return` arm', () => {
   assert.equal(run(dir, ['trace', 'render', '--phase', '4']).counts.lifecycle, 1);
 });
 
-test('seam: a close carrying --detail writes the `checkpoint` arm', () => {
-  const dir = root();
+test('seam: a close carrying --detail writes the `checkpoint` arm', (t) => {
+  const dir = root(t);
   const r = run(dir, ['trace', 'close', '--phase', '4', '--plan', '1',
     '--role', 'cad-executor', '--detail', 'x']);
   assert.equal(r.ok, true);
@@ -2337,8 +2336,8 @@ test('seam: a close carrying --detail writes the `checkpoint` arm', () => {
   assert.equal(e.detail, 'x');
 });
 
-test('seam: a close with --tokens and no --detail is still a `return` (D-06)', () => {
-  const dir = root();
+test('seam: a close with --tokens and no --detail is still a `return` (D-06)', (t) => {
+  const dir = root(t);
   // The inference may NOT key on `--tokens`: 6 of the 10 shipped checkpoint
   // sites carry a figure and 4 do not, so a token-presence classifier would
   // bill four unusable workers as clean closes. `--detail` is the only
@@ -2354,13 +2353,13 @@ test('seam: a close with --tokens and no --detail is still a `return` (D-06)', (
   assert.equal(lines(dir)[1].event, 'checkpoint');
 });
 
-test('seam: --replay marks a close that performed no work, and stays a `return`', () => {
+test('seam: --replay marks a close that performed no work, and stays a `return`', (t) => {
   // A replayed dispatch costs real tokens and commits nothing, and its bracket
   // is otherwise byte-identical in shape to a real one - two measured replays
   // charged 30,588 and 24,570 tokens a cost read counted as execution. The arm
   // matters as much as the field: the flag must NOT push the close onto the
   // checkpoint arm, which is what a `--detail` note would have done.
-  const dir = root();
+  const dir = root(t);
   const r = run(dir, ['trace', 'close', '--phase', '4', '--plan', '1',
     '--role', 'cad-executor', '--tokens', '30588', '--replay']);
   assert.equal(r.ok, true);
@@ -2370,22 +2369,22 @@ test('seam: --replay marks a close that performed no work, and stays a `return`'
   assert.equal(e.tokens, 30588, 'the replay still carries what it cost');
 });
 
-test('seam: a close without --replay carries no replay key at all', () => {
+test('seam: a close without --replay carries no replay key at all', (t) => {
   // Present-only-when-true, the shape every optional field on this event takes:
   // `false` and absent say the same thing, and writing `replay: false` onto
   // every close would put the field on thousands of dispatches that were not
   // one. This is also the byte-for-byte guarantee that an ordinary close writes
   // what it always wrote.
-  const dir = root();
+  const dir = root(t);
   run(dir, ['trace', 'close', '--phase', '4', '--plan', '1', '--role', 'cad-executor']);
   const [e] = lines(dir);
   assert.equal('replay' in e, false);
 });
 
-test('seam: --replay does not fight the checkpoint arm', () => {
+test('seam: --replay does not fight the checkpoint arm', (t) => {
   // The two flags answer different questions - WHAT came back, and whether it
   // did any work - so a detail still decides the arm and the mark still lands.
-  const dir = root();
+  const dir = root(t);
   run(dir, ['trace', 'close', '--phase', '4', '--plan', '1',
     '--role', 'cad-executor', '--detail', 'came back empty', '--replay']);
   const [e] = lines(dir);
@@ -2393,8 +2392,8 @@ test('seam: --replay does not fight the checkpoint arm', () => {
   assert.equal(e.replay, true);
 });
 
-test('seam: a malformed --tokens on a close appends NOTHING at all', () => {
-  const dir = root();
+test('seam: a malformed --tokens on a close appends NOTHING at all', (t) => {
+  const dir = root(t);
   for (const bad of ['abc', '-1', '1.5', '1,2,3']) {
     const r = run(dir, ['trace', 'close', '--phase', '4', '--plan', '1',
       '--role', 'cad-executor', '--tokens', bad]);
@@ -2412,8 +2411,8 @@ test('seam: a malformed --tokens on a close appends NOTHING at all', () => {
 // worker RETURNED. `--turns` is the tool-call count on the same subagent return
 // `--tokens` is read off, so the two travel together at every close site.
 
-test('seam: --turns rides a close beside --tokens, as a NUMBER', () => {
-  const dir = root();
+test('seam: --turns rides a close beside --tokens, as a NUMBER', (t) => {
+  const dir = root(t);
   const r = run(dir, ['trace', 'close', '--phase', '1', '--plan', '1',
     '--role', 'cad-executor', '--tokens', '12', '--turns', '83']);
   assert.equal(r.ok, true);
@@ -2427,19 +2426,19 @@ test('seam: --turns rides a close beside --tokens, as a NUMBER', () => {
   assert.equal(e.tokens, 12);
 });
 
-test('seam: --turns lands on a `trace append` through the same shared body', () => {
+test('seam: --turns lands on a `trace append` through the same shared body', (t) => {
   // One body serves both subcommands, so the flag cannot be validated twice and
   // cannot drift between them. `append` is where a hand-written or replayed
   // event still enters the record.
-  const dir = root();
+  const dir = root(t);
   const r = run(dir, ['trace', 'append', '--phase', '1', '--family', 'lifecycle',
     '--event', 'return', '--plan', '1', '--role', 'cad-planner', '--turns', '7']);
   assert.equal(r.ok, true);
   assert.equal(lines(dir)[0].turns, 7);
 });
 
-test('seam: a malformed --turns appends NOTHING at all', () => {
-  const dir = root();
+test('seam: a malformed --turns appends NOTHING at all', (t) => {
+  const dir = root(t);
   // No comma-grouping exception, unlike `--tokens`: a tool-call count is never
   // PRINTED grouped, so `1,234` is a typo rather than a transcription - the
   // same rule `--raised` states.
@@ -2464,8 +2463,8 @@ test('seam: a malformed --turns appends NOTHING at all', () => {
   assert.equal(traceBytes(dir), null);
 });
 
-test('seam: a close with no --turns writes no turns key at all', () => {
-  const dir = root();
+test('seam: a close with no --turns writes no turns key at all', (t) => {
+  const dir = root(t);
   run(dir, ['trace', 'close', '--phase', '1', '--plan', '1',
     '--role', 'cad-executor', '--tokens', '12']);
   const [e] = lines(dir);
@@ -2474,8 +2473,8 @@ test('seam: a close with no --turns writes no turns key at all', () => {
   assert.equal('turns' in e, false, JSON.stringify(e));
 });
 
-test('seam: --turns 0 is a recorded figure, not an omission', () => {
-  const dir = root();
+test('seam: --turns 0 is a recorded figure, not an omission', (t) => {
+  const dir = root(t);
   run(dir, ['trace', 'close', '--phase', '1', '--plan', '1',
     '--role', 'cad-executor', '--turns', '0']);
   const [e] = lines(dir);
@@ -2491,8 +2490,8 @@ test('seam: --turns 0 is a recorded figure, not an omission', () => {
 // between the two writes. The flag takes the host's own formatted spelling
 // because that is the only one an orchestrator can copy off a return.
 
-test('seam: --duration-ms takes the formatted spelling the host prints', () => {
-  const dir = root();
+test('seam: --duration-ms takes the formatted spelling the host prints', (t) => {
+  const dir = root(t);
   const r = run(dir, ['trace', 'close', '--phase', '2', '--plan', 'p',
     '--role', 'cad-executor', '--duration-ms', '1m 23s']);
   assert.equal(r.ok, true);
@@ -2505,10 +2504,10 @@ test('seam: --duration-ms takes the formatted spelling the host prints', () => {
   assert.match(traceBytes(dir), /"duration_ms":83000/);
 });
 
-test('seam: --duration-ms accepts every term of its closed grammar', () => {
+test('seam: --duration-ms accepts every term of its closed grammar', (t) => {
   for (const [raw, ms] of [['4200', 4200], ['0', 0], ['450ms', 450], ['23s', 23000],
     ['1h2m3s', 3723000], ['2h 30m', 9000000], ['1m 23s', 83000]]) {
-    const dir = root();
+    const dir = root(t);
     const r = run(dir, ['trace', 'close', '--phase', '2', '--plan', 'p',
       '--role', 'cad-executor', '--duration-ms', raw]);
     assert.equal(r.ok, true, raw);
@@ -2516,8 +2515,8 @@ test('seam: --duration-ms accepts every term of its closed grammar', () => {
   }
 });
 
-test('seam: a malformed --duration-ms appends NOTHING at all', () => {
-  const dir = root();
+test('seam: a malformed --duration-ms appends NOTHING at all', (t) => {
+  const dir = root(t);
   // The grammar is CLOSED to digits and unit letters: free text, a negative, a
   // decimal, a unit Cadence does not read and a grouped figure are all typos,
   // and a typo may not cost the bracket it was recording.
@@ -2542,8 +2541,8 @@ test('seam: a malformed --duration-ms appends NOTHING at all', () => {
   assert.equal(traceBytes(dir), null);
 });
 
-test('seam: a close with no --duration-ms writes no duration_ms key at all', () => {
-  const dir = root();
+test('seam: a close with no --duration-ms writes no duration_ms key at all', (t) => {
+  const dir = root(t);
   run(dir, ['trace', 'close', '--phase', '2', '--plan', 'p',
     '--role', 'cad-executor', '--tokens', '12']);
   const [e] = lines(dir);
@@ -2552,16 +2551,16 @@ test('seam: a close with no --duration-ms writes no duration_ms key at all', () 
   assert.equal('duration_ms' in e, false, JSON.stringify(e));
 });
 
-test('seam: --duration-ms lands on a `trace append` through the same shared body', () => {
-  const dir = root();
+test('seam: --duration-ms lands on a `trace append` through the same shared body', (t) => {
+  const dir = root(t);
   const r = run(dir, ['trace', 'append', '--phase', '2', '--family', 'lifecycle',
     '--event', 'return', '--plan', 'p', '--role', 'cad-planner', '--duration-ms', '450ms']);
   assert.equal(r.ok, true);
   assert.equal(lines(dir)[0].duration_ms, 450);
 });
 
-test('seam: a close pairs with the dispatch of the same --plan', () => {
-  const dir = root();
+test('seam: a close pairs with the dispatch of the same --plan', (t) => {
+  const dir = root(t);
   run(dir, ['trace', 'append', '--phase', '4', '--family', 'lifecycle',
     '--event', 'dispatch', '--plan', '1', '--role', 'cad-executor',
     '--read', '.planning/phases/4/PLAN-1.md']);
@@ -2572,8 +2571,8 @@ test('seam: a close pairs with the dispatch of the same --plan', () => {
   assert.deepEqual(r.roles, { 'cad-executor': { dispatches: 1, tokens: 12 } });
 });
 
-test('seam: a close with no --phase is refused and names the subcommand', () => {
-  const dir = root();
+test('seam: a close with no --phase is refused and names the subcommand', (t) => {
+  const dir = root(t);
   const r = run(dir, ['trace', 'close', '--plan', '1', '--role', 'cad-executor']);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-args');
@@ -2598,8 +2597,8 @@ function valueFile(dir, body, name = 'detail.txt') {
   return file;
 }
 
-test('seam: --detail-file carries a detail no shell could expand', () => {
-  const dir = root();
+test('seam: --detail-file carries a detail no shell could expand', (t) => {
+  const dir = root(t);
   const payload = 'reviewer said $(touch /tmp/cad-trace-should-not-exist) and `id`';
   const r = run(dir, ['trace', 'append', '--phase', '4', '--family', 'outcome',
     '--event', 'adjudication', '--survivors', '0', '--downgraded', '0', '--refuted', '0',
@@ -2611,8 +2610,8 @@ test('seam: --detail-file carries a detail no shell could expand', () => {
   assert.equal(existsSync('/tmp/cad-trace-should-not-exist'), false, 'the payload executed');
 });
 
-test('seam: --detail-file and --detail write the SAME record for the same value', () => {
-  const dir = root();
+test('seam: --detail-file and --detail write the SAME record for the same value', (t) => {
+  const dir = root(t);
   const text = 'came back empty';
   run(dir, ['trace', 'close', '--phase', '4', '--plan', '1', '--role', 'cad-executor',
     '--detail', text]);
@@ -2623,8 +2622,8 @@ test('seam: --detail-file and --detail write the SAME record for the same value'
   assert.equal(viaFile.event, inline.event);
 });
 
-test('seam: a close carrying --detail-file writes the `checkpoint` arm', () => {
-  const dir = root();
+test('seam: a close carrying --detail-file writes the `checkpoint` arm', (t) => {
+  const dir = root(t);
   // The inference reads the RESOLVED detail. Left on `opts.detail` alone, every
   // converted checkpoint site would bill as a clean `return` - the one arm the
   // record exists to keep separate.
@@ -2637,8 +2636,8 @@ test('seam: a close carrying --detail-file writes the `checkpoint` arm', () => {
   assert.equal(lines(dir)[1].event, 'return');
 });
 
-test('seam: every --detail-file refusal is bad-args and appends NOTHING at all', () => {
-  const dir = root();
+test('seam: every --detail-file refusal is bad-args and appends NOTHING at all', (t) => {
+  const dir = root(t);
   const present = valueFile(dir, 'a real detail');
   const cases = [
     // valueless: `--detail-file "$F"` with F unset parses as boolean true
@@ -2656,8 +2655,8 @@ test('seam: every --detail-file refusal is bad-args and appends NOTHING at all',
   }
 });
 
-test('seam: an UNREADABLE --detail-file is refused and NAMES the read error', () => {
-  const dir = root();
+test('seam: an UNREADABLE --detail-file is refused and NAMES the read error', (t) => {
+  const dir = root(t);
   const file = valueFile(dir, 'a real detail');
   chmodSync(file, 0o000);
   try {
@@ -2675,8 +2674,8 @@ test('seam: an UNREADABLE --detail-file is refused and NAMES the read error', ()
 
 // --- --read-file: the same comma grammar through the path transport ----------
 
-test('seam: --read-file produces the identical array the same value produces inline', () => {
-  const dir = root();
+test('seam: --read-file produces the identical array the same value produces inline', (t) => {
+  const dir = root(t);
   const set = 'a.md, ,b.md,';
   run(dir, ['trace', 'append', '--phase', '4', '--family', 'lifecycle',
     '--event', 'dispatch', '--plan', '1', '--read', set]);
@@ -2689,8 +2688,8 @@ test('seam: --read-file produces the identical array the same value produces inl
   assert.deepEqual(viaFile.read, ['a.md', 'b.md']);
 });
 
-test('seam: --read-file stores a ref range and a glob verbatim, existence unchecked', () => {
-  const dir = root();
+test('seam: --read-file stores a ref range and a glob verbatim, existence unchecked', (t) => {
+  const dir = root(t);
   const set = '.planning/does-not-exist.md,.planning/phases/*/PLAN*.md,abc1234..def5678';
   run(dir, ['trace', 'append', '--phase', '4', '--family', 'lifecycle',
     '--event', 'dispatch', '--plan', 'cad-reviewer', '--role', 'cad-reviewer',
@@ -2698,8 +2697,8 @@ test('seam: --read-file stores a ref range and a glob verbatim, existence unchec
   assert.deepEqual(lines(dir)[0].read, set.split(','));
 });
 
-test('seam: every --read-file refusal is bad-args and appends NOTHING at all', () => {
-  const dir = root();
+test('seam: every --read-file refusal is bad-args and appends NOTHING at all', (t) => {
+  const dir = root(t);
   const present = valueFile(dir, 'a.md,b.md', 'reads.txt');
   const cases = [
     { name: 'valueless', args: ['--read-file'] },
@@ -2732,16 +2731,16 @@ test('seam: every --read-file refusal is bad-args and appends NOTHING at all', (
 
 // --- per-role totals ----------------------------------------------------------
 
-test('render: a fully-recorded role carries a total and NO unrecorded key', () => {
-  const dir = root();
+test('render: a fully-recorded role carries a total and NO unrecorded key', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor' });
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'return', plan: '1', role: 'cad-executor', tokens: 900 });
   const r = renderTrace(dir, 4);
   assert.deepEqual(r.roles, { 'cad-executor': { dispatches: 1, tokens: 900 } });
 });
 
-test('render: a half-recorded role shows BOTH a total and an unrecorded count', () => {
-  const dir = root();
+test('render: a half-recorded role shows BOTH a total and an unrecorded count', (t) => {
+  const dir = root(t);
   for (const n of [1, 2, 3]) {
     appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: String(n), role: 'cad-executor' });
   }
@@ -2754,8 +2753,8 @@ test('render: a half-recorded role shows BOTH a total and an unrecorded count', 
     { 'cad-executor': { dispatches: 3, tokens: 300, unrecorded: 1 } });
 });
 
-test('render: a role whose dispatches carried nothing shows no tokens key at all', () => {
-  const dir = root();
+test('render: a role whose dispatches carried nothing shows no tokens key at all', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: 'cad-reviewer', role: 'cad-reviewer' });
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'return', plan: 'cad-reviewer', role: 'cad-reviewer' });
   const row = renderTrace(dir, 4).roles['cad-reviewer'];
@@ -2765,8 +2764,8 @@ test('render: a role whose dispatches carried nothing shows no tokens key at all
   assert.equal('tokens' in row, false);
 });
 
-test('render: two roles in one phase are grouped separately', () => {
-  const dir = root();
+test('render: two roles in one phase are grouped separately', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: 'cad-planner', role: 'cad-planner' });
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'return', plan: 'cad-planner', role: 'cad-planner', tokens: 900 });
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: 'cad-reviewer', role: 'cad-reviewer' });
@@ -2778,8 +2777,8 @@ test('render: two roles in one phase are grouped separately', () => {
 
 // --- per-role TURNS, and their own unrecorded counter (MSR-01, D-03) ---------
 
-test('render: a role\'s turn total rides beside its tokens with a counter of its own', () => {
-  const dir = root();
+test('render: a role\'s turn total rides beside its tokens with a counter of its own', (t) => {
+  const dir = root(t);
   for (const n of [1, 2]) {
     appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: String(n), role: 'cad-executor' });
   }
@@ -2793,8 +2792,8 @@ test('render: a role\'s turn total rides beside its tokens with a counter of its
   assert.equal('unrecorded' in row, false);
 });
 
-test('render: reporting tokens without turns is a different row from the reverse', () => {
-  const dir = root();
+test('render: reporting tokens without turns is a different row from the reverse', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'tokens-only' });
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'return', plan: '1', role: 'tokens-only', tokens: 10 });
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '2', role: 'turns-only' });
@@ -2807,8 +2806,8 @@ test('render: reporting tokens without turns is a different row from the reverse
   assert.notDeepEqual(r.roles['tokens-only'], r.roles['turns-only']);
 });
 
-test('render: a role whose every close carried no turn figure shows NO turn keys', () => {
-  const dir = root();
+test('render: a role whose every close carried no turn figure shows NO turn keys', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-planner' });
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'return', plan: '1', role: 'cad-planner', tokens: 900 });
   const row = renderTrace(dir, 4).roles['cad-planner'];
@@ -2820,8 +2819,8 @@ test('render: a role whose every close carried no turn figure shows NO turn keys
   assert.equal('turns_unrecorded' in row, false);
 });
 
-test('render: a bracket carries the turn figure only where one exists', () => {
-  const dir = root();
+test('render: a bracket carries the turn figure only where one exists', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor' });
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'return', plan: '1', role: 'cad-executor', tokens: 10, turns: 4 });
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '2', role: 'cad-executor' });
@@ -2834,8 +2833,8 @@ test('render: a bracket carries the turn figure only where one exists', () => {
   assert.equal(without.tokens, 10, 'the token half of the same row is untouched');
 });
 
-test('render: a bracket falls back to a turn figure the DISPATCH half carried', () => {
-  const dir = root();
+test('render: a bracket falls back to a turn figure the DISPATCH half carried', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor', turns: 7 });
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'return', plan: '1', role: 'cad-executor' });
   const [b] = renderTrace(dir, 4).brackets;
@@ -2845,8 +2844,8 @@ test('render: a bracket falls back to a turn figure the DISPATCH half carried', 
     { 'cad-executor': { dispatches: 1, turns: 7, unrecorded: 1 } });
 });
 
-test('render: a bracket carries the wall clock its close reported, beside ms', () => {
-  const dir = root();
+test('render: a bracket carries the wall clock its close reported, beside ms', (t) => {
+  const dir = root(t);
   const a = '2026-08-16T10:00:00.000Z';
   const b = '2026-08-16T10:05:00.000Z';
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor', ts: a });
@@ -2865,8 +2864,8 @@ test('render: a bracket carries the wall clock its close reported, beside ms', (
   assert.notEqual(row.ms, row.duration_ms);
 });
 
-test('render: a bracket whose close carried no duration has NO duration_ms key', () => {
-  const dir = root();
+test('render: a bracket whose close carried no duration has NO duration_ms key', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor' });
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'return', plan: '1', role: 'cad-executor', tokens: 10 });
   const [row] = renderTrace(dir, 4).brackets;
@@ -2876,8 +2875,8 @@ test('render: a bracket whose close carried no duration has NO duration_ms key',
   assert.equal(row.tokens, 10, 'the rest of the row is untouched');
 });
 
-test('render: a non-numeric duration_ms contributes NOTHING to the bracket', () => {
-  const dir = root();
+test('render: a non-numeric duration_ms contributes NOTHING to the bracket', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor' });
   // A hand-edited or foreign-producer line. The guard is the one `tokens` and
   // `turns` already carry: the field is a number a caller sums, and the string
@@ -2890,8 +2889,8 @@ test('render: a non-numeric duration_ms contributes NOTHING to the bracket', () 
   assert.equal('duration_ms' in row, false, JSON.stringify(row));
 });
 
-test('render: two closes differing ONLY in their turn count are two closes', () => {
-  const dir = root();
+test('render: two closes differing ONLY in their turn count are two closes', (t) => {
+  const dir = root(t);
   const at1 = '2026-08-16T10:00:00.000Z';
   const at2 = '2026-08-16T11:00:00.000Z';
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor', ts: at1 });
@@ -2903,7 +2902,7 @@ test('render: two closes differing ONLY in their turn count are two closes', () 
   assert.deepEqual(renderTrace(dir, 4).roles,
     { 'cad-executor': { dispatches: 1, turns: 9, unrecorded: 1 } });
   // ...and the byte-identical repeat IS still a replay.
-  const same = root();
+  const same = root(t);
   appendEvent(same, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor', ts: at1 });
   appendEvent(same, { ...close, turns: 4 });
   appendEvent(same, { ...close, turns: 4 });
@@ -2929,16 +2928,16 @@ const rich = {
 };
 
 /** One dispatch closed twice, in the order the two closes are given. */
-function twice(first, second) {
-  const dir = root();
+function twice(t, first, second) {
+  const dir = root(t);
   appendEvent(dir, { phase: 5, family: 'lifecycle', event: 'dispatch', plan: 'p', role: 'cad-executor', ts: DISP });
   appendEvent(dir, first);
   appendEvent(dir, second);
   return renderTrace(dir, 5);
 }
 
-test('render: a dispatch closed by BOTH writers is exactly one bracket', () => {
-  const r = twice(bare, rich);
+test('render: a dispatch closed by BOTH writers is exactly one bracket', (t) => {
+  const r = twice(t, bare, rich);
   assert.equal(r.brackets.length, 1, 'two closes, one dispatch, one row');
   const [b] = r.brackets;
   // Every figure the second writer carried landed on the row the first opened.
@@ -2954,7 +2953,7 @@ test('render: a dispatch closed by BOTH writers is exactly one bracket', () => {
   assert.deepEqual(r.roles, { 'cad-executor': { dispatches: 1, tokens: 1200, turns: 9 } });
 });
 
-test('render: the two closes render identically in EITHER arrival order', () => {
+test('render: the two closes render identically in EITHER arrival order', (t) => {
   // Neither writer may assume it ran first: the hook fires when the host
   // decides and the hand-written close when the orchestrator reaches its step.
   //
@@ -2967,11 +2966,11 @@ test('render: the two closes render identically in EITHER arrival order', () => 
     brackets: r.brackets, unpaired: r.unpaired, mismatched: r.mismatched,
     roles: r.roles, counts: r.counts, corr: r.corr,
   });
-  assert.deepEqual(derived(twice(rich, bare)), derived(twice(bare, rich)));
+  assert.deepEqual(derived(twice(t, rich, bare)), derived(twice(t, bare, rich)));
 });
 
-test('render: two genuine dispatches on ONE worker key are still two brackets', () => {
-  const dir = root();
+test('render: two genuine dispatches on ONE worker key are still two brackets', (t) => {
+  const dir = root(t);
   const ev = (event, ts) => appendEvent(dir,
     { phase: 5, family: 'lifecycle', event, plan: 'p', role: 'cad-executor', ts });
   ev('dispatch', '2026-08-20T10:00:00.000Z');
@@ -2986,7 +2985,7 @@ test('render: two genuine dispatches on ONE worker key are still two brackets', 
   assert.deepEqual(r.roles, { 'cad-executor': { dispatches: 2, unrecorded: 2 } });
 });
 
-test('render: a delayed repeat close never steals the NEXT dispatch of its key', () => {
+test('render: a delayed repeat close never steals the NEXT dispatch of its key', (t) => {
   // The retry path (TRC-04). A plan is dispatched, closed, and dispatched again
   // on the SAME worker key; the first attempt's second writer - the host's
   // `SubagentStop` hook, which fires when the host decides - lands after the
@@ -2994,7 +2993,7 @@ test('render: a delayed repeat close never steals the NEXT dispatch of its key',
   // dispatch, and the tell is the stolen row's NEGATIVE `ms`: measured on this
   // fixture before the discriminator, row 2 rendered `end` 10:05 against `ts`
   // 10:09 for `ms: -240000`, and the role was billed for all three terminals.
-  const dir = root();
+  const dir = root(t);
   const ev = (e) => appendEvent(dir,
     { phase: 5, family: 'lifecycle', plan: 'p', role: 'cad-executor', ...e });
   const A_OPEN = '2026-08-20T10:00:00.000Z';
@@ -3030,8 +3029,8 @@ test('render: a delayed repeat close never steals the NEXT dispatch of its key',
     { 'cad-executor': { dispatches: 2, tokens: a.tokens + b.tokens } });
 });
 
-test('render: a close whose dispatch was never read still bills its own role', () => {
-  const dir = root();
+test('render: a close whose dispatch was never read still bills its own role', (t) => {
+  const dir = root(t);
   // A close whose dispatch fell outside the `--phase` filter or above the read
   // cap is a DIFFERENT input from a repeat close: there is no row to fold into,
   // so today's behaviour stands - it bills its own role and opens no bracket.
@@ -3041,8 +3040,8 @@ test('render: a close whose dispatch was never read still bills its own role', (
   assert.deepEqual(r.roles, { 'cad-verifier': { dispatches: 0, tokens: 42 } });
 });
 
-test('render: a non-numeric turn figure contributes NOTHING', () => {
-  const dir = root();
+test('render: a non-numeric turn figure contributes NOTHING', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor' });
   // A hand-edited or foreign-producer line: the same posture `tokens` takes,
   // never string-concatenated onto a total.
@@ -3055,9 +3054,9 @@ test('render: a non-numeric turn figure contributes NOTHING', () => {
   assert.equal('turns' in row, false);
 });
 
-test('render: tokens on checkpoint and escalation aggregate as on return', () => {
+test('render: tokens on checkpoint and escalation aggregate as on return', (t) => {
   for (const event of TERMINAL) {
-    const dir = root();
+    const dir = root(t);
     appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor' });
     appendEvent(dir, { phase: 4, family: 'lifecycle', event, plan: '1', role: 'cad-executor', tokens: 5 });
     // A checkpointed worker did the work twice; closing on `return` alone would
@@ -3067,31 +3066,31 @@ test('render: tokens on checkpoint and escalation aggregate as on return', () =>
   }
 });
 
-test('render: a bracket with no role lands under the "" key rather than vanishing', () => {
-  const dir = root();
+test('render: a bracket with no role lands under the "" key rather than vanishing', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '1' });
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'return', plan: '1', tokens: 42 });
   assert.deepEqual(renderTrace(dir, 4).roles, { '': { dispatches: 1, tokens: 42 } });
 });
 
-test('render: a phase with no lifecycle events renders an empty roles map', () => {
-  const dir = root();
+test('render: a phase with no lifecycle events renders an empty roles map', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 4, family: 'routing', event: 'resolve' });
   assert.deepEqual(renderTrace(dir, 4).roles, {});
   // ...and the seam omits the key entirely, per the absent-optionals convention.
   assert.equal('roles' in run(dir, ['trace', 'render', '--phase', '4']), false);
 });
 
-test('render: the ANCHOR event invents no role row', () => {
-  const dir = root();
+test('render: the ANCHOR event invents no role row', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: ANCHOR, sha: 'abc1234' });
   // `phase_start` is the correlation-id anchor, not a worker: keying it into
   // the role table would invent a role that never ran.
   assert.deepEqual(renderTrace(dir, 4).roles, {});
 });
 
-test('render: a string tokens value contributes 0 and counts as unrecorded', () => {
-  const dir = root();
+test('render: a string tokens value contributes 0 and counts as unrecorded', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor' });
   appendFileSync(tracePath(dir), `${JSON.stringify({
     corr: '4', phase: 4, ts: 'x', family: 'lifecycle', event: 'return', plan: '1', role: 'cad-executor', tokens: '12345',
@@ -3101,8 +3100,8 @@ test('render: a string tokens value contributes 0 and counts as unrecorded', () 
   assert.deepEqual(renderTrace(dir, 4).roles, { 'cad-executor': { dispatches: 1, unrecorded: 1 } });
 });
 
-test('render: per-role grouping did not become a second pairing rule', () => {
-  const dir = root();
+test('render: per-role grouping did not become a second pairing rule', (t) => {
+  const dir = root(t);
   // Two plans, one role: pairing stays keyed on (corr, phase, plan), so both
   // brackets close, while the role table sums them into one row.
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor' });
@@ -3114,8 +3113,8 @@ test('render: per-role grouping did not become a second pairing rule', () => {
   assert.deepEqual(r.roles, { 'cad-executor': { dispatches: 2, tokens: 30 } });
 });
 
-test('render: a terminal is billed to the role that DISPATCHED, not its own', () => {
-  const dir = root();
+test('render: a terminal is billed to the role that DISPATCHED, not its own', (t) => {
+  const dir = root(t);
   // The two halves of a bracket are written by two separate prose lines, so
   // they can disagree. Billing each half to whatever it names is the worst
   // available answer: the worker that really ran reads as unmeasured while a
@@ -3128,8 +3127,8 @@ test('render: a terminal is billed to the role that DISPATCHED, not its own', ()
     'the dispatch role owns the figure, and the mistyped closing role invents no row');
 });
 
-test('render: a bracket closed under a DIFFERENT role is reported, not absorbed', () => {
-  const dir = root();
+test('render: a bracket closed under a DIFFERENT role is reported, not absorbed', (t) => {
+  const dir = root(t);
   // The billing above is right and stays right - and it is also the reason the
   // disagreement is invisible, so the prose defect at one of the two sites
   // survives every render. `mismatched` is where it surfaces; nothing about the
@@ -3153,8 +3152,8 @@ test('render: a bracket closed under a DIFFERENT role is reported, not absorbed'
   }]);
 });
 
-test('seam: trace render shows mismatched only where a bracket disagreed', () => {
-  const dir = root();
+test('seam: trace render shows mismatched only where a bracket disagreed', (t) => {
+  const dir = root(t);
   const base = ['trace', 'append', '--phase', '4', '--family', 'lifecycle'];
   run(dir, [...base, '--event', 'dispatch', '--plan', '1', '--role', 'cad-executor',
     '--read', '.planning/phases/4/PLAN-1.md']);
@@ -3169,16 +3168,16 @@ test('seam: trace render shows mismatched only where a bracket disagreed', () =>
   assert.deepEqual(shown.roles, { 'cad-executor': { dispatches: 1, tokens: 500 } });
 });
 
-test('render: an UNMATCHED terminal shows its tokens but funds no dispatch', () => {
-  const dir = root();
+test('render: an UNMATCHED terminal shows its tokens but funds no dispatch', (t) => {
+  const dir = root(t);
   // No dispatch to speak for it, so it falls back to its own role - and must
   // not drive any role's `unrecorded` below zero.
   appendEvent(dir, { phase: 4, family: 'lifecycle', event: 'return', plan: '7', role: 'cad-verifier', tokens: 42 });
   assert.deepEqual(renderTrace(dir, 4).roles, { 'cad-verifier': { dispatches: 0, tokens: 42 } });
 });
 
-test('render: a duplicated terminal cannot fund a second dispatch', () => {
-  const dir = root();
+test('render: a duplicated terminal cannot fund a second dispatch', (t) => {
+  const dir = root(t);
   // Two dispatches, one genuine close, then a replayed close for the SAME
   // worker. Counting token-bearing EVENTS would report both workers funded and
   // hide the one that never came back with a figure.
@@ -3192,8 +3191,8 @@ test('render: a duplicated terminal cannot fund a second dispatch', () => {
     'both figures are summed, but plan 2 stays unrecorded');
 });
 
-test('render: a REPLAYED terminal funds nothing, even with a dispatch still open', () => {
-  const dir = root();
+test('render: a REPLAYED terminal funds nothing, even with a dispatch still open', (t) => {
+  const dir = root(t);
   // Both dispatches are on ONE worker key, which is where the `funded` flag
   // cannot help: the FIFO pairing hands the replay the second, genuinely open
   // dispatch and marks IT funded, so a worker that came back with no figure
@@ -3213,8 +3212,8 @@ test('render: a REPLAYED terminal funds nothing, even with a dispatch still open
   assert.deepEqual(r.mismatched, []);
 });
 
-test('render: a role named __proto__ is an own row, not a prototype write', () => {
-  const dir = root();
+test('render: a role named __proto__ is an own row, not a prototype write', (t) => {
+  const dir = root(t);
   // Plain assignment of this one key hits the prototype setter, so the row
   // silently does not exist and the seam's omit-when-empty gate can drop the
   // WHOLE block - one hostile role name erasing every other role's accounting.
@@ -3229,8 +3228,8 @@ test('render: a role named __proto__ is an own row, not a prototype write', () =
     'the sibling role survives - the block is not dropped');
 });
 
-test('seam: trace render surfaces the roles block through the CLI', () => {
-  const dir = root();
+test('seam: trace render surfaces the roles block through the CLI', (t) => {
+  const dir = root(t);
   const base = ['trace', 'append', '--phase', '4', '--family', 'lifecycle'];
   run(dir, [...base, '--event', 'dispatch', '--plan', 'cad-planner', '--role', 'cad-planner',
     '--read', '.planning/ROADMAP.md']);
@@ -3617,14 +3616,14 @@ test('census: every trace family has a producer, and every producer speaks the r
 const FIXTURE = join(TESTS, 'fixtures', 'verbatim.trace.jsonl');
 
 /** The committed fixture, in a scratch planning root of its own. */
-function fixtureRoot() {
-  const dir = root();
+function fixtureRoot(t) {
+  const dir = root(t);
   copyFileSync(FIXTURE, tracePath(dir));
   return dir;
 }
 
-test('fixture: the committed verbatim trace renders exactly as it did before this phase', () => {
-  const r = renderTrace(fixtureRoot(), '1');
+test('fixture: the committed verbatim trace renders exactly as it did before this phase', (t) => {
+  const r = renderTrace(fixtureRoot(t), '1');
   assert.equal(r.corr, '1-573f325');
   assert.equal(r.capped, false);
   assert.equal(r.malformed, 0);
@@ -3645,8 +3644,8 @@ test('fixture: the committed verbatim trace renders exactly as it did before thi
   ]);
 });
 
-test('render: an unpaired row names the ROLE its dispatch was opened under', () => {
-  const dir = root();
+test('render: an unpaired row names the ROLE its dispatch was opened under', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 6, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor', ts: DISP });
   // A dispatch that forgot `--role` keys the empty string rather than dropping
   // the key, the same posture `roles` already takes: a forgotten flag stays
@@ -3675,8 +3674,8 @@ function bracket(dir, plan, a, b, phase = 1) {
   appendEvent(dir, { phase, family: 'lifecycle', event: 'return', plan, ts: at(b) });
 }
 
-test('coordinator: a step\'s residue is its wall span minus the bracket inside it', () => {
-  const dir = root();
+test('coordinator: a step\'s residue is its wall span minus the bracket inside it', (t) => {
+  const dir = root(t);
   mark(dir, 'analyze', 0);
   bracket(dir, 'cad-planner', 2, 6);          // 4 minutes of worker time
   mark(dir, 'write_plan', 10);
@@ -3696,8 +3695,8 @@ test('coordinator: a step\'s residue is its wall span minus the bracket inside i
   );
 });
 
-test('coordinator: one phase spanning two corr ids is TWO coordinator streams (D-01)', () => {
-  const dir = root();
+test('coordinator: one phase spanning two corr ids is TWO coordinator streams (D-01)', (t) => {
+  const dir = root(t);
   // A phase can hold more than one id even after the read-time repair: a RE-RUN
   // starts a new one. Every /cad-context marker fires before any anchor, so
   // `load_priors` joins the first anchor ahead of it and `git_guard` joins the
@@ -3727,8 +3726,8 @@ test('coordinator: one phase spanning two corr ids is TWO coordinator streams (D
   assert.equal(r.coordinator.residue_ms, 6 * MIN);
 });
 
-test('coordinator: two workers running at once subtract their overlap ONCE', () => {
-  const dir = root();
+test('coordinator: two workers running at once subtract their overlap ONCE', (t) => {
+  const dir = root(t);
   mark(dir, 'dispatch_plans', 0);
   bracket(dir, '1', 1, 7);
   bracket(dir, '2', 3, 9);   // overlaps the first from 3 to 7
@@ -3740,8 +3739,8 @@ test('coordinator: two workers running at once subtract their overlap ONCE', () 
   assert.equal(c.residue_ms, 2 * MIN);
 });
 
-test('coordinator: an UNPAIRED dispatch subtracts nothing', () => {
-  const dir = root();
+test('coordinator: an UNPAIRED dispatch subtracts nothing', (t) => {
+  const dir = root(t);
   mark(dir, 'review', 0);
   appendEvent(dir, {
     phase: 1, family: 'lifecycle', event: DISPATCH, plan: 'cad-reviewer', role: 'cad-reviewer', ts: at(2),
@@ -3756,8 +3755,8 @@ test('coordinator: an UNPAIRED dispatch subtracts nothing', () => {
   assert.equal(r.coordinator.bracket_ms, 0);
 });
 
-test('coordinator: a marker with an unparseable ts contributes nothing, never NaN', () => {
-  const dir = root();
+test('coordinator: a marker with an unparseable ts contributes nothing, never NaN', (t) => {
+  const dir = root(t);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: COORDINATOR, step: 'broken', ts: 'not-a-date' });
   mark(dir, 'analyze', 0);
   bracket(dir, 'cad-planner', 1, 3);
@@ -3768,18 +3767,18 @@ test('coordinator: a marker with an unparseable ts contributes nothing, never Na
   assert.equal(c.residue_ms, 3 * MIN);
 });
 
-test('coordinator: a trace with no marker renders no coordinator block at all', () => {
-  const dir = root();
+test('coordinator: a trace with no marker renders no coordinator block at all', (t) => {
+  const dir = root(t);
   bracket(dir, 'cad-planner', 0, 4);
   const r = renderTrace(dir, 1);
   assert.equal('coordinator' in r, false);
   // And the committed fixture, which is what AC1 actually rides on.
-  assert.equal('coordinator' in renderTrace(fixtureRoot(), '1'), false);
-  assert.equal('coordinator' in renderTrace(fixtureRoot()), false);
+  assert.equal('coordinator' in renderTrace(fixtureRoot(t), '1'), false);
+  assert.equal('coordinator' in renderTrace(fixtureRoot(t)), false);
 });
 
-test('seam: trace render emits the coordinator block only where markers were written', () => {
-  const dir = root();
+test('seam: trace render emits the coordinator block only where markers were written', (t) => {
+  const dir = root(t);
   mark(dir, 'analyze', 0);
   bracket(dir, 'cad-planner', 2, 6);
   mark(dir, 'write_plan', 10);
@@ -3787,17 +3786,17 @@ test('seam: trace render emits the coordinator block only where markers were wri
   assert.equal(shown.ok, true);
   assert.equal(shown.coordinator.residue_ms, 6 * MIN);
   assert.deepEqual(shown.coordinator.steps.map((s) => s.step), ['analyze', 'write_plan']);
-  const bare = run(fixtureRoot(), ['trace', 'render', '--phase', '1']);
+  const bare = run(fixtureRoot(t), ['trace', 'render', '--phase', '1']);
   assert.equal(bare.ok, true);
   assert.equal('coordinator' in bare, false);
 });
 
 // --- appendEvent: a symlinked run record is refused, never followed (D-04) ---
 
-test('appendEvent: a symlinked trace path is refused and nothing is appended', () => {
-  const outside = join(mkdtempSync(join(tmpdir(), 'cad-outside-')), 'stolen.jsonl');
+test('appendEvent: a symlinked trace path is refused and nothing is appended', (t) => {
+  const outside = join(scratch('cad-outside-', t), 'stolen.jsonl');
   writeFileSync(outside, 'ORIGINAL\n');
-  const dir = root();
+  const dir = root(t);
   symlinkSync(outside, tracePath(dir));
 
   const res = appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
@@ -3808,9 +3807,9 @@ test('appendEvent: a symlinked trace path is refused and nothing is appended', (
   assert.equal(lstatSync(tracePath(dir)).isSymbolicLink(), true);
 });
 
-test('appendEvent: a symlinked records folder is refused and nothing is written through it', () => {
-  const outside = mkdtempSync(join(tmpdir(), 'cad-outside-'));
-  const dir = join(mkdtempSync(join(tmpdir(), 'cad-trace-')), '.planning');
+test('appendEvent: a symlinked records folder is refused and nothing is written through it', (t) => {
+  const outside = scratch('cad-outside-', t);
+  const dir = join(scratch('cad-trace-', t), '.planning');
   mkdirSync(dir, { recursive: true });
   symlinkSync(outside, recordsDir(dir));
 
@@ -3821,8 +3820,8 @@ test('appendEvent: a symlinked records folder is refused and nothing is written 
 
 // --- appendEvent: no valid state, nothing written (D-10) ---
 
-test('appendEvent: an unstamped v4.0 project gets no-valid-state and stays byte-identical; once converted the append lands in records/', () => {
-  const dir = v40Project();
+test('appendEvent: an unstamped v4.0 project gets no-valid-state and stays byte-identical; once converted the append lands in records/', (t) => {
+  const dir = v40Project(t);
   const before = treeOf(dir);
   const event = { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' };
   assert.deepEqual(appendEvent(dir, event), { written: false, reason: 'no-valid-state' });
@@ -3835,8 +3834,8 @@ test('appendEvent: an unstamped v4.0 project gets no-valid-state and stays byte-
   assert.equal(existsSync(join(dir, 'trace.jsonl')), false);
 });
 
-test('appendEvent: a state file that does not parse gets no-valid-state and stays byte-identical', () => {
-  const dir = root();
+test('appendEvent: a state file that does not parse gets no-valid-state and stays byte-identical', (t) => {
+  const dir = root(t);
   writeFileSync(statePath(dir), '{torn');
   const before = treeOf(dir);
   assert.deepEqual(appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' }),
@@ -3845,16 +3844,16 @@ test('appendEvent: a state file that does not parse gets no-valid-state and stay
 });
 
 // the stamp made the records folder, so the appender never creates one; the unstamped case is the no-valid-state tests
-test('appendEvent: the first write lands the record inside the records folder', () => {
-  const dir = root();
+test('appendEvent: the first write lands the record inside the records folder', (t) => {
+  const dir = root(t);
   const res = appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   assert.equal(res.written, true);
   assert.equal(existsSync(join(recordsDir(dir), 'trace.jsonl')), true);
   assert.equal(existsSync(join(dir, 'trace.jsonl')), false);
 });
 
-test('appendEvent: an ordinary trace file still appends and reports written', () => {
-  const dir = root();
+test('appendEvent: an ordinary trace file still appends and reports written', (t) => {
+  const dir = root(t);
   const first = appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'phase_start', sha: 'abc1234' });
   assert.equal(first.written, true);
   const second = appendEvent(dir, { phase: 1, family: 'routing', event: 'resolve' });
@@ -3898,8 +3897,8 @@ test('appendEvent: an ordinary trace file still appends and reports written', ()
 // checkout's `cadence-core/bin/`, `node --test` it there, then remove the
 // worktree.
 
-test('falsifier: turns persist onto the close and reach both the bracket and the role row (MSR-01)', () => {
-  const dir = root();
+test('falsifier: turns persist onto the close and reach both the bracket and the role row (MSR-01)', (t) => {
+  const dir = root(t);
   for (const k of ['1', '2']) {
     run(dir, ['trace', 'append', '--phase', '1', '--family', 'lifecycle',
       '--event', 'dispatch', '--plan', k, '--role', 'cad-executor',
@@ -3977,8 +3976,8 @@ test('falsifier: turns persist onto the close and reach both the bracket and the
 // `<tmp>/cadence-core/bin/`, run `node --test tests/trace.test.mjs`
 // from `<tmp>`, then `git worktree remove <tmp>`.
 //
-test('falsifier: every step window closes inside the corr that opened it (MSR-04)', () => {
-  const dir = root();
+test('falsifier: every step window closes inside the corr that opened it (MSR-04)', (t) => {
+  const dir = root(t);
   // Run A: its anchor, a marker, a worker bracket, the run's LAST marker, and
   // one outcome event two minutes after it.
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: ANCHOR, sha: 'aaa1111', ts: at(0) });
@@ -4076,8 +4075,8 @@ const cacheClose = (extra) => ({
 });
 
 /** One dispatch, closed once, rendered. */
-function closedWith(extra) {
-  const dir = root();
+function closedWith(t, extra) {
+  const dir = root(t);
   appendEvent(dir, {
     phase: 6, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor',
     ts: '2026-08-26T10:00:00.000Z',
@@ -4086,8 +4085,8 @@ function closedWith(extra) {
   return renderTrace(dir, 6);
 }
 
-test('render: a bracket carries the cache figures its close reported, and roles does not', () => {
-  const r = closedWith({ cache_creation_input_tokens: 4096, cache_read_input_tokens: 33033480 });
+test('render: a bracket carries the cache figures its close reported, and roles does not', (t) => {
+  const r = closedWith(t, { cache_creation_input_tokens: 4096, cache_read_input_tokens: 33033480 });
   const [row] = r.brackets;
   assert.equal(row.cache_creation_input_tokens, 4096);
   assert.equal(row.cache_read_input_tokens, 33033480);
@@ -4096,35 +4095,35 @@ test('render: a bracket carries the cache figures its close reported, and roles 
   // over turns counts one cached prefix once per turn, so folding it into a
   // total denominated in final windows would produce a number denominated in
   // nothing - and would misprice every role in the report.
-  assert.deepEqual(r.roles, closedWith({}).roles);
+  assert.deepEqual(r.roles, closedWith(t, {}).roles);
   assert.deepEqual(r.roles, { 'cad-executor': { dispatches: 1, tokens: 1200 } });
 });
 
-test('render: a close reporting no cache traffic leaves NEITHER key on the bracket', () => {
+test('render: a close reporting no cache traffic leaves NEITHER key on the bracket', (t) => {
   // ABSENT, not zero. Checked by `in` and never against 0: a zero would claim
   // the worker billed no cache traffic, and every trace written before this
   // phase must render byte-identically.
-  const [row] = closedWith({}).brackets;
+  const [row] = closedWith(t, {}).brackets;
   assert.equal('cache_creation_input_tokens' in row, false, JSON.stringify(row));
   assert.equal('cache_read_input_tokens' in row, false, JSON.stringify(row));
   // The two answer INDEPENDENTLY: one reported and one not is one key.
-  const [one] = closedWith({ cache_read_input_tokens: 900 }).brackets;
+  const [one] = closedWith(t, { cache_read_input_tokens: 900 }).brackets;
   assert.equal(one.cache_read_input_tokens, 900);
   assert.equal('cache_creation_input_tokens' in one, false, JSON.stringify(one));
 });
 
-test('render: a non-numeric cache figure contributes NOTHING to the bracket', () => {
+test('render: a non-numeric cache figure contributes NOTHING to the bracket', (t) => {
   // The guard `tokens`, `turns` and `duration_ms` already carry, for the same
   // hazard: a hand-edited or foreign-producer line must never string-concatenate
   // onto a numeric field a caller sums.
-  const [row] = closedWith({
+  const [row] = closedWith(t, {
     cache_creation_input_tokens: '1,000', cache_read_input_tokens: 12,
   }).brackets;
   assert.equal('cache_creation_input_tokens' in row, false, JSON.stringify(row));
   assert.equal(row.cache_read_input_tokens, 12, 'the readable half of the same row survived');
 });
 
-test('render: two closes of one worker leave the LARGER cache read on the row', () => {
+test('render: two closes of one worker leave the LARGER cache read on the row', (t) => {
   // The two writers close one bracket in either order. The hook is the only one
   // that HAS these figures, so the ordinary live shape is the hand-written close
   // opening the row and the hook filling it - but the reverse must not lose a
@@ -4134,7 +4133,7 @@ test('render: two closes of one worker leave the LARGER cache read on the row', 
   // writer, and two values for one worker are two reads of a transcript that
   // only grows. So the first half is a fill, the second is a refusal to shrink,
   // and the third is the correction fill-only-empty would have refused.
-  const dir = root();
+  const dir = root(t);
   appendEvent(dir, {
     phase: 6, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor',
     ts: '2026-08-26T10:00:00.000Z',
@@ -4151,7 +4150,7 @@ test('render: two closes of one worker leave the LARGER cache read on the row', 
   assert.equal(r.brackets[0].cache_read_input_tokens, 900);
 
   // ...and the first writer's figure STANDS when the second carries its own.
-  const other = root();
+  const other = root(t);
   appendEvent(other, {
     phase: 6, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor',
     ts: '2026-08-26T10:00:00.000Z',
@@ -4170,7 +4169,7 @@ test('render: two closes of one worker leave the LARGER cache read on the row', 
   // ...and the SHORTER read gives way. This is the arm fill-only-empty got
   // wrong: a hook close that landed first with a partial sum froze the row, and
   // no later, fuller read of the same transcript could correct it.
-  const third = root();
+  const third = root(t);
   appendEvent(third, {
     phase: 6, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor',
     ts: '2026-08-26T10:00:00.000Z',
@@ -4187,7 +4186,7 @@ test('render: two closes of one worker leave the LARGER cache read on the row', 
     'a 7-token read froze the row against a fuller one');
 });
 
-test('render: the worker id survives the hook closing the bracket first', () => {
+test('render: the worker id survives the hook closing the bracket first', (t) => {
   // THE ORDINARY ARRIVAL ORDER, and the one the fold used to drop the id on.
   // The host fires SubagentStop when the worker stops, which is before the
   // orchestrator has processed the return and written its own close - so the
@@ -4196,7 +4195,7 @@ test('render: the worker id survives the hook closing the bracket first', () => 
   // the record carries worker identity only on brackets the hand-written close
   // happened to open, and `lib/subagent-trace.mjs`'s `alreadyClosed` equality
   // test reads a key that is absent on the common path.
-  const dir = root();
+  const dir = root(t);
   appendEvent(dir, {
     phase: 6, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor',
     ts: '2026-08-26T10:00:00.000Z',
@@ -4223,7 +4222,7 @@ test('render: the worker id survives the hook closing the bracket first', () => 
   // ...and the FIRST writer's id stands, on the same fill-only-empty rule the
   // figures follow. Two ids on one bracket means two workers were confused for
   // one, and the writer that opened the row is the one that named it.
-  const other = root();
+  const other = root(t);
   appendEvent(other, {
     phase: 6, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor',
     ts: '2026-08-26T10:00:00.000Z',
@@ -4250,8 +4249,8 @@ test('render: the worker id survives the hook closing the bracket first', () => 
 // The point of the pair is the DISAGREEMENT it can express - a `max` dispatch
 // that ran at `high` is invisible on a record holding the routed rung alone.
 
-test('render: a bracket carries the effort it RAN at beside the rung it was DISPATCHED under', () => {
-  const r = closedWith({ effort: 'high', rung: 'max' });
+test('render: a bracket carries the effort it RAN at beside the rung it was DISPATCHED under', (t) => {
+  const r = closedWith(t, { effort: 'high', rung: 'max' });
   const [row] = r.brackets;
   assert.equal(row.effort, 'high');
   assert.equal(row.rung, 'max');
@@ -4259,53 +4258,53 @@ test('render: a bracket carries the effort it RAN at beside the rung it was DISP
   // rung enum: that enum is a config rule about what a user may ASK for, and a
   // renamed host rung has to appear on the record rather than vanish at the
   // moment its appearance is the signal.
-  assert.equal(closedWith({ effort: 'ultrathink-9', rung: 'max' }).brackets[0].effort,
+  assert.equal(closedWith(t, { effort: 'ultrathink-9', rung: 'max' }).brackets[0].effort,
     'ultrathink-9');
   // D-09, and this is the assertion that holds it: the per-role bill is
   // DEEP-EQUAL to the same fixture rendered without the two keys. An enum has
   // nothing to sum and the roles bill is denominated in tokens, so a string
   // that reached `roles` could only reach it as a wrong number.
-  assert.deepEqual(r.roles, closedWith({}).roles);
+  assert.deepEqual(r.roles, closedWith(t, {}).roles);
   assert.deepEqual(r.roles, { 'cad-executor': { dispatches: 1, tokens: 1200 } });
 });
 
-test('render: a close naming no effort leaves NEITHER key on the bracket', () => {
+test('render: a close naming no effort leaves NEITHER key on the bracket', (t) => {
   // ABSENT, not `unrecorded`. `unrecorded` is something a READER prints for a
   // row carrying no observation; storing the literal beside real rungs would
   // put a non-observation into the column a comparison reads. Checked with
   // `in`, so every trace written before this phase renders byte-identically.
-  const [row] = closedWith({}).brackets;
+  const [row] = closedWith(t, {}).brackets;
   assert.equal('effort' in row, false, JSON.stringify(row));
   assert.equal('rung' in row, false, JSON.stringify(row));
   // The two answer INDEPENDENTLY at the render even though the hook writes
   // them as a pair: a producer that carried one is not a reason to drop it,
   // and a reader asking `in` gets a straight answer either way.
-  const [one] = closedWith({ effort: 'high' }).brackets;
+  const [one] = closedWith(t, { effort: 'high' }).brackets;
   assert.equal(one.effort, 'high');
   assert.equal('rung' in one, false, JSON.stringify(one));
 });
 
-test('render: a non-string or empty effort or rung contributes NOTHING to the bracket', () => {
+test('render: a non-string or empty effort or rung contributes NOTHING to the bracket', (t) => {
   // The guard `tokens`, `turns`, `duration_ms` and the two cache figures carry,
   // for the same hazard and with the answer this field's type demands: a
   // hand-edited or foreign-producer line must never put a number, or a blank,
   // where a reader prints a rung name and compares two of them.
-  const [row] = closedWith({ effort: 3, rung: '' }).brackets;
+  const [row] = closedWith(t, { effort: 3, rung: '' }).brackets;
   assert.equal('effort' in row, false, JSON.stringify(row));
   assert.equal('rung' in row, false, JSON.stringify(row));
-  const [half] = closedWith({ effort: '', rung: 'xhigh' }).brackets;
+  const [half] = closedWith(t, { effort: '', rung: 'xhigh' }).brackets;
   assert.equal('effort' in half, false, JSON.stringify(half));
   assert.equal(half.rung, 'xhigh', 'the readable half of the same row survived');
 });
 
-test('render: a second close does not overwrite the effort or rung the first supplied', () => {
+test('render: a second close does not overwrite the effort or rung the first supplied', (t) => {
   // FILL-ONLY-EMPTY, the clause `agent_id` follows and NOT the larger-wins
   // clause the two cache keys use one line above it: `moreComplete` compares
   // with `>`, which for an enum-shaped string is a lexicographic accident
   // rather than a fuller read, and a rung does not GROW between two reads of
   // one transcript the way a running cache sum does.
   const twice = (first, second) => {
-    const dir = root();
+    const dir = root(t);
     appendEvent(dir, {
       phase: 6, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor',
       ts: '2026-08-26T10:00:00.000Z',
@@ -4337,7 +4336,7 @@ test('render: a second close does not overwrite the effort or rung the first sup
   assert.equal(mixed.rung, 'max');
 });
 
-test('render: the span ends at the LATER close, not whichever landed first', () => {
+test('render: the span ends at the LATER close, not whichever landed first', (t) => {
   // `ms` is DISPATCH-TO-CLOSE and the brackets typedef says it includes what
   // the orchestrator did between writing the two halves. Freezing `end` at the
   // first terminal broke that: the hook's figureless close ordinarily lands
@@ -4345,7 +4344,7 @@ test('render: the span ends at the LATER close, not whichever landed first', () 
   // orchestrator time it is defined to include. The tell is a bracket whose
   // `ms` is SHORTER than the `duration_ms` beside it - a worker running longer
   // than the window that supposedly contained it.
-  const dir = root();
+  const dir = root(t);
   appendEvent(dir, {
     phase: 8, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor',
     ts: at(0),
@@ -4367,7 +4366,7 @@ test('render: the span ends at the LATER close, not whichever landed first', () 
   // MONOTONIC, never backwards. A delayed repeat close - the D-05 ordering,
   // whose `ts` precedes the dispatch already paired - must not shrink a span
   // that closed later.
-  const other = root();
+  const other = root(t);
   appendEvent(other, {
     phase: 8, family: 'lifecycle', event: 'dispatch', plan: '1', role: 'cad-executor',
     ts: at(0),
@@ -4385,12 +4384,12 @@ test('render: the span ends at the LATER close, not whichever landed first', () 
   assert.equal(late.ms, 6 * MIN);
 });
 
-test('coordinator: the residue subtracts the worker span to its LATER close', () => {
+test('coordinator: the residue subtracts the worker span to its LATER close', (t) => {
   // The same defect one layer out. The coordinator span was pushed once, at
   // pairing time, off the first terminal - so every bracket the hook closed
   // first handed the coordinator back time the worker was still holding, and
   // `residue_ms` overstated by the gap between the two closes.
-  const dir = root();
+  const dir = root(t);
   mark(dir, 'execute', 0);
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: DISPATCH, plan: 'cad-executor', role: 'cad-executor', ts: at(2) });
   appendEvent(dir, { phase: 1, family: 'lifecycle', event: 'return', plan: 'cad-executor', ts: at(4) });
@@ -4438,23 +4437,23 @@ const vFact = (extra) => ({
  * move the per-role bill. Asserting it inside the helper is what puts the
  * assertion on every case below without restating it six times.
  */
-function folded(rows) {
-  const dir = root();
+function folded(t, rows) {
+  const dir = root(t);
   for (const r of rows) appendEvent(dir, r);
   const r = renderTrace(dir, 7);
-  const bare = root();
+  const bare = root(t);
   for (const row of rows) if (row.event !== WORKER_CACHE) appendEvent(bare, row);
   assert.equal(JSON.stringify(r.roles), JSON.stringify(renderTrace(bare, 7).roles),
     'a cache-only fact moved the per-role bill');
   return r;
 }
 
-test('render: a cache-only fact lands on the bracket its corr and id name', () => {
+test('render: a cache-only fact lands on the bracket its corr and id name', (t) => {
   // THE LIVE SHAPE. The hook's figureless close opens the row, the
   // orchestrator's hand-written `trace close --agent-id` names the worker, and
   // the fact - written by a gate that refused to close anything - carries the
   // only cache figures the record will ever hold for that worker.
-  const r = folded([
+  const r = folded(t, [
     vDispatch(),
     // The hook's own close: no figure of any kind and no id, because the
     // payload carries neither.
@@ -4470,13 +4469,13 @@ test('render: a cache-only fact lands on the bracket its corr and id name', () =
   assert.equal(r.brackets[0].cache_read_input_tokens, 33033480);
 });
 
-test('render: the fact folds just as well when it arrives BEFORE the id', () => {
+test('render: the fact folds just as well when it arrives BEFORE the id', (t) => {
   // The ORDINARY arrival order, and the reason the fold is a post-pass (D-09):
   // the host fires `SubagentStop` the moment the worker stops, while the
   // orchestrator writes its `--agent-id` close only after processing the
   // return. A fold riding the forward pass would see no bracket yet and drop
   // every figure this phase exists to keep.
-  const r = folded([
+  const r = folded(t, [
     vDispatch(),
     vFact({ agent_id: 'W1' }),
     vClose({ agent_id: 'W1' }),
@@ -4486,7 +4485,7 @@ test('render: the fact folds just as well when it arrives BEFORE the id', () => 
   assert.equal(r.brackets[0].cache_read_input_tokens, 33033480);
 });
 
-test('render: a fact CORRECTS a shorter figure the close carried, never a longer one', () => {
+test('render: a fact CORRECTS a shorter figure the close carried, never a longer one', (t) => {
   // THIS SUPERSEDES fill-only-empty for these two keys alone, and with it AC2's
   // "a bracket that already carries cache figures is not overwritten" clause
   // and D-11 as it applied to them. The reason is the writer count: these two
@@ -4499,7 +4498,7 @@ test('render: a fact CORRECTS a shorter figure the close carried, never a longer
   // The same clause the repeat-close arm applies, reused rather than restated:
   // a second overwrite rule is one that disagrees with the first the day either
   // changes.
-  const short = folded([
+  const short = folded(t, [
     vDispatch(),
     vClose({ agent_id: 'W1', cache_read_input_tokens: 7 }),
     vFact({ agent_id: 'W1' }),
@@ -4513,7 +4512,7 @@ test('render: a fact CORRECTS a shorter figure the close carried, never a longer
 
   // ...and the fact never SHRINKS a figure. A close carrying the fuller read
   // keeps its own, so the rule is larger-wins and not last-writer-wins.
-  const long = folded([
+  const long = folded(t, [
     vDispatch(),
     vClose({ agent_id: 'W1', cache_read_input_tokens: 99999999 }),
     vFact({ agent_id: 'W1' }),
@@ -4523,12 +4522,12 @@ test('render: a fact CORRECTS a shorter figure the close carried, never a longer
   assert.equal(long.brackets[0].cache_creation_input_tokens, 4096);
 });
 
-test('render: with two workers of one role open, the fact reaches the matching id', () => {
+test('render: with two workers of one role open, the fact reaches the matching id', (t) => {
   // Not the newest bracket and not whichever fact arrived first - the one whose
   // `agent_id` the fact names. This is the parallel path's own shape: two
   // dispatches of one role in one phase run, closed under two different host
   // ids.
-  const r = folded([
+  const r = folded(t, [
     vDispatch(),
     vDispatch({ ts: '2026-08-26T10:01:00.000Z' }),
     vClose({ ts: '2026-08-26T10:05:00.000Z', agent_id: 'W1' }),
@@ -4545,7 +4544,7 @@ test('render: with two workers of one role open, the fact reaches the matching i
   assert.equal(second.cache_creation_input_tokens, 4096);
 });
 
-test('render: a fact that names no bracket of its own run lands NOWHERE', () => {
+test('render: a fact that names no bracket of its own run lands NOWHERE', (t) => {
   // The join is `corr` AND `agent_id`, never the id alone (D-10). Measured
   // 2026-08-26 over 1,333 transcripts, 7 of 1,323 distinct host ids appear in
   // two or more transcripts of the same project, so an unscoped equality would
@@ -4557,7 +4556,7 @@ test('render: a fact that names no bracket of its own run lands NOWHERE', () => 
     'a fact carrying no id at all': {},
     'a fact naming an id no bracket carries': { agent_id: 'NOBODY' },
   })) {
-    const r = folded([vDispatch(), vClose({ agent_id: 'W1' }), vFact(extra)]);
+    const r = folded(t, [vDispatch(), vClose({ agent_id: 'W1' }), vFact(extra)]);
     assert.equal(r.brackets.length, 1, why);
     assert.equal('cache_read_input_tokens' in r.brackets[0], false, why);
     assert.equal('cache_creation_input_tokens' in r.brackets[0], false, why);
@@ -4565,7 +4564,7 @@ test('render: a fact that names no bracket of its own run lands NOWHERE', () => 
   }
 });
 
-test('render: two facts for one worker leave the LARGER sums, in either order', () => {
+test('render: two facts for one worker leave the LARGER sums, in either order', (t) => {
   // A transcript only GROWS, so a second `SubagentStop` for one worker is a
   // re-sum of the same file and a superset of the first. Summing the two would
   // double-bill every turn both reads covered; keeping the LARGER one carries
@@ -4574,7 +4573,7 @@ test('render: two facts for one worker leave the LARGER sums, in either order', 
   const small = { cache_creation_input_tokens: 100, cache_read_input_tokens: 1000 };
   const big = { cache_creation_input_tokens: 150, cache_read_input_tokens: 3000 };
   for (const [why, order] of Object.entries({ 'growing': [small, big], 'shrinking': [big, small] })) {
-    const r = folded([
+    const r = folded(t, [
       vDispatch(),
       vClose({ agent_id: 'W1' }),
       vFact({ agent_id: 'W1', ...order[0] }),
@@ -4586,7 +4585,7 @@ test('render: two facts for one worker leave the LARGER sums, in either order', 
 
   // Per key and INDEPENDENTLY: a pair where each fact holds the larger half
   // leaves both larger halves on the row, which no arrival-ordered rule gives.
-  const r = folded([
+  const r = folded(t, [
     vDispatch(),
     vClose({ agent_id: 'W1' }),
     vFact({ agent_id: 'W1', cache_creation_input_tokens: 150, cache_read_input_tokens: 1000 }),
@@ -4596,12 +4595,12 @@ test('render: two facts for one worker leave the LARGER sums, in either order', 
   assert.equal(r.brackets[0].cache_read_input_tokens, 3000);
 });
 
-test('render: rendering one fixture TWICE gives byte-identical brackets', () => {
+test('render: rendering one fixture TWICE gives byte-identical brackets', (t) => {
   // Idempotence is what larger-wins buys that no arrival-ordered rule can: the
   // answer is a function of the BYTES rather than of the order they were read
   // in, so a reader that renders the same file again gets the same bracket. It
   // also pins that the fold leaves no state behind between renders.
-  const dir = root();
+  const dir = root(t);
   for (const row of [
     vDispatch(),
     vClose({ agent_id: 'W1' }),
@@ -4629,7 +4628,7 @@ const vRan = (extra) => ({
   ts: '2026-08-26T10:05:00.000Z', agent_id: 'W1', effort: 'high', rung: 'max', ...extra,
 });
 
-test('render: a fact carries the effort and the rung onto its bracket, in EITHER order', () => {
+test('render: a fact carries the effort and the rung onto its bracket, in EITHER order', (t) => {
   // Before the `--agent-id` close is the ORDINARY order and the reason the fold
   // is a post-pass at all: the host fires `SubagentStop` the moment the worker
   // stops, while the orchestrator writes its own close only once it has
@@ -4638,19 +4637,19 @@ test('render: a fact carries the effort and the rung onto its bracket, in EITHER
     'the fact arrived BEFORE the id': [vDispatch(), vRan(), vClose({ agent_id: 'W1' })],
     'the fact arrived AFTER the id': [vDispatch(), vClose({ agent_id: 'W1' }), vRan()],
   })) {
-    const r = folded(rows);
+    const r = folded(t, rows);
     assert.equal(r.brackets.length, 1, why);
     assert.equal(r.brackets[0].effort, 'high', why);
     assert.equal(r.brackets[0].rung, 'max', why);
   }
 });
 
-test('render: a fact reporting an effort and NO cache figure still reaches the row', () => {
+test('render: a fact reporting an effort and NO cache figure still reaches the row', (t) => {
   // The case the collection gate used to drop. It demanded a cache figure, so
   // a transcript that named an effort and billed no cache traffic - the one
   // observation of a silent downgrade - was refused here while the hook's own
   // test said the fact was written. An effort counts as something to give.
-  const r = folded([
+  const r = folded(t, [
     vDispatch(),
     vClose({ agent_id: 'W1' }),
     vRan(),
@@ -4665,7 +4664,7 @@ test('render: a fact reporting an effort and NO cache figure still reaches the r
     JSON.stringify(r.brackets[0]));
 });
 
-test('render: a fact never overwrites an effort or rung the close already carried', () => {
+test('render: a fact never overwrites an effort or rung the close already carried', (t) => {
   // FILL-ONLY-EMPTY, and NOT the larger-wins clause the two cache figures take
   // one line above it in the same fold: `moreComplete` compares with `>`, which
   // for a rung name is a lexicographic accident, and there is no fuller read of
@@ -4680,7 +4679,7 @@ test('render: a fact never overwrites an effort or rung the close already carrie
       vDispatch(), vRan({ effort: 'xhigh', rung: 'xhigh' }), vClose({ agent_id: 'W1' }),
     ],
   })) {
-    const r = folded(rows);
+    const r = folded(t, rows);
     assert.equal(r.brackets[0].effort, 'xhigh', why);
     assert.equal(r.brackets[0].rung, 'xhigh', why);
   }
@@ -4688,7 +4687,7 @@ test('render: a fact never overwrites an effort or rung the close already carrie
   // TWO FACTS for one worker resolve on the same rule: the first value stands,
   // per field, so a second read of the same transcript cannot rewrite an
   // observation - while the cache figures beside them still take the larger.
-  const two = folded([
+  const two = folded(t, [
     vDispatch(),
     vClose({ agent_id: 'W1' }),
     vRan({ cache_read_input_tokens: 7 }),
@@ -4700,7 +4699,7 @@ test('render: a fact never overwrites an effort or rung the close already carrie
     'the figures beside them stopped taking the larger read');
 });
 
-test('render: a fact with no bracket to name adds no effort, no rung and no row', () => {
+test('render: a fact with no bracket to name adds no effort, no rung and no row', (t) => {
   // The join is `corr` AND `agent_id`, never the id alone, and an id-less fact
   // has no bracket it could ever reach. None of the three is an error and none
   // of them adds a row - the same answer the cache half already gives.
@@ -4709,7 +4708,7 @@ test('render: a fact with no bracket to name adds no effort, no rung and no row'
     'a fact carrying no id at all': { agent_id: undefined },
     'a fact naming an id no bracket carries': { agent_id: 'NOBODY' },
   })) {
-    const r = folded([vDispatch(), vClose({ agent_id: 'W1' }), vRan(extra)]);
+    const r = folded(t, [vDispatch(), vClose({ agent_id: 'W1' }), vRan(extra)]);
     assert.equal(r.brackets.length, 1, why);
     assert.equal('effort' in r.brackets[0], false, why);
     assert.equal('rung' in r.brackets[0], false, why);
@@ -4746,11 +4745,11 @@ const sFact = (extra) => ({
  * deleted, and refuse to return unless `roles` is the same across the two
  * (D-13: a figureless return stays out of the spend, `unrecorded` included).
  */
-function windowed(rows) {
-  const dir = root();
+function windowed(t, rows) {
+  const dir = root(t);
   for (const r of rows) appendEvent(dir, r);
   const r = renderTrace(dir, 1);
-  const bare = root();
+  const bare = root(t);
   for (const row of rows) if (row.event !== STEP_WINDOW) appendEvent(bare, row);
   const without = renderTrace(bare, 1);
   assert.deepEqual(r.roles, without.roles, 'a step-window fact moved the per-role bill');
@@ -4763,8 +4762,8 @@ test('STEP_WINDOW: a lifecycle name outside TERMINAL', () => {
   assert.equal(FAMILIES.includes(STEP_WINDOW), false);
 });
 
-test('render: a figureless bracket takes the step-window fact for its corr and id', () => {
-  const r = windowed([sDispatch(), sFact(), sClose()]);
+test('render: a figureless bracket takes the step-window fact for its corr and id', (t) => {
+  const r = windowed(t, [sDispatch(), sFact(), sClose()]);
   assert.equal(r.brackets.length, 1, 'the fact opened a bracket of its own');
   assert.equal(r.brackets[0].tokens, 123);
   assert.equal(r.roles['cad-reviewer'].unrecorded, 1, 'the fact funded the dispatch');
@@ -4772,7 +4771,7 @@ test('render: a figureless bracket takes the step-window fact for its corr and i
   assert.deepEqual(r.unpaired, []);
 });
 
-test('render: a return carrying its own figure keeps it, whichever line came first', () => {
+test('render: a return carrying its own figure keeps it, whichever line came first', (t) => {
   for (const [why, rows] of Object.entries({
     'the fact before the close': [sDispatch(), sFact(), sClose({ tokens: 999 })],
     'the fact after the close': [sDispatch(), sClose({ tokens: 999 }), sFact()],
@@ -4780,31 +4779,31 @@ test('render: a return carrying its own figure keeps it, whichever line came fir
       sDispatch(), sClose(), sClose({ ts: '2026-10-04T10:03:00.000Z', tokens: 999 }), sFact(),
     ],
   })) {
-    const r = windowed(rows);
+    const r = windowed(t, rows);
     assert.equal(r.brackets.length, 1, why);
     assert.equal(r.brackets[0].tokens, 999, why);
   }
 });
 
-test('render: a fact under another corr or another id changes nothing', () => {
+test('render: a fact under another corr or another id changes nothing', (t) => {
   for (const [why, extra] of Object.entries({
     'another run': { corr: 'ANOTHER-RUN' },
     'another agent': { agent_id: 'a2' },
   })) {
-    const r = windowed([sDispatch(), sFact(extra), sClose()]);
+    const r = windowed(t, [sDispatch(), sFact(extra), sClose()]);
     assert.equal(r.brackets.length, 1, why);
     assert.equal(r.brackets[0].tokens, null, why);
   }
 });
 
-test('render: of two facts for one pair, the later line wins', () => {
-  const r = windowed([
+test('render: of two facts for one pair, the later line wins', (t) => {
+  const r = windowed(t, [
     sDispatch(), sFact({ tokens: 500 }), sFact({ ts: '2026-10-04T10:01:59.500Z', tokens: 77 }), sClose(),
   ]);
   assert.equal(r.brackets[0].tokens, 77);
 });
 
-test('render: a fact with no id or a non-integer figure changes nothing', () => {
+test('render: a fact with no id or a non-integer figure changes nothing', (t) => {
   for (const [why, extra] of Object.entries({
     'no agent_id': { agent_id: undefined },
     'an empty agent_id': { agent_id: '' },
@@ -4812,14 +4811,14 @@ test('render: a fact with no id or a non-integer figure changes nothing', () => 
     'a string figure': { tokens: '123' },
     'a negative figure': { tokens: -1 },
   })) {
-    const r = windowed([sDispatch(), sFact(extra), sClose()]);
+    const r = windowed(t, [sDispatch(), sFact(extra), sClose()]);
     assert.equal(r.brackets.length, 1, why);
     assert.equal(r.brackets[0].tokens, null, why);
   }
 });
 
-test('trace seam: a step-window fact prices a figureless close end to end', () => {
-  const dir = root();
+test('trace seam: a step-window fact prices a figureless close end to end', (t) => {
+  const dir = root(t);
   const fact = run(dir, ['trace', 'append', '--phase', '1', '--family', 'lifecycle',
     '--event', STEP_WINDOW, '--agent-id', 'a1', '--tokens', '123']);
   assert.equal(fact.written, true);
@@ -4856,8 +4855,8 @@ const SECOND = [
 ];
 
 /** A stamped root whose trace is exactly these events, one line each. */
-function traced(events) {
-  const dir = root();
+function traced(t, events) {
+  const dir = root(t);
   mkdirSync(recordsDir(dir), { recursive: true });
   writeFileSync(tracePath(dir), events.map((e) => `${JSON.stringify(e)}\n`).join(''));
   return dir;
@@ -4866,9 +4865,9 @@ function traced(events) {
 /** A render or a CLI answer with its root's paths taken out, so two roots' answers compare. */
 const unrooted = (dir, v) => JSON.parse(JSON.stringify(v).replaceAll(dir, '<root>'));
 
-test('cycle boundary: a phase-scoped render holds only the events after the newest marker, an unscoped one holds all', () => {
-  const dir = traced([...FIRST, MARKER, ...SECOND]);
-  const only = traced(SECOND);
+test('cycle boundary: a phase-scoped render holds only the events after the newest marker, an unscoped one holds all', (t) => {
+  const dir = traced(t, [...FIRST, MARKER, ...SECOND]);
+  const only = traced(t, SECOND);
   const r = renderTrace(dir, 1);
   assert.deepEqual(r.events.map((e) => e.corr), ['1-bbb2222', '1-bbb2222', '1-bbb2222']);
   assert.deepEqual(r.counts, { routing: 0, provider: 0, lifecycle: 3, outcome: 0 });
@@ -4879,16 +4878,16 @@ test('cycle boundary: a phase-scoped render holds only the events after the newe
   assert.deepEqual(all.counts, { routing: 0, provider: 0, lifecycle: 7, outcome: 0 });
 });
 
-test('cycle boundary: an anchor only before the marker leaves a phase-scoped read on the bare id', () => {
-  const dir = traced([...FIRST, MARKER, ...SECOND.slice(1)]);
+test('cycle boundary: an anchor only before the marker leaves a phase-scoped read on the bare id', (t) => {
+  const dir = traced(t, [...FIRST, MARKER, ...SECOND.slice(1)]);
   const r = renderTrace(dir, 1);
   assert.equal(r.corr, '1');
   assert.equal(r.events.length, 2);
 });
 
-test('cycle boundary: trace render, suggest and window --phase 1 answer as on a record of the later cycle alone', () => {
-  const dir = traced([...FIRST, MARKER, ...SECOND]);
-  const only = traced(SECOND);
+test('cycle boundary: trace render, suggest and window --phase 1 answer as on a record of the later cycle alone', (t) => {
+  const dir = traced(t, [...FIRST, MARKER, ...SECOND]);
+  const only = traced(t, SECOND);
   for (const sub of ['render', 'suggest', 'window']) {
     const marked = run(dir, ['trace', sub, '--phase', '1']);
     assert.equal(marked.ok, true, sub);
@@ -4896,8 +4895,8 @@ test('cycle boundary: trace render, suggest and window --phase 1 answer as on a 
   }
 });
 
-test('cycle boundary: with the marker line removed the three calls still read both cycles\' phase 1', () => {
-  const dir = traced([...FIRST, ...SECOND]);
+test('cycle boundary: with the marker line removed the three calls still read both cycles\' phase 1', (t) => {
+  const dir = traced(t, [...FIRST, ...SECOND]);
   const rendered = run(dir, ['trace', 'render', '--phase', '1']);
   assert.equal(rendered.corr, '1-bbb2222');
   assert.deepEqual(rendered.brackets.map((b) => b.role), ['cad-executor', 'cad-planner']);
@@ -4909,8 +4908,8 @@ test('cycle boundary: with the marker line removed the three calls still read bo
 // D-22: the writer's `correlationId` stops at the same marker the reader does. Between a new cycle's marker and
 // that phase's own `phase_start`, the writer stamped the old cycle's `1-aaa1111` while the reader answered `1`.
 
-test('cycle boundary: a rearm written before the new cycle\'s anchor is counted by the re-arm cap\'s read', () => {
-  const dir = traced([...FIRST, MARKER]);
+test('cycle boundary: a rearm written before the new cycle\'s anchor is counted by the re-arm cap\'s read', (t) => {
+  const dir = traced(t, [...FIRST, MARKER]);
   const wrote = run(dir, ['trace', 'append', '--phase', '1', '--family', 'outcome', '--event', 'rearm',
     '--trigger', 'plan', '--plan', '1', '--base', 'aaa1111', '--sha', 'ccc3333', '--detail', 'plan']);
   assert.equal(wrote.ok, true, JSON.stringify(wrote));
@@ -4920,8 +4919,8 @@ test('cycle boundary: a rearm written before the new cycle\'s anchor is counted 
   assert.equal(rearms.length, 1, `render corr ${r.corr}, outcomes ${JSON.stringify(r.outcomes)}`);
 });
 
-test('cycle boundary: an event written and a phase-scoped render in the same window carry the same corr', () => {
-  const dir = traced([...FIRST, MARKER]);
+test('cycle boundary: an event written and a phase-scoped render in the same window carry the same corr', (t) => {
+  const dir = traced(t, [...FIRST, MARKER]);
   const wrote = appendEvent(dir, { phase: 1, family: 'lifecycle', event: DISPATCH, plan: '1', role: 'cad-planner', ts: cyc(12) });
   assert.equal(wrote.written, true, JSON.stringify(wrote));
   const r = renderTrace(dir, 1);
