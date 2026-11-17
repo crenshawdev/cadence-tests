@@ -2,17 +2,26 @@
 // node --test 'tests/*.test.mjs'. Fixture style mirrors
 // git-guard.test.mjs: a temp .planning dir with config/PROJECT/ROADMAP, driven
 // through the seam with an explicit --branch so no live git repo is needed.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'git-branch.mjs');
 // Hermetic global config (never read the dev's real ~/.claude one).
-const NO_GLOBAL = join(mkdtempSync(join(tmpdir(), 'cad-gb-')), 'no-global.json');
+const NO_GLOBAL_ROOT = mkdtempSync(join(tmpdir(), 'cad-gb-'));
+const NO_GLOBAL = join(NO_GLOBAL_ROOT, 'no-global.json');
+after(() => rmSync(NO_GLOBAL_ROOT, { recursive: true, force: true }));
+
+/** A mkdtemp root that goes when test `t` ends. */
+function tmp(t, prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
 
 /** Plant a .planning fixture at `dir`, whatever built the directory. */
 function plant(dir, gitConfig, version) {
@@ -25,8 +34,8 @@ function plant(dir, gitConfig, version) {
 }
 
 /** A .planning fixture with the given git config block. */
-function fixture(gitConfig, version = 'v1.1.0-rc.2') {
-  return plant(mkdtempSync(join(tmpdir(), 'cad-gb-repo-')), gitConfig, version);
+function fixture(t, gitConfig, version = 'v1.1.0-rc.2') {
+  return plant(tmp(t, 'cad-gb-repo-'), gitConfig, version);
 }
 
 /**
@@ -43,13 +52,13 @@ const GIT_ENV = {
   GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
 };
 
-function taggedFixture(gitConfig, version, tags) {
-  const dir = fixture(gitConfig, version);
+function taggedFixture(t, gitConfig, version, tags) {
+  const dir = fixture(t, gitConfig, version);
   const env = GIT_ENV;
   const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'ignore', env });
   git('init', '-q');
   git('commit', '--allow-empty', '-q', '-m', 'root');
-  for (const t of tags) git('tag', t);
+  for (const tag of tags) git('tag', tag);
   return dir;
 }
 
@@ -64,8 +73,8 @@ function decide(dir, branch) {
   }
 }
 
-test('milestone + auto on a protected base: create the named integration branch', () => {
-  const r = decide(fixture({ integration_branch: 'milestone', auto_branch: 'auto' }), 'main');
+test('milestone + auto on a protected base: create the named integration branch', (t) => {
+  const r = decide(fixture(t, { integration_branch: 'milestone', auto_branch: 'auto' }), 'main');
   assert.equal(r.ok, true);
   assert.equal(r.action, 'create');
   assert.equal(r.branch, 'cadence/v1.1.0-rc.2');
@@ -73,55 +82,55 @@ test('milestone + auto on a protected base: create the named integration branch'
   assert.equal(r.currentBranch, 'main');
 });
 
-test('milestone + ask on a protected base: ask, naming the integration branch', () => {
-  const r = decide(fixture({ integration_branch: 'milestone', auto_branch: 'ask' }), 'main');
+test('milestone + ask on a protected base: ask, naming the integration branch', (t) => {
+  const r = decide(fixture(t, { integration_branch: 'milestone', auto_branch: 'ask' }), 'main');
   assert.equal(r.action, 'ask');
   assert.equal(r.branch, 'cadence/v1.1.0-rc.2');
 });
 
-test('milestone + off on a protected base: stay', () => {
-  const r = decide(fixture({ integration_branch: 'milestone', auto_branch: 'off' }), 'main');
+test('milestone + off on a protected base: stay', (t) => {
+  const r = decide(fixture(t, { integration_branch: 'milestone', auto_branch: 'off' }), 'main');
   assert.equal(r.action, 'stay');
 });
 
-test('milestone already on a work branch: stay (lazy, once per cycle)', () => {
-  const r = decide(fixture({ integration_branch: 'milestone', auto_branch: 'auto' }), 'feat/thing');
+test('milestone already on a work branch: stay (lazy, once per cycle)', (t) => {
+  const r = decide(fixture(t, { integration_branch: 'milestone', auto_branch: 'auto' }), 'feat/thing');
   assert.equal(r.action, 'stay');
   assert.equal(r.currentBranch, 'feat/thing');
 });
 
-test('trunk on a protected base: stay, no integration branch (branch null)', () => {
-  const r = decide(fixture({ integration_branch: 'trunk' }), 'main');
+test('trunk on a protected base: stay, no integration branch (branch null)', (t) => {
+  const r = decide(fixture(t, { integration_branch: 'trunk' }), 'main');
   assert.equal(r.action, 'stay');
   assert.equal(r.branch, null);
 });
 
-test('defaults (no git block set): milestone + ask on a protected base -> ask', () => {
-  const r = decide(fixture({}), 'main');
+test('defaults (no git block set): milestone + ask on a protected base -> ask', (t) => {
+  const r = decide(fixture(t, {}), 'main');
   assert.equal(r.mode, 'milestone');
   assert.equal(r.action, 'ask');
   assert.equal(r.branch, 'cadence/v1.1.0-rc.2');
 });
 
-test('a STRING protected_branches is honored here too, not dropped (#38, COR-01)', () => {
+test('a STRING protected_branches is honored here too, not dropped (#38, COR-01)', (t) => {
   // This seam's own per-consumer proof of the shared coercion
   // (lib/protected-branches.mjs). Before it, a lone string fell to
   // ['main','master'] HERE while git-guard already honored it: "release" read
   // as an ordinary work branch, so the seam advised `stay` on the very branch
   // the user had protected, and the default list protected `main` nobody named.
   const cfg = { integration_branch: 'milestone', auto_branch: 'ask', protected_branches: 'release' };
-  const onProtected = decide(fixture(cfg), 'release');
+  const onProtected = decide(fixture(t, cfg), 'release');
   assert.equal(onProtected.action, 'ask');
   assert.equal(onProtected.branch, 'cadence/v1.1.0-rc.2');
   // and the swapped-in default is gone: main is now an ordinary branch.
-  assert.equal(decide(fixture(cfg), 'main').action, 'stay');
+  assert.equal(decide(fixture(t, cfg), 'main').action, 'stay');
 });
 
-test('published: a milestone the repo has ALREADY TAGGED asks, naming both numbers (AC8)', () => {
+test('published: a milestone the repo has ALREADY TAGGED asks, naming both numbers (AC8)', (t) => {
   // The #87 collision at the seam: `### Active` still names v0.1.0 while the
   // repo carries v0.1.0 and v0.2.0, so `create cadence/v0.1.0` would name a
   // branch after a shipped release. The tag list is what answers - no manifest.
-  const dir = taggedFixture({ integration_branch: 'milestone', auto_branch: 'auto' },
+  const dir = taggedFixture(t, { integration_branch: 'milestone', auto_branch: 'auto' },
     'v0.1.0', ['v0.1.0', 'v0.2.0']);
   const r = decide(dir, 'main');
   assert.equal(r.ok, true);
@@ -136,11 +145,11 @@ test('published: a milestone the repo has ALREADY TAGGED asks, naming both numbe
   assert.doesNotMatch(r.reason, /0\.2\.0/, 'not the highest tag: it did not cause this');
 });
 
-test('published: an untagged maintenance milestone below a higher tag still creates (AC8)', () => {
+test('published: an untagged maintenance milestone below a higher tag still creates (AC8)', (t) => {
   // The live-git half of the sort-order defect: v1.9.1 is published nowhere,
   // and the repo's newest tag is v2.0.0. Sorting refused it as "already
   // published"; membership creates it.
-  const dir = taggedFixture({ integration_branch: 'milestone', auto_branch: 'auto' },
+  const dir = taggedFixture(t, { integration_branch: 'milestone', auto_branch: 'auto' },
     'v1.9.1', ['v1.9.0', 'v2.0.0']);
   const r = decide(dir, 'main');
   assert.equal(r.ok, true);
@@ -148,22 +157,22 @@ test('published: an untagged maintenance milestone below a higher tag still crea
   assert.equal(r.branch, 'cadence/v1.9.1');
 });
 
-test('published: a milestone above every tag still creates - the guard refuses no new cycle', () => {
-  const dir = taggedFixture({ integration_branch: 'milestone', auto_branch: 'auto' },
+test('published: a milestone above every tag still creates - the guard refuses no new cycle', (t) => {
+  const dir = taggedFixture(t, { integration_branch: 'milestone', auto_branch: 'auto' },
     'v0.3.0', ['v0.1.0', 'v0.2.0']);
   const r = decide(dir, 'main');
   assert.equal(r.action, 'create');
   assert.equal(r.branch, 'cadence/v0.3.0');
 });
 
-test('published: a non-semver tag is skipped, not guessed at', () => {
+test('published: a non-semver tag is skipped, not guessed at', (t) => {
   // `nightly` parses as no version, so it can carry no milestone: membership is
   // what counts, and an out-of-grammar tag matches nothing rather than being
   // ranked or guessed at.
-  const dir = taggedFixture({ integration_branch: 'milestone', auto_branch: 'auto' },
+  const dir = taggedFixture(t, { integration_branch: 'milestone', auto_branch: 'auto' },
     'v0.2.0', ['nightly', '2024-06-release', 'v0.2.0']);
   assert.equal(decide(dir, 'main').action, 'ask');
-  const clean = taggedFixture({ integration_branch: 'milestone', auto_branch: 'auto' },
+  const clean = taggedFixture(t, { integration_branch: 'milestone', auto_branch: 'auto' },
     'v0.2.0', ['nightly', '2024-06-release']);
   assert.equal(decide(clean, 'main').action, 'create', 'no tag carries it: nothing to refuse');
 });
@@ -174,13 +183,13 @@ test('published: a non-semver tag is skipped, not guessed at', () => {
 // half of the same bound carries the full watch recipe in
 // planning.test.mjs's `version_drift` block.
 
-test('published: an enclosing repository\'s tags are not this project\'s (TAG-01)', () => {
+test('published: an enclosing repository\'s tags are not this project\'s (TAG-01)', (t) => {
   // `git -C` discovers the repository UPWARD, so a project that is not itself a
   // repository read the tag list of whatever repository happened to CONTAIN it
   // - a checkout under an umbrella repo, a vendored copy, a monorepo sibling -
   // and was refused an integration branch over a version it never published.
   // The umbrella's v0.1.0 says nothing about the project below it.
-  const umbrella = mkdtempSync(join(tmpdir(), 'cad-gb-umbrella-'));
+  const umbrella = tmp(t, 'cad-gb-umbrella-');
   const git = (...args) => execFileSync('git', ['-C', umbrella, ...args],
     { stdio: 'ignore', env: GIT_ENV });
   git('init', '-q');
@@ -199,37 +208,37 @@ test('published: an enclosing repository\'s tags are not this project\'s (TAG-01
 
 const THEMED = { integration_branch: 'milestone', auto_branch: 'auto', integration_branch_name: 'seldon/hardin' };
 
-test('branch name: the key set to a themed name creates that branch; unset keeps cadence/<version>', () => {
-  const themed = decide(fixture(THEMED, 'v4.0.0'), 'main');
+test('branch name: the key set to a themed name creates that branch; unset keeps cadence/<version>', (t) => {
+  const themed = decide(fixture(t, THEMED, 'v4.0.0'), 'main');
   assert.equal(themed.action, 'create');
   assert.equal(themed.branch, 'seldon/hardin');
   const { integration_branch_name: _drop, ...unset } = THEMED;
-  const plain = decide(fixture(unset, 'v4.0.0'), 'main');
+  const plain = decide(fixture(t, unset, 'v4.0.0'), 'main');
   assert.equal(plain.action, 'create');
   assert.equal(plain.branch, 'cadence/v4.0.0');
 });
 
-test('branch name: a version already tagged asks under either name, never a create', () => {
+test('branch name: a version already tagged asks under either name, never a create', (t) => {
   const { integration_branch_name: _drop, ...unset } = THEMED;
   for (const cfg of [THEMED, unset]) {
-    const r = decide(taggedFixture(cfg, 'v4.0.0', ['v4.0.0']), 'main');
+    const r = decide(taggedFixture(t, cfg, 'v4.0.0', ['v4.0.0']), 'main');
     assert.equal(r.action, 'ask', JSON.stringify(cfg));
     assert.equal(r.branch, null);
     assert.match(r.reason, /already-published/);
   }
 });
 
-test('branch name: a hand-edited bad value asks, names the key and never creates under it', () => {
+test('branch name: a hand-edited bad value asks, names the key and never creates under it', (t) => {
   for (const bad of ['--x', 'a b', '$(id)', 'a..b', 5]) {
-    const r = decide(fixture({ ...THEMED, integration_branch_name: bad }, 'v4.0.0'), 'main');
+    const r = decide(fixture(t, { ...THEMED, integration_branch_name: bad }, 'v4.0.0'), 'main');
     assert.equal(r.action, 'ask', String(bad));
     assert.equal(r.branch, null, String(bad));
     assert.match(r.reason, /naming-problem.*git\.integration_branch_name/, String(bad));
   }
 });
 
-test('branch name: a themed name with no version in the prose still creates under that name', () => {
-  const dir = fixture(THEMED);
+test('branch name: a themed name with no version in the prose still creates under that name', (t) => {
+  const dir = fixture(t, THEMED);
   writeFileSync(join(dir, '.planning', 'PROJECT.md'), '### Active\n\nnothing yet\n');
   writeFileSync(join(dir, '.planning', 'ROADMAP.md'), '# Roadmap\n');
   const r = decide(dir, 'main');
@@ -237,8 +246,8 @@ test('branch name: a themed name with no version in the prose still creates unde
   assert.equal(r.branch, 'seldon/hardin');
 });
 
-test('branch name: off a protected base the themed key still stays', () => {
-  assert.equal(decide(fixture(THEMED, 'v4.0.0'), 'seldon/hardin').action, 'stay');
+test('branch name: off a protected base the themed key still stays', (t) => {
+  assert.equal(decide(fixture(t, THEMED, 'v4.0.0'), 'seldon/hardin').action, 'stay');
 });
 
 // --- the read-only tags arm (REL-01) ----------------------------------------
@@ -256,27 +265,27 @@ function tags(dir) {
     { encoding: 'utf8', env }));
 }
 
-test('tags: the repository at --dir answers with its own tag list', () => {
-  const dir = taggedFixture({}, 'v9.9.0', ['v9.9.0']);
+test('tags: the repository at --dir answers with its own tag list', (t) => {
+  const dir = taggedFixture(t, {}, 'v9.9.0', ['v9.9.0']);
   const r = tags(dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.tags, ['v9.9.0']);
 });
 
-test('tags: a non-repository project inside a tagged repository has published nothing (TAG-01)', () => {
+test('tags: a non-repository project inside a tagged repository has published nothing (TAG-01)', (t) => {
   // The defect this arm exists to stop carrying into the release-mode
   // decision: `sub/` is not a repository, so a bare probe there reads the
   // umbrella's v9.9.0 and the close reads as a RELEASE close for a project
   // that has never published anything.
-  const umbrella = taggedFixture({}, 'v9.9.0', ['v9.9.0']);
+  const umbrella = taggedFixture(t, {}, 'v9.9.0', ['v9.9.0']);
   const sub = plant(join(umbrella, 'project'), {}, 'v9.9.0');
   const r = tags(sub);
   assert.equal(r.ok, true, 'a non-repository is an answer, never a failure');
   assert.deepEqual(r.tags, [], "the umbrella's release is not this project's");
 });
 
-test('tags: a directory that is no repository at all reads as no tags, not an error', () => {
-  const r = tags(mkdtempSync(join(tmpdir(), 'cad-gb-bare-')));
+test('tags: a directory that is no repository at all reads as no tags, not an error', (t) => {
+  const r = tags(tmp(t, 'cad-gb-bare-'));
   assert.equal(r.ok, true);
   assert.deepEqual(r.tags, []);
 });
@@ -294,16 +303,16 @@ test('an unknown subcommand names BOTH arms, so the new one is reachable from th
   assert.match(r.detail, /tags/);
 });
 
-test('warnings[] rides the envelope, and a torn layer puts the parse failure on it', () => {
+test('warnings[] rides the envelope, and a torn layer puts the parse failure on it', (t) => {
   // Pins the EMISSION, not just the binding: every value this seam decides with
   // - mode, auto_branch, protected_branches - comes off that one merge, so a
   // torn layer means the advice was computed from DEFAULTS. Stripping
   // `, warnings })` off the emit fails here and nowhere else.
-  const clean = decide(fixture({ integration_branch: 'milestone', auto_branch: 'auto' }), 'main');
+  const clean = decide(fixture(t, { integration_branch: 'milestone', auto_branch: 'auto' }), 'main');
   assert.deepEqual(clean.warnings, [], 'present as an empty array, not omitted');
 
-  const dir = fixture({ integration_branch: 'milestone', auto_branch: 'auto' });
-  const torn = join(mkdtempSync(join(tmpdir(), 'cad-gb-torn-')), 'g.json');
+  const dir = fixture(t, { integration_branch: 'milestone', auto_branch: 'auto' });
+  const torn = join(tmp(t, 'cad-gb-torn-'), 'g.json');
   writeFileSync(torn, '{"git":{"auto_branch":"off"');
   const r = JSON.parse(execFileSync('node', [SEAM, 'decide', '--dir', dir, '--branch', 'main'],
     { encoding: 'utf8', env: { ...process.env, CADENCE_GLOBAL_CONFIG: torn } }));
