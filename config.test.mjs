@@ -1,9 +1,9 @@
 // Zero-dep tests for config.mjs. Run: node --test 'tests/*.test.mjs'
 // Only node: builtins, matching the repo's zero-dep ethos.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, existsSync, writeFileSync, mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, mkdtempSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { basename, join, dirname, relative } from 'node:path';
@@ -16,6 +16,7 @@ import { CONTRACTS } from '../cadence-core/bin/lib/arg-contract.mjs';
 
 const CONFIG = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'config.mjs');
 const dir = mkdtempSync(join(tmpdir(), 'cad-config-'));
+after(() => rmSync(dir, { recursive: true, force: true }));
 
 // Run config.mjs with a controlled global-config path; returns parsed JSON
 // line. Degraded results exit 1 (seam convention), so catch and parse stdout.
