@@ -11,7 +11,7 @@
 // does not.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,9 +19,10 @@ import { referenceRouterIssues, ROUTERS, CODES } from '../cadence-core/bin/lib/r
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** A temp root carrying `cadence-core/references/`, so the rule engages. */
-function fixtureRoot() {
+/** A temp root carrying `cadence-core/references/`, so the rule engages; gone when `t`'s test ends. */
+function fixtureRoot(t) {
   const root = mkdtempSync(join(tmpdir(), 'cad-routers-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, 'cadence-core', 'references'), { recursive: true });
   return root;
 }
@@ -93,8 +94,8 @@ test('every row states a router, a branch and a cold path, all root-relative POS
 
 // --- arm 1: the cold file is on disk ------------------------------------------
 
-test('a cold file the tree does not have is reported against the COLD path', () => {
-  const root = fixtureRoot();
+test('a cold file the tree does not have is reported against the COLD path', (t) => {
+  const root = fixtureRoot(t);
   put(root, ROUTER, `# router\n\n${readLine(COLD)}\n`);
   const issues = referenceRouterIssues(root, ROW);
   assert.deepEqual(kinds(issues), [CODES.missingCold]);
@@ -103,18 +104,18 @@ test('a cold file the tree does not have is reported against the COLD path', () 
   assert.match(issues[0].detail, /the branch/);
 });
 
-test('a missing cold file is reported ONCE, not also as an unread branch', () => {
+test('a missing cold file is reported ONCE, not also as an unread branch', (t) => {
   // The two arms would otherwise both fire on one deletion and a reader would
   // go looking for a deleted Read line that is still right there.
-  const root = fixtureRoot();
+  const root = fixtureRoot(t);
   put(root, ROUTER, '# router\n\nno path here at all\n');
   assert.deepEqual(kinds(referenceRouterIssues(root, ROW)), [CODES.missingCold]);
 });
 
 // --- arm 2: the router still Reads it -----------------------------------------
 
-test('a router carrying no plugin-root path for its cold file is an unread branch', () => {
-  const root = fixtureRoot();
+test('a router carrying no plugin-root path for its cold file is an unread branch', (t) => {
+  const root = fixtureRoot(t);
   put(root, COLD, '# cold\n');
   put(root, ROUTER, '# router\n\nthe branch is described and never loaded\n');
   const issues = referenceRouterIssues(root, ROW);
@@ -123,21 +124,21 @@ test('a router carrying no plugin-root path for its cold file is an unread branc
   assert.match(issues[0].detail, /the branch/);
 });
 
-test('a bare `references/<file>` citation is NOT a Read', () => {
+test('a bare `references/<file>` citation is NOT a Read', (t) => {
   // The whole point of the plugin-root spelling: a citation tells a reader where
   // a rule lives, a `${CLAUDE_PLUGIN_ROOT}` path is what a model can open. Only
   // the second one makes a branch loadable.
-  const root = fixtureRoot();
+  const root = fixtureRoot(t);
   put(root, COLD, '# cold\n');
   put(root, ROUTER, '# router\n\nThe branch lives in `references/cold.md`.\n');
   assert.deepEqual(kinds(referenceRouterIssues(root, ROW)), [CODES.unread]);
 });
 
-test('a plugin-root path inside a FENCE is not a Read', () => {
+test('a plugin-root path inside a FENCE is not a Read', (t) => {
   // The gap this closes: arm 3 read the prose and arm 2 read the raw text, so a
   // cold file whose only mention was a fenced command argument satisfied the
   // Read check with no branch a reader could follow.
-  const root = fixtureRoot();
+  const root = fixtureRoot(t);
   put(root, COLD, '# cold\n');
   put(root, ROUTER, [
     '# router',
@@ -159,7 +160,7 @@ test('an unreadable ROUTER reports one unread branch per row, and never throws',
     t.skip('running as root: chmod 000 does not deny a read');
     return;
   }
-  const root = fixtureRoot();
+  const root = fixtureRoot(t);
   put(root, COLD, '# cold\n');
   const second = 'cadence-core/references/cold2.md';
   put(root, second, '# cold 2\n');
@@ -174,8 +175,8 @@ test('an unreadable ROUTER reports one unread branch per row, and never throws',
 
 // --- arm 3: the register's own completeness -----------------------------------
 
-test('a references path the router names that no row declares is an unregistered branch', () => {
-  const root = fixtureRoot();
+test('a references path the router names that no row declares is an unregistered branch', (t) => {
+  const root = fixtureRoot(t);
   put(root, COLD, '# cold\n');
   put(root, 'cadence-core/references/stowaway.md', '# stowaway\n');
   put(root, ROUTER, `# router\n\n${readLine(COLD)}\n\n${readLine('cadence-core/references/stowaway.md')}\n`);
@@ -185,8 +186,8 @@ test('a references path the router names that no row declares is an unregistered
   assert.match(issues[0].detail, /stowaway\.md/);
 });
 
-test('an unregistered branch named twice is reported once', () => {
-  const root = fixtureRoot();
+test('an unregistered branch named twice is reported once', (t) => {
+  const root = fixtureRoot(t);
   put(root, COLD, '# cold\n');
   const stow = 'cadence-core/references/stowaway.md';
   put(root, ROUTER,
@@ -194,20 +195,20 @@ test('an unregistered branch named twice is reported once', () => {
   assert.equal(referenceRouterIssues(root, ROW).length, 1);
 });
 
-test('a router naming ITSELF is not an unregistered branch', () => {
-  const root = fixtureRoot();
+test('a router naming ITSELF is not an unregistered branch', (t) => {
+  const root = fixtureRoot(t);
   put(root, COLD, '# cold\n');
   put(root, ROUTER, `# router\n\n${readLine(ROUTER)}\n\n${readLine(COLD)}\n`);
   assert.deepEqual(referenceRouterIssues(root, ROW), []);
 });
 
-test('a path inside a FENCED block is an argument, not a branch', () => {
+test('a path inside a FENCED block is an argument, not a branch', (t) => {
   // `references/review-triggers.md` really does pass
   // `${CLAUDE_PLUGIN_ROOT}/cadence-core/references/reviewer-brief.md` to a
   // `node -e` composer. That is a path handed to a subprocess, not a file the
   // router loads, and counting it would force a register row for a branch that
   // does not exist.
-  const root = fixtureRoot();
+  const root = fixtureRoot(t);
   put(root, COLD, '# cold\n');
   const body = `# router\n\n${readLine(COLD)}\n\n`
     + '```\n'
@@ -217,11 +218,11 @@ test('a path inside a FENCED block is an argument, not a branch', () => {
   assert.deepEqual(referenceRouterIssues(root, ROW), []);
 });
 
-test('an INDENTED fence still hides its contents', () => {
+test('an INDENTED fence still hides its contents', (t) => {
   // review-triggers.md's composer block is indented under a bullet. A
   // column-0-only fence matcher reads that whole block as prose, which is the
   // exact tree this exclusion exists for.
-  const root = fixtureRoot();
+  const root = fixtureRoot(t);
   put(root, COLD, '# cold\n');
   put(root, ROUTER, `# router\n\n${readLine(COLD)}\n\n`
     + '  ```\n'
@@ -230,10 +231,10 @@ test('an INDENTED fence still hides its contents', () => {
   assert.deepEqual(referenceRouterIssues(root, ROW), []);
 });
 
-test('a path AFTER a fence closes is prose again', () => {
+test('a path AFTER a fence closes is prose again', (t) => {
   // The falsifier for the exclusion above: a fence that swallowed the rest of
   // the file would make arm 3 vacuous from its first code block on.
-  const root = fixtureRoot();
+  const root = fixtureRoot(t);
   put(root, COLD, '# cold\n');
   put(root, ROUTER, `# router\n\n${readLine(COLD)}\n\n`
     + '```\n'
@@ -243,10 +244,10 @@ test('a path AFTER a fence closes is prose again', () => {
   assert.deepEqual(kinds(referenceRouterIssues(root, ROW)), [CODES.unregistered]);
 });
 
-test('a path outside cadence-core/references is not a branch', () => {
+test('a path outside cadence-core/references is not a branch', (t) => {
   // Workflows, templates and scripts are named by routers all the time; only a
   // reference can be a cold branch of one.
-  const root = fixtureRoot();
+  const root = fixtureRoot(t);
   put(root, COLD, '# cold\n');
   put(root, ROUTER, `# router\n\n${readLine(COLD)}\n\n`
     + `${readLine('cadence-core/workflows/verify-deep.md')}\n`
@@ -254,10 +255,10 @@ test('a path outside cadence-core/references is not a branch', () => {
   assert.deepEqual(referenceRouterIssues(root, ROW), []);
 });
 
-test('arm 3 reads the ROUTER a row names, never every router at once', () => {
+test('arm 3 reads the ROUTER a row names, never every router at once', (t) => {
   // Two routers, each declaring its own cold file. Neither may be reported for
   // the other's branch, or splitting a second reference would redden the first.
-  const root = fixtureRoot();
+  const root = fixtureRoot(t);
   const routerB = 'cadence-core/references/router-b.md';
   const coldB = 'cadence-core/references/cold-b.md';
   put(root, COLD, '# cold\n');
@@ -272,16 +273,17 @@ test('arm 3 reads the ROUTER a row names, never every router at once', () => {
 
 // --- scope --------------------------------------------------------------------
 
-test('a root with no cadence-core/references contributes nothing', () => {
+test('a root with no cadence-core/references contributes nothing', (t) => {
   // A `--root` fixture supplying its own tiny surface set is not an install
   // with a deleted reference, the same degradation deferredReadIssues makes on
   // an absent skills/.
   const root = mkdtempSync(join(tmpdir(), 'cad-routers-bare-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   assert.deepEqual(referenceRouterIssues(root, ROW), []);
 });
 
-test('a clean fixture reports nothing', () => {
-  const root = fixtureRoot();
+test('a clean fixture reports nothing', (t) => {
+  const root = fixtureRoot(t);
   put(root, COLD, '# cold\n');
   put(root, ROUTER, `# router\n\n${readLine(COLD)}\n`);
   assert.deepEqual(referenceRouterIssues(root, ROW), []);

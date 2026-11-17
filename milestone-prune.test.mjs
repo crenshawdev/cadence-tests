@@ -551,8 +551,9 @@ test('a fenced `## ` inside ## Shipped does not cut the append scan short', () =
 // --- the seam ---------------------------------------------------------------
 
 /** `stamp: false` leaves the state to the caller, for a test that rewrites a document the state is built from. */
-function scaffold({ stamp = true } = {}) {
+function scaffold(t, { stamp = true } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'cad-prune-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const dir = join(root, '.planning');
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
   mkdirSync(join(dir, 'phases', '2.1'), { recursive: true });
@@ -575,8 +576,8 @@ function run(dir, extra) {
   }
 }
 
-test('seam: archive mode prunes docs and moves completed dirs, leaves the open phase', () => {
-  const dir = scaffold();
+test('seam: archive mode prunes docs and moves completed dirs, leaves the open phase', (t) => {
+  const dir = scaffold(t);
   const r = run(dir, ['--label', 'v1.2.0', '--mode', 'archive']);
   assert.equal(r.ok, true);
   assert.equal(r.action, 'pruned');
@@ -591,8 +592,8 @@ test('seam: archive mode prunes docs and moves completed dirs, leaves the open p
   assert.ok(reqs.includes('| STOR-01 (bytes survive) | 1 | Complete | v1.2.0 |'));
 });
 
-test('seam: delete mode removes the dirs and a second run is a clean skip', () => {
-  const dir = scaffold();
+test('seam: delete mode removes the dirs and a second run is a clean skip', (t) => {
+  const dir = scaffold(t);
   const first = run(dir, ['--label', 'v1.2.0', '--mode', 'delete']);
   assert.deepEqual(first.dirs.deleted, [1, 2.1]);
   assert.ok(!existsSync(join(dir, 'phases', '1')));
@@ -600,8 +601,8 @@ test('seam: delete mode removes the dirs and a second run is a clean skip', () =
   assert.equal(again.action, 'skip');   // idempotent: nothing checked remains
 });
 
-test('seam: a missing phase dir is reported in dirs.missing, never a failure', () => {
-  const dir = scaffold();
+test('seam: a missing phase dir is reported in dirs.missing, never a failure', (t) => {
+  const dir = scaffold(t);
   rmDirHack(join(dir, 'phases', '1'));
   const r = run(dir, ['--label', 'v1', '--mode', 'delete']);
   assert.equal(r.ok, true);
@@ -609,8 +610,8 @@ test('seam: a missing phase dir is reported in dirs.missing, never a failure', (
   assert.deepEqual(r.dirs.deleted, [2.1]);
 });
 
-test('seam: missing REQUIREMENTS.md degrades to a warning, roadmap half still lands', () => {
-  const dir = scaffold();
+test('seam: missing REQUIREMENTS.md degrades to a warning, roadmap half still lands', (t) => {
+  const dir = scaffold(t);
   rmDirHack(join(dir, 'REQUIREMENTS.md'));
   const r = run(dir, ['--label', 'v1', '--mode', 'delete']);
   assert.equal(r.ok, true);
@@ -681,8 +682,8 @@ const TEMPLATE_PLUS_REAL = `${TEMPLATE_SHAPED}
 | STOR-01 | Phase 1 | Complete |
 `;
 
-test('seam: a REQUIREMENTS.md whose sections are only fenced comes back byte-identical', () => {
-  const dir = scaffold({ stamp: false });
+test('seam: a REQUIREMENTS.md whose sections are only fenced comes back byte-identical', (t) => {
+  const dir = scaffold(t, { stamp: false });
   writeFileSync(join(dir, 'REQUIREMENTS.md'), TEMPLATE_SHAPED);
   verifyChecked(dir);
   const r = run(dir, ['--label', 'v1.2.0', '--mode', 'delete']);
@@ -695,8 +696,8 @@ test('seam: a REQUIREMENTS.md whose sections are only fenced comes back byte-ide
   assert.ok(!readFileSync(join(dir, 'ROADMAP.md'), 'utf8').includes('Phase 1: Store'));
 });
 
-test('seam: with real sections below the fence, the row lands under the REAL ## Shipped', () => {
-  const dir = scaffold({ stamp: false });
+test('seam: with real sections below the fence, the row lands under the REAL ## Shipped', (t) => {
+  const dir = scaffold(t, { stamp: false });
   writeFileSync(join(dir, 'REQUIREMENTS.md'), TEMPLATE_PLUS_REAL);
   verifyChecked(dir);
   const r = run(dir, ['--label', 'v1.2.0', '--mode', 'delete']);
@@ -723,8 +724,8 @@ test('seam: with real sections below the fence, the row lands under the REAL ## 
 // destination that already exists as a NON-EMPTY directory makes renameSync
 // throw ENOTEMPTY on any platform this ships to.
 
-test('seam: a phase whose directory move fails is refused, and keeps its docs', () => {
-  const dir = scaffold();
+test('seam: a phase whose directory move fails is refused, and keeps its docs', (t) => {
+  const dir = scaffold(t);
   // Occupy _archive-v1.2.0/1 with a non-empty directory. Phase 1 cannot move
   // there; phase 2.1 is untouched and must still clear.
   mkdirSync(join(dir, '_archive-v1.2.0', '1', 'squatter'), { recursive: true });
@@ -759,8 +760,8 @@ test('seam: a phase whose directory move fails is refused, and keeps its docs', 
     'the failed phase does not get a Shipped row');
 });
 
-test('seam: when every phase fails, neither document is written at all', () => {
-  const dir = scaffold();
+test('seam: when every phase fails, neither document is written at all', (t) => {
+  const dir = scaffold(t);
   const before = {
     road: readFileSync(join(dir, 'ROADMAP.md'), 'utf8'),
     reqs: readFileSync(join(dir, 'REQUIREMENTS.md'), 'utf8'),
@@ -780,11 +781,12 @@ test('seam: when every phase fails, neither document is written at all', () => {
 
 // --- archive containment: the symlink the lexical check could not see -------
 
-test('seam: an _archive-<label> that is a symlink is refused before anything moves', () => {
-  const dir = scaffold();
+test('seam: an _archive-<label> that is a symlink is refused before anything moves', (t) => {
+  const dir = scaffold(t);
   // The escape hatch: a writable directory OUTSIDE the planning root, reached
   // through a link whose own path resolves lexically inside it.
   const outside = mkdtempSync(join(tmpdir(), 'cad-prune-outside-'));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
   symlinkSync(outside, join(dir, '_archive-v1.2.0'), 'dir');
 
   const r = run(dir, ['--label', 'v1.2.0', '--mode', 'archive']);
@@ -800,8 +802,8 @@ test('seam: an _archive-<label> that is a symlink is refused before anything mov
     'a refusal before the loop writes nothing');
 });
 
-test('seam: a regular file squatting _archive-<label> is refused the same way', () => {
-  const dir = scaffold();
+test('seam: a regular file squatting _archive-<label> is refused the same way', (t) => {
+  const dir = scaffold(t);
   writeFileSync(join(dir, '_archive-v1.2.0'), 'not a directory');
   const r = run(dir, ['--label', 'v1.2.0', '--mode', 'archive']);
   assert.equal(r.ok, false);
@@ -809,16 +811,18 @@ test('seam: a regular file squatting _archive-<label> is refused the same way', 
   assert.doesNotMatch(r.detail, /symlink/, 'the symlink clause is conditional on it being one');
 });
 
-test('seam: delete mode builds no archive root, so the type check does not apply', () => {
-  const dir = scaffold();
-  symlinkSync(mkdtempSync(join(tmpdir(), 'cad-prune-outside-')), join(dir, '_archive-v1.2.0'), 'dir');
+test('seam: delete mode builds no archive root, so the type check does not apply', (t) => {
+  const dir = scaffold(t);
+  const outside = mkdtempSync(join(tmpdir(), 'cad-prune-outside-'));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  symlinkSync(outside, join(dir, '_archive-v1.2.0'), 'dir');
   const r = run(dir, ['--label', 'v1.2.0', '--mode', 'delete']);
   assert.equal(r.ok, true, 'delete never touches _archive-<label>');
   assert.deepEqual(r.dirs.deleted, [1, 2.1]);
 });
 
-test('seam: bad args are refused - label required, mode must be delete|archive', () => {
-  const dir = scaffold();
+test('seam: bad args are refused - label required, mode must be delete|archive', (t) => {
+  const dir = scaffold(t);
   assert.equal(run(dir, ['--mode', 'delete']).reason, 'bad-args');
   assert.equal(run(dir, ['--label', 'v1']).reason, 'bad-args');
   assert.equal(run(dir, ['--label', 'v1', '--mode', 'prune']).reason, 'bad-args');
@@ -840,9 +844,9 @@ function labelFile(dir, body, name = 'label.txt') {
   return file;
 }
 
-test('seam: a label from a file archives exactly where the inline label does', () => {
-  const inlineDir = scaffold();
-  const fileDir = scaffold();
+test('seam: a label from a file archives exactly where the inline label does', (t) => {
+  const inlineDir = scaffold(t);
+  const fileDir = scaffold(t);
   const a = run(inlineDir, ['--label', 'v1.2.0', '--mode', 'archive']);
   const b = run(fileDir, ['--label-file', labelFile(fileDir, 'v1.2.0\n'), '--mode', 'archive']);
   assert.equal(a.ok, true);
@@ -855,12 +859,12 @@ test('seam: a label from a file archives exactly where the inline label does', (
     readFileSync(join(inlineDir, 'REQUIREMENTS.md'), 'utf8'));
 });
 
-test('seam: both label terms still run on a label that arrived in a FILE', () => {
+test('seam: both label terms still run on a label that arrived in a FILE', (t) => {
   for (const [name, body, pattern] of [
     ['the containment term', '../../../outside-tree', /must stay inside the planning root/],
     ['the table term', 'v1.2.0 | rc', /"\|" or a newline/],
   ]) {
-    const dir = scaffold();
+    const dir = scaffold(t);
     const r = run(dir, ['--label-file', labelFile(dir, body), '--mode', 'archive']);
     assert.equal(r.ok, false, name);
     assert.equal(r.reason, 'bad-args', name);
@@ -871,8 +875,8 @@ test('seam: both label terms still run on a label that arrived in a FILE', () =>
   }
 });
 
-test('seam: every --label-file refusal is bad-args and leaves the tree untouched', () => {
-  const dir = scaffold();
+test('seam: every --label-file refusal is bad-args and leaves the tree untouched', (t) => {
+  const dir = scaffold(t);
   const before = readFileSync(join(dir, 'ROADMAP.md'), 'utf8');
   const good = labelFile(dir, 'v1.2.0');
   const cases = [
@@ -964,8 +968,8 @@ const PHASE1_CONTEXT = `# Phase 1 Context
  * Phase 2.1 keeps its section-less `patched` SUMMARY, which is how these rows
  * assert that only a parsed snippet lands - not every completed phase.
  */
-function scaffoldWithArtifacts() {
-  const dir = scaffold();
+function scaffoldWithArtifacts(t) {
+  const dir = scaffold(t);
   writeFileSync(join(dir, 'phases', '1', 'SUMMARY.md'), PHASE1_SUMMARY);
   writeFileSync(join(dir, 'phases', '1', 'UAT.md'), PHASE1_UAT);
   writeFileSync(join(dir, 'phases', '1', 'CONTEXT.md'), PHASE1_CONTEXT);
@@ -974,8 +978,8 @@ function scaffoldWithArtifacts() {
 
 const RESIDUE_ORIGINS = ['phases/1/SUMMARY.md', 'phases/1/UAT.md', 'phases/1/CONTEXT.md'];
 
-test('seam: a delete-mode close writes its residue before the directories go', () => {
-  const dir = scaffoldWithArtifacts();
+test('seam: a delete-mode close writes its residue before the directories go', (t) => {
+  const dir = scaffoldWithArtifacts(t);
   const r = run(dir, ['--label', 'v3.5.2', '--mode', 'delete']);
   assert.equal(r.ok, true);
   assert.equal(r.residue_rows, 3, 'the envelope states the count, so a no-op is legible');
@@ -992,8 +996,8 @@ test('seam: a delete-mode close writes its residue before the directories go', (
   assert.ok(!existsSync(join(dir, 'phases', '1')));
 });
 
-test('seam: the archive arm writes the same rows the delete arm does', () => {
-  const dir = scaffoldWithArtifacts();
+test('seam: the archive arm writes the same rows the delete arm does', (t) => {
+  const dir = scaffoldWithArtifacts(t);
   const r = run(dir, ['--label', 'v3.5.2', '--mode', 'archive']);
   assert.equal(r.ok, true);
   assert.equal(r.residue_rows, 3);
@@ -1002,8 +1006,8 @@ test('seam: the archive arm writes the same rows the delete arm does', () => {
   assert.ok(existsSync(join(dir, '_archive-v3.5.2', '1', 'SUMMARY.md')));
 });
 
-test('seam: a second identical run adds no row and leaves ARCHIVE.md byte-identical', () => {
-  const dir = scaffoldWithArtifacts();
+test('seam: a second identical run adds no row and leaves ARCHIVE.md byte-identical', (t) => {
+  const dir = scaffoldWithArtifacts(t);
   run(dir, ['--label', 'v3.5.2', '--mode', 'delete']);
   const before = readFileSync(join(recordsDir(dir), 'ARCHIVE.md'), 'utf8');
   const again = run(dir, ['--label', 'v3.5.2', '--mode', 'delete']);
@@ -1011,8 +1015,8 @@ test('seam: a second identical run adds no row and leaves ARCHIVE.md byte-identi
   assert.equal(readFileSync(join(recordsDir(dir), 'ARCHIVE.md'), 'utf8'), before);
 });
 
-test('seam: an interrupted close keeps its rows, and the re-run neither duplicates nor drops them', () => {
-  const dir = scaffoldWithArtifacts();
+test('seam: an interrupted close keeps its rows, and the re-run neither duplicates nor drops them', (t) => {
+  const dir = scaffoldWithArtifacts(t);
   // Block phase 1's move the way the partial-prune tests above do. The residue
   // is written before that failure, which is exactly the interrupt D-01 exists
   // for: the directory is still live and its rows are already on disk.
@@ -1039,10 +1043,10 @@ test('seam: an interrupted close keeps its rows, and the re-run neither duplicat
   assert.ok(existsSync(join(dir, '_archive-v3.5.2', '1', 'SUMMARY.md')), 'and the phase finally moved');
 });
 
-test('seam: phases holding no readable artifact write no ARCHIVE.md at all', () => {
+test('seam: phases holding no readable artifact write no ARCHIVE.md at all', (t) => {
   // The bare scaffold: both completed SUMMARYs are section-less prose, so the
   // three parsers return nothing and there is no residue to write.
-  const dir = scaffold();
+  const dir = scaffold(t);
   const r = run(dir, ['--label', 'v3.5.2', '--mode', 'delete']);
   assert.equal(r.ok, true);
   assert.equal(r.residue_rows, 0);
@@ -1095,8 +1099,9 @@ Prose.
  * fixture; `zarquon` appears once in each of the three, which is what makes the
  * three sources separable in one result list.
  */
-function falsifierTree() {
+function falsifierTree(t) {
   const root = mkdtempSync(join(tmpdir(), 'cad-rcl07-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const dir = join(root, '.planning');
   mkdirSync(join(dir, 'phases', '1'), { recursive: true });
   mkdirSync(join(dir, 'phases', '2'), { recursive: true });
@@ -1133,8 +1138,8 @@ function recallIn(dir, query) {
 }
 
 for (const mode of ['delete', 'archive']) {
-  test(`falsifier: a close in \`${mode}\` mode leaves its phase recallable (RCL-07)`, () => {
-    const dir = falsifierTree();
+  test(`falsifier: a close in \`${mode}\` mode leaves its phase recallable (RCL-07)`, (t) => {
+    const dir = falsifierTree(t);
 
     // It is recallable BEFORE the close - otherwise this case could pass on a
     // fixture that never had a corpus at all.
@@ -1176,8 +1181,8 @@ function rmDirHack(p) {
 // it makes the omission permanent. Both assert on ORIGINS, because the phase
 // number alone is exactly the resolution that was too coarse.
 
-test('seam: a foreign heading that prefixes this label does not suppress the write', () => {
-  const dir = scaffoldWithArtifacts();
+test('seam: a foreign heading that prefixes this label does not suppress the write', (t) => {
+  const dir = scaffoldWithArtifacts(t);
   // A section this close does not own, named so the old
   // `source.startsWith(label + "/")` test answers true for it.
   plantFile(join(recordsDir(dir), 'ARCHIVE.md'),
@@ -1191,8 +1196,8 @@ test('seam: a foreign heading that prefixes this label does not suppress the wri
   assert.deepEqual(originsIn(own), RESIDUE_ORIGINS);
 });
 
-test('seam: a partial section re-runs the artifacts it is missing, not the phase whole', () => {
-  const dir = scaffoldWithArtifacts();
+test('seam: a partial section re-runs the artifacts it is missing, not the phase whole', (t) => {
+  const dir = scaffoldWithArtifacts(t);
   // What a close that landed SUMMARY and CONTEXT but could not read UAT.md
   // leaves behind. Keyed on the phase number, the retry skips all three.
   plantFile(join(recordsDir(dir), 'ARCHIVE.md'),
@@ -1208,11 +1213,11 @@ test('seam: a partial section re-runs the artifacts it is missing, not the phase
   assert.equal(originsIn(text).filter((o) => o === 'phases/1/SUMMARY.md').length, 1);
 });
 
-test('seam: a held ARCHIVE.md lock refuses the close before any directory moves', () => {
+test('seam: a held ARCHIVE.md lock refuses the close before any directory moves', (t) => {
   // The blocking `diff` gate's finding: unserialized, two closes clobber each
   // other's rows and then remove the directories that were the only other copy.
   // A refused lock must therefore stop BEFORE the removal, not after it.
-  const dir = scaffoldWithArtifacts();
+  const dir = scaffoldWithArtifacts(t);
   plantFile(join(recordsDir(dir), 'ARCHIVE.md.lock'), ''); // a fresh mtime: a live writer holds it
   const r = run(dir, ['--label', 'v3.5.2', '--mode', 'delete']);
   assert.equal(r.ok, false);
@@ -1222,9 +1227,11 @@ test('seam: a held ARCHIVE.md lock refuses the close before any directory moves'
   assert.ok(!existsSync(join(recordsDir(dir), 'ARCHIVE.md')), 'and nothing was written');
 });
 
-test('seam: a symlinked records folder refuses the close before any directory moves', () => {
-  const dir = scaffoldWithArtifacts();
+test('seam: a symlinked records folder refuses the close before any directory moves', (t) => {
+  const dir = scaffoldWithArtifacts(t);
   const outside = mkdtempSync(join(tmpdir(), 'cad-prune-outside-'));
+  // the scaffold keeps only a link to it, so its own removal never reaches here
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
   // a link where the records folder belongs is refused at the state-file door, so the project is stamped first and its
   // records folder then moved behind the link, state file and all
   verifyChecked(dir);

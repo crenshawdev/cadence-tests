@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { ensureRoadmap } from './planning.test.mjs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -533,11 +533,12 @@ test('review-panel: an entry with no input keeps today\'s prompts while the othe
 });
 
 // Drift between the script's return and the seam that reads it would refuse every live run, so the real return goes through both.
-test('review-panel: its real return, with a local voice and a provider voice, placed in a run file, passes workflow-run and the record\'s own adjudication', async () => {
+test('review-panel: its real return, with a local voice and a provider voice, placed in a run file, passes workflow-run and the record\'s own adjudication', async (t) => {
   const mild = (file, claim, severity) => ({ file, line: 3, severity, claim, failure_scenario: `${claim} breaks` });
   const raised = [mild('a.js', 'first', 'medium'), mild('b.js', 'second', 'low'), mild('c.js', 'third', 'medium')];
   const theirs = [mild('p.js', 'provider one', 'medium'), mild('q.js', 'provider two', 'low')];
   const repo = mkdtempSync(join(tmpdir(), 'cad-wfs-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
   const envelopePath = join(repo, 'openai.envelope.json');
   const h = host((label, prompt) => {
     if (label.startsWith('reviewer')) return { findings: raised };
@@ -610,7 +611,7 @@ test('review-panel: its real return, with a local voice and a provider voice, pl
 });
 
 // The split's four voices must reach the record as four, each on the model its own agent row names.
-test('review-panel: its real return for a three-plan fire passes workflow-run, bills four reviewer brackets and records four voices, the cross-plan one on its own model', async () => {
+test('review-panel: its real return for a three-plan fire passes workflow-run, bills four reviewer brackets and records four voices, the cross-plan one on its own model', async (t) => {
   const mild = (voice, n) => ({ file: 'f.js', line: 1, severity: 'medium', claim: `${voice} claim ${n}`, failure_scenario: `${voice} claim ${n} breaks` });
   const raised = Object.fromEntries(SPLIT.map((v, i) => [`reviewer ${v}`, Array.from({ length: i < 3 ? 1 : 2 }, (_, n) => mild(v, n))]));
   const h = host((label, prompt) => (label.startsWith('reviewer') ? { findings: raised[label] } : batch(prompt, () => verdict('proved', { severity: 'medium' }))));
@@ -618,6 +619,7 @@ test('review-panel: its real return for a three-plan fire passes workflow-run, b
   assert.deepEqual(out.voices.map((v) => v.voice), SPLIT);
 
   const repo = mkdtempSync(join(tmpdir(), 'cad-wfs-split-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
   const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim();
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T'); git('config', 'commit.gpgsign', 'false');
   mkdirSync(join(repo, '.planning', 'phases', '1'), { recursive: true });
@@ -658,7 +660,7 @@ test('review-panel: its real return for a three-plan fire passes workflow-run, b
   assert.deepEqual(record.entries.map((e) => [e.voice, e.claim]), SPLIT.flatMap((v) => raised[`reviewer ${v}`].map((f) => [v, f.claim])));
 });
 
-test('review-panel: a blocking risk_surface run with a proved blocker holds the halt at both seams until a fix commit settles it', async () => {
+test('review-panel: a blocking risk_surface run with a proved blocker holds the halt at both seams until a fix commit settles it', async (t) => {
   const claim = 'the vault key is read before the session guard runs';
   const blocker = { file: 'src/secrets/vault.ts', line: 1, severity: 'blocker', claim, failure_scenario: 'a caller with no session reads the key' };
   const h = host((label, prompt) => (label.startsWith('reviewer') ? { findings: [blocker] } : batch(prompt, () => verdict('proved', { severity: 'blocker' }))));
@@ -667,6 +669,7 @@ test('review-panel: a blocking risk_surface run with a proved blocker holds the 
 
   // a repository whose committed range the detector matches on the secrets surface
   const repo = mkdtempSync(join(tmpdir(), 'cad-wfs-risk-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
   const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim();
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T'); git('config', 'commit.gpgsign', 'false');
   const dir = join(repo, '.planning');
@@ -904,8 +907,9 @@ test('code-map: its schema is the entry schema the seam judges against', async (
 
 // Drift between the script's return and `codemap write` would refuse every live run, so the real return goes through the seam.
 // The fake reader answers from the item file it is handed, the way a real one does, with absolute paths and only the symbols listed there.
-test('code-map: its real return writes the map through codemap write and bills one cad-mapper bracket per agent, and a refresh starts one reader', async () => {
+test('code-map: its real return writes the map through codemap write and bills one cad-mapper bracket per agent, and a refresh starts one reader', async (t) => {
   const repo = mkdtempSync(join(tmpdir(), 'cad-wfs-map-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
   const git = (cwd, ...a) => execFileSync('git', ['-C', cwd, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim();
   const ident = (cwd) => { git(cwd, 'init', '-q'); git(cwd, 'config', 'user.email', 't@example.com'); git(cwd, 'config', 'user.name', 'T'); };
   ident(repo);
@@ -1093,11 +1097,12 @@ test('execute-wave: its digest schema asks only for the status line and types ev
 });
 
 // Drift between the script's return and workflow-run would refuse every live wave, so the real return goes through the seam.
-test('execute-wave: its real return, placed in a run file with one row per call, passes workflow-run with both outcomes and closes under plans 1 and 2', async () => {
+test('execute-wave: its real return, placed in a run file with one row per call, passes workflow-run with both outcomes and closes under plans 1 and 2', async (t) => {
   const cp = { status: 'PLAN PARTIAL', tasks: '1 of 2', commits: 'abc1234', deviations: '0', open_items: '0', checkpoint: 'decision', current_task: '2 - x', need: 'a call' };
   const h = host((label) => (label === 'plan 2' ? cp : done()));
   const out = JSON.parse(JSON.stringify(await runScript(WAVE, h, WAVE_ARGS)));
   const repo = mkdtempSync(join(tmpdir(), 'cad-wfs-wave-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
   mkdirSync(join(repo, '.planning', 'phases', '1'), { recursive: true });
   ensureRoadmap(join(repo, '.planning'));
   mkdirSync(join(repo, 'scratch'));
