@@ -21,8 +21,8 @@ import { EMPTY_CAPTURE } from '../cadence-core/bin/lib/capture-file.mjs';
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
 
 /** A tree with a roadmap, a CAPTURE.md written verbatim, and an optional config. */
-function tree(capture, config) {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], ...(config ? { config } : {}) });
+function tree(t, capture, config) {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'One' }], ...(config ? { config } : {}) }, t);
   if (capture !== undefined) writeFileSync(join(dir, 'CAPTURE.md'), capture);
   return dir;
 }
@@ -57,11 +57,11 @@ const MANGLED = [
   '',
 ].join('\n');
 
-test('capture-check: a freshly created queue is zero, unannotated and archive-free', () => {
+test('capture-check: a freshly created queue is zero, unannotated and archive-free', (t) => {
   // The exact bytes `appendCapture` writes when CAPTURE.md is absent. Three
   // `- None.` placeholders are three bullets to `capture-sections`, and must be
   // zero here or a new project opens over its bound on day one.
-  const r = run(['capture-check'], tree(EMPTY_CAPTURE));
+  const r = run(['capture-check'], tree(t, EMPTY_CAPTURE));
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.exists, true);
   assert.equal(r.substantive, 0);
@@ -77,8 +77,8 @@ test('capture-check: a freshly created queue is zero, unannotated and archive-fr
   assert.equal(r.over_bound, false);
 });
 
-test('capture-check: the annotated bullets and the archived section are all named', () => {
-  const r = run(['capture-check'], tree(MANGLED));
+test('capture-check: the annotated bullets and the archived section are all named', (t) => {
+  const r = run(['capture-check'], tree(t, MANGLED));
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.substantive, 3);
   assert.deepEqual(r.sections, [
@@ -95,8 +95,8 @@ test('capture-check: the annotated bullets and the archived section are all name
   assert.deepEqual(r.archive, { heading: '## Archive', present: true, bullets: 2 });
 });
 
-test('capture-check: an absent CAPTURE.md is an EMPTY queue, never a failure', () => {
-  const r = run(['capture-check'], tree());
+test('capture-check: an absent CAPTURE.md is an EMPTY queue, never a failure', (t) => {
+  const r = run(['capture-check'], tree(t));
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.exists, false);
   assert.equal(r._exit, 0);
@@ -108,8 +108,8 @@ test('capture-check: an absent CAPTURE.md is an EMPTY queue, never a failure', (
 
 test('capture-check: a PRESENT but unreadable queue refuses, and says what it is not claiming', {
   skip: typeof process.getuid === 'function' && process.getuid() === 0 ? 'root bypasses mode bits' : false,
-}, () => {
-  const dir = tree(MANGLED);
+}, (t) => {
+  const dir = tree(t, MANGLED);
   const file = join(dir, 'CAPTURE.md');
   chmodSync(file, 0o000);
   const r = run(['capture-check'], dir);
@@ -124,8 +124,8 @@ test('capture-check: a PRESENT but unreadable queue refuses, and says what it is
   rmSync(file);
 });
 
-test('capture-check: a VALUELESS --file is bad-args, never silently the --dir default', () => {
-  const r = run(['capture-check', '--file'], tree(MANGLED));
+test('capture-check: a VALUELESS --file is bad-args, never silently the --dir default', (t) => {
+  const r = run(['capture-check', '--file'], tree(t, MANGLED));
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-args');
 });
@@ -135,8 +135,8 @@ test('capture-check: a VALUELESS --file is bad-args, never silently the --dir de
 // bullets cross a bound of 2 and clear a bound of 4, so the crossing is
 // demonstrably read off the config layer rather than off anything in the file.
 
-test('capture-check: a queue over its bound is REPORTED, with both numbers, and refuses nothing', () => {
-  const r = run(['capture-check'], tree(MANGLED, bounded(2)));
+test('capture-check: a queue over its bound is REPORTED, with both numbers, and refuses nothing', (t) => {
+  const r = run(['capture-check'], tree(t, MANGLED, bounded(2)));
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r._exit, 0, 'a crossing is a report - the seam still exits 0');
   assert.equal(r.substantive, 3);
@@ -148,20 +148,20 @@ test('capture-check: a queue over its bound is REPORTED, with both numbers, and 
   assert.equal(r.archive.present, true);
 });
 
-test('capture-check: the same tree under a bound of 4 reports no crossing', () => {
-  const r = run(['capture-check'], tree(MANGLED, bounded(4)));
+test('capture-check: the same tree under a bound of 4 reports no crossing', (t) => {
+  const r = run(['capture-check'], tree(t, MANGLED, bounded(4)));
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.substantive, 3);
   assert.equal(r.bound, 4);
   assert.equal(r.over_bound, false);
 });
 
-test('capture-check: a torn config layer rides the envelope rather than silently defaulting', () => {
+test('capture-check: a torn config layer rides the envelope rather than silently defaulting', (t) => {
   // A layer that did not parse reads EVERY key as unset, so a project that
   // raised its bound would be told it crossed a number it does not use. The
   // report still lands - nothing here refuses - and the warning says why the
   // bound is the default one.
-  const dir = tree(MANGLED);
+  const dir = tree(t, MANGLED);
   writeFileSync(join(dir, 'config.json'), '{ not json');
   const r = run(['capture-check'], dir);
   assert.equal(r.ok, true, JSON.stringify(r));

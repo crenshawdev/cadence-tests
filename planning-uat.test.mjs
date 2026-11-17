@@ -24,14 +24,14 @@ const UAT_ITEMS = JSON.stringify([
   { name: 'Logout works', expected: 'session cleared' },
 ]);
 
-function uatTree() {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: { plan: true, summary: true } } });
+function uatTree(t) {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: { plan: true, summary: true } } }, t);
   run(['uat', 'init', '--phase', '1'], dir, UAT_ITEMS);
   return dir;
 }
 
-test('uat init: writes all-pending checklist and returns the first item', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: { plan: true } } });
+test('uat init: writes all-pending checklist and returns the first item', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: { plan: true } } }, t);
   const r = run(['uat', 'init', '--phase', '1'], dir, UAT_ITEMS);
   assert.equal(r.ok, true);
   assert.equal(r.items, 2);
@@ -44,8 +44,8 @@ test('uat init: writes all-pending checklist and returns the first item', () => 
   assert.equal(again.reason, 'uat-exists');
 });
 
-test('uat init: refuses a malformed payload, writes nothing', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: { plan: true } } });
+test('uat init: refuses a malformed payload, writes nothing', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: { plan: true } } }, t);
   assert.equal(run(['uat', 'init', '--phase', '1'], dir, 'not json {').reason, 'bad-payload');
   assert.equal(run(['uat', 'init', '--phase', '1'], dir, '{"name":"not an array"}').reason, 'bad-payload');
   assert.equal(run(['uat', 'init', '--phase', '1'], dir,
@@ -53,8 +53,8 @@ test('uat init: refuses a malformed payload, writes nothing', () => {
   assert.equal(existsSync(join(dir, 'phases', '1', 'UAT.md')), false); // nothing written
 });
 
-test('uat record: unknown item and bad result refuse without writing', () => {
-  const dir = uatTree();
+test('uat record: unknown item and bad result refuse without writing', (t) => {
+  const dir = uatTree(t);
   assert.equal(run(['uat', 'record', '--phase', '1', '--item', '9', '--result', 'pass'], dir)
     .reason, 'unknown-item');
   const r = run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'maybe'], dir);
@@ -67,8 +67,8 @@ test('uat record: unknown item and bad result refuse without writing', () => {
 // `--item "$K"` with K unset: parseArgs mints `true`, `Number(true)` is 1, and
 // item 1 was recorded pass - permanently, once first_pass is set.
 for (const [name, arg] of [['valueless', null], ['abc', 'abc'], ['empty string', '']]) {
-  test(`uat record: a ${name} --item refuses; UAT.md is byte-unchanged`, () => {
-    const dir = uatTree();
+  test(`uat record: a ${name} --item refuses; UAT.md is byte-unchanged`, (t) => {
+    const dir = uatTree(t);
     const before = readFileSync(join(dir, 'phases', '1', 'UAT.md'), 'utf8');
     const r = run(['uat', 'record', '--phase', '1',
       ...(arg === null ? ['--item'] : ['--item', arg]), '--result', 'pass'], dir);
@@ -79,15 +79,15 @@ for (const [name, arg] of [['valueless', null], ['abc', 'abc'], ['empty string',
   });
 }
 
-test('uat record: a clean integer naming no item still answers unknown-item', () => {
-  const dir = uatTree();
+test('uat record: a clean integer naming no item still answers unknown-item', (t) => {
+  const dir = uatTree(t);
   const r = run(['uat', 'record', '--phase', '1', '--item', '99', '--result', 'pass'], dir);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'unknown-item');
 });
 
-test('uat record: a normal --item still records, with counts and first_pass', () => {
-  const dir = uatTree();
+test('uat record: a normal --item still records, with counts and first_pass', (t) => {
+  const dir = uatTree(t);
   const r = run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pass'], dir);
   assert.equal(r.ok, true);
   assert.deepEqual(r.item, { k: 1, status: 'pass' });
@@ -113,9 +113,9 @@ const FIVE_FIELDS = {
 const FIVE_INLINE = Object.entries(FIVE_FIELDS).flatMap(([k, v]) => [`--${k}`, v]);
 const uatBytes = (dir) => readFileSync(join(dir, 'phases', '1', 'UAT.md'), 'utf8');
 
-test('uat record: --fields-file writes the SAME UAT.md the five inline flags write', () => {
-  const inlineDir = uatTree();
-  const fileDir = uatTree();
+test('uat record: --fields-file writes the SAME UAT.md the five inline flags write', (t) => {
+  const inlineDir = uatTree(t);
+  const fileDir = uatTree(t);
   const a = run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'fail',
     ...FIVE_INLINE], inlineDir);
   const src = join(fileDir, 'fields.json');
@@ -132,8 +132,8 @@ test('uat record: --fields-file writes the SAME UAT.md the five inline flags wri
   }
 });
 
-test('uat record: a --fields-file value no shell could expand lands verbatim', () => {
-  const dir = uatTree();
+test('uat record: a --fields-file value no shell could expand lands verbatim', (t) => {
+  const dir = uatTree(t);
   const src = join(dir, 'fields.json');
   const reason = 'it printed $(touch /tmp/cad-uat-should-not-exist) and `id`';
   writeFileSync(src, JSON.stringify({ reason }));
@@ -144,8 +144,8 @@ test('uat record: a --fields-file value no shell could expand lands verbatim', (
   assert.equal(existsSync('/tmp/cad-uat-should-not-exist'), false, 'the payload executed');
 });
 
-test('uat record: every --fields-file refusal is bad-args, UAT.md byte-unchanged', () => {
-  const dir = uatTree();
+test('uat record: every --fields-file refusal is bad-args, UAT.md byte-unchanged', (t) => {
+  const dir = uatTree(t);
   const before = uatBytes(dir);
   const write = (name, body) => {
     const f = join(dir, name);
@@ -185,8 +185,8 @@ test('uat record: every --fields-file refusal is bad-args, UAT.md byte-unchanged
   }
 });
 
-test('uat merge: matches by k, and a verifier pass never rewrites first_pass', () => {
-  const dir = uatTree();
+test('uat merge: matches by k, and a verifier pass never rewrites first_pass', (t) => {
+  const dir = uatTree(t);
   // Item 1 fails, the fix lands, it resets to pending - first_pass is fail.
   run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'fail', '--reported', 'broken'], dir);
   run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pending', '--fix', 'abc1234'], dir);
@@ -206,8 +206,8 @@ test('uat merge: matches by k, and a verifier pass never rewrites first_pass', (
   assert.match(text, /severity: major/);
 });
 
-test('uat record: sets status, first_pass once, returns next pending (zero re-reads)', () => {
-  const dir = uatTree();
+test('uat record: sets status, first_pass once, returns next pending (zero re-reads)', (t) => {
+  const dir = uatTree(t);
   const r = run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'fail',
     '--reported', 'error on submit', '--severity', 'major'], dir);
   assert.equal(r.ok, true);
@@ -223,8 +223,8 @@ test('uat record: sets status, first_pass once, returns next pending (zero re-re
   assert.equal(done.next, null); // nothing pending left
 });
 
-test('uat record: fixed failure resets to pending, first_pass survives', () => {
-  const dir = uatTree();
+test('uat record: fixed failure resets to pending, first_pass survives', (t) => {
+  const dir = uatTree(t);
   run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'fail',
     '--reported', 'broken'], dir);
   const r = run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pending',
@@ -236,8 +236,8 @@ test('uat record: fixed failure resets to pending, first_pass survives', () => {
   assert.match(text, /fix: abc1234, retest/);
 });
 
-test('uat record: verifier source cannot overwrite a recorded result', () => {
-  const dir = uatTree();
+test('uat record: verifier source cannot overwrite a recorded result', (t) => {
+  const dir = uatTree(t);
   run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pass'], dir);
   const r = run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'fail',
     '--source', 'verifier'], dir);
@@ -249,8 +249,8 @@ test('uat record: verifier source cannot overwrite a recorded result', () => {
 // outside `verifier`, so a check the MODEL ran and cited was written to disk as
 // a user answer with nothing reporting the drop - registration is what makes
 // the value survive, not merely writing it.
-test('uat record --source model: stores the provenance and it survives a later record', () => {
-  const dir = uatTree();
+test('uat record --source model: stores the provenance and it survives a later record', (t) => {
+  const dir = uatTree(t);
   const r = run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pass',
     '--evidence', 'node --test x.test.mjs -> 12 pass 0 fail', '--source', 'model'], dir);
   assert.equal(r.ok, true);
@@ -263,8 +263,8 @@ test('uat record --source model: stores the provenance and it survives a later r
   assert.equal(after.match(/source:/g).length, 1); // item 2's user answer wrote none
 });
 
-test('uat record: an out-of-enum --source is refused with the file byte-unchanged', () => {
-  const dir = uatTree();
+test('uat record: an out-of-enum --source is refused with the file byte-unchanged', (t) => {
+  const dir = uatTree(t);
   const before = readFileSync(join(dir, 'phases', '1', 'UAT.md'), 'utf8');
   const r = run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pass',
     '--source', 'bogus'], dir);
@@ -274,8 +274,8 @@ test('uat record: an out-of-enum --source is refused with the file byte-unchange
   assert.equal(readFileSync(join(dir, 'phases', '1', 'UAT.md'), 'utf8'), before);
 });
 
-test('uat record --source user: writes no source line - user stays implicit', () => {
-  const dir = uatTree();
+test('uat record --source user: writes no source line - user stays implicit', (t) => {
+  const dir = uatTree(t);
   const r = run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pass',
     '--source', 'user'], dir);
   assert.equal(r.ok, true);
@@ -287,8 +287,8 @@ test('uat record --source user: writes no source line - user stays implicit', ()
 // judged. It reached UAT.md through no path at all before: `merge` appended the
 // human check without it, so the walk had to re-judge every item the deep pass
 // had already ruled on.
-test('uat merge: a human_checks why_human is carried onto the appended item and survives', () => {
-  const dir = uatTree();
+test('uat merge: a human_checks why_human is carried onto the appended item and survives', (t) => {
+  const dir = uatTree(t);
   const r = run(['uat', 'merge', '--phase', '1'], dir, JSON.stringify({
     human_checks: [
       { name: 'Card charges', expected: 'receipt emailed', why_human: 'moves real money' },
@@ -307,8 +307,8 @@ test('uat merge: a human_checks why_human is carried onto the appended item and 
   assert.match(after, /why_human: moves real money/);
 });
 
-test('uat refresh: appends only new names, never touches recorded results', () => {
-  const dir = uatTree();
+test('uat refresh: appends only new names, never touches recorded results', (t) => {
+  const dir = uatTree(t);
   run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pass'], dir);
   const r = run(['uat', 'refresh', '--phase', '1'], dir, JSON.stringify([
     { name: 'Login works', expected: 'reworded criterion' },  // name exists - skipped
@@ -321,8 +321,8 @@ test('uat refresh: appends only new names, never touches recorded results', () =
   assert.match(text, /expected: user lands on dashboard/); // original wording kept
 });
 
-test('uat merge: fills pending only, appends unmatched gaps and human checks', () => {
-  const dir = uatTree();
+test('uat merge: fills pending only, appends unmatched gaps and human checks', (t) => {
+  const dir = uatTree(t);
   run(['uat', 'record', '--phase', '1', '--item', '2', '--result', 'pass'], dir); // user result
   const r = run(['uat', 'merge', '--phase', '1'], dir, JSON.stringify({
     passes: [{ name: 'Login works', evidence: 'src/auth.ts:42 asserts redirect' },
@@ -357,14 +357,14 @@ const LINKED_ITEMS = JSON.stringify([
 /** The raw bytes of a fixture's UAT.md - never the envelope. */
 const uatText = (dir) => readFileSync(join(dir, 'phases', '1', 'UAT.md'), 'utf8');
 
-function linkedTree() {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: { plan: true } } });
+function linkedTree(t) {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: { plan: true } } }, t);
   run(['uat', 'init', '--phase', '1'], dir, LINKED_ITEMS);
   return dir;
 }
 
-test('uat: a criterion written by init is byte-present after a refresh AND after a record', () => {
-  const dir = linkedTree();
+test('uat: a criterion written by init is byte-present after a refresh AND after a record', (t) => {
+  const dir = linkedTree(t);
   assert.match(uatText(dir), /### 1\. Login works\nexpected: user lands on dashboard\ncriterion: AC3\nstatus: pending/);
   // The refresh payload carries a NEW item name, so the file is actually
   // rewritten (`if (fresh.length) writeUat`) - re-sending the identical payload
@@ -383,8 +383,8 @@ test('uat: a criterion written by init is byte-present after a refresh AND after
 // The marker is written before any item is looked at, so it cannot be lost by
 // a payload that carries no links - which is the whole point of moving the
 // legacy test off the item fields and onto the file.
-test('uat init: writes fields_version unconditionally, and it survives refresh and record', () => {
-  const dir = linkedTree();
+test('uat init: writes fields_version unconditionally, and it survives refresh and record', (t) => {
+  const dir = linkedTree(t);
   assert.match(uatText(dir), /^---\nstatus: testing\nphase: 1\nfields_version: 1\n/);
   run(['uat', 'refresh', '--phase', '1'], dir, JSON.stringify([
     { name: 'Password reset', expected: 'email arrives', criterion: 'AC5' },
@@ -394,16 +394,16 @@ test('uat init: writes fields_version unconditionally, and it survives refresh a
   assert.equal(uatText(dir).match(/^fields_version: 1$/gm).length, 1);
 });
 
-test('uat init: a payload with no criterion and no origin still gets the marker', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: { plan: true } } });
+test('uat init: a payload with no criterion and no origin still gets the marker', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: { plan: true } } }, t);
   run(['uat', 'init', '--phase', '1'], dir, JSON.stringify([
     { name: 'Bare item', expected: 'something observable' },
   ]));
   assert.match(uatText(dir), /^fields_version: 1$/m);
 });
 
-test('uat: an origin written by init survives refresh and record the same way', () => {
-  const dir = linkedTree();
+test('uat: an origin written by init survives refresh and record the same way', (t) => {
+  const dir = linkedTree(t);
   assert.match(uatText(dir), /### 3\. The plugin loads at all\nexpected: [^\n]*\norigin: smoke\nstatus: pending/);
   run(['uat', 'refresh', '--phase', '1'], dir, JSON.stringify([
     { name: 'A deliverable', expected: 'ships', origin: 'verifier' },
@@ -413,8 +413,8 @@ test('uat: an origin written by init survives refresh and record the same way', 
   assert.equal(uatText(dir).match(/^origin: verifier$/gm).length, 1);
 });
 
-test('uat refresh: carries source, criterion and origin onto an appended item, in lockstep with init', () => {
-  const dir = linkedTree();
+test('uat refresh: carries source, criterion and origin onto an appended item, in lockstep with init', (t) => {
+  const dir = linkedTree(t);
   run(['uat', 'refresh', '--phase', '1'], dir, JSON.stringify([
     { name: 'Deep-pass find', expected: 'observable', criterion: 'AC6', origin: 'criterion', source: 'verifier' },
   ]));
@@ -422,16 +422,16 @@ test('uat refresh: carries source, criterion and origin onto an appended item, i
     /### 4\. Deep-pass find\nexpected: observable\ncriterion: AC6\norigin: criterion\nstatus: pending\nsource: verifier/);
 });
 
-test('uat record --origin: sets provenance after the fact on an existing item', () => {
-  const dir = uatTree(); // no field on either item
+test('uat record --origin: sets provenance after the fact on an existing item', (t) => {
+  const dir = uatTree(t); // no field on either item
   const r = run(['uat', 'record', '--phase', '1', '--item', '2', '--result', 'pass',
     '--origin', 'verifier'], dir);
   assert.equal(r.ok, true);
   assert.match(uatText(dir), /### 2\. Logout works\nexpected: session cleared\norigin: verifier\nstatus: pass/);
 });
 
-test('uat record: an out-of-enum --origin is refused with the file byte-unchanged', () => {
-  const dir = linkedTree();
+test('uat record: an out-of-enum --origin is refused with the file byte-unchanged', (t) => {
+  const dir = linkedTree(t);
   const before = uatText(dir);
   const r = run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pass',
     '--origin', 'verifer'], dir);
@@ -445,8 +445,8 @@ test('uat record: an out-of-enum --origin is refused with the file byte-unchange
 // not a substitute: on a fieldless checklist it writes `origin: criterion`,
 // which names no id, disqualifies the phase from the legacy rule and converts
 // zero breaks into one per criterion with no seam able to add the link back.
-test('uat record --criterion: restores a dropped link in the registered field position', () => {
-  const dir = uatTree(); // no criterion on either item
+test('uat record --criterion: restores a dropped link in the registered field position', (t) => {
+  const dir = uatTree(t); // no criterion on either item
   const r = run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pass',
     '--criterion', 'AC9'], dir);
   assert.equal(r.ok, true);
@@ -455,8 +455,8 @@ test('uat record --criterion: restores a dropped link in the registered field po
   assert.equal(uatText(dir).match(/^criterion: AC9$/gm).length, 1); // no duplicate line
 });
 
-test('uat record: an out-of-shape --criterion is refused by name, file byte-unchanged', () => {
-  const dir = linkedTree();
+test('uat record: an out-of-shape --criterion is refused by name, file byte-unchanged', (t) => {
+  const dir = linkedTree(t);
   for (const bad of ['AC-1', 'ac1']) {
     const before = uatText(dir);
     const r = run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pass',
@@ -477,8 +477,8 @@ test('uat record: an out-of-shape --criterion is refused by name, file byte-unch
   assert.equal(uatText(dir), before);
 });
 
-test('uat init: an out-of-shape criterion or origin is bad-payload, nothing written', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: { plan: true } } });
+test('uat init: an out-of-shape criterion or origin is bad-payload, nothing written', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: { plan: true } } }, t);
   const badId = run(['uat', 'init', '--phase', '1'], dir,
     JSON.stringify([{ name: 'X', expected: 'y', criterion: 'AC-01' }]));
   assert.equal(badId.reason, 'bad-payload');
@@ -491,8 +491,8 @@ test('uat init: an out-of-shape criterion or origin is bad-payload, nothing writ
   assert.equal(existsSync(join(dir, 'phases', '1', 'UAT.md')), false);
 });
 
-test('uat merge: both append paths write origin verifier - the item-level provenance source cannot carry', () => {
-  const dir = uatTree();
+test('uat merge: both append paths write origin verifier - the item-level provenance source cannot carry', (t) => {
+  const dir = uatTree(t);
   const r = run(['uat', 'merge', '--phase', '1'], dir, JSON.stringify({
     gaps: [{ name: 'Rate limiting', reason: 'no limiter found on /login' }],
     human_checks: [{ name: 'Email renders in dark mode', expected: 'readable' }],
@@ -504,8 +504,8 @@ test('uat merge: both append paths write origin verifier - the item-level proven
   assert.match(uatText(dir), /### 4\. Email renders in dark mode\nexpected: readable\norigin: verifier\nstatus: pending/);
 });
 
-test('uat merge: a MATCHED pending item gets source verifier and no origin - it was not verifier-added', () => {
-  const dir = linkedTree();
+test('uat merge: a MATCHED pending item gets source verifier and no origin - it was not verifier-added', (t) => {
+  const dir = linkedTree(t);
   run(['uat', 'merge', '--phase', '1'], dir, JSON.stringify({
     passes: [{ name: 'Login works', evidence: 'src/auth.ts:42' }],
   }));
@@ -515,8 +515,8 @@ test('uat merge: a MATCHED pending item gets source verifier and no origin - it 
   assert.equal(uatText(dir).match(/^origin: verifier$/gm), null);
 });
 
-test('uat merge: an entry with no usable name is rejected, never written (#46.2)', () => {
-  const dir = uatTree();
+test('uat merge: an entry with no usable name is rejected, never written (#46.2)', (t) => {
+  const dir = uatTree(t);
   const r = run(['uat', 'merge', '--phase', '1'], dir, JSON.stringify({
     gaps: [
       { reason: 'no k, no name' },              // nothing to name a heading with
@@ -534,8 +534,8 @@ test('uat merge: an entry with no usable name is rejected, never written (#46.2)
   assert.doesNotMatch(text, /undefined/); // `### N. undefined` can never be written
 });
 
-test('uat merge: an untrimmed name fills the pending item, never appends a duplicate', () => {
-  const dir = uatTree();
+test('uat merge: an untrimmed name fills the pending item, never appends a duplicate', (t) => {
+  const dir = uatTree(t);
   // A trailing space is routine in verifier output. The append path trims, so
   // matching untrimmed appended `### 3. Login works` alongside the existing
   // `### 1. Login works` - unreachable by name on every later merge, so its
@@ -553,8 +553,8 @@ test('uat merge: an untrimmed name fills the pending item, never appends a dupli
   assert.equal(text.match(/^### \d+\. Logout works$/gm)?.length, 1);
 });
 
-test('uat merge: a finding conflicting with a recorded result is skipped and counted (#46.3)', () => {
-  const dir = uatTree();
+test('uat merge: a finding conflicting with a recorded result is skipped and counted (#46.3)', (t) => {
+  const dir = uatTree(t);
   run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pass'], dir); // user result
   const r = run(['uat', 'merge', '--phase', '1'], dir, JSON.stringify({
     passes: [{ k: 1, evidence: 'x' }],
@@ -578,8 +578,8 @@ test('uat merge: a finding conflicting with a recorded result is skipped and cou
 const findingsFile = (dir) => join(dir, 'phases', '1', 'records', 'FINDINGS.json');
 const readFindings = (dir) => JSON.parse(readFileSync(findingsFile(dir), 'utf8'));
 
-test('uat merge: FINDINGS.json holds the five counters plus every discarded entry', () => {
-  const dir = uatTree();
+test('uat merge: FINDINGS.json holds the five counters plus every discarded entry', (t) => {
+  const dir = uatTree(t);
   run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pass'], dir);
   const r = run(['uat', 'merge', '--phase', '1'], dir, JSON.stringify({
     passes: [{ k: 1, evidence: 'x' }],          // conflicts with the user result
@@ -612,8 +612,8 @@ test('uat merge: FINDINGS.json holds the five counters plus every discarded entr
 // The counting gap at the bare `continue` is deferred (D-14), so no counter
 // moves - but the ENTRY still lands, or the file whose purpose is making a
 // discarded finding recoverable would be the one place one disappears.
-test('uat merge: a human_check matching an existing item is recorded while its counter stays deferred', () => {
-  const dir = uatTree();
+test('uat merge: a human_check matching an existing item is recorded while its counter stays deferred', (t) => {
+  const dir = uatTree(t);
   const r = run(['uat', 'merge', '--phase', '1'], dir, JSON.stringify({
     human_checks: [{ name: 'Login works', expected: 'user lands on dashboard' }],
   }));
@@ -630,8 +630,8 @@ test('uat merge: a human_check matching an existing item is recorded while its c
 });
 
 // Written on EVERY successful merge, so its ABSENCE means no merge ran.
-test('uat merge: a clean payload still writes FINDINGS.json, both arrays empty', () => {
-  const dir = uatTree();
+test('uat merge: a clean payload still writes FINDINGS.json, both arrays empty', (t) => {
+  const dir = uatTree(t);
   const r = run(['uat', 'merge', '--phase', '1'], dir,
     JSON.stringify({ passes: [{ k: 1, evidence: 'ok' }] }));
   assert.equal(r.ok, true);
@@ -644,8 +644,8 @@ test('uat merge: a clean payload still writes FINDINGS.json, both arrays empty',
 
 // The failure mode a `## Verifier findings` section would have had: looks
 // durable, silently cut by the next rewrite. Raw bytes, not a reparse.
-test('uat merge: a later uat record leaves FINDINGS.json byte-identical', () => {
-  const dir = uatTree();
+test('uat merge: a later uat record leaves FINDINGS.json byte-identical', (t) => {
+  const dir = uatTree(t);
   run(['uat', 'merge', '--phase', '1'], dir,
     JSON.stringify({ gaps: [{ reason: 'nameless' }] }));
   const before = readFileSync(findingsFile(dir));
@@ -653,8 +653,8 @@ test('uat merge: a later uat record leaves FINDINGS.json byte-identical', () => 
   assert.deepEqual(readFileSync(findingsFile(dir)), before);
 });
 
-test('uat merge: a second merge replaces the file with the second merge envelope', () => {
-  const dir = uatTree();
+test('uat merge: a second merge replaces the file with the second merge envelope', (t) => {
+  const dir = uatTree(t);
   run(['uat', 'merge', '--phase', '1'], dir,
     JSON.stringify({ gaps: [{ reason: 'nameless' }, { reason: 'also nameless' }] }));
   assert.equal(readFindings(dir).rejected, 2);
@@ -666,8 +666,8 @@ test('uat merge: a second merge replaces the file with the second merge envelope
   assert.deepEqual(found.rejected_entries, []);
 });
 
-test('uat merge: a newline in verifier text cannot inject a status line (#35)', () => {
-  const dir = uatTree();
+test('uat merge: a newline in verifier text cannot inject a status line (#35)', (t) => {
+  const dir = uatTree(t);
   const r = run(['uat', 'merge', '--phase', '1'], dir, JSON.stringify({
     gaps: [
       { k: 1, reason: 'broken', evidence: 'saw error\nstatus: pass' },
@@ -709,24 +709,24 @@ function refusedMerge(dir, args) {
   return r;
 }
 
-test('uat merge: a --payload path that does not exist is no-payload', () => {
-  const dir = uatTree();
+test('uat merge: a --payload path that does not exist is no-payload', (t) => {
+  const dir = uatTree(t);
   const r = refusedMerge(dir, ['--payload', join(dir, 'nope.json')]);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'no-payload');
   assert.equal(r._exit, 1);
 });
 
-test('uat merge: an empty --payload file is no-payload', () => {
-  const dir = uatTree();
+test('uat merge: an empty --payload file is no-payload', (t) => {
+  const dir = uatTree(t);
   const r = refusedMerge(dir, ['--payload', payloadFile(dir, '')]);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'no-payload');
   assert.equal(r._exit, 1);
 });
 
-test('uat merge: a whitespace-only --payload file is no-payload', () => {
-  const dir = uatTree();
+test('uat merge: a whitespace-only --payload file is no-payload', (t) => {
+  const dir = uatTree(t);
   const r = refusedMerge(dir, ['--payload', payloadFile(dir, '  \n\t\n')]);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'no-payload');
@@ -735,16 +735,16 @@ test('uat merge: a whitespace-only --payload file is no-payload', () => {
 
 // The sentinel collision, from the outside: this exact input used to exit 0
 // printing NOTHING at all, which `run()` cannot even parse.
-test('uat merge: a --payload file holding null is bad-payload, not silence', () => {
-  const dir = uatTree();
+test('uat merge: a --payload file holding null is bad-payload, not silence', (t) => {
+  const dir = uatTree(t);
   const r = refusedMerge(dir, ['--payload', payloadFile(dir, 'null')]);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-payload');
   assert.equal(r._exit, 1);
 });
 
-test('uat merge: a --payload file holding a bare string is bad-payload', () => {
-  const dir = uatTree();
+test('uat merge: a --payload file holding a bare string is bad-payload', (t) => {
+  const dir = uatTree(t);
   const r = refusedMerge(dir, ['--payload', payloadFile(dir, '"hello"')]);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-payload');
@@ -752,16 +752,16 @@ test('uat merge: a --payload file holding a bare string is bad-payload', () => {
 });
 
 // The all-zero ok:true hole: a truncated findings file reporting a clean pass.
-test('uat merge: a --payload file holding {} is bad-payload, not an all-zero success', () => {
-  const dir = uatTree();
+test('uat merge: a --payload file holding {} is bad-payload, not an all-zero success', (t) => {
+  const dir = uatTree(t);
   const r = refusedMerge(dir, ['--payload', payloadFile(dir, '{}')]);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-payload');
   assert.equal(r._exit, 1);
 });
 
-test('uat merge: a --payload file holding a JSON array is bad-payload', () => {
-  const dir = uatTree();
+test('uat merge: a --payload file holding a JSON array is bad-payload', (t) => {
+  const dir = uatTree(t);
   const r = refusedMerge(dir, ['--payload', payloadFile(dir, '[{"k":1}]')]);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-payload');
@@ -776,9 +776,9 @@ for (const [key, body] of [
   ['passes', '{"passes":"oops","gaps":[]}'],
   ['human_checks', '{"gaps":[],"human_checks":42}'],
 ]) {
-  test(`uat merge: ${key} present but not an array is bad-payload`, () => {
+  test(`uat merge: ${key} present but not an array is bad-payload`, (t) => {
     // refusedMerge asserts UAT.md is byte-identical across the call.
-    const dir = uatTree();
+    const dir = uatTree(t);
     const r = refusedMerge(dir, ['--payload', payloadFile(dir, body)]);
     assert.equal(r.ok, false);
     assert.equal(r.reason, 'bad-payload');
@@ -787,16 +787,16 @@ for (const [key, body] of [
   });
 }
 
-test('uat merge: an omitted list is not a malformed one', () => {
+test('uat merge: an omitted list is not a malformed one', (t) => {
   // Presence, not truthiness - `{"gaps":[...]}` alone stays legal.
-  const dir = uatTree();
+  const dir = uatTree(t);
   const r = run(['uat', 'merge', '--phase', '1', '--payload',
     payloadFile(dir, '{"gaps":[{"name":"only gaps","reason":"r","evidence":"e"}]}')], dir);
   assert.equal(r.ok, true);
   assert.equal(r.added, 1);
 });
 
-test('uat merge: --payload with no path refuses, never a read of fd 1', () => {
+test('uat merge: --payload with no path refuses, never a read of fd 1', (t) => {
   // The invariant is that a valueless `--payload` never falls through to a read
   // of fd 1. It is answered EARLIER now, and by a different vocabulary: the
   // declared row refuses the bare spelling at the dispatch door, which names
@@ -804,7 +804,7 @@ test('uat merge: --payload with no path refuses, never a read of fd 1', () => {
   // `no-payload` arm is still what answers a path that is missing, unreadable
   // or empty - the spellings a declaration cannot judge - and the code reaches
   // no prose surface, so nothing branches on which of the two fires here.
-  const dir = uatTree();
+  const dir = uatTree(t);
   const r = refusedMerge(dir, ['--payload']);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-args');
@@ -813,15 +813,15 @@ test('uat merge: --payload with no path refuses, never a read of fd 1', () => {
 });
 
 // The positive row: the flag is a TRANSPORT change and nothing else.
-test('uat merge: --payload <file> and stdin merge identically', () => {
+test('uat merge: --payload <file> and stdin merge identically', (t) => {
   const findings = JSON.stringify({
     passes: [{ k: 1, evidence: 'cli run' }],
     gaps: [{ name: 'New gap', reason: 'unwired', severity: 'major' }],
     human_checks: [{ name: 'looks right', expected: 'green' }],
   });
-  const viaStdin = uatTree();
+  const viaStdin = uatTree(t);
   const a = run(['uat', 'merge', '--phase', '1'], viaStdin, findings);
-  const viaFile = uatTree();
+  const viaFile = uatTree(t);
   const b = run(['uat', 'merge', '--phase', '1',
     '--payload', payloadFile(viaFile, findings)], viaFile);
 
@@ -841,8 +841,8 @@ test('uat merge: --payload <file> and stdin merge identically', () => {
 // refusing the ordinary findings file of a verifier that found only passes,
 // only gaps, or only human checks. One row per array closes that.
 
-test('uat merge: a payload carrying ONLY passes merges', () => {
-  const dir = uatTree();
+test('uat merge: a payload carrying ONLY passes merges', (t) => {
+  const dir = uatTree(t);
   const r = run(['uat', 'merge', '--phase', '1', '--payload',
     payloadFile(dir, JSON.stringify({ passes: [{ k: 1, evidence: 'cli run' }] }))], dir);
   assert.equal(r.ok, true);
@@ -851,8 +851,8 @@ test('uat merge: a payload carrying ONLY passes merges', () => {
   assert.match(readFileSync(join(dir, 'phases', '1', 'UAT.md'), 'utf8'), /cli run/);
 });
 
-test('uat merge: a payload carrying ONLY gaps merges', () => {
-  const dir = uatTree();
+test('uat merge: a payload carrying ONLY gaps merges', (t) => {
+  const dir = uatTree(t);
   const r = run(['uat', 'merge', '--phase', '1', '--payload',
     payloadFile(dir, JSON.stringify({
       gaps: [{ name: 'New gap', reason: 'unwired', severity: 'major' }],
@@ -863,8 +863,8 @@ test('uat merge: a payload carrying ONLY gaps merges', () => {
   assert.equal(r.auto_passed, 0);
 });
 
-test('uat merge: a payload carrying ONLY human_checks merges', () => {
-  const dir = uatTree();
+test('uat merge: a payload carrying ONLY human_checks merges', (t) => {
+  const dir = uatTree(t);
   const r = run(['uat', 'merge', '--phase', '1', '--payload',
     payloadFile(dir, JSON.stringify({
       human_checks: [{ name: 'looks right', expected: 'green' }],
@@ -876,24 +876,24 @@ test('uat merge: a payload carrying ONLY human_checks merges', () => {
 
 // init/refresh share the reader, so the sentinel fix must not have left them
 // exiting 0 in silence on the same input.
-test('uat init: a literal null on stdin is bad-payload, not silence', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: { plan: true } } });
+test('uat init: a literal null on stdin is bad-payload, not silence', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }], phases: { 1: { plan: true } } }, t);
   const r = run(['uat', 'init', '--phase', '1'], dir, 'null');
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-payload');
   assert.equal(r._exit, 1);
 });
 
-test('uat refresh: a literal null on stdin is bad-payload, not silence', () => {
-  const dir = uatTree();
+test('uat refresh: a literal null on stdin is bad-payload, not silence', (t) => {
+  const dir = uatTree(t);
   const r = run(['uat', 'refresh', '--phase', '1'], dir, 'null');
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'bad-payload');
   assert.equal(r._exit, 1);
 });
 
-test('uat: a hand-added ### section mints no item and survives rewrites (#46.1)', () => {
-  const dir = uatTree();
+test('uat: a hand-added ### section mints no item and survives rewrites (#46.1)', (t) => {
+  const dir = uatTree(t);
   const file = join(dir, 'phases', '1', 'UAT.md');
   const notes = '### Manual notes\n\n1. check the logs';
   writeFileSync(file, readFileSync(file, 'utf8').replace('## Summary', `${notes}\n\n## Summary`));
@@ -920,8 +920,8 @@ test('uat: a hand-added ### section mints no item and survives rewrites (#46.1)'
   assert.equal(readFileSync(file, 'utf8').split(notes).length - 1, 1);
 });
 
-test('uat: a `## ` inside a fenced block does not truncate a preserved section', () => {
-  const dir = uatTree();
+test('uat: a `## ` inside a fenced block does not truncate a preserved section', (t) => {
+  const dir = uatTree(t);
   const file = join(dir, 'phases', '1', 'UAT.md');
   // A `## ` line inside a code block used to bound the section, so the closing
   // fence and the trailing prose were destroyed. The odd fence count left the
@@ -945,8 +945,8 @@ test('uat: a `## ` inside a fenced block does not truncate a preserved section',
   assert.equal(readFileSync(file, 'utf8').split(notes).length - 1, 1);
 });
 
-test('uat status: complete only when every item passes or is skipped-with-reason', () => {
-  const dir = uatTree();
+test('uat status: complete only when every item passes or is skipped-with-reason', (t) => {
+  const dir = uatTree(t);
   run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pass'], dir);
   const partial = run(['uat', 'status', '--phase', '1'], dir);
   assert.equal(partial.result, 'partial');
@@ -959,8 +959,8 @@ test('uat status: complete only when every item passes or is skipped-with-reason
   assert.equal(complete.first_pending, undefined);
 });
 
-test('uat record: pending_ci keeps the phase partial, is never offered, and pass completes it', () => {
-  const dir = uatTree();
+test('uat record: pending_ci keeps the phase partial, is never offered, and pass completes it', (t) => {
+  const dir = uatTree(t);
   run(['uat', 'record', '--phase', '1', '--item', '1', '--result', 'pass'], dir);
   // Both fields or nothing: a pending_ci with no job writes no file change.
   const file = join(dir, 'phases', '1', 'UAT.md');
@@ -995,8 +995,8 @@ test('uat record: pending_ci keeps the phase partial, is never offered, and pass
   assert.doesNotMatch(readFileSync(file, 'utf8'), /^pending_ci:/m);
 });
 
-test('uat: missing checklist degrades to no-uat', () => {
-  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }] });
+test('uat: missing checklist degrades to no-uat', (t) => {
+  const dir = makeTree({ roadmap: [{ n: 1, name: 'Only' }] }, t);
   const r = run(['uat', 'status', '--phase', '1'], dir);
   assert.equal(r.reason, 'no-uat');
 });
