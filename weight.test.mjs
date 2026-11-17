@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, chmodSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -327,6 +327,69 @@ test('chars/4: estTokens and bytes match the measurement proxy', () => {
   assert.equal(s[0].surface, 'cadence-core/workflows/w.md');
   assert.equal(s[0].estTokens, Math.ceil(body.length / 4));
   assert.equal(s[0].bytes, Buffer.byteLength(body, 'utf8'));
+});
+
+// --- the `paths` subcommand: each registered ordinary path under its baseline -
+
+/** Run `weight.mjs paths` against a root, returning parsed JSON even when the seam exits 1. */
+function paths(root) {
+  try {
+    return JSON.parse(execFileSync('node', [WEIGHT, 'paths', '--root', root], { encoding: 'utf8' }));
+  } catch (e) {
+    if (typeof e.stdout === 'string' && e.stdout) return JSON.parse(e.stdout);
+    throw e;
+  }
+}
+/** The hold: every path over its baseline, by command and variant with the excess. The arm only reports (D-03). */
+const overBaseline = (j) => j.paths
+  .filter((p) => p.bytes > p.baseline)
+  .map((p) => `${p.command} (${p.variant}): ${p.bytes} B, ${p.bytes - p.baseline} B over ${p.baseline}`);
+/** A fixture root carrying only its own register. */
+function pathsFixture(prefix, register) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  mkdirSync(join(root, 'cadence-core', 'bin'), { recursive: true });
+  writeFileSync(join(root, 'cadence-core', 'bin', 'path-baselines.json'), JSON.stringify({ paths: register }));
+  return root;
+}
+
+test('paths: every registered ordinary path is at or under its report baseline (D-03)', () => {
+  const j = paths(REPO);
+  assert.equal(j.ok, true, JSON.stringify(j));
+  assert.equal(j.checked, 'path-weight');
+  // No row count: each later phase adds its own paths to the register.
+  assert.ok(j.paths.length > 0);
+  const over = overBaseline(j);
+  assert.deepEqual(over, [], `paths over their baseline:\n${over.join('\n')}`);
+});
+
+test('paths: each total is its files summed, and each file is its size on disk', () => {
+  for (const p of paths(REPO).paths) {
+    const label = `${p.command} (${p.variant})`;
+    assert.equal(p.bytes, sumBytes(p.files), label);
+    for (const f of p.files) assert.equal(f.bytes, statSync(join(REPO, f.surface)).size, `${label}: ${f.surface}`);
+  }
+});
+
+test('paths: the hold names exactly the path that is over its baseline', () => {
+  const root = pathsFixture('cad-paths-over-', [
+    { command: 'cad-big', variant: 'ordinary', files: ['big.md'], baseline: 5 },
+    { command: 'cad-small', variant: 'ordinary', files: ['small.md'], baseline: 5 },
+  ]);
+  writeFileSync(join(root, 'big.md'), 'abcdefgh');
+  writeFileSync(join(root, 'small.md'), 'abc');
+  const j = paths(root);
+  assert.equal(j.ok, true, JSON.stringify(j));
+  assert.deepEqual(overBaseline(j), ['cad-big (ordinary): 8 B, 3 B over 5']);
+});
+
+test('paths: a registered file missing on disk refuses and names it, never counts 0', () => {
+  const root = pathsFixture('cad-paths-missing-', [
+    { command: 'cad-x', variant: 'ordinary', files: ['nope.md'], baseline: 1 },
+  ]);
+  const j = paths(root);
+  assert.equal(j.ok, false);
+  assert.match(j.detail, /nope\.md/);
+  assert.equal(j.paths, undefined);
 });
 
 // --- flag values: absent is not the same as present-with-no-value -----------
