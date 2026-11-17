@@ -18,11 +18,11 @@
 // Every stub appends its argv to `$CAD_ARGV_LOG`, so "exactly one list call for
 // a five-finding fire" is an assertion about a file on disk rather than about
 // something the seam reported about itself.
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync, symlinkSync,
+  mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, chmodSync, symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -38,13 +38,20 @@ const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core',
 
 /** A user-global layer that does not exist, so a developer's own
  *  ~/.claude/cadence/config.json can never answer one of these cases. */
-const NO_GLOBAL = join(mkdtempSync(join(tmpdir(), 'cad-if-')), 'no-global.json');
+const NO_GLOBAL_DIR = mkdtempSync(join(tmpdir(), 'cad-if-'));
+after(() => rmSync(NO_GLOBAL_DIR, { recursive: true, force: true }));
+const NO_GLOBAL = join(NO_GLOBAL_DIR, 'no-global.json');
 
-const tmp = (p) => mkdtempSync(join(tmpdir(), `cad-if-${p}-`));
+/** A fresh `cad-if-<p>-` dir, gone when test `t` ends. */
+const tmp = (t, p) => {
+  const dir = mkdtempSync(join(tmpdir(), `cad-if-${p}-`));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+};
 
 /** A repository whose `.planning/config.json` carries a persisted forge record. */
-function repoWith(git) {
-  const dir = tmp('repo');
+function repoWith(t, git) {
+  const dir = tmp(t, 'repo');
   mkdirSync(join(dir, '.planning'), { recursive: true });
   writeFileSync(join(dir, '.planning', 'config.json'), JSON.stringify({ git }));
   return dir;
@@ -117,12 +124,12 @@ function stubBin(dir, name,
  * `FILED.md.lock`, say), which cannot be planted after `repoWith` returns
  * because `repoWith` runs inside this helper.
  */
-function run(args, { git = GITHUB, bins = ['gh'], stub = {}, prepare = null } = {}) {
-  const stubDir = tmp('bin');
-  const argvLog = join(tmp('log'), 'argv');
-  const createLog = join(tmp('log'), 'creates');
+function run(t, args, { git = GITHUB, bins = ['gh'], stub = {}, prepare = null } = {}) {
+  const stubDir = tmp(t, 'bin');
+  const argvLog = join(tmp(t, 'log'), 'argv');
+  const createLog = join(tmp(t, 'log'), 'creates');
   for (const name of bins) stubBin(stubDir, name, { ...stub, createLog });
-  const dir = repoWith(git);
+  const dir = repoWith(t, git);
   if (prepare) prepare(dir);
   const env = {
     ...process.env,
@@ -179,8 +186,8 @@ const payloadFor = (pairs) => ({
 });
 
 /** Write any object to a temp file and return the path. */
-function payloadFile(obj) {
-  const p = join(tmp('payload'), 'payload.json');
+function payloadFile(t, obj) {
+  const p = join(tmp(t, 'payload'), 'payload.json');
   writeFileSync(p, JSON.stringify(obj));
   return p;
 }
@@ -216,12 +223,12 @@ const createCalls = (calls) => calls.filter((c) => / create /.test(` ${c} `));
 
 const viewCalls = (calls) => calls.filter((c) => / repo view /.test(` ${c} `));
 
-test('a five-finding fire spawns ONE visibility read and no list or create (D-05)', () => {
+test('a five-finding fire spawns ONE visibility read and no list or create (D-05)', (t) => {
   // Criterion 11's falsifiable form, counted off the stub's own log. The decline
   // set is a local file, so the ask costs no list; the one forge call it makes
   // is the read-only visibility query that tells the user where the issue goes.
-  const payload = payloadFile(payloadFor(FIVE.map((f) => [f, 'survived'])));
-  const { status, envelope, calls } = run(['unfixed', '--payload', payload]);
+  const payload = payloadFile(t, payloadFor(FIVE.map((f) => [f, 'survived'])));
+  const { status, envelope, calls } = run(t, ['unfixed', '--payload', payload]);
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
   assert.equal(envelope.raised, 5);
@@ -232,23 +239,23 @@ test('a five-finding fire spawns ONE visibility read and no list or create (D-05
   assert.equal(createCalls(calls).length, 0, calls.join('\n'));
 });
 
-test('unfixed reports the visibility the forge answered, read from `repo view` (D-05)', () => {
-  const payload = payloadFile(payloadFor([[FIVE[0], 'survived']]));
+test('unfixed reports the visibility the forge answered, read from `repo view` (D-05)', (t) => {
+  const payload = payloadFile(t, payloadFor([[FIVE[0], 'survived']]));
   const cases = [
     ['{"visibility":"PUBLIC"}', 'public'],
     ['{"visibility":"PRIVATE"}', 'private'],
     ['{"visibility":"INTERNAL"}', 'internal'],
   ];
   for (const [visBody, word] of cases) {
-    const { envelope, calls } = run(['unfixed', '--payload', payload], { stub: { visBody } });
+    const { envelope, calls } = run(t, ['unfixed', '--payload', payload], { stub: { visBody } });
     assert.equal(envelope.visibility, word, visBody);
     assert.equal(envelope.visibility_read, true, visBody);
     assert.equal(calls[0].trim(), 'gh repo view acme/widget --json visibility');
   }
 });
 
-test('a visibility that could not be read is public and marked not read (D-05)', () => {
-  const payload = payloadFile(payloadFor([[FIVE[0], 'survived']]));
+test('a visibility that could not be read is public and marked not read (D-05)', (t) => {
+  const payload = payloadFile(t, payloadFor([[FIVE[0], 'survived']]));
   const unreadable = [
     { visFails: true },
     { visBody: 'not json at all' },
@@ -257,23 +264,23 @@ test('a visibility that could not be read is public and marked not read (D-05)',
     { visBody: 'null' },
   ];
   for (const stub of unreadable) {
-    const { envelope } = run(['unfixed', '--payload', payload], { stub });
+    const { envelope } = run(t, ['unfixed', '--payload', payload], { stub });
     assert.equal(envelope.ok, true, JSON.stringify(stub));
     assert.equal(envelope.visibility, 'public', JSON.stringify(stub));
     assert.equal(envelope.visibility_read, false, JSON.stringify(stub));
   }
 });
 
-test('the CLI\'s own bytes never ride the unfixed envelope (D-05)', () => {
-  const payload = payloadFile(payloadFor([[FIVE[0], 'survived']]));
-  const { envelope } = run(['unfixed', '--payload', payload],
+test('the CLI\'s own bytes never ride the unfixed envelope (D-05)', (t) => {
+  const payload = payloadFile(t, payloadFor([[FIVE[0], 'survived']]));
+  const { envelope } = run(t, ['unfixed', '--payload', payload],
     { stub: { visBody: '{"visibility":"PRIVATE","note":"LEAKME"}' } });
   assert.ok(!JSON.stringify(envelope).includes('LEAKME'), JSON.stringify(envelope));
 });
 
-test('the gitlab row reads `repo view --output json` and folds the lower-case word (D-05)', () => {
-  const payload = payloadFile(payloadFor([[FIVE[0], 'survived']]));
-  const { envelope, calls } = run(['unfixed', '--payload', payload], {
+test('the gitlab row reads `repo view --output json` and folds the lower-case word (D-05)', (t) => {
+  const payload = payloadFile(t, payloadFor([[FIVE[0], 'survived']]));
+  const { envelope, calls } = run(t, ['unfixed', '--payload', payload], {
     git: GITLAB, bins: ['glab'], stub: { visBody: '{"visibility":"internal"}' },
   });
   assert.equal(envelope.visibility, 'internal');
@@ -281,9 +288,9 @@ test('the gitlab row reads `repo view --output json` and folds the lower-case wo
   assert.equal(calls[0].trim(), 'glab repo view acme/widget --output json');
 });
 
-test('a forge whose row has no visibility query reads as public, not read, spawning nothing (D-05)', () => {
-  const payload = payloadFile(payloadFor([[FIVE[0], 'survived']]));
-  const { envelope, calls } = run(['unfixed', '--payload', payload], {
+test('a forge whose row has no visibility query reads as public, not read, spawning nothing (D-05)', (t) => {
+  const payload = payloadFile(t, payloadFor([[FIVE[0], 'survived']]));
+  const { envelope, calls } = run(t, ['unfixed', '--payload', payload], {
     git: FORGEJO, bins: ['tea'],
     stub: { loginBody: '[{"name":"example","url":"https://git.example.test"}]' },
   });
@@ -293,23 +300,23 @@ test('a forge whose row has no visibility query reads as public, not read, spawn
   assert.equal(viewCalls(calls).length, 0, calls.join('\n'));
 });
 
-test('the decline set is read even where no forge CLI resolves', () => {
+test('the decline set is read even where no forge CLI resolves', (t) => {
   // The strongest form of "local": the ask still answers on a PATH holding no
   // forge binary at all, because nothing it needs lives on a tracker. The
   // envelope still refuses - `unfixed` names the provider and repo - but it
   // refuses for the FORGE being unreachable, never for the declines being
   // unknown, and the reason names which.
-  const payload = payloadFile(payloadFor([[FIVE[0], 'survived']]));
-  const { envelope, calls } = run(['unfixed', '--payload', payload], { bins: [] });
+  const payload = payloadFile(t, payloadFor([[FIVE[0], 'survived']]));
+  const { envelope, calls } = run(t, ['unfixed', '--payload', payload], { bins: [] });
   assert.equal(envelope.ok, false);
   assert.equal(envelope.reason, 'no-cli');
   assert.equal(calls.length, 0, calls.join('\n'));
 });
 
-test('a finding DECLINED.md already carries is absent from the answer', () => {
+test('a finding DECLINED.md already carries is absent from the answer', (t) => {
   // The decline that must not be asked about twice (criterion 11).
-  const payload = payloadFile(payloadFor(FIVE.map((f) => [f, 'survived'])));
-  const { envelope } = run(['unfixed', '--payload', payload],
+  const payload = payloadFile(t, payloadFor(FIVE.map((f) => [f, 'survived'])));
+  const { envelope } = run(t, ['unfixed', '--payload', payload],
     { prepare: declinedWith([FIVE[1], FIVE[3]]) });
   assert.equal(envelope.ok, true);
   assert.equal(envelope.raised, 5);
@@ -318,28 +325,28 @@ test('a finding DECLINED.md already carries is absent from the answer', () => {
     ['src/a.mjs', 'src/c.mjs', 'src/e.mjs']);
 });
 
-test('a decline recognized by (file, claim) survives the file shifting by a line', () => {
+test('a decline recognized by (file, claim) survives the file shifting by a line', (t) => {
   // The same finding raised again 30 lines lower is the SAME decline.
   const moved = { ...FIVE[1], line: 999 };
-  const payload = payloadFile(payloadFor([[moved, 'survived']]));
-  const { envelope } = run(['unfixed', '--payload', payload],
+  const payload = payloadFile(t, payloadFor([[moved, 'survived']]));
+  const { envelope } = run(t, ['unfixed', '--payload', payload],
     { prepare: declinedWith([FIVE[1]]) });
   assert.deepEqual(envelope.findings, []);
   assert.equal(envelope.already_declined, 1);
 });
 
-test('a survived blocker never reaches the ask, so the fire has nothing to file', () => {
-  const payload = payloadFile(payloadFor([
+test('a survived blocker never reaches the ask, so the fire has nothing to file', (t) => {
+  const payload = payloadFile(t, payloadFor([
     [finding('src/a.mjs', 1, 'blocker', 'the lock is never released'), 'survived'],
   ]));
-  const { status, envelope } = run(['unfixed', '--payload', payload]);
+  const { status, envelope } = run(t, ['unfixed', '--payload', payload]);
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
   assert.deepEqual(envelope.findings, []);
   assert.equal(envelope.raised, 0);
 });
 
-test('a survived medium whose fix is already committed is never put to the user', () => {
+test('a survived medium whose fix is already committed is never put to the user', (t) => {
   // AC4, reproducing the one entry of this shape on disk today:
   // .planning/_archive-v3.7.3/1/ADJUDICATION-risk_surface-plan-2.json holds a
   // `medium survived` naming commit 4a1af326. A tracker issue asking whether
@@ -351,7 +358,7 @@ test('a survived medium whose fix is already committed is never put to the user'
   const fixed = finding('src/f.mjs', 60, 'medium', 'the retry loop has no ceiling');
   const composed = payloadFor([...FIVE.map((f) => [f, 'survived']), [fixed, 'survived']]);
   composed.voices[0].rulings[5].fix_commit = '4a1af326';
-  const { status, envelope } = run(['unfixed', '--payload', payloadFile(composed)]);
+  const { status, envelope } = run(t, ['unfixed', '--payload', payloadFile(t, composed)]);
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
   // `raised` still counts what `unfixedFindings` answered with - five now,
@@ -365,9 +372,9 @@ test('a survived medium whose fix is already committed is never put to the user'
     ['src/a.mjs', 'src/b.mjs', 'src/c.mjs', 'src/d.mjs', 'src/e.mjs']);
 });
 
-test('each returned finding carries its fingerprint BESIDE it, never inside it', () => {
-  const payload = payloadFile(payloadFor([[FIVE[0], 'survived']]));
-  const { envelope } = run(['unfixed', '--payload', payload]);
+test('each returned finding carries its fingerprint BESIDE it, never inside it', (t) => {
+  const payload = payloadFile(t, payloadFor([[FIVE[0], 'survived']]));
+  const { envelope } = run(t, ['unfixed', '--payload', payload]);
   const entry = envelope.findings[0];
   assert.equal(entry.fingerprint, fingerprint(FIVE[0]));
   assert.equal(entry.finding.fingerprint, undefined);
@@ -376,14 +383,14 @@ test('each returned finding carries its fingerprint BESIDE it, never inside it',
 
 // --- criterion 12: an incomplete lookup refuses the fire ---------------------
 
-test('a decline set far past any old page size is read whole', () => {
+test('a decline set far past any old page size is read whole', (t) => {
   // The case that used to REFUSE. A forge lookup could only see one page, so a
   // decline set bigger than it made the fire un-answerable; a file has no page.
   // 500 rows is well past the 200 the forgejo arm could ever return.
   const many = Array.from({ length: 500 },
     (_, i) => finding(`src/x${i}.mjs`, 1, 'low', `c${i}`));
-  const payload = payloadFile(payloadFor([[FIVE[0], 'survived'], [many[499], 'survived']]));
-  const { status, envelope } = run(['unfixed', '--payload', payload],
+  const payload = payloadFile(t, payloadFor([[FIVE[0], 'survived'], [many[499], 'survived']]));
+  const { status, envelope } = run(t, ['unfixed', '--payload', payload],
     { prepare: declinedWith(many) });
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
@@ -392,23 +399,23 @@ test('a decline set far past any old page size is read whole', () => {
   assert.deepEqual(envelope.findings.map((e) => e.finding.file), ['src/a.mjs']);
 });
 
-test('a missing DECLINED.md is an empty decline set, not a refusal', () => {
+test('a missing DECLINED.md is an empty decline set, not a refusal', (t) => {
   // The state every repository starts in. Asking about every finding is the
   // correct answer here, and refusing would make the first fire un-answerable.
-  const payload = payloadFile(payloadFor(FIVE.map((f) => [f, 'survived'])));
-  const { status, envelope } = run(['unfixed', '--payload', payload]);
+  const payload = payloadFile(t, payloadFor(FIVE.map((f) => [f, 'survived'])));
+  const { status, envelope } = run(t, ['unfixed', '--payload', payload]);
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
   assert.equal(envelope.already_declined, 0);
   assert.equal(envelope.findings.length, 5);
 });
 
-test('an unreadable DECLINED.md refuses rather than re-asking what was declined', () => {
+test('an unreadable DECLINED.md refuses rather than re-asking what was declined', (t) => {
   // The posture the old incomplete-lookup arm held: a fire that cannot tell
   // what was already declined does not guess. A directory where the file is
   // expected reads as EISDIR, which is not ENOENT and so is not "none yet".
-  const payload = payloadFile(payloadFor([[FIVE[0], 'survived']]));
-  const { status, envelope, calls } = run(['unfixed', '--payload', payload], {
+  const payload = payloadFile(t, payloadFor([[FIVE[0], 'survived']]));
+  const { status, envelope, calls } = run(t, ['unfixed', '--payload', payload], {
     prepare: (dir) => mkdirSync(join(recordsDir(join(dir, '.planning')), 'DECLINED.md'), { recursive: true }),
   });
   assert.equal(status, 1);
@@ -422,16 +429,16 @@ test('an unreadable DECLINED.md refuses rather than re-asking what was declined'
 
 // --- file: one create per entry, the declined ones labelled ------------------
 
-const dispositions = (pairs) => payloadFile({
+const dispositions = (t, pairs) => payloadFile(t, {
   entries: pairs.map(([f, disposition]) => ({ finding: f, disposition })),
 });
 
-test('three accepts and two declines make exactly THREE creates, none labelled', () => {
-  const payload = dispositions([
+test('three accepts and two declines make exactly THREE creates, none labelled', (t) => {
+  const payload = dispositions(t, [
     [FIVE[0], 'accept'], [FIVE[1], 'decline'], [FIVE[2], 'accept'],
     [FIVE[3], 'decline'], [FIVE[4], 'accept'],
   ]);
-  const { status, envelope, calls } = run(['file', '--payload', payload]);
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload]);
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
   assert.equal(envelope.accepted, 3);
@@ -450,9 +457,9 @@ test('three accepts and two declines make exactly THREE creates, none labelled',
   }
 });
 
-test('a declined finding lands in DECLINED.md and never in FILED.md', () => {
-  const payload = dispositions([[FIVE[0], 'accept'], [FIVE[1], 'decline']]);
-  const { status, dir } = run(['file', '--payload', payload]);
+test('a declined finding lands in DECLINED.md and never in FILED.md', (t) => {
+  const payload = dispositions(t, [[FIVE[0], 'accept'], [FIVE[1], 'decline']]);
+  const { status, dir } = run(t, ['file', '--payload', payload]);
   assert.equal(status, 0);
   const declined = declinedText(dir);
   const filed = filedText(dir);
@@ -462,21 +469,21 @@ test('a declined finding lands in DECLINED.md and never in FILED.md', () => {
   assert.ok(!filed.includes(fingerprint(FIVE[1])), 'a decline leaked into FILED.md');
 });
 
-test('a decline written by `file` is what the next `unfixed` reads back', () => {
+test('a decline written by `file` is what the next `unfixed` reads back', (t) => {
   // The round trip that is the whole point: the two faces share one record, so
   // a question answered once is never asked again. Same repository directory
   // for both runs, which is what `run`'s deterministic tmp naming gives.
   const f = FIVE[1];
-  const { dir } = run(['file', '--payload', dispositions([[f, 'decline']])]);
-  const payload = payloadFile(payloadFor([[f, 'survived']]));
-  const { envelope } = run(['unfixed', '--payload', payload],
+  const { dir } = run(t, ['file', '--payload', dispositions(t, [[f, 'decline']])]);
+  const payload = payloadFile(t, payloadFor([[f, 'survived']]));
+  const { envelope } = run(t, ['unfixed', '--payload', payload],
     { prepare: (d) => plantFile(join(recordsDir(join(d, '.planning')), 'DECLINED.md'), declinedText(dir)) });
   assert.equal(envelope.ok, true);
   assert.equal(envelope.already_declined, 1);
   assert.deepEqual(envelope.findings, []);
 });
 
-test('a credential in a finding reaches no create argv, no FILED.md row and no DECLINED.md row (D-04)', () => {
+test('a credential in a finding reaches no create argv, no FILED.md row and no DECLINED.md row (D-04)', (t) => {
   const leaky = (file, n) => ({
     file, line: 1, severity: 'low',
     claim: `dials https://u:SECRET1${n}@host/x with api_key=SECRET2${n}`,
@@ -484,7 +491,7 @@ test('a credential in a finding reaches no create argv, no FILED.md row and no D
   });
   const a = leaky('src/acc.mjs', 'A');
   const d = leaky('src/dec.mjs', 'D');
-  const { status, dir, calls } = run(['file', '--payload', dispositions([[a, 'accept'], [d, 'decline']])]);
+  const { status, dir, calls } = run(t, ['file', '--payload', dispositions(t, [[a, 'accept'], [d, 'decline']])]);
   assert.equal(status, 0);
   const creates = createCalls(calls);
   assert.equal(creates.length, 1, calls.join('\n'));
@@ -494,20 +501,20 @@ test('a credential in a finding reaches no create argv, no FILED.md row and no D
   assert.ok(declinedText(dir).includes(`${fingerprint(d)}: `), 'declined row fingerprint is the unredacted one');
 });
 
-test('every create supplies a body, on every entry', () => {
+test('every create supplies a body, on every entry', (t) => {
   // gh PROMPTS for one when it is absent, which hangs the child inside a step.
-  const payload = dispositions([[FIVE[0], 'accept'], [FIVE[1], 'decline']]);
-  const { calls } = run(['file', '--payload', payload]);
+  const payload = dispositions(t, [[FIVE[0], 'accept'], [FIVE[1], 'decline']]);
+  const { calls } = run(t, ['file', '--payload', payload]);
   for (const c of createCalls(calls)) assert.match(c, /--body /);
 });
 
-test('a create exiting nonzero refuses and NAMES the findings that were not filed', () => {
+test('a create exiting nonzero refuses and NAMES the findings that were not filed', (t) => {
   // Criterion 9: no finding is dropped because the tracker could not be reached.
-  const payload = dispositions([
+  const payload = dispositions(t, [
     [FIVE[0], 'accept'], [FIVE[1], 'decline'], [FIVE[2], 'accept'],
     [FIVE[3], 'decline'], [FIVE[4], 'accept'],
   ]);
-  const { status, envelope, calls } = run(['file', '--payload', payload],
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload],
     { stub: { failAt: 3 } });
   assert.equal(status, 1);
   assert.equal(envelope.ok, false);
@@ -536,11 +543,11 @@ const onTracker = (pairs) => JSON.stringify(
   pairs.map(([f, number, extra = {}]) => ({ number, title: issueTitle(f), ...extra })),
 );
 
-test('a fire with accepts asks the tracker ONCE, and the ask precedes every create', () => {
-  const payload = dispositions([
+test('a fire with accepts asks the tracker ONCE, and the ask precedes every create', (t) => {
+  const payload = dispositions(t, [
     [FIVE[0], 'accept'], [FIVE[1], 'accept'], [FIVE[2], 'accept'],
   ]);
-  const { status, envelope, calls } = run(['file', '--payload', payload]);
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload]);
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
   assert.equal(listCalls(calls).length, 1, calls.join('\n'));
@@ -552,13 +559,13 @@ test('a fire with accepts asks the tracker ONCE, and the ask precedes every crea
   assert.ok(firstList < firstCreate, calls.join('\n'));
 });
 
-test('the list call is TITLE-SCOPED and names every accepted fingerprint', () => {
+test('the list call is TITLE-SCOPED and names every accepted fingerprint', (t) => {
   // Bare tokens match BODIES: measured 2026-09-03, a bare fingerprint returned
   // an issue that merely quotes it, while `in:title` returned only the filings.
-  const payload = dispositions([
+  const payload = dispositions(t, [
     [FIVE[0], 'accept'], [FIVE[1], 'accept'], [FIVE[2], 'accept'],
   ]);
-  const { calls } = run(['file', '--payload', payload]);
+  const { calls } = run(t, ['file', '--payload', payload]);
   const list = listCalls(calls)[0];
   assert.match(list, /--search /, list);
   assert.match(list, /in:title /, list);
@@ -568,11 +575,11 @@ test('the list call is TITLE-SCOPED and names every accepted fingerprint', () =>
   assert.ok(!list.includes(DECLINE_LABEL), list);
 });
 
-test('a fingerprint the tracker already holds gets no create and is reported by NUMBER', () => {
-  const payload = dispositions([
+test('a fingerprint the tracker already holds gets no create and is reported by NUMBER', (t) => {
+  const payload = dispositions(t, [
     [FIVE[0], 'accept'], [FIVE[1], 'accept'], [FIVE[2], 'accept'],
   ]);
-  const { status, envelope, calls, dir } = run(['file', '--payload', payload],
+  const { status, envelope, calls, dir } = run(t, ['file', '--payload', payload],
     { stub: { listBody: onTracker([[FIVE[1], 7]]) } });
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
@@ -587,14 +594,14 @@ test('a fingerprint the tracker already holds gets no create and is reported by 
   for (const f of [FIVE[0], FIVE[2]]) assert.ok(text.includes(fingerprint(f)), text);
 });
 
-test('a CLOSED issue suppresses exactly as an open one does (D-05)', () => {
+test('a CLOSED issue suppresses exactly as an open one does (D-05)', (t) => {
   // The fingerprint is over (file, claim), so it does not move when the code is
   // fixed - a finding filed, fixed and closed can never be filed again, and
   // that cost is stated rather than discovered.
-  const payload = dispositions([
+  const payload = dispositions(t, [
     [FIVE[0], 'accept'], [FIVE[1], 'accept'], [FIVE[2], 'accept'],
   ]);
-  const { status, envelope, calls } = run(['file', '--payload', payload],
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload],
     { stub: { listBody: onTracker([[FIVE[1], 7, { state: 'closed' }]]) } });
   assert.equal(status, 0);
   assert.equal(createCalls(calls).length, 2, calls.join('\n'));
@@ -602,15 +609,15 @@ test('a CLOSED issue suppresses exactly as an open one does (D-05)', () => {
     [[fingerprint(FIVE[1]), 7]]);
 });
 
-test('a lookup that FILLED ITS PAGE refuses the fire before any create', () => {
+test('a lookup that FILLED ITS PAGE refuses the fire before any create', (t) => {
   // 200 rows against gh's 200-row page: either truncation or a forge that did
   // not apply the search. Reading either as "not filed" is the duplicate.
   const full = JSON.stringify(Array.from({ length: 200 }, (_, i) => ({
     number: i + 1,
     title: issueTitle(finding(`src/x${i}.mjs`, 1, 'low', `claim ${i}`)),
   })));
-  const payload = dispositions([[FIVE[0], 'accept'], [FIVE[1], 'accept']]);
-  const { status, envelope, calls, dir } = run(['file', '--payload', payload],
+  const payload = dispositions(t, [[FIVE[0], 'accept'], [FIVE[1], 'accept']]);
+  const { status, envelope, calls, dir } = run(t, ['file', '--payload', payload],
     { stub: { listBody: full } });
   assert.equal(status, 1);
   assert.equal(envelope.reason, 'incomplete-lookup');
@@ -621,11 +628,11 @@ test('a lookup that FILLED ITS PAGE refuses the fire before any create', () => {
   assert.equal(filedText(dir), '', 'nothing was mirrored either');
 });
 
-test('a lookup child that could NOT RUN does not refuse - the creates still run', () => {
+test('a lookup child that could NOT RUN does not refuse - the creates still run', (t) => {
   // D-11: "incomplete" and "unavailable" are two arms. An offline forge that
   // refused every fire would be a gate nobody can get past.
-  const payload = dispositions([[FIVE[0], 'accept'], [FIVE[1], 'accept']]);
-  const { status, envelope, calls } = run(['file', '--payload', payload],
+  const payload = dispositions(t, [[FIVE[0], 'accept'], [FIVE[1], 'accept']]);
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload],
     { stub: { listFails: true } });
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
@@ -634,21 +641,21 @@ test('a lookup child that could NOT RUN does not refuse - the creates still run'
   assert.deepEqual(envelope.suppressed, []);
 });
 
-test('a fire of DECLINES alone spawns no child at all - no list and no create', () => {
-  const payload = dispositions([[FIVE[0], 'decline'], [FIVE[1], 'decline']]);
-  const { status, envelope, calls } = run(['file', '--payload', payload]);
+test('a fire of DECLINES alone spawns no child at all - no list and no create', (t) => {
+  const payload = dispositions(t, [[FIVE[0], 'decline'], [FIVE[1], 'decline']]);
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload]);
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
   assert.deepEqual(calls, [], calls.join('\n'));
   assert.equal(envelope.declined, 2);
 });
 
-test('the forgejo arm\'s ISSUE list call carries --login, like its create', () => {
+test('the forgejo arm\'s ISSUE list call carries --login, like its create', (t) => {
   // An unqualified `tea --repo` falls back to config file order, so a lookup
   // without a login would read a stranger's tracker and answer about it.
   const logins = JSON.stringify([{ name: 'mine', url: 'https://git.example.test', user: 'me' }]);
-  const payload = dispositions([[FIVE[0], 'accept']]);
-  const { status, calls } = run(['file', '--payload', payload],
+  const payload = dispositions(t, [[FIVE[0], 'accept']]);
+  const { status, calls } = run(t, ['file', '--payload', payload],
     { git: FORGEJO, bins: ['tea'], stub: { loginBody: logins } });
   assert.equal(status, 0);
   const issueList = calls.filter((c) => /issues list /.test(c));
@@ -660,13 +667,13 @@ test('the forgejo arm\'s ISSUE list call carries --login, like its create', () =
 
 // --- the forge record is read, and every refusal precedes the first create ---
 
-test('the forgejo arm carries --login on both calls, resolved off the persisted host', () => {
+test('the forgejo arm carries --login on both calls, resolved off the persisted host', (t) => {
   const logins = JSON.stringify([
     { name: 'other', url: 'https://elsewhere.test', user: 'nobody' },
     { name: 'mine', url: 'https://git.example.test', user: 'me' },
   ]);
-  const payload = dispositions([[FIVE[0], 'accept']]);
-  const { status, envelope, calls } = run(['file', '--payload', payload],
+  const payload = dispositions(t, [[FIVE[0], 'accept']]);
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload],
     { git: FORGEJO, bins: ['tea'], stub: { loginBody: logins } });
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
@@ -674,10 +681,10 @@ test('the forgejo arm carries --login on both calls, resolved off the persisted 
   assert.match(createCalls(calls)[0], new RegExp('issues create'));
 });
 
-test('no login naming the persisted host refuses BEFORE any create', () => {
+test('no login naming the persisted host refuses BEFORE any create', (t) => {
   const logins = JSON.stringify([{ name: 'other', url: 'https://elsewhere.test', user: 'nobody' }]);
-  const payload = dispositions([[FIVE[0], 'accept']]);
-  const { status, envelope, calls } = run(['file', '--payload', payload],
+  const payload = dispositions(t, [[FIVE[0], 'accept']]);
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload],
     { git: FORGEJO, bins: ['tea'], stub: { loginBody: logins } });
   assert.equal(status, 1);
   assert.equal(envelope.reason, 'no-login');
@@ -686,9 +693,9 @@ test('no login naming the persisted host refuses BEFORE any create', () => {
   assert.equal(createCalls(calls).length, 0, calls.join('\n'));
 });
 
-test('an unconfigured forge refuses by naming the unset keys, spawning nothing', () => {
-  const payload = dispositions([[FIVE[0], 'accept']]);
-  const { status, envelope, calls } = run(['file', '--payload', payload], { git: {} });
+test('an unconfigured forge refuses by naming the unset keys, spawning nothing', (t) => {
+  const payload = dispositions(t, [[FIVE[0], 'accept']]);
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload], { git: {} });
   assert.equal(status, 1);
   assert.equal(envelope.reason, 'no-forge');
   assert.match(envelope.detail, /git\.forge_provider/);
@@ -696,9 +703,9 @@ test('an unconfigured forge refuses by naming the unset keys, spawning nothing',
   assert.deepEqual(calls, []);
 });
 
-test('a configured forge whose CLI does not resolve refuses without spawning', () => {
-  const payload = dispositions([[FIVE[0], 'accept']]);
-  const { status, envelope, calls } = run(['file', '--payload', payload], { bins: [] });
+test('a configured forge whose CLI does not resolve refuses without spawning', (t) => {
+  const payload = dispositions(t, [[FIVE[0], 'accept']]);
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload], { bins: [] });
   assert.equal(status, 1);
   assert.equal(envelope.reason, 'no-cli');
   assert.match(envelope.detail, /gh does not resolve on PATH/);
@@ -706,33 +713,33 @@ test('a configured forge whose CLI does not resolve refuses without spawning', (
   assert.deepEqual(calls, []);
 });
 
-test('warnings from the config merge ride every envelope', () => {
-  const payload = payloadFile(payloadFor([[FIVE[0], 'survived']]));
-  const { envelope } = run(['unfixed', '--payload', payload]);
+test('warnings from the config merge ride every envelope', (t) => {
+  const payload = payloadFile(t, payloadFor([[FIVE[0], 'survived']]));
+  const { envelope } = run(t, ['unfixed', '--payload', payload]);
   assert.ok(Array.isArray(envelope.warnings));
 });
 
 // --- the payload door -------------------------------------------------------
 
-test('an absent payload file refuses before the forge is touched', () => {
-  const { status, envelope, calls } = run(['unfixed', '--payload', '/no/such/payload.json']);
+test('an absent payload file refuses before the forge is touched', (t) => {
+  const { status, envelope, calls } = run(t, ['unfixed', '--payload', '/no/such/payload.json']);
   assert.equal(status, 1);
   assert.equal(envelope.reason, 'no-payload');
   assert.ok(envelope.hint);
   assert.deepEqual(calls, []);
 });
 
-test('a payload that is not JSON refuses naming the file', () => {
-  const p = join(tmp('payload'), 'payload.json');
+test('a payload that is not JSON refuses naming the file', (t) => {
+  const p = join(tmp(t, 'payload'), 'payload.json');
   writeFileSync(p, 'this is prose, not a payload');
-  const { status, envelope, calls } = run(['unfixed', '--payload', p]);
+  const { status, envelope, calls } = run(t, ['unfixed', '--payload', p]);
   assert.equal(status, 1);
   assert.equal(envelope.reason, 'bad-payload');
   assert.match(envelope.detail, /is not JSON/);
   assert.deepEqual(calls, []);
 });
 
-test('BOTH payload arms redact a credential out of the path they name', () => {
+test('BOTH payload arms redact a credential out of the path they name', (t) => {
   // The shape planning-lease-check.test.mjs's no-staged-set case pins, applied
   // to the other input that reaches a `detail` as caller-supplied argv: the
   // credential goes and NOTHING ELSE does. Both arms are asserted in one test
@@ -744,7 +751,7 @@ test('BOTH payload arms redact a credential out of the path they name', () => {
   // Arm 1, no-payload: the path does not exist, so `readFileSync`'s own ENOENT
   // message quotes the credential-bearing path back verbatim as well.
   const absent = `/nonexistent/${secret}/payload.json`;
-  const gone = run(['unfixed', '--payload', absent]).envelope;
+  const gone = run(t, ['unfixed', '--payload', absent]).envelope;
   assert.equal(gone.reason, 'no-payload');
   assert.equal(gone.detail.includes('s3cr3t-tok'), false, gone.detail);
   assert.equal(gone.detail.includes('cad:'), false, gone.detail);
@@ -757,11 +764,11 @@ test('BOTH payload arms redact a credential out of the path they name', () => {
 
   // Arm 2, bad-payload: the file EXISTS at a credential-bearing path and holds
   // prose, so only this seam's own `${file}` interpolation carries the secret.
-  const home = join(tmp('cred'), secret);
+  const home = join(tmp(t, 'cred'), secret);
   mkdirSync(home, { recursive: true });
   const present = join(home, 'payload.json');
   writeFileSync(present, 'this is prose, not a payload');
-  const bad = run(['unfixed', '--payload', present]).envelope;
+  const bad = run(t, ['unfixed', '--payload', present]).envelope;
   assert.equal(bad.reason, 'bad-payload');
   assert.equal(bad.detail.includes('s3cr3t-tok'), false, bad.detail);
   assert.equal(bad.detail.includes('cad:'), false, bad.detail);
@@ -770,42 +777,42 @@ test('BOTH payload arms redact a credential out of the path they name', () => {
   assert.match(bad.detail, /is not JSON/, bad.detail);
 });
 
-test('a payload buildEntries refuses names the entry, and no forge call is made', () => {
+test('a payload buildEntries refuses names the entry, and no forge call is made', (t) => {
   const bad = payloadFor([[FIVE[0], 'survived']]);
   bad.voices[0].rulings[0].ruling = 'not-a-ruling';
-  const { status, envelope, calls } = run(['unfixed', '--payload', payloadFile(bad)]);
+  const { status, envelope, calls } = run(t, ['unfixed', '--payload', payloadFile(t, bad)]);
   assert.equal(status, 1);
   assert.equal(envelope.reason, 'bad-payload');
   assert.match(envelope.detail, /voices\[0\]\.rulings\[0\]\.ruling/);
   assert.deepEqual(calls, []);
 });
 
-test('a dispositions payload with an unknown disposition refuses before any create', () => {
-  const p = payloadFile({ entries: [{ finding: FIVE[0], disposition: 'maybe' }] });
-  const { status, envelope, calls } = run(['file', '--payload', p]);
+test('a dispositions payload with an unknown disposition refuses before any create', (t) => {
+  const p = payloadFile(t, { entries: [{ finding: FIVE[0], disposition: 'maybe' }] });
+  const { status, envelope, calls } = run(t, ['file', '--payload', p]);
   assert.equal(status, 1);
   assert.equal(envelope.reason, 'bad-payload');
   assert.match(envelope.detail, /entries\[0\]\.disposition/);
   assert.deepEqual(calls, []);
 });
 
-test('a dispositions entry whose finding has no claim refuses: it is half the fingerprint', () => {
-  const p = payloadFile({ entries: [{ finding: { file: 'src/a.mjs' }, disposition: 'accept' }] });
-  const { status, envelope } = run(['file', '--payload', p]);
+test('a dispositions entry whose finding has no claim refuses: it is half the fingerprint', (t) => {
+  const p = payloadFile(t, { entries: [{ finding: { file: 'src/a.mjs' }, disposition: 'accept' }] });
+  const { status, envelope } = run(t, ['file', '--payload', p]);
   assert.equal(status, 1);
   assert.match(envelope.detail, /entries\[0\]\.finding\.claim/);
 });
 
-test('a bare --payload refuses at the declared door, naming the flag', () => {
-  const { status, envelope } = run(['unfixed', '--payload']);
+test('a bare --payload refuses at the declared door, naming the flag', (t) => {
+  const { status, envelope } = run(t, ['unfixed', '--payload']);
   assert.equal(status, 1);
   assert.equal(envelope.ok, false);
   assert.equal(envelope.detail, '--payload');
   assert.ok(envelope.hint);
 });
 
-test('an unknown subcommand reports usage naming both faces', () => {
-  const { status, envelope } = run(['fyle', '--payload', 'x']);
+test('an unknown subcommand reports usage naming both faces', (t) => {
+  const { status, envelope } = run(t, ['fyle', '--payload', 'x']);
   assert.equal(status, 1);
   assert.equal(envelope.reason, 'usage');
   assert.match(envelope.detail, /unfixed/);
@@ -814,9 +821,9 @@ test('an unknown subcommand reports usage naming both faces', () => {
 
 // --- no byte of a child's output reaches an envelope -------------------------
 
-test('a CLI that prints a URL on create leaks none of it onto the envelope', () => {
-  const payload = dispositions([[FIVE[0], 'accept']]);
-  const { envelope } = run(['file', '--payload', payload]);
+test('a CLI that prints a URL on create leaks none of it onto the envelope', (t) => {
+  const payload = dispositions(t, [[FIVE[0], 'accept']]);
+  const { envelope } = run(t, ['file', '--payload', payload]);
   const json = JSON.stringify(envelope);
   assert.ok(!json.includes('tracker.test'), json);
 });
@@ -829,15 +836,15 @@ const filedText = (dir) => {
   return existsSync(p) ? readFileSync(p, 'utf8') : '';
 };
 
-test('three accepts and two declines leave exactly THREE bullets in FILED.md', () => {
+test('three accepts and two declines leave exactly THREE bullets in FILED.md', (t) => {
   // The falsifying case for "no artifact anywhere holds a declined one": a test
   // over successful ACCEPTS alone passes vacuously, so this one asserts the
   // absence of the two declined titles and fingerprints as well.
-  const payload = dispositions([
+  const payload = dispositions(t, [
     [FIVE[0], 'accept'], [FIVE[1], 'decline'], [FIVE[2], 'accept'],
     [FIVE[3], 'decline'], [FIVE[4], 'accept'],
   ]);
-  const { status, envelope, dir } = run(['file', '--payload', payload]);
+  const { status, envelope, dir } = run(t, ['file', '--payload', payload]);
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
   const text = filedText(dir);
@@ -853,9 +860,9 @@ test('three accepts and two declines leave exactly THREE bullets in FILED.md', (
   }
 });
 
-test('a fire of declines ALONE writes no FILED.md, and two DECLINED.md rows', () => {
-  const payload = dispositions([[FIVE[0], 'decline'], [FIVE[1], 'decline']]);
-  const { status, envelope, dir, calls } = run(['file', '--payload', payload]);
+test('a fire of declines ALONE writes no FILED.md, and two DECLINED.md rows', (t) => {
+  const payload = dispositions(t, [[FIVE[0], 'decline'], [FIVE[1], 'decline']]);
+  const { status, envelope, dir, calls } = run(t, ['file', '--payload', payload]);
   assert.equal(status, 0);
   assert.equal(envelope.declined, 2);
   assert.equal(filedText(dir), '');
@@ -865,41 +872,41 @@ test('a fire of declines ALONE writes no FILED.md, and two DECLINED.md rows', ()
   assert.equal(createCalls(calls).length, 0, calls.join('\n'));
 });
 
-test('the bullet is a POINTER: the title and no finding body', () => {
-  const payload = dispositions([[FIVE[0], 'accept']]);
-  const { dir } = run(['file', '--payload', payload]);
+test('the bullet is a POINTER: the title and no finding body', (t) => {
+  const payload = dispositions(t, [[FIVE[0], 'accept']]);
+  const { dir } = run(t, ['file', '--payload', payload]);
   const text = filedText(dir);
   assert.match(text, /^- \d{4}-\d{2}-\d{2} github acme\/widget [0-9a-f]+: /m);
   assert.ok(!text.includes(FIVE[0].failure_scenario), 'the failure scenario is not a pointer');
 });
 
-test('a second fire appends rather than replacing the first run\'s rows', () => {
-  const { dir } = run(['file', '--payload', dispositions([[FIVE[0], 'accept']])]);
+test('a second fire appends rather than replacing the first run\'s rows', (t) => {
+  const { dir } = run(t, ['file', '--payload', dispositions(t, [[FIVE[0], 'accept']])]);
   // The second run reuses the SAME repository directory, which is what makes
   // this an append test rather than two independent writes.
-  const stubDir = tmp('bin');
-  const createLog = join(tmp('log'), 'creates');
+  const stubDir = tmp(t, 'bin');
+  const createLog = join(tmp(t, 'log'), 'creates');
   stubBin(stubDir, 'gh', { createLog });
   execFileSync(process.execPath,
-    [SEAM, 'file', '--dir', dir, '--payload', dispositions([[FIVE[2], 'accept']])],
+    [SEAM, 'file', '--dir', dir, '--payload', dispositions(t, [[FIVE[2], 'accept']])],
     { encoding: 'utf8', cwd: tmpdir(),
       env: { ...process.env, CADENCE_GLOBAL_CONFIG: NO_GLOBAL,
-        CAD_ARGV_LOG: join(tmp('log'), 'argv'), PATH: `${stubDir}:${process.env.PATH}` } });
+        CAD_ARGV_LOG: join(tmp(t, 'log'), 'argv'), PATH: `${stubDir}:${process.env.PATH}` } });
   const text = filedText(dir);
   assert.ok(text.includes(fingerprint(FIVE[0])), 'the first run\'s row survived');
   assert.ok(text.includes(fingerprint(FIVE[2])), 'the second run\'s row landed');
   assert.equal(text.split('\n').filter((l) => l.startsWith('- ')).length, 2, text);
 });
 
-test('a create that fails part way mirrors what landed AND marks the ambiguous one', () => {
+test('a create that fails part way mirrors what landed AND marks the ambiguous one', (t) => {
   // The tracker holds two issues; a pointer they never got would be a second
   // loss on top of the first. The third create came back nonzero, which is
   // AMBIGUOUS rather than known-failed, so it gets a row of its own carrying
   // the word `unconfirmed` - the local pointer a retry reads (D-06).
-  const payload = dispositions([
+  const payload = dispositions(t, [
     [FIVE[0], 'accept'], [FIVE[1], 'accept'], [FIVE[2], 'accept'],
   ]);
-  const { status, envelope, dir } = run(['file', '--payload', payload], { stub: { failAt: 3 } });
+  const { status, envelope, dir } = run(t, ['file', '--payload', payload], { stub: { failAt: 3 } });
   assert.equal(status, 1);
   assert.equal(envelope.reason, 'create-failed');
   const rows = filedText(dir).split('\n').filter((l) => l.startsWith('- '));
@@ -921,7 +928,7 @@ test('a create that fails part way mirrors what landed AND marks the ambiguous o
   assert.equal(envelope.mirror_reason, null);
 });
 
-test('a create failure whose mirror ALSO failed says so, and the hint stops the retry losing it', () => {
+test('a create failure whose mirror ALSO failed says so, and the hint stops the retry losing it', (t) => {
   // The worst of the three outcomes was reported as the middle one: two issues
   // exist on the tracker, `.planning/FILED.md` names neither, and the envelope
   // still listed them as `filed` while telling the caller to re-run only the
@@ -929,10 +936,10 @@ test('a create failure whose mirror ALSO failed says so, and the hint stops the 
   // through recall forever. A held lock is the cheap way to make the mirror
   // refuse: `withPlanningFileLock` waits out its own bound and returns
   // `filed-locked` rather than throwing.
-  const payload = dispositions([
+  const payload = dispositions(t, [
     [FIVE[0], 'accept'], [FIVE[1], 'accept'], [FIVE[2], 'accept'],
   ]);
-  const { status, envelope, dir } = run(['file', '--payload', payload], {
+  const { status, envelope, dir } = run(t, ['file', '--payload', payload], {
     stub: { failAt: 3 },
     prepare: (d) => plantFile(join(recordsDir(join(d, '.planning')), 'FILED.md.lock'), ''),
   });
@@ -955,7 +962,7 @@ test('a create failure whose mirror ALSO failed says so, and the hint stops the 
   assert.match(envelope.hint, /[Dd]o not re-file them/);
 });
 
-test('the create-failed hint is honest that the failed create may have LANDED', () => {
+test('the create-failed hint is honest that the failed create may have LANDED', (t) => {
   // `run` collapses a refusal, a SIGKILL on the timeout and a transport failure
   // into one `{ok:false}`, and a forge can accept and create an issue before
   // the client stops listening. The old hint said "re-run the unfiled entries"
@@ -963,10 +970,10 @@ test('the create-failed hint is honest that the failed create may have LANDED', 
   // file that no create ever writes, it can never see an accepted issue - so
   // the retry filed a duplicate. The fix is an honest instruction, and the token that makes it
   // followable is the fingerprint the issue TITLE already carries.
-  const payload = dispositions([
+  const payload = dispositions(t, [
     [FIVE[0], 'accept'], [FIVE[1], 'accept'], [FIVE[2], 'accept'],
   ]);
-  const { envelope } = run(['file', '--payload', payload], { stub: { failAt: 3 } });
+  const { envelope } = run(t, ['file', '--payload', payload], { stub: { failAt: 3 } });
   assert.equal(envelope.reason, 'create-failed');
   const failed = fingerprint(FIVE[2]);
   assert.equal(envelope.unfiled[0].fingerprint, failed);
@@ -984,24 +991,24 @@ test('the create-failed hint is honest that the failed create may have LANDED', 
   // Still one create attempt per entry up to the failure, and exactly ONE list
   // call for the whole fire - the tracker is asked once, before the first
   // create, not once per ambiguous outcome.
-  const { calls } = run(['file', '--payload', payload], { stub: { failAt: 3 } });
+  const { calls } = run(t, ['file', '--payload', payload], { stub: { failAt: 3 } });
   assert.equal(createCalls(calls).length, 3, calls.join('\n'));
   assert.equal(listCalls(calls).length, 1, calls.join('\n'));
 });
 
-test('a fingerprint FILED.md already carries gets no SECOND row, even when it is re-filed', () => {
+test('a fingerprint FILED.md already carries gets no SECOND row, even when it is re-filed', (t) => {
   // D-04's stated cost: the tracker decides on a complete answer, and an empty
   // response is a complete MISS - so one of the 9 fingerprints whose issue was
   // deleted in the 2026-08-30 cleanup is re-filed rather than frozen. What must
   // NOT happen is a second ledger row for it, which is how `#241`/`#242` looked
   // locally: `appendFiledRow` appends unconditionally and nothing checked.
-  const payload = dispositions([[FIVE[0], 'accept']]);
+  const payload = dispositions(t, [[FIVE[0], 'accept']]);
   const planted = (dir) => {
     mkdirSync(join(dir, '.planning'), { recursive: true });
     plantFile(join(recordsDir(join(dir, '.planning')), 'FILED.md'),
       `# Filed\n\n- 2026-08-25 github acme/widget ${fingerprint(FIVE[0])}: ${issueTitle(FIVE[0])}\n`);
   };
-  const { status, envelope, calls, dir } = run(['file', '--payload', payload],
+  const { status, envelope, calls, dir } = run(t, ['file', '--payload', payload],
     { stub: { listBody: '[]' }, prepare: planted });
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
@@ -1012,17 +1019,17 @@ test('a fingerprint FILED.md already carries gets no SECOND row, even when it is
   assert.equal(rows[0].slice(2, 12), '2026-08-25', 'the planted row was rewritten, not kept');
 });
 
-test('an UNCONFIRMED write over a CONFIRMED row rewrites that row rather than adding one', () => {
+test('an UNCONFIRMED write over a CONFIRMED row rewrites that row rather than adding one', (t) => {
   // Skipping it would swallow the marker: over a confirmed row whose issue the
   // tracker no longer holds, a complete miss creates, the create comes back
   // nonzero, and a row left confirmed lets the next fire file it again.
-  const payload = dispositions([[FIVE[0], 'accept']]);
+  const payload = dispositions(t, [[FIVE[0], 'accept']]);
   const planted = (dir) => {
     mkdirSync(join(dir, '.planning'), { recursive: true });
     plantFile(join(recordsDir(join(dir, '.planning')), 'FILED.md'),
       `# Filed\n\n- 2026-08-25 github acme/widget ${fingerprint(FIVE[0])}: ${issueTitle(FIVE[0])}\n`);
   };
-  const { status, envelope, dir } = run(['file', '--payload', payload],
+  const { status, envelope, dir } = run(t, ['file', '--payload', payload],
     { stub: { listBody: '[]', failAt: 1 }, prepare: planted });
   assert.equal(status, 1);
   assert.equal(envelope.reason, 'create-failed');
@@ -1034,11 +1041,11 @@ test('an UNCONFIRMED write over a CONFIRMED row rewrites that row rather than ad
 
 // --- one fingerprint, one entry, whatever the payload holds ------------------
 
-test('a payload carrying the same fingerprint TWICE spawns one create', () => {
+test('a payload carrying the same fingerprint TWICE spawns one create', (t) => {
   // No tracker lookup can catch this shape: both entries are in one fire, so
   // the second create would run before any query could learn of the first.
-  const payload = dispositions([[FIVE[0], 'accept'], [FIVE[0], 'accept']]);
-  const { status, envelope, calls, dir } = run(['file', '--payload', payload]);
+  const payload = dispositions(t, [[FIVE[0], 'accept'], [FIVE[0], 'accept']]);
+  const { status, envelope, calls, dir } = run(t, ['file', '--payload', payload]);
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
   assert.equal(createCalls(calls).length, 1, calls.join('\n'));
@@ -1049,12 +1056,12 @@ test('a payload carrying the same fingerprint TWICE spawns one create', () => {
   assert.equal(rows.length, 1, filedText(dir));
 });
 
-test('an accept followed by a DECLINE of the same finding creates once and declines nothing', () => {
+test('an accept followed by a DECLINE of the same finding creates once and declines nothing', (t) => {
   // First occurrence wins, so the collapsed entry is the accept - and the
   // decline that followed it writes no DECLINED.md row, because it is not in
   // the set any more.
-  const payload = dispositions([[FIVE[0], 'accept'], [FIVE[0], 'decline']]);
-  const { status, envelope, calls, dir } = run(['file', '--payload', payload]);
+  const payload = dispositions(t, [[FIVE[0], 'accept'], [FIVE[0], 'decline']]);
+  const { status, envelope, calls, dir } = run(t, ['file', '--payload', payload]);
   assert.equal(status, 0);
   assert.equal(createCalls(calls).length, 1, calls.join('\n'));
   assert.equal(envelope.accepted, 1);
@@ -1077,9 +1084,9 @@ const filedWith = (pairs) => (dir) => {
     `# Filed: issues this repository's gates opened\n\n${rows.join('\n')}\n`);
 };
 
-test('a lookup that could not run falls through to FILED.md, per fingerprint', () => {
-  const payload = dispositions([[FIVE[0], 'accept'], [FIVE[2], 'accept']]);
-  const { status, envelope, calls } = run(['file', '--payload', payload],
+test('a lookup that could not run falls through to FILED.md, per fingerprint', (t) => {
+  const payload = dispositions(t, [[FIVE[0], 'accept'], [FIVE[2], 'accept']]);
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload],
     { stub: { listFails: true }, prepare: filedWith([[FIVE[0], false]]) });
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
@@ -1092,11 +1099,11 @@ test('a lookup that could not run falls through to FILED.md, per fingerprint', (
   assert.equal(envelope.ledger_stood_in, true, JSON.stringify(envelope));
 });
 
-test('a lookup that could not run with NO ledger creates every accept', () => {
+test('a lookup that could not run with NO ledger creates every accept', (t) => {
   // An offline forge that suppressed everything would drop findings on the
   // floor, which is the one thing this seam may never do.
-  const payload = dispositions([[FIVE[0], 'accept'], [FIVE[2], 'accept']]);
-  const { status, envelope, calls } = run(['file', '--payload', payload],
+  const payload = dispositions(t, [[FIVE[0], 'accept'], [FIVE[2], 'accept']]);
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload],
     { stub: { listFails: true } });
   assert.equal(status, 0);
   assert.equal(createCalls(calls).length, 2, calls.join('\n'));
@@ -1104,7 +1111,7 @@ test('a lookup that could not run with NO ledger creates every accept', () => {
   assert.equal(envelope.ledger_stood_in, false);
 });
 
-test('on a forge whose lookup is UNMEASURED, a complete miss cannot overrule a confirmed row', () => {
+test('on a forge whose lookup is UNMEASURED, a complete miss cannot overrule a confirmed row', (t) => {
   // `glab` space-joins the chunk's tokens because it offers one search string
   // and no OR, and whether it reads that as more than one term - or matches a
   // bracketed hex token in a title at all - is CONTEXT D-12's flagged
@@ -1115,8 +1122,8 @@ test('on a forge whose lookup is UNMEASURED, a complete miss cannot overrule a c
   // same empty answer DOES create over a confirmed row, because that query was
   // run live - as forgejo's now has been, which is why this case is written
   // against gitlab, the one row left carrying `lookupMeasured: false`.
-  const payload = dispositions([[FIVE[0], 'accept'], [FIVE[2], 'accept']]);
-  const { status, envelope, calls } = run(['file', '--payload', payload], {
+  const payload = dispositions(t, [[FIVE[0], 'accept'], [FIVE[2], 'accept']]);
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload], {
     git: GITLAB,
     bins: ['glab'],
     stub: { listBody: '[]' },
@@ -1141,14 +1148,14 @@ test('on a forge whose lookup is UNMEASURED, a complete miss cannot overrule a c
   assert.equal(calls.filter((c) => /issue list /.test(c)).length, 1, calls.join('\n'));
 });
 
-test('an unmeasured forge still honours a lookup HIT, which is the arm that was measured true', () => {
+test('an unmeasured forge still honours a lookup HIT, which is the arm that was measured true', (t) => {
   // Only the MISS is downgraded on an unmeasured row. A title that carries the
   // fingerprint is a positive answer whatever the query semantics were, so it
   // suppresses by NUMBER exactly as github's does. gitlab is the unmeasured row
   // and `iid` is its `numberKey`.
-  const payload = dispositions([[FIVE[0], 'accept']]);
+  const payload = dispositions(t, [[FIVE[0], 'accept']]);
   const listBody = JSON.stringify([{ iid: 12, title: issueTitle(FIVE[0]) }]);
-  const { status, envelope, calls } = run(['file', '--payload', payload],
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload],
     { git: GITLAB, bins: ['glab'], stub: { listBody } });
   assert.equal(status, 0);
   assert.equal(createCalls(calls).length, 0, calls.join('\n'));
@@ -1157,19 +1164,19 @@ test('an unmeasured forge still honours a lookup HIT, which is the arm that was 
   assert.equal(envelope.ledger_stood_in, false, JSON.stringify(envelope));
 });
 
-test('AC4 end to end: an ambiguous create is not re-filed on the next fire', () => {
+test('AC4 end to end: an ambiguous create is not re-filed on the next fire', (t) => {
   // The whole of GH-244 in one case. Fire once with a create that comes back
   // nonzero; fire the SAME payload again on the same directory with a fresh
   // stub whose tracker answers `[]` - a complete MISS, which is exactly the
   // answer a search index that has not caught up would give.
-  const payload = dispositions([[FIVE[0], 'accept']]);
-  const first = run(['file', '--payload', payload], { stub: { failAt: 1 } });
+  const payload = dispositions(t, [[FIVE[0], 'accept']]);
+  const first = run(t, ['file', '--payload', payload], { stub: { failAt: 1 } });
   assert.equal(first.envelope.reason, 'create-failed');
   assert.match(filedText(first.dir), new RegExp(`${fingerprint(FIVE[0])} unconfirmed: `));
 
-  const stubDir = tmp('bin');
-  const createLog = join(tmp('log'), 'creates');
-  const argvLog = join(tmp('log'), 'argv');
+  const stubDir = tmp(t, 'bin');
+  const createLog = join(tmp(t, 'log'), 'creates');
+  const argvLog = join(tmp(t, 'log'), 'argv');
   stubBin(stubDir, 'gh', { createLog, listBody: '[]' });
   const out = execFileSync(process.execPath,
     [SEAM, 'file', '--dir', first.dir, '--payload', payload],
@@ -1188,11 +1195,11 @@ test('AC4 end to end: an ambiguous create is not re-filed on the next fire', () 
   assert.match(rows[0], new RegExp(`${fingerprint(FIVE[0])} unconfirmed: `), rows[0]);
 });
 
-test('an unreadable FILED.md refuses BEFORE any create, like the decline record', () => {
+test('an unreadable FILED.md refuses BEFORE any create, like the decline record', (t) => {
   // A fire that cannot tell what it already filed must not guess: guessing here
   // means a second issue for a finding that already has one.
-  const payload = dispositions([[FIVE[0], 'accept']]);
-  const { status, envelope, calls } = run(['file', '--payload', payload], {
+  const payload = dispositions(t, [[FIVE[0], 'accept']]);
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload], {
     prepare: (d) => {
       filedWith([[FIVE[0], false]])(d);
       chmodSync(join(recordsDir(join(d, '.planning')), 'FILED.md'), 0o000);
@@ -1205,11 +1212,11 @@ test('an unreadable FILED.md refuses BEFORE any create, like the decline record'
   assert.deepEqual(calls, [], calls.join('\n'));
 });
 
-test('a DECLINED.md row never stops `file` creating what the user just accepted', () => {
+test('a DECLINED.md row never stops `file` creating what the user just accepted', (t) => {
   // D-04: the decline record gates the ASK. By the time `file` runs the user has
   // answered, and letting an old decline veto that answer would silently drop it.
-  const payload = dispositions([[FIVE[0], 'accept']]);
-  const { status, envelope, calls } = run(['file', '--payload', payload],
+  const payload = dispositions(t, [[FIVE[0], 'accept']]);
+  const { status, envelope, calls } = run(t, ['file', '--payload', payload],
     { prepare: declinedWith([FIVE[0]]) });
   assert.equal(status, 0);
   assert.equal(envelope.ok, true);
@@ -1217,9 +1224,9 @@ test('a DECLINED.md row never stops `file` creating what the user just accepted'
   assert.deepEqual(envelope.suppressed, []);
 });
 
-test('`unfixed` writes nothing at all - the ask is not a filing', () => {
-  const payload = payloadFile(payloadFor(FIVE.map((f) => [f, 'survived'])));
-  const { dir } = run(['unfixed', '--payload', payload]);
+test('`unfixed` writes nothing at all - the ask is not a filing', (t) => {
+  const payload = payloadFile(t, payloadFor(FIVE.map((f) => [f, 'survived'])));
+  const { dir } = run(t, ['unfixed', '--payload', payload]);
   assert.equal(filedText(dir), '');
 });
 
@@ -1228,10 +1235,10 @@ test('`unfixed` writes nothing at all - the ask is not a filing', () => {
 // reported success. They are grouped because they share one consequence: a
 // question the user already settled is asked again, forever.
 
-test('an unreadable EXISTING DECLINED.md is never replaced by this batch alone', () => {
+test('an unreadable EXISTING DECLINED.md is never replaced by this batch alone', (t) => {
   // The catch used to fold every read error into an empty file and then WRITE,
   // so one mode-000 record under a writable `.planning` erased every row in it.
-  const { status, envelope, dir } = run(['file', '--payload', dispositions([[FIVE[0], 'decline']])], {
+  const { status, envelope, dir } = run(t, ['file', '--payload', dispositions(t, [[FIVE[0], 'decline']])], {
     prepare: (d) => {
       declinedWith([FIVE[2], FIVE[3]])(d);
       chmodSync(join(recordsDir(join(d, '.planning')), 'DECLINED.md'), 0o000);
@@ -1246,11 +1253,11 @@ test('an unreadable EXISTING DECLINED.md is never replaced by this batch alone',
   assert.equal(envelope.ok, false);
 });
 
-test('a row the grammar rejects refuses rather than reporting the batch recorded', () => {
+test('a row the grammar rejects refuses rather than reporting the batch recorded', (t) => {
   // `appendDeclinedRow` refuses by returning the text unchanged, which is right
   // for a pure function and silent for its caller. A slug with a space is the
   // cheapest way to reach that arm through real configuration.
-  const { status, envelope, dir } = run(['file', '--payload', dispositions([[FIVE[0], 'decline']])],
+  const { status, envelope, dir } = run(t, ['file', '--payload', dispositions(t, [[FIVE[0], 'decline']])],
     { git: { forge_provider: 'github', forge_repo: 'acme/the widget' } });
   assert.equal(status, 1, JSON.stringify(envelope));
   assert.equal(envelope.ok, false);
@@ -1258,11 +1265,11 @@ test('a row the grammar rejects refuses rather than reporting the batch recorded
   assert.equal(declinedText(dir), '', 'a refused row must not half-land');
 });
 
-test('a DANGLING SYMLINK at DECLINED.md refuses; it is an entry, not an absence', () => {
+test('a DANGLING SYMLINK at DECLINED.md refuses; it is an entry, not an absence', (t) => {
   // readFileSync answers ENOENT for both, and only one of them means "nothing
   // has been declined yet". The other is a record this process cannot reach.
-  const payload = payloadFile(payloadFor([[FIVE[0], 'survived']]));
-  const { status, envelope } = run(['unfixed', '--payload', payload], {
+  const payload = payloadFile(t, payloadFor([[FIVE[0], 'survived']]));
+  const { status, envelope } = run(t, ['unfixed', '--payload', payload], {
     prepare: (d) => {
       mkdirSync(recordsDir(join(d, '.planning')), { recursive: true });
       symlinkSync(join(d, '.planning', 'nowhere.md'), join(recordsDir(join(d, '.planning')), 'DECLINED.md'));
@@ -1273,12 +1280,12 @@ test('a DANGLING SYMLINK at DECLINED.md refuses; it is an entry, not an absence'
   assert.equal(envelope.findings, undefined);
 });
 
-test('a conflicted DECLINED.md refuses rather than reading past the damage', () => {
+test('a conflicted DECLINED.md refuses rather than reading past the damage', (t) => {
   // The grammar skips any line that is not a row, which is right for a human
   // note and wrong for a row a merge mangled: the fingerprint leaves the set
   // silently and the gate re-asks a settled question.
-  const payload = payloadFile(payloadFor([[FIVE[0], 'survived']]));
-  const { status, envelope } = run(['unfixed', '--payload', payload], {
+  const payload = payloadFile(t, payloadFor([[FIVE[0], 'survived']]));
+  const { status, envelope } = run(t, ['unfixed', '--payload', payload], {
     prepare: (d) => {
       declinedWith([FIVE[0]])(d);
       const f = join(recordsDir(join(d, '.planning')), 'DECLINED.md');
@@ -1290,11 +1297,11 @@ test('a conflicted DECLINED.md refuses rather than reading past the damage', () 
   assert.match(envelope.hint, /BOTH sides/);
 });
 
-test('a create failure AFTER a decline still lands that decline row', () => {
+test('a create failure AFTER a decline still lands that decline row', (t) => {
   // The refuted half of the same review: the mirror runs BEFORE the refusal is
   // emitted, so a decline accumulated ahead of a failed create is written.
-  const payload = dispositions([[FIVE[1], 'decline'], [FIVE[0], 'accept']]);
-  const { status, envelope, dir } = run(['file', '--payload', payload], { stub: { failAt: 1 } });
+  const payload = dispositions(t, [[FIVE[1], 'decline'], [FIVE[0], 'accept']]);
+  const { status, envelope, dir } = run(t, ['file', '--payload', payload], { stub: { failAt: 1 } });
   assert.equal(status, 1);
   assert.equal(envelope.reason, 'create-failed');
   assert.ok(declinedText(dir).includes(fingerprint(FIVE[1])),
