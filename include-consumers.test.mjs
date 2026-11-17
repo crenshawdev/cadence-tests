@@ -12,7 +12,7 @@
 // nobody has to keep true.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,9 +21,11 @@ import { includeConsumerIssues, WAIVED, CODES } from '../cadence-core/bin/lib/in
 const HERE = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin');
 const REPO = join(HERE, '..', '..');
 
-/** An empty temp root. */
-function emptyRoot() {
-  return mkdtempSync(join(tmpdir(), 'cad-includes-'));
+/** An empty temp root, gone when the test that made it ends. */
+function emptyRoot(t) {
+  const root = mkdtempSync(join(tmpdir(), 'cad-includes-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  return root;
 }
 
 /**
@@ -77,8 +79,8 @@ const ONE_ROW = Object.freeze([
  * include after the workflow include; `false` is the plain byte copy of the
  * shipped file.
  */
-function verifyRoot({ withInclude = true } = {}) {
-  const root = emptyRoot();
+function verifyRoot(t, { withInclude = true } = {}) {
+  const root = emptyRoot(t);
   copyReal(root, VERIFY_SKILL, (t) => (withInclude
     ? t.replace(`${includeLine(WF_INCLUDE)}\n`,
       `${includeLine(WF_INCLUDE)}\n${includeLine(UAT_INCLUDE)}\n`)
@@ -87,8 +89,8 @@ function verifyRoot({ withInclude = true } = {}) {
   return root;
 }
 
-test('AC5: the live cad-verify bytes report exactly one unnamed include', () => {
-  const root = verifyRoot();
+test('AC5: the live cad-verify bytes report exactly one unnamed include', (t) => {
+  const root = verifyRoot(t);
   // Guard the fixture: the include line must actually be there, or the "one
   // issue" below would be measuring a file that lost it in the copy.
   assert.ok(readFileSync(join(root, ...VERIFY_SKILL.split('/')), 'utf8')
@@ -99,20 +101,20 @@ test('AC5: the live cad-verify bytes report exactly one unnamed include', () => 
   assert.match(issues[0].detail, /cadence-core\/templates\/UAT\.md/);
 });
 
-test('AC5: the same bytes report nothing under a one-row WAIVED', () => {
+test('AC5: the same bytes report nothing under a one-row WAIVED', (t) => {
   // The suppression path, still exercised after the register emptied: the row
   // is passed EXPLICITLY, because the shipped register no longer carries one.
-  assert.deepEqual(includeConsumerIssues(verifyRoot(), ONE_ROW), []);
+  assert.deepEqual(includeConsumerIssues(verifyRoot(t), ONE_ROW), []);
   // And with the shipped (empty) register, the same bytes report again - which
   // is what makes re-adding the include a red build rather than a silent one.
-  assert.deepEqual(includeConsumerIssues(verifyRoot()).map((i) => i.kind),
+  assert.deepEqual(includeConsumerIssues(verifyRoot(t)).map((i) => i.kind),
     [CODES.neverNamed]);
 });
 
-test('AC5: cad-help passes under both, because its objective names the include', () => {
+test('AC5: cad-help passes under both, because its objective names the include', (t) => {
   // The legitimate shape the dead include was wrongly compared to:
   // `references/COMMANDS.md` is named in `cad-help`'s own `<objective>`.
-  const root = emptyRoot();
+  const root = emptyRoot(t);
   copyReal(root, 'skills/cad-help/SKILL.md');
   copyReal(root, 'cadence-core/references/COMMANDS.md');
   assert.deepEqual(includeConsumerIssues(root, []), []);
@@ -121,11 +123,11 @@ test('AC5: cad-help passes under both, because its objective names the include',
 
 // --- AC6 and the exclusions that make the check non-vacuous ------------------
 
-test('AC6: an include named ONLY by its own `@`-include line still reports', () => {
+test('AC6: an include named ONLY by its own `@`-include line still reports', (t) => {
   // `CITE_RE` in lib/resident-weight.mjs matches the include LINE and yields
   // `references/x.md` from it. Leaving those lines in the scan text would make
   // every include name itself and the check ok:true forever (D-10).
-  const root = emptyRoot();
+  const root = emptyRoot(t);
   put(root, 'skills/cad-fixture/SKILL.md',
     skillFile('cad-fixture', `<execution_context>\n${includeLine('cadence-core/references/x.md')}\n</execution_context>\n\n<process>\nDo the thing.\n</process>`));
   put(root, 'cadence-core/references/x.md', '# X\n\nSome prose.\n');
@@ -135,14 +137,14 @@ test('AC6: an include named ONLY by its own `@`-include line still reports', () 
   assert.match(issues[0].detail, /references\/x\.md/);
 });
 
-test('a self-citing INCLUDED file does not answer for the command that includes it', () => {
+test('a self-citing INCLUDED file does not answer for the command that includes it', (t) => {
   // The root-relative exclusion, proved to actually MATCH rather than silently
   // never matching. `references/config-reach.md:3` names its own path in its own
   // body; if the exclusion compared against a realpath or a dedupe key, this
   // fixture would pass and the check would be vacuous for every self-naming
   // reference (D-10, and `commandEagerSets`' JSDoc naming `surface` as the
   // root-relative field).
-  const root = emptyRoot();
+  const root = emptyRoot(t);
   put(root, 'skills/cad-fixture/SKILL.md',
     skillFile('cad-fixture', `<execution_context>\n${includeLine('cadence-core/references/config-reach.md')}\n</execution_context>\n\n<process>\nDo the thing.\n</process>`));
   copyReal(root, 'cadence-core/references/config-reach.md');
@@ -151,23 +153,23 @@ test('a self-citing INCLUDED file does not answer for the command that includes 
   assert.match(issues[0].detail, /references\/config-reach\.md/);
 });
 
-test('a workflows/ include is exempt even when nothing names it anywhere', () => {
+test('a workflows/ include is exempt even when nothing names it anywhere', (t) => {
   // The workflow IS the command's process. Measured over the live tree,
   // `workflows/<name>.md` is named nowhere in its own command's eager text for
   // 15 of 16 commands, so an unexempted check lands red on 19 correct includes
   // (D-08).
-  const root = emptyRoot();
+  const root = emptyRoot(t);
   put(root, 'skills/cad-fixture/SKILL.md',
     skillFile('cad-fixture', `<execution_context>\n${includeLine('cadence-core/workflows/fixture.md')}\n</execution_context>`));
   put(root, 'cadence-core/workflows/fixture.md', '# Fixture workflow\n\nSteps.\n');
   assert.deepEqual(includeConsumerIssues(root, []), []);
 });
 
-test('naming is the <branch>/<file> path form, never the basename', () => {
+test('naming is the <branch>/<file> path form, never the basename', (t) => {
   // `workflows/verify.md` says bare `UAT.md` eight times for the runtime
   // artifact `.planning/phases/<N>/UAT.md`; basename matching would stop the
   // check firing on the one instance it must catch (D-09).
-  const root = emptyRoot();
+  const root = emptyRoot(t);
   const body = (mention) => `<execution_context>\n${includeLine('cadence-core/templates/UAT.md')}\n</execution_context>\n\n<process>\n${mention}\n</process>`;
   put(root, 'skills/cad-fixture/SKILL.md',
     skillFile('cad-fixture', body('Write the checklist into UAT.md as you go.')));
@@ -185,11 +187,11 @@ test('naming is the <branch>/<file> path form, never the basename', () => {
   }
 });
 
-test('an included surface named by the command WORKFLOW satisfies the check', () => {
+test('an included surface named by the command WORKFLOW satisfies the check', (t) => {
   // The scan set is the whole EAGER set, not the SKILL.md alone: `cad-phase`,
   // `cad-milestone` and `cad-undo` each name `references/git-guard.md` only in
   // their workflow.
-  const root = emptyRoot();
+  const root = emptyRoot(t);
   put(root, 'skills/cad-fixture/SKILL.md',
     skillFile('cad-fixture', `<execution_context>\n${includeLine('cadence-core/workflows/fixture.md')}\n${includeLine('cadence-core/references/git-guard.md')}\n</execution_context>`));
   put(root, 'cadence-core/workflows/fixture.md',
@@ -209,22 +211,22 @@ test('WAIVED ships EMPTY, and is frozen', () => {
   assert.ok(Object.isFrozen(WAIVED));
 });
 
-test('DOWNWARD bound: the waiver cannot outlive its `@`-include line', () => {
+test('DOWNWARD bound: the waiver cannot outlive its `@`-include line', (t) => {
   // The bound that forced this phase's shape: the include and the row died in
   // one commit or CI went red. Driven from an explicit row, because the shipped
   // register is empty and the MECHANISM is what survives.
-  const root = verifyRoot({ withInclude: false });
+  const root = verifyRoot(t, { withInclude: false });
   const issues = includeConsumerIssues(root, ONE_ROW);
   assert.deepEqual(issues.map((i) => i.kind), [CODES.staleWaiver]);
   assert.equal(issues[0].file, VERIFY_SKILL);
   assert.match(issues[0].detail, /templates\/UAT\.md/);
 });
 
-test('UPWARD bound: a checked-off removeInPhase expires the waiver', () => {
+test('UPWARD bound: a checked-off removeInPhase expires the waiver', (t) => {
   // `removeInPhase` is an executable deadline. Without it, a scheduled removal
   // that slips or is dropped leaves the defect suppressed indefinitely with CI
   // green.
-  const root = verifyRoot();
+  const root = verifyRoot(t);
   put(root, '.planning/ROADMAP.md',
     '## Phases\n\n- [x] **Phase 1: The checks** - done\n- [x] **Phase 2: The free cuts** - done\n');
   const issues = includeConsumerIssues(root, ONE_ROW);
@@ -233,22 +235,22 @@ test('UPWARD bound: a checked-off removeInPhase expires the waiver', () => {
   assert.match(issues[0].detail, /phase 2/);
 });
 
-test('UPWARD bound: an UNCHECKED phase, or no ROADMAP at all, reports nothing', () => {
-  const root = verifyRoot();
+test('UPWARD bound: an UNCHECKED phase, or no ROADMAP at all, reports nothing', (t) => {
+  const root = verifyRoot(t);
   put(root, '.planning/ROADMAP.md',
     '## Phases\n\n- [x] **Phase 1: The checks** - done\n- [ ] **Phase 2: The free cuts** - open\n');
   assert.deepEqual(includeConsumerIssues(root, ONE_ROW), []);
   // The partial-fixture degradation: a root carrying no `.planning/` arm is not
   // a break, the same way lib/deferred-reads.mjs treats an absent `skills/`.
-  assert.deepEqual(includeConsumerIssues(verifyRoot(), ONE_ROW), []);
+  assert.deepEqual(includeConsumerIssues(verifyRoot(t), ONE_ROW), []);
 });
 
-test('a waiver row whose skill is absent from the root reports nothing', () => {
-  const root = emptyRoot();
+test('a waiver row whose skill is absent from the root reports nothing', (t) => {
+  const root = emptyRoot(t);
   put(root, 'skills/cad-help/SKILL.md', skillFile('cad-help', '<process>\nNothing.\n</process>'));
   assert.deepEqual(includeConsumerIssues(root, ONE_ROW), []);
 });
 
-test('an absent skills/ directory contributes nothing at all', () => {
-  assert.deepEqual(includeConsumerIssues(emptyRoot()), []);
+test('an absent skills/ directory contributes nothing at all', (t) => {
+  assert.deepEqual(includeConsumerIssues(emptyRoot(t)), []);
 });

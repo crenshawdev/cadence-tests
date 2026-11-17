@@ -12,7 +12,7 @@
 // has to keep true.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,9 +27,11 @@ const REPO = join(HERE, '..', '..');
 const readSentence = (ref) =>
   `Read \`\${CLAUDE_PLUGIN_ROOT}/cadence-core/${ref}\` at this step, not preloaded.`;
 
-/** An empty temp root. */
-function emptyRoot() {
-  return mkdtempSync(join(tmpdir(), 'cad-deferred-'));
+/** An empty temp root, gone when the test that made it ends. */
+function emptyRoot(t) {
+  const root = mkdtempSync(join(tmpdir(), 'cad-deferred-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  return root;
 }
 
 /**
@@ -210,8 +212,8 @@ const STEP_4 = '4. Commit per the commit protocol below.';
 const SEAMS = 'references/seams.md';
 
 /** The contract copied in, with the Read sentence at the END of `<process>` step 3. */
-function contractRoot({ withRead }) {
-  const root = emptyRoot();
+function contractRoot(t, { withRead }) {
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT, (t) => (withRead
     ? t.replace(`\n${STEP_4}`, `\n${readSentence(SEAMS)}\n${STEP_4}`)
     : t));
@@ -226,17 +228,17 @@ const contractRow = (anchors) => ({
   read_paragraphs: anchors.length,
 });
 
-test('AC3: a contract skill anchor is clean while its Read sentence stands', () => {
+test('AC3: a contract skill anchor is clean while its Read sentence stands', (t) => {
   // Guard the fixture itself: if the insertion did not land, the "clean" arm
   // below would be measuring an unedited file.
-  const root = contractRoot({ withRead: true });
+  const root = contractRoot(t, { withRead: true });
   const text = readFileSync(join(root, ...CONTRACT.split('/')), 'utf8');
   assert.ok(text.includes(readSentence(SEAMS)), 'fixture must carry the inserted sentence');
   assert.deepEqual(deferredReadIssues(root, [contractRow(['3'])]), []);
 });
 
-test('AC3: deleting that one sentence reports exactly one deferred-read-unread', () => {
-  const root = contractRoot({ withRead: false });
+test('AC3: deleting that one sentence reports exactly one deferred-read-unread', (t) => {
+  const root = contractRoot(t, { withRead: false });
   const issues = deferredReadIssues(root, [contractRow(['3'])]);
   assert.deepEqual(issues.map((i) => i.kind), [CODES.unread]);
   assert.equal(issues[0].file, CONTRACT);
@@ -244,10 +246,10 @@ test('AC3: deleting that one sentence reports exactly one deferred-read-unread',
   assert.match(issues[0].detail, /references\/seams\.md/);
 });
 
-test('AC3: the sentence in the WRONG step of the contract does not answer for step 3', () => {
+test('AC3: the sentence in the WRONG step of the contract does not answer for step 3', (t) => {
   // Same file, same sentence, same count - only the region changed. That is the
   // whole rule, restated on a contract surface rather than a command one.
-  const root = emptyRoot();
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT, (t) =>
     t.replace('\n5. Record the short hash for your report.',
       `\n${readSentence(SEAMS)}\n5. Record the short hash for your report.`));
@@ -268,14 +270,14 @@ const workflowRow = {
   file: 'cadence-core/workflows/execute.md',
 };
 
-test('file: an absent PARENT directory is a partial fixture and reports nothing', () => {
-  const root = emptyRoot();
+test('file: an absent PARENT directory is a partial fixture and reports nothing', (t) => {
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT);
   assert.deepEqual(deferredReadIssues(root, [workflowRow]), []);
 });
 
-test('file: a present parent with the file absent is one deferred-read-missing-file', () => {
-  const root = emptyRoot();
+test('file: a present parent with the file absent is one deferred-read-missing-file', (t) => {
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT);
   mkdirSync(join(root, 'cadence-core', 'workflows'), { recursive: true });
   const issues = deferredReadIssues(root, [workflowRow]);
@@ -326,8 +328,8 @@ const GUARD_ITEM_2 = '\n2. "Commit them now';
  * numbered item), inside its item 1, or nowhere.
  * @param {'body'|'item1'|'none'} where
  */
-function executeRoot(where) {
-  const root = emptyRoot();
+function executeRoot(t, where) {
+  const root = emptyRoot(t);
   copyReal(root, 'skills/cad-execute/SKILL.md');
   copyReal(root, EXECUTE_WF, (t) => {
     if (where === 'body') {
@@ -350,25 +352,25 @@ const executeRow = (anchors) => ({
   file: EXECUTE_WF,
 });
 
-test('AC1: a <step name="..."> anchor is clean while its Read sentence stands', () => {
-  const root = executeRoot('body');
+test('AC1: a <step name="..."> anchor is clean while its Read sentence stands', (t) => {
+  const root = executeRoot(t, 'body');
   const text = readFileSync(join(root, ...EXECUTE_WF.split('/')), 'utf8');
   assert.ok(text.includes(readSentence(SEAMS)), 'fixture must carry the inserted sentence');
   assert.deepEqual(deferredReadIssues(root, [executeRow(['git_guard'])]), []);
 });
 
-test('AC1: deleting that sentence reports exactly one deferred-read-unread', () => {
-  const issues = deferredReadIssues(executeRoot('none'), [executeRow(['git_guard'])]);
+test('AC1: deleting that sentence reports exactly one deferred-read-unread', (t) => {
+  const issues = deferredReadIssues(executeRoot(t, 'none'), [executeRow(['git_guard'])]);
   assert.deepEqual(issues.map((i) => i.kind), [CODES.unread]);
   assert.equal(issues[0].file, EXECUTE_WF);
   assert.match(issues[0].detail, /git_guard/);
 });
 
-test('AC4: a Read in item 1 of a named step does not satisfy item 3 of the same step', () => {
+test('AC4: a Read in item 1 of a named step does not satisfy item 3 of the same step', (t) => {
   // The nested-label precedence rule. `git_guard` puts `1.`-`3.` at column 0
   // inside a named step; bare numbers there would let this sentence answer for
   // any `3` anywhere in the file - and `cad-land` really does anchor inside `3`.
-  const root = executeRoot('item1');
+  const root = executeRoot(t, 'item1');
   const issues = deferredReadIssues(root, [executeRow(['git_guard(3)'])]);
   assert.deepEqual(issues.map((i) => i.kind), [CODES.unread]);
   assert.match(issues[0].detail, /git_guard\(3\)/);
@@ -377,14 +379,14 @@ test('AC4: a Read in item 1 of a named step does not satisfy item 3 of the same 
   assert.deepEqual(deferredReadIssues(root, [executeRow(['git_guard(1)'])]), []);
 });
 
-test('AC4: the named step is not a PREFIX match for its own numbered items', () => {
+test('AC4: the named step is not a PREFIX match for its own numbered items', (t) => {
   // `git_guard` and `git_guard(1)` are distinct regions, the same way `3` and
   // `3(a)` always were.
-  const issues = deferredReadIssues(executeRoot('item1'), [executeRow(['git_guard'])]);
+  const issues = deferredReadIssues(executeRoot(t, 'item1'), [executeRow(['git_guard'])]);
   assert.deepEqual(issues.map((i) => i.kind), [CODES.unread]);
 });
 
-test('D-04: a <step name="..."> with NO <process> wrapper is still a region', () => {
+test('D-04: a <step name="..."> with NO <process> wrapper is still a region', (t) => {
   // `workflows/verify-deep.md` carries three `<step name=` tags and no wrapper.
   // Requiring the wrapper would leave a second unwatchable file behind.
   const wf = 'cadence-core/workflows/verify-deep.md';
@@ -392,7 +394,7 @@ test('D-04: a <step name="..."> with NO <process> wrapper is still a region', ()
     skill: 'cad-verify', reference: SEAMS, anchors, read_paragraphs: 1, file: wf,
   });
   const mk = (withRead) => {
-    const root = emptyRoot();
+    const root = emptyRoot(t);
     copyReal(root, 'skills/cad-verify/SKILL.md');
     copyReal(root, wf, (t) => (withRead
       ? t.replace('<step name="merge">', `<step name="merge">\n${readSentence(SEAMS)}`)
@@ -426,8 +428,8 @@ const WALK_ANCHOR = 'Interactive menu (no args)/The walk/2';
  * of its step 1, under `## Direct set`, or nowhere.
  * @param {'step2'|'step1'|'direct'|'none'} where
  */
-function configRoot(where) {
-  const root = emptyRoot();
+function configRoot(t, where) {
+  const root = emptyRoot(t);
   copyReal(root, 'skills/cad-config/SKILL.md');
   copyReal(root, CONFIG_WF, (t) => {
     const s = readSentence(SEAMS);
@@ -448,22 +450,22 @@ const configRow = (anchors) => ({
   file: CONFIG_WF,
 });
 
-test('AC2: a heading-scoped walk step is clean while its Read sentence stands', () => {
-  const root = configRoot('step2');
+test('AC2: a heading-scoped walk step is clean while its Read sentence stands', (t) => {
+  const root = configRoot(t, 'step2');
   const text = readFileSync(join(root, ...CONFIG_WF.split('/')), 'utf8');
   assert.ok(text.includes(readSentence(SEAMS)), 'fixture must carry the inserted sentence');
   assert.deepEqual(deferredReadIssues(root, [configRow([WALK_ANCHOR])]), []);
 });
 
-test('AC2: deleting it reports exactly one deferred-read-unread naming the walk step', () => {
-  const issues = deferredReadIssues(configRoot('none'), [configRow([WALK_ANCHOR])]);
+test('AC2: deleting it reports exactly one deferred-read-unread naming the walk step', (t) => {
+  const issues = deferredReadIssues(configRoot(t, 'none'), [configRow([WALK_ANCHOR])]);
   assert.deepEqual(issues.map((i) => i.kind), [CODES.unread]);
   assert.equal(issues[0].file, CONFIG_WF);
   assert.match(issues[0].detail, /Interactive menu \(no args\)\/The walk\/2/);
 });
 
-test('AC2: the same sentence in walk step 1 does not answer for walk step 2', () => {
-  const root = configRoot('step1');
+test('AC2: the same sentence in walk step 1 does not answer for walk step 2', (t) => {
+  const root = configRoot(t, 'step1');
   assert.deepEqual(deferredReadIssues(root, [configRow([WALK_ANCHOR])]).map((i) => i.kind),
     [CODES.unread]);
   // ... and it really did land in step 1, so the falsifier is about the region.
@@ -471,8 +473,8 @@ test('AC2: the same sentence in walk step 1 does not answer for walk step 2', ()
     deferredReadIssues(root, [configRow(['Interactive menu (no args)/The walk/1'])]), []);
 });
 
-test('AC2: the same sentence under another `##` heading does not answer either', () => {
-  const root = configRoot('direct');
+test('AC2: the same sentence under another `##` heading does not answer either', (t) => {
+  const root = configRoot(t, 'direct');
   assert.deepEqual(deferredReadIssues(root, [configRow([WALK_ANCHOR])]).map((i) => i.kind),
     [CODES.unread]);
   assert.deepEqual(deferredReadIssues(root, [configRow(['Direct set'])]), []);
@@ -515,26 +517,26 @@ test('grammar: a heading INSIDE an open block does not compete with the frame', 
 // moves exactly that block. A `<process>`-step pair alone would pass against an
 // implementation that never grew the plain-tag branch at all.
 
-test('D-07: a Read inside <worktree_mode> is anchorable at `worktree_mode`', () => {
-  const root = emptyRoot();
+test('D-07: a Read inside <worktree_mode> is anchorable at `worktree_mode`', (t) => {
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT, (t) =>
     t.replace('<worktree_mode>', `<worktree_mode>\n${readSentence(SEAMS)}`));
   assert.deepEqual(deferredReadIssues(root, [contractRow(['worktree_mode'])]), []);
 });
 
-test('D-07: deleting it reports one deferred-read-unread naming worktree_mode', () => {
-  const root = emptyRoot();
+test('D-07: deleting it reports one deferred-read-unread naming worktree_mode', (t) => {
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT);
   const issues = deferredReadIssues(root, [contractRow(['worktree_mode'])]);
   assert.deepEqual(issues.map((i) => i.kind), [CODES.unread]);
   assert.match(issues[0].detail, /worktree_mode/);
 });
 
-test('D-07: label EXACTNESS, not null-ness, is what blocks a relocation', () => {
+test('D-07: label EXACTNESS, not null-ness, is what blocks a relocation', (t) => {
   // The cost of labelling plain tags: `<guardrails>` stops being `null`. The
   // relocation attack the shipped tests pin still fails, because `guardrails`
   // is not `worktree_mode`.
-  const root = emptyRoot();
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT, (t) =>
     t.replace('<never>', `<never>\n${readSentence(SEAMS)}`));
   const issues = deferredReadIssues(root, [contractRow(['worktree_mode'])]);
@@ -604,8 +606,8 @@ function stripReadSentence(text, full) {
 }
 
 /** The real surfaces a shipped row needs, with its Read sentence kept or cut. */
-function rowRoot(row, { withRead }) {
-  const root = emptyRoot();
+function rowRoot(t, row, { withRead }) {
+  const root = emptyRoot(t);
   const skillRel = `skills/${row.skill}/SKILL.md`;
   const rel = row.file || skillRel;
   const full = `\${CLAUDE_PLUGIN_ROOT}/cadence-core/${row.reference}`;
@@ -619,58 +621,58 @@ function rowRoot(row, { withRead }) {
  * Both halves of one promoted row's falsifier: the real tree is clean, and the
  * same tree minus that one sentence is exactly one `deferred-read-unread`.
  */
-function assertPromotedRow(skill, reference, anchor) {
+function assertPromotedRow(t, skill, reference, anchor) {
   const row = shippedRow(skill, reference);
   const rel = row.file || `skills/${row.skill}/SKILL.md`;
-  assert.deepEqual(deferredReadIssues(rowRoot(row, { withRead: true }), [row]), [],
+  assert.deepEqual(deferredReadIssues(rowRoot(t, row, { withRead: true }), [row]), [],
     `${rel} must satisfy ${reference} as shipped`);
-  const issues = deferredReadIssues(rowRoot(row, { withRead: false }), [row]);
+  const issues = deferredReadIssues(rowRoot(t, row, { withRead: false }), [row]);
   assert.deepEqual(issues.map((i) => i.kind), [CODES.unread]);
   assert.equal(issues[0].file, rel);
   assert.match(issues[0].detail, new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 }
 
-test('AC4: cad-context / templates/CONTEXT.md is unread without its one sentence', () => {
-  assertPromotedRow('cad-context', 'templates/CONTEXT.md', 'write_context');
+test('AC4: cad-context / templates/CONTEXT.md is unread without its one sentence', (t) => {
+  assertPromotedRow(t, 'cad-context', 'templates/CONTEXT.md', 'write_context');
 });
 
-test('AC4: cad-context / references/recall.md is unread without its one sentence', () => {
-  assertPromotedRow('cad-context', 'references/recall.md', 'spend_gate');
+test('AC4: cad-context / references/recall.md is unread without its one sentence', (t) => {
+  assertPromotedRow(t, 'cad-context', 'references/recall.md', 'spend_gate');
 });
 
-test('AC4: cad-debug / references/recall.md is unread without its one sentence', () => {
+test('AC4: cad-debug / references/recall.md is unread without its one sentence', (t) => {
   // The other half of the per-COMMAND site rule: one reference, two rows, and
   // each command's anchor falsified on its own. If these were merged into one
   // row, deleting either sentence would still leave the other satisfying it.
-  assertPromotedRow('cad-debug', 'references/recall.md', 'The method loop/1');
+  assertPromotedRow(t, 'cad-debug', 'references/recall.md', 'The method loop/1');
 });
 
-test('AC4: cad-execute / references/execute-parallel.md is unread without its one sentence', () => {
-  assertPromotedRow('cad-execute', 'references/execute-parallel.md', 'execute_parallel');
+test('AC4: cad-execute / references/execute-parallel.md is unread without its one sentence', (t) => {
+  assertPromotedRow(t, 'cad-execute', 'references/execute-parallel.md', 'execute_parallel');
 });
 
-test('AC4: cad-execute / references/execute-workflow.md is unread without its one sentence', () => {
-  assertPromotedRow('cad-execute', 'references/execute-workflow.md', 'execute_workflow');
+test('AC4: cad-execute / references/execute-workflow.md is unread without its one sentence', (t) => {
+  assertPromotedRow(t, 'cad-execute', 'references/execute-workflow.md', 'execute_workflow');
 });
 
-test('AC4: cad-executor-contract / references/worktree-executor.md is unread without its one sentence', () => {
+test('AC4: cad-executor-contract / references/worktree-executor.md is unread without its one sentence', (t) => {
   // The first row on a `user-invocable: false` skill, anchored on the row's
   // DEFAULT `file` - the contract's own SKILL.md, no `file` field at all.
-  assertPromotedRow('cad-executor-contract', 'references/worktree-executor.md', 'worktree_mode');
+  assertPromotedRow(t, 'cad-executor-contract', 'references/worktree-executor.md', 'worktree_mode');
 });
 
-test('AC4: cad-plan / references/plan-revision.md is unread without its one sentence', () => {
+test('AC4: cad-plan / references/plan-revision.md is unread without its one sentence', (t) => {
   // Anchored at the WHOLE step `check_gate`: the revision's `1.`/`2.`/`3.` are
   // indented four spaces and take no item label, so `check_gate(1)` names no
   // region at all. Coarse, and stated as such in the phase's D-08.
-  assertPromotedRow('cad-plan', 'references/plan-revision.md', 'check_gate');
+  assertPromotedRow(t, 'cad-plan', 'references/plan-revision.md', 'check_gate');
 });
 
-test('file: still-eager watches the SKILL.md even when the anchor is a workflow', () => {
+test('file: still-eager watches the SKILL.md even when the anchor is a workflow', (t) => {
   // D-05. The `@`-include line always lives in the SKILL.md, so `skill` stays
   // the target of this arm whatever `file` says - a workflow-anchored row that
   // stopped watching for re-promotion would lose half of what check 13 does.
-  const root = emptyRoot();
+  const root = emptyRoot(t);
   copyReal(root, CONTRACT, (t) =>
     `@\${CLAUDE_PLUGIN_ROOT}/cadence-core/${SEAMS}\n${t}`);
   mkdirSync(join(root, 'cadence-core', 'workflows'), { recursive: true });
