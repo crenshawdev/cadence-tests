@@ -29,7 +29,7 @@
 //   node tests/test.mjs --list          the groups and their files
 'use strict';
 
-import { mkdtempSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -114,10 +114,29 @@ if (!files.length) { console.error('no test files matched'); process.exit(2); }
 // The suite never reads the developer's own user-global config: unless the
 // caller pinned CADENCE_GLOBAL_CONFIG, it points at a path in a fresh temp dir
 // that does not exist, which is what CI sees, so a developer's own settings
-// can't change what a test resolves.
-const env = process.env.CADENCE_GLOBAL_CONFIG ? process.env : {
+// can't change what a test resolves. That dir sits beside the private TMPDIR,
+// never in it, so it is never reported as a leftover.
+const globalRoot = process.env.CADENCE_GLOBAL_CONFIG ? null : mkdtempSync(join(tmpdir(), 'cad-test-global-'));
+// The child's TMPDIR is ours alone, so anything still in it after the run is a
+// fixture some test forgot to remove. A direct `node --test` run, like CI's coverage job, gets no leftover check.
+const scratch = mkdtempSync(join(tmpdir(), 'cad-test-run-'));
+const env = {
   ...process.env,
-  CADENCE_GLOBAL_CONFIG: join(mkdtempSync(join(tmpdir(), 'cad-test-global-')), 'config.json'),
+  TMPDIR: scratch,
+  ...(globalRoot ? { CADENCE_GLOBAL_CONFIG: join(globalRoot, 'config.json') } : {}),
 };
-const r = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit', env });
-process.exit(r.status === null ? 1 : r.status);
+
+let status = 1;
+try {
+  const r = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit', env });
+  status = r.status === null ? 1 : r.status;
+  const left = readdirSync(scratch);
+  // Named by prefix: mkdtemp's six random characters would only change per run. A plain name prints whole.
+  for (const name of left) console.error(`temp folder left behind: ${name.replace(/(?<=-)[A-Za-z0-9]{6}$/, '')}`);
+  if (left.length && status === 0) status = 1;
+} finally {
+  // The roots go, not the config.json joined under one.
+  rmSync(scratch, { recursive: true, force: true });
+  if (globalRoot) rmSync(globalRoot, { recursive: true, force: true });
+}
+process.exit(status);

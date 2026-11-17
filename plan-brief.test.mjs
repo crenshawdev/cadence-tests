@@ -55,8 +55,7 @@ ${notes}
 `;
 
 /** A scratch project: .planning with PROJECT.md, one phase and its plans, gone when `t`'s test ends. */
-function project(t, { plans = { 'PLAN-3.md': planText() }, projectMd = PROJECT, context = null, phase = '4' } = {}) {
-  const root = temp(t, 'cad-brief-');
+function project(t, { plans = { 'PLAN-3.md': planText() }, projectMd = PROJECT, context = null, phase = '4', root = temp(t, 'cad-brief-') } = {}) {
   const dir = join(root, '.planning');
   const pdir = join(dir, 'phases', phase);
   mkdirSync(pdir, { recursive: true });
@@ -438,8 +437,8 @@ import { execFileSync } from 'node:child_process';
 const SOURCE = 'export function alpha() {}\nexport function beta() {}\n';
 
 /** A scratch git repository holding the sources, with an index from the real `codemap scan` when `scan` is true. */
-function gitProject(t, { plans, scan = true, sources = { 'src/a.mjs': SOURCE, 'src/b.mjs': 'export const b = 1;\n' }, context = null } = {}) {
-  const p = project(t, { plans, context });
+function gitProject(t, { plans, scan = true, sources = { 'src/a.mjs': SOURCE, 'src/b.mjs': 'export const b = 1;\n' }, context = null, root } = {}) {
+  const p = project(t, { plans, context, root });
   const git = (...a) => execFileSync('git', ['-C', p.root, ...a], { encoding: 'utf8', stdio: 'pipe' });
   git('init', '-q'); git('config', 'user.email', 't@example.com'); git('config', 'user.name', 'T');
   for (const [f, text] of Object.entries(sources)) {
@@ -480,10 +479,13 @@ test('brief reads: an absent symbol and an absent path are each reported, with t
 });
 
 test('brief reads: a path outside the repository is reported and its file is never opened', (t) => {
-  const { dir, root } = gitProject(t, { plans: readsOnly('../../outside#x') });
+  // Two levels down a fixture of its own, so ../../outside lands in it and goes with it.
+  const nest = join(temp(t, 'cad-brief-'), 'up', 'repo');
+  mkdirSync(nest, { recursive: true });
+  const { dir, root } = gitProject(t, { plans: readsOnly('../../outside#x'), root: nest });
   const outside = join(root, '..', '..', 'outside');
   const marker = 'OUTSIDE-MARKER-STRING';
-  try { writeFileSync(outside, marker); } catch { /* a read-only parent still proves nothing was reported as held */ }
+  writeFileSync(outside, marker);
   const { r, text } = briefText(t, dir);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(r.reads_missing, ['../../outside#x']);
