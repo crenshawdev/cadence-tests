@@ -546,8 +546,8 @@ test('census: no gate value reaches the protected-branch guard (D-11)', () => {
   // the source spells. `config.json` is the layer FILENAME, not a key, so the
   // config arm excludes it by name rather than by a second allowlist.
   const gitKeys = GUARD_SRC.match(new RegExp("\\bgit\\.[a-z_]+", 'g')) || [];
-  assert.deepEqual([...new Set(gitKeys)].sort(), ['git.on_protected', 'git.protected_branches'],
-    'git-guard.mjs reads a git.* config key beyond on_protected and '
+  assert.deepEqual([...new Set(gitKeys)].sort(), ['git.guard_bypass', 'git.on_protected', 'git.protected_branches'],
+    'git-guard.mjs reads a git.* config key beyond guard_bypass, on_protected and '
     + 'protected_branches. protected_branches is read through '
     + 'lib/protected-branches.mjs, which reads that one key and nothing else.');
   const configKeys = GUARD_SRC.match(new RegExp("\\bconfig\\.(?!json\\b)[a-z_]+", 'g')) || [];
@@ -653,4 +653,40 @@ test('several commits in one command: a deny beats an ask', (t) => {
   const refuse = project(t, 'main', { git: { on_protected: 'refuse' } });
   const d = guard(`git commit -m a && git -C ${refuse} commit -m b`, project(t, 'main'));
   assert.equal(d.permissionDecision, 'deny');
+});
+
+// --- The bypass: git.guard_bypass in both config layers turns both rails off. ---
+
+/** A user-global config file holding `text`, gone when test `t` ends. */
+function globalFile(t, text) {
+  const file = join(tmp(t, 'cad-guard-global-'), 'config.json');
+  writeFileSync(file, text);
+  return file;
+}
+
+const BYPASS = JSON.stringify({ git: { guard_bypass: true } });
+
+test('bypass in both layers: no decision on a push or on a refused protected-branch commit', (t) => {
+  const dir = project(t, 'main', { git: { guard_bypass: true, on_protected: 'refuse' } });
+  const g = globalFile(t, BYPASS);
+  assert.equal(guardWithGlobal('git push origin main', dir, g), null);
+  assert.equal(guardWithGlobal('git commit -m x', dir, g), null);
+});
+
+test('bypass in one layer only: both rails decide as before', (t) => {
+  const repoOnly = project(t, 'main', { git: { guard_bypass: true } });
+  const empty = globalFile(t, '{}');
+  assert.equal(guardWithGlobal('git push origin main', repoOnly, empty).permissionDecision, 'ask');
+  assert.equal(guardWithGlobal('git commit -m x', repoOnly, empty).permissionDecision, 'ask');
+  const globalOnly = project(t, 'main', { git: {} });
+  const g = globalFile(t, BYPASS);
+  assert.equal(guardWithGlobal('git push origin main', globalOnly, g).permissionDecision, 'ask');
+  assert.equal(guardWithGlobal('git commit -m x', globalOnly, g).permissionDecision, 'ask');
+});
+
+test('bypass with a torn global layer: the hook decides as before', (t) => {
+  const dir = project(t, 'main', { git: { guard_bypass: true } });
+  const torn = globalFile(t, '{ nope');
+  assert.equal(guardWithGlobal('git push origin main', dir, torn).permissionDecision, 'ask');
+  assert.equal(guardWithGlobal('git commit -m x', dir, torn).permissionDecision, 'ask');
 });

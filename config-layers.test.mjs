@@ -216,10 +216,10 @@ test('layers: auto_close set in only the repo reads off with no winner; a repo t
   assert.deepEqual([t.repo.state, t.value, t.winner], ['ignored', 'npm t', 'global']);
 });
 
-test('layers: a fresh template repo sets 43, all 43 the shipped default', () => {
+test('layers: a fresh template repo sets 44, 43 of them the shipped default', () => {
   const { json } = cli(templateFixture(), ['layers']);
-  assert.equal(json.totals.settings, 97);
-  assert.equal(json.totals.repo, 43);
+  assert.equal(json.totals.settings, 98);
+  assert.equal(json.totals.repo, 44);
   assert.equal(json.totals.at_default, 43);
   assert.equal(json.totals.global, 0);
   assert.equal(json.groups.length, 6);
@@ -231,7 +231,7 @@ test('layers: a corrupt global file is named as unreadable and no global count s
   assert.deepEqual(json.unreadable, [{ layer: 'global', file: f.g }]);
   assert.equal(json.totals.global, 'unreadable');
   assert.ok(json.groups.every((g) => g.global === 'unreadable'));
-  assert.equal(json.totals.repo, 43);
+  assert.equal(json.totals.repo, 44);
 });
 
 test('layers: each row value equals config.mjs get, group totals sum, and the selectors cover every key once', () => {
