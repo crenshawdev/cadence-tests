@@ -260,3 +260,29 @@ test('design-read: multi-line values come back as one line, and a name or Outcom
     assert.ok(r.issues[0][where], `${name} names no ${where}`);
   }
 });
+
+// --- content the reader would otherwise drop -----------------------------------
+
+test('design-read: a repeated or unlisted section and a repeated epic field are refused, never read past', (t) => {
+  for (const [name, file, edit, issue] of [
+    ['a second ## Requirements', 'prd.md', (s) => s + '\n## Requirements\n### Extra\n- **EXT-01**: An extra requirement.\n',
+      { file: 'prd.md', section: 'Requirements', problem: 'section appears more than once' }],
+    ['a second ## Non-functional requirements', 'prd.md', (s) => s + '\n## Non-functional requirements\n- **NFR-03**: Another one.\n',
+      { file: 'prd.md', section: 'Non-functional requirements', problem: 'section appears more than once' }],
+    ['an unlisted prd section', 'prd.md', (s) => s + '\n## Security requirements\n- **SEC-01**: A security requirement.\n',
+      { file: 'prd.md', section: 'Security requirements', problem: 'not a section prd.md has' }],
+    ['a second ## Vision', 'brief.md', (s) => s + '\n## Vision\nA second vision.\n',
+      { file: 'brief.md', section: 'Vision', problem: 'section appears more than once' }],
+    ['an unlisted brief section', 'brief.md', (s) => s + '\n## Roadmap\nLater.\n',
+      { file: 'brief.md', section: 'Roadmap', problem: 'not a section brief.md has' }],
+    ['a second Requirements field', 'epics.md', (s) => s.replace('**Requirements:** CAT-01, CAT-02\n',
+      '**Requirements:** CAT-01, CAT-02\n**Requirements:** LOAN-03\n'),
+      { file: 'epics.md', id: 'E-01', field: 'Requirements', problem: 'field appears more than once' }],
+  ]) {
+    const design = designCopy(t, { [file]: edit });
+    assert.notEqual(readFileSync(join(design, file), 'utf8'), readFileSync(join(FIXTURE, file), 'utf8'), `${name} edited nothing`);
+    const r = read(t, design);
+    assert.equal(r.ok, false, `${name}: ${JSON.stringify(r)}`);
+    assert.deepEqual(r.issues, [issue], name);
+  }
+});
