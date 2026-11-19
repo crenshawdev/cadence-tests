@@ -64,7 +64,7 @@ const GROUPS = Object.freeze({
   planning: ['planning', 'planning-adjudication', 'planning-audit',
     'planning-capture-check', 'planning-capture-sections', 'planning-cite-count',
     'planning-criteria-coverage', 'planning-criteria-size', 'planning-cursor',
-    'planning-debt-harvest', 'planning-deferred', 'planning-detect',
+    'planning-debt-harvest', 'planning-deferred', 'planning-design-read', 'planning-detect',
     'planning-files', 'planning-lease-check', 'planning-migrate', 'planning-milestone-prune',
     'planning-phase-done', 'planning-phase-entry', 'planning-plans', 'planning-recall', 'planning-recall-fold', 'planning-records-dir',
     'planning-replay-check', 'planning-req-row', 'planning-risk-carry',
