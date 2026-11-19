@@ -172,3 +172,91 @@ test('design-read: a malformed, a repeated and an empty spine decision are three
   assert.equal(r.issues.length, 3, JSON.stringify(r.issues));
   assert.ok(r.issues.every((i) => i.file === 'spine.md'));
 });
+
+// --- epics onto phases ---------------------------------------------------------
+
+test('design-read: each epic is one phase numbered from --first-phase, with its goal, criteria and decisions', (t) => {
+  const r = read(t, FIXTURE, '4');
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.phases.map((p) => [p.number, p.name]), [[4, 'Catalog'], [5, 'Lending'], [6, 'Reminders']]);
+  const [catalog, lending, reminders] = r.phases;
+  assert.equal(catalog.goal, 'Volunteers keep a catalog of tools, and members can search it. Tools and their categories'
+    + ' only. No loans and no member records. It\'s epic E-01 of the Seldon design "Toolshed".');
+  assert.equal(catalog.description, 'Volunteers keep a catalog of tools, and members can search it.');
+  assert.equal(catalog.depends_on, 'Nothing');
+  assert.deepEqual(lending.success_criteria, [
+    'A checkout records the member, the tool and a due date.',
+    'A return closes the open loan for that tool.',
+    'Member contact details are hidden from anyone who isn\'t a volunteer.',
+    'Everything built so far, this epic included, works end to end, with every test passing and nothing half-built showing.',
+  ]);
+  assert.equal(lending.depends_on, 'Phase 4');
+  assert.deepEqual(lending.requirements, ['LOAN-01', 'LOAN-02', 'NFR-01', 'NFR-02']);
+  assert.deepEqual(lending.spine_decisions.map((d) => d.id), ['S-01', 'S-02', 'S-03', 'S-04', 'S-05', 'S-06']);
+  assert.equal(lending.spine_decisions[2].text, S03);
+  assert.equal(reminders.depends_on, 'Phase 5');
+  assert.deepEqual(r.uncovered, []);
+});
+
+test('design-read: phases follow file order, never the E- number', (t) => {
+  const design = designCopy(t, {
+    'epics.md': (s) => s.replace('## E-01:', '## E-07:').replace('## E-02:', '## E-03:').replace('## E-03: Reminders', '## E-05: Reminders')
+      .replace('**Depends on:** E-01', '**Depends on:** E-07').replace('**Depends on:** E-02', '**Depends on:** E-03'),
+  });
+  const r = read(t, design);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.phases.map((p) => [p.number, p.name, p.depends_on]),
+    [[1, 'Catalog', 'Nothing'], [2, 'Lending', 'Phase 1'], [3, 'Reminders', 'Phase 2']]);
+});
+
+test('design-read: broken epic fields are one issue each, and an unread PRD is not checked against', (t) => {
+  const r = read(t, designCopy(t, {
+    'epics.md': (s) => s.replace('**Depends on:** None', '**Depends on:** E-02')
+      .replace('**Requirements:** LOAN-01,', '**Requirements:** LOAN-09,')
+      .replace('**Spine decisions:** S-01, S-02, S-03, S-04, S-05, S-06', '**Spine decisions:** S-01, S-09')
+      .replace('**Boundaries:** The daily job and its emails. It only reads the loan log.\n', '')
+      .replace('**Requirements:** LOAN-03', '**Requirements:** loan-3'),
+  }));
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.deepEqual(r.issues.map((i) => [i.file, i.id, i.field]), [
+    ['epics.md', 'E-01', 'Depends on'],
+    ['epics.md', 'E-02', 'Requirements'],
+    ['epics.md', 'E-02', 'Spine decisions'],
+    ['epics.md', 'E-03', 'Boundaries'],
+    ['epics.md', 'E-03', 'Requirements'],
+  ]);
+  const unread = designCopy(t, { 'epics.md': (s) => s.replace('**Requirements:** LOAN-01,', '**Requirements:** LOAN-09,') });
+  rmSync(join(unread, 'prd.md'));
+  assert.deepEqual(read(t, unread).issues, [{ file: 'prd.md', problem: 'missing file' }]);
+});
+
+test('design-read: a requirement no epic names is accepted and listed as uncovered', (t) => {
+  const r = read(t, designCopy(t, { 'epics.md': (s) => s.replace('**Requirements:** LOAN-03', '**Requirements:** LOAN-02') }));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.uncovered, ['LOAN-03']);
+});
+
+test('design-read: multi-line values come back as one line, and a name or Outcome holding ** is refused once', (t) => {
+  const joined = read(t, designCopy(t, {
+    'epics.md': (s) => s.replace('**Outcome:** Volunteers keep a catalog of tools, and members',
+      '**Outcome:** Volunteers keep a catalog of tools,\nand members')
+      .replace('- A volunteer can add a tool with a name, a category', '- A volunteer can add a tool with a name,\n  a category'),
+  }));
+  assert.equal(joined.ok, true, JSON.stringify(joined));
+  assert.equal(joined.phases[0].description, 'Volunteers keep a catalog of tools, and members can search it.');
+  assert.deepEqual(joined.phases[0].success_criteria.slice(0, 2),
+    ['A volunteer can add a tool with a name, a category and a photo.', 'A member can find that tool by name or by category.']);
+  for (const [name, edit, where] of [
+    ['a bold name', (s) => s.replace('## E-01: Catalog', '## E-01: **Bold** name'), 'section'],
+    ['a bold Outcome', (s) => s.replace('**Outcome:** Volunteers keep a catalog of tools, and members can search it.',
+      '**Outcome:** a **b** c'), 'field'],
+    ['a name the judge refuses', (s) => s.replace('## E-01: Catalog', '## E-01: A** - B'), 'section'],
+  ]) {
+    const r = read(t, designCopy(t, { 'epics.md': edit }));
+    assert.equal(r.ok, false, `${name}: ${JSON.stringify(r)}`);
+    assert.equal(r.issues.length, 1, `${name}: ${JSON.stringify(r.issues)}`);
+    assert.equal(r.issues[0].file, 'epics.md');
+    assert.equal(r.issues[0].id, 'E-01');
+    assert.ok(r.issues[0][where], `${name} names no ${where}`);
+  }
+});
