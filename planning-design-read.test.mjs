@@ -13,6 +13,7 @@ import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureRoadmap, isEntryFile, run, scratch, stampState, treeOf } from './planning.test.mjs';
+import { readDesign } from '../cadence-core/bin/lib/seldon-design.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -105,4 +106,69 @@ test('design-read: an accepted and a refused read change no file and create none
       assert.deepEqual(treeOf(root), before, `${stamped ? 'stamped' : 'unstamped'} ${name} changed the project`);
     }
   }
+});
+
+// --- requirements and spine decisions -----------------------------------------
+
+const S03 = "A job runs once a day, reads the loan log and sends that day's reminders. Nothing sends email while a"
+  + ' request is being handled. When a run fails, the counter screen shows the volunteers a notice naming the'
+  + " reminders that didn't go out, until a volunteer dismisses it. [ASSUMPTION]";
+
+test('design-read: the PRD requirements come back in file order with their category and one-line text', (t) => {
+  const r = read(t, FIXTURE);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.requirements.map((q) => q.id),
+    ['CAT-01', 'CAT-02', 'LOAN-01', 'LOAN-02', 'LOAN-03', 'NFR-01', 'NFR-02']);
+  assert.deepEqual(r.requirements[0],
+    { id: 'CAT-01', category: 'Catalog', text: 'A volunteer adds a tool with a name, a category and a photo. [ASSUMPTION]' });
+  assert.equal(r.requirements[1].text, 'A member searches the catalog by name or category.');
+  assert.equal(r.requirements[6].category, 'Non-functional');
+});
+
+// each edit breaks one D-02 class; all four together are one answer
+const PRD_BREAKS = {
+  'a bold colon': (s) => s.replace('- **CAT-02**', '- **CAT-03:** text\n- **CAT-02**'),
+  'a second CAT-01': (s) => s.replace('### Loans\n', '### Loans\n- **CAT-01**: again\n'),
+  'a bullet above its category': (s) => s.replace('### Catalog\n- **CAT-01**: A volunteer adds a tool with a name, a category and a photo. [ASSUMPTION]\n',
+    '- **CAT-01**: A volunteer adds a tool with a name, a category and a photo. [ASSUMPTION]\n### Catalog\n'),
+  'no MVP scope': (s) => s.replace(/\n## MVP scope\n[^]*$/, '\n'),
+};
+
+test('design-read: each broken PRD is refused with one issue naming prd.md, and all four at once with four', (t) => {
+  for (const [name, edit] of Object.entries(PRD_BREAKS)) {
+    const r = read(t, designCopy(t, { 'prd.md': edit }));
+    assert.equal(r.ok, false, `${name}: ${JSON.stringify(r)}`);
+    assert.equal(r.issues.length, 1, `${name}: ${JSON.stringify(r.issues)}`);
+    assert.equal(r.issues[0].file, 'prd.md');
+    assert.ok(r.issues[0].section, `${name} names no section`);
+  }
+  const all = read(t, designCopy(t, { 'prd.md': (s) => Object.values(PRD_BREAKS).reduce((acc, edit) => edit(acc), s) }));
+  assert.equal(all.ok, false);
+  assert.ok(all.hint);
+  assert.equal(all.issues.length, 4, JSON.stringify(all.issues));
+  assert.ok(all.issues.every((i) => i.file === 'prd.md'));
+  assert.deepEqual(all.issues.filter((i) => i.id).map((i) => i.id), ['CAT-01', 'CAT-01']);
+});
+
+test('design-read: a spine decision reads as its kind and one-line text, quotes and source lines dropped', () => {
+  const texts = { 'brief.md': null, 'prd.md': null, 'epics.md': null };
+  const fixture = readDesign({ ...texts, 'spine.md': readFileSync(join(FIXTURE, 'spine.md'), 'utf8') });
+  assert.deepEqual(fixture.issues, []);
+  const s03 = fixture.decisions.get('S-03');
+  assert.equal(s03.kind, 'boundaries');
+  assert.equal(s03.text, S03);
+  const sourced = readDesign({ ...texts,
+    'spine.md': '# x\n\n## S-01: One file\nKind: stack\nThe data sits in one file.\n> a quote\n(src/db.js)\n' });
+  assert.equal(sourced.decisions.get('S-01').text, 'The data sits in one file.');
+});
+
+test('design-read: a malformed, a repeated and an empty spine decision are three issues naming spine.md', (t) => {
+  const design = designCopy(t, {
+    'spine.md': (s) => s.replace(/(## S-05: One small rented server\nKind: hosting\n)[^\n]*\n/, '$1')
+      + '\n## S-1: x\nKind: stack\nSomething.\n\n## S-02: again\nKind: stack\nSomething else.\n',
+  });
+  const r = read(t, design);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.issues.length, 3, JSON.stringify(r.issues));
+  assert.ok(r.issues.every((i) => i.file === 'spine.md'));
 });
