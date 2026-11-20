@@ -305,3 +305,10 @@ test('context.md: still exactly 8 asks, and resolve_phase locks the spine decisi
   assert.match(stepOf('resolve_phase').replace(/\s+/g, ' '),
     /Held spine decisions are locked: no ask this run makes is about one of them, on either `spend_gate` arm, the skip arm's own gray areas included\./);
 });
+
+test('context.md: confirm_decisions numbers the rest from D-(k+1) after the spine decisions, and from D-01 with none', () => {
+  const sentence = stepOf('confirm_decisions').replace(/\s+/g, ' ').split(/(?<=\.) /).find((s) => s.includes('D-(k+1)'));
+  assert.ok(sentence, 'confirm_decisions numbers nothing from D-(k+1)');
+  assert.match(sentence, /after the spine decisions/);
+  assert.match(sentence, /with none held, numbering starts at D-01\./);
+});
