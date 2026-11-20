@@ -9,13 +9,14 @@
 // a sibling that imports from here registers nothing twice.
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isEntryFile } from './planning.test.mjs';
+import { isEntryFile, run, scratch, stampState, treeOf } from './planning.test.mjs';
 import { renderSections } from '../cadence-core/bin/lib/design-render.mjs';
-import { phaseSpineDecisions } from '../cadence-core/bin/lib/planning-files.mjs';
+import { parseContextDecisions, phaseSpineDecisions } from '../cadence-core/bin/lib/planning-files.mjs';
 import { DESIGN_FILES, readDesign } from '../cadence-core/bin/lib/seldon-design.mjs';
+import { contextDecisions } from '../cadence-core/bin/lib/why-record.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -123,4 +124,117 @@ test('phaseSpineDecisions: a Goal without its closing sentence is one problem, a
     text: '**Goal:** Volunteers check tools out and in at the counter. Members, checkouts and returns. Reminders are not part of it.' }]);
   assert.equal(r.title, null);
   assert.equal(r.decisions.length, 6);
+});
+
+// --- the seam: planning.mjs spine-decisions --------------------------------------
+
+/**
+ * A stamped scratch project whose ROADMAP.md holds design-read's sections for the fixture from phase 3, passed through
+ * `edit` first, or no ROADMAP.md at all when `edit` answers null.
+ * @param {any} t @param {(text: string) => string|null} [edit]
+ */
+function project(t, edit = (s) => s) {
+  const read = run(['design-read', '--design', FIXTURE, '--first-phase', '3'], scratch('spine-design-dir-', t));
+  assert.equal(read.ok, true, JSON.stringify(read));
+  const dir = join(scratch('spine-decisions-', t), '.planning');
+  mkdirSync(dir, { recursive: true });
+  stampState(dir);
+  const text = edit(`# Roadmap\n\n## Phase Details\n\n${read.sections_text}`);
+  if (text !== null) writeFileSync(join(dir, 'ROADMAP.md'), text);
+  return dir;
+}
+
+const LOCKED = [
+  '- D-01 (how state changes): Loans are an append-only event log. Checkouts and returns are stored as events and never edited.'
+    + ' Who has a tool, and whether it\'s overdue, is computed from the log. Evidence: S-01 of the Seldon design "Toolshed".',
+  '- D-02 (design approach): One server-rendered web app. The counter screens and the public catalog are pages of one app.'
+    + ' There\'s no separate API. Evidence: S-02 of the Seldon design "Toolshed".',
+  '- D-03 (boundaries): Reminders run from a daily scheduled job. A job runs once a day, reads the loan log and sends that day\'s'
+    + ' reminders. Nothing sends email while a request is being handled. When a run fails, the counter screen shows the'
+    + ' volunteers a notice naming the reminders that didn\'t go out, until a volunteer dismisses it. [ASSUMPTION]'
+    + ' Evidence: S-03 of the Seldon design "Toolshed".',
+  '- D-04 (stack): Node with one SQLite database. The app runs on Node and keeps the catalog, the members and the loan log in'
+    + ' one SQLite database file. [ASSUMPTION] Evidence: S-04 of the Seldon design "Toolshed".',
+  '- D-05 (hosting): One small rented server. The app and its database file run on one small rented virtual server.'
+    + ' [ASSUMPTION] Evidence: S-05 of the Seldon design "Toolshed".',
+  '- D-06 (boundaries): Members reach only the catalog. The catalog pages are the only part members and the public reach from'
+    + ' outside, and what they type there is only ever read as search text. Member emails and addresses sit behind the'
+    + ' volunteer login, and no catalog page shows them. [ASSUMPTION] Evidence: S-06 of the Seldon design "Toolshed".',
+].map((l) => `${l}\n`).join('');
+
+test('spine-decisions: phase 4 answers D-01 to D-06 for S-01 to S-06, as the text to lock', (t) => {
+  const dir = project(t);
+  const r = run(['spine-decisions', '--phase', '4'], dir);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r._exit, 0);
+  assert.equal(r.design_title, 'Toolshed');
+  assert.equal(r.count, 6);
+  assert.deepEqual(r.decisions.map((d) => [d.id, d.spine_id]),
+    [['D-01', 'S-01'], ['D-02', 'S-02'], ['D-03', 'S-03'], ['D-04', 'S-04'], ['D-05', 'S-05'], ['D-06', 'S-06']]);
+  const lines = readFileSync(join(dir, 'ROADMAP.md'), 'utf8').split('\n');
+  for (const d of r.decisions) assert.ok(lines[d.line - 1].startsWith(`- **${d.spine_id}: `), `${d.id} at line ${d.line}`);
+  assert.equal(r.text, LOCKED);
+  const locked = r.text.split('\n');
+  assert.ok(locked[2].endsWith('dismisses it. [ASSUMPTION] Evidence: S-03 of the Seldon design "Toolshed".'));
+  assert.ok(locked[0].startsWith('- D-01 (how state changes): Loans are an append-only event log. Checkouts'));
+});
+
+test('spine-decisions: phase 3 numbers its four decisions by roadmap order, not by S- number', (t) => {
+  const r = run(['spine-decisions', '--phase', '3'], project(t));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.decisions.map((d) => [d.id, d.spine_id]),
+    [['D-01', 'S-02'], ['D-02', 'S-04'], ['D-03', 'S-05'], ['D-04', 'S-06']]);
+  assert.ok(r.text.startsWith('- D-01 (design approach): One server-rendered web app. '));
+});
+
+test('spine-decisions: a section with no field answers none, never a refusal', (t) => {
+  const hand = '\n### Phase 6: Hand\n**Goal:** Ship it.\n**Requirements:** CAT-01\n**Success Criteria:**\n1. It ships.\n';
+  const r = run(['spine-decisions', '--phase', '6'], project(t, (s) => s + hand));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.count, 0);
+  assert.deepEqual(r.decisions, []);
+  assert.equal(r.text, '');
+});
+
+test('spine-decisions: a bad line, a Goal without its sentence, no ROADMAP and a bad --phase refuse and write nothing', (t) => {
+  const mangled = '- S-02: One server-rendered web app';
+  const goal = '**Goal:** Volunteers check tools out and in at the counter. Members, checkouts and returns. Reminders are not part of it.';
+  /** @param {string} s */
+  const inPhase4 = (s, from, to) => {
+    const at = s.indexOf('### Phase 4:');
+    return s.slice(0, at) + s.slice(at).replace(from, to);
+  };
+  const cases = [
+    { label: 'mangled line', edit: (s) => inPhase4(s, /^- \*\*S-02: .*$/m, mangled), argv: ['--phase', '4'], names: mangled },
+    { label: 'goal', edit: (s) => s.replace(' It\'s epic E-02 of the Seldon design "Toolshed".', ''), argv: ['--phase', '4'], names: goal },
+    { label: 'no roadmap', edit: () => null, argv: ['--phase', '4'], names: 'ROADMAP.md' },
+    { label: 'no --phase', edit: undefined, argv: [], names: '--phase' },
+    { label: '--phase x', edit: undefined, argv: ['--phase', 'x'], names: '--phase' },
+  ];
+  for (const c of cases) {
+    const dir = project(t, c.edit);
+    const before = treeOf(dir);
+    const r = run(['spine-decisions', ...c.argv], dir);
+    assert.equal(r.ok, false, `${c.label}: ${JSON.stringify(r)}`);
+    assert.equal(r._exit, 1, c.label);
+    assert.ok(r.hint, c.label);
+    assert.ok(r.detail.includes(c.names), `${c.label}: ${r.detail}`);
+    if (c.label === 'mangled line' || c.label === 'goal') {
+      const n = readFileSync(join(dir, 'ROADMAP.md'), 'utf8').split('\n').indexOf(c.names) + 1;
+      assert.ok(n > 0 && r.detail.includes('ROADMAP.md') && r.detail.includes(`line ${n}: `), `${c.label}: ${r.detail}`);
+    }
+    assert.deepEqual(treeOf(dir), before, c.label);
+  }
+});
+
+test('spine-decisions: Cadence\'s CONTEXT readers take the answer\'s lines as decisions D-01 onward', (t) => {
+  const r = run(['spine-decisions', '--phase', '4'], project(t));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const context = `# Phase 4: Context\n\n## Durable decisions\n\n${r.text}- D-07 (storage): A later decision. Evidence: x.\n\n`
+    + '## Decisions\n\n- D-08 (local): A phase-local decision.\n';
+  const durable = parseContextDecisions(context);
+  assert.equal(durable.length, 7);
+  assert.ok(durable[0].startsWith('D-01 (how state changes): Loans are an append-only event log. '));
+  assert.deepEqual(contextDecisions(context).map((d) => d.slice(0, 4)),
+    ['D-01', 'D-02', 'D-03', 'D-04', 'D-05', 'D-06', 'D-07', 'D-08']);
 });
