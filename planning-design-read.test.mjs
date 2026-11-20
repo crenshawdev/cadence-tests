@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ensureRoadmap, isEntryFile, makeTree, run, scratch, stampState, treeOf, verifyChecked } from './planning.test.mjs';
+import { ensureRoadmap, isEntryFile, makeTree, run, scratch, stampState, today, treeOf, verifyChecked } from './planning.test.mjs';
 import { readDesign } from '../cadence-core/bin/lib/seldon-design.mjs';
 import { classifyActiveSection, parseActiveIds, phaseCriteria, phaseDetailSpans, phaseRequirements, sectionSpan } from '../cadence-core/bin/lib/planning-files.mjs';
 
@@ -535,6 +535,71 @@ test('design-read: a spine decision its Spine decisions line would not read back
   // S-04's line is a problem in every phase, and S-02's wrong title still comes back beside it to be compared
   assert.deepEqual(only(read(t, designCopy(t, { 'spine.md': (s) => kind(heading(s)) }), '3')),
     [['spine.md', 'S-02'], ['spine.md', 'S-04']]);
+});
+
+// --- the PROJECT.md text a new project starts from ------------------------------
+
+/** brief.md's `## <name>` body as the file has it, cut here so nothing is taken from the reader. @param {string} name */
+function briefSlice(name) {
+  const text = readFileSync(join(FIXTURE, 'brief.md'), 'utf8');
+  const start = text.indexOf(`\n## ${name}\n`) + `\n## ${name}\n`.length;
+  const next = text.indexOf('\n## ', start);
+  return text.slice(start, next === -1 ? text.length : next).replace(/\n+$/, '');
+}
+
+/** The text from `heading`'s line up to the next heading of that level or higher. @param {string} text @param {string} heading */
+function spanOf(text, heading) {
+  const start = text.indexOf(`\n${heading}\n`);
+  assert.ok(start >= 0, `no ${heading}`);
+  const level = heading.indexOf(' ');
+  const after = text.slice(start + heading.length + 2);
+  const end = after.search(new RegExp(`^#{1,${level}} `, 'm'));
+  return end === -1 ? after : after.slice(0, end);
+}
+
+test('design-read: a new project\'s PROJECT.md text carries the title and the eight brief sections byte for byte', (t) => {
+  const r = read(t, FIXTURE);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const text = r.project_text;
+  assert.ok(text.startsWith('# Toolshed\n'), text);
+  assert.deepEqual([...text.matchAll(/^## (.*)$/gm)].map((m) => m[1]),
+    ['What This Is', 'Core Value', 'Requirements', 'Context', 'Constraints', 'Key Decisions']);
+  const what = spanOf(text, '## What This Is');
+  for (const name of ['Problem', 'Solution', 'Who it serves', "What's different"]) {
+    assert.ok(what.includes(`### ${name}\n\n${briefSlice(name)}\n`), `${name}:\n${what}`);
+  }
+  assert.ok(briefSlice('Problem').split('\n').filter((l) => l.startsWith('> ')).length === 2);
+  assert.ok(briefSlice("What's different").includes('[ASSUMPTION]'));
+  assert.ok(spanOf(text, '### Out of Scope').includes(briefSlice('What it refuses')));
+  const context = spanOf(text, '## Context');
+  for (const name of ['Success criteria', 'Scope', 'Vision']) {
+    assert.ok(context.includes(`### ${name}\n\n${briefSlice(name)}\n`), `${name}:\n${context}`);
+  }
+});
+
+test('design-read: PROJECT.md\'s Constraints holds each stack and hosting decision once, and Core Value one bracketed line', (t) => {
+  const r = read(t, FIXTURE);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  // S-04 and S-05 sit on all three epics, so two lines is the once-each rule
+  assert.deepEqual(spanOf(r.project_text, '## Constraints').split('\n').filter((l) => l.trim() !== ''), [
+    '- **stack**: Node with one SQLite database - The app runs on Node and keeps the catalog, the members and the loan'
+      + ' log in one SQLite database file. [ASSUMPTION]',
+    '- **hosting**: One small rented server - The app and its database file run on one small rented virtual server.'
+      + ' [ASSUMPTION]',
+  ]);
+  const core = spanOf(r.project_text, '## Core Value').split('\n').filter((l) => l.trim() !== '');
+  assert.equal(core.length, 1, core.join('\n'));
+  assert.ok(core[0].startsWith('[') && core[0].endsWith(']'), core[0]);
+  const footer = r.project_text.split('\n').filter((l) => l.startsWith('*Last updated: '));
+  assert.equal(footer.length, 1);
+  assert.ok(footer[0].includes(today()), footer[0]);
+});
+
+test('design-read --add: the accepted answer carries no PROJECT.md text, its keys as they were', (t) => {
+  const r = add(t, project(t, [1]).planning);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(Object.keys(r).filter((k) => k !== '_exit').sort(),
+    ['active_text', 'brief', 'ok', 'phases', 'requirements', 'sections_text', 'title', 'uncovered']);
 });
 
 test('/cad-phase sends every --brief to phase-design.md, whose Route step refuses it on any op but add before the read', () => {
