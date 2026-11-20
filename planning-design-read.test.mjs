@@ -1,0 +1,891 @@
+// Zero-dep tests for `planning.mjs design-read`, the Seldon design reader. Run:
+// node --test tests/planning-design-read.test.mjs
+//
+// The design under fixtures/seldon-design/ is Seldon's samples/ copied byte
+// for byte (D-16), so nothing here reads /code/seldon. Every arm that changes
+// a document does it to a scratch copy.
+//
+// The `test` binding below is a no-op unless this module IS the entry file, so
+// a sibling that imports from here registers nothing twice.
+import { test as nodeTest } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { PLANNING, ensureRoadmap, isEntryFile, makeTree, run, scratch, stampState, today, treeOf, verifyChecked } from './planning.test.mjs';
+import { readDesign } from '../cadence-core/bin/lib/seldon-design.mjs';
+import { classifyActiveSection, parseActiveIds, phaseCriteria, phaseDetailSpans, phaseRequirements, sectionSpan } from '../cadence-core/bin/lib/planning-files.mjs';
+
+/** `node:test`'s `test` when run directly, a no-op when imported (see header). */
+const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
+
+const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'seldon-design');
+const BRIEF_SECTIONS = ['Problem', 'Solution', 'Who it serves', "What's different", 'Success criteria', 'Scope',
+  'What it refuses', 'Vision'];
+
+/**
+ * A scratch copy of the fixture design, each named document passed through its edit first.
+ * @param {any} t @param {Record<string, (text: string) => string>} [edits]
+ */
+function designCopy(t, edits = {}) {
+  const dir = join(scratch('design-read-', t), 'design');
+  cpSync(FIXTURE, dir, { recursive: true });
+  for (const [file, edit] of Object.entries(edits)) {
+    const path = join(dir, file);
+    writeFileSync(path, edit(readFileSync(path, 'utf8')));
+  }
+  return dir;
+}
+
+/** design-read on `design`, with a scratch --dir nothing reads. */
+function read(t, design, first = '1') {
+  return run(['design-read', '--design', design, '--first-phase', first], scratch('design-read-dir-', t));
+}
+
+// --- the door, the four-file read, the brief ----------------------------------
+
+test('design-read: the fixture design is accepted with its title and the brief sections by exact name', (t) => {
+  const r = read(t, FIXTURE);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r._exit, 0);
+  assert.equal(r.title, 'Toolshed');
+  assert.deepEqual(Object.keys(r.brief), BRIEF_SECTIONS);
+  assert.equal(r.brief.Vision, 'Any volunteer-run lending library can track what it lends without a logbook. [ASSUMPTION]');
+});
+
+test('design-read: an empty folder is refused with one issue per missing document', (t) => {
+  const r = read(t, scratch('design-read-empty-', t));
+  assert.equal(r.ok, false);
+  assert.equal(r._exit, 1);
+  assert.ok(r.hint);
+  assert.deepEqual(r.issues, ['brief.md', 'prd.md', 'spine.md', 'epics.md']
+    .map((file) => ({ file, problem: 'missing file' })));
+});
+
+test('design-read: a brief missing one section and holding only the tag in another is refused for both', (t) => {
+  const design = designCopy(t, {
+    'brief.md': (s) => s.replace(/\n## Vision\n[^]*$/, '\n')
+      .replace(/## Scope\n[^]*?\n## /, '## Scope\n[ASSUMPTION]\n\n## '),
+  });
+  const r = read(t, design);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.ok(r.hint);
+  assert.deepEqual(r.issues, [
+    { file: 'brief.md', section: 'Scope', problem: 'empty section' },
+    { file: 'brief.md', section: 'Vision', problem: 'missing section' },
+  ]);
+});
+
+test('design-read: a --design naming a file, no --first-phase and --first-phase 0 are refused with a hint', (t) => {
+  const dir = scratch('design-read-dir-', t);
+  for (const args of [
+    ['--design', join(FIXTURE, 'brief.md'), '--first-phase', '1'],
+    ['--design', FIXTURE],
+    ['--design', FIXTURE, '--first-phase', '0'],
+  ]) {
+    const r = run(['design-read', ...args], dir);
+    assert.equal(r.ok, false, `${args.join(' ')}: ${JSON.stringify(r)}`);
+    assert.equal(r._exit, 1);
+    assert.ok(r.hint, `${args.join(' ')} carries no hint`);
+  }
+});
+
+test('design-read: an accepted and a refused read change no file and create none, stamped or not', (t) => {
+  for (const stamped of [true, false]) {
+    const root = scratch('design-read-project-', t);
+    const planning = join(root, '.planning');
+    mkdirSync(planning);
+    ensureRoadmap(planning);
+    if (stamped) stampState(planning);
+    cpSync(FIXTURE, join(planning, 'seldon'), { recursive: true });
+    cpSync(FIXTURE, join(planning, 'seldon-broken'), { recursive: true });
+    rmSync(join(planning, 'seldon-broken', 'brief.md'));
+    const before = treeOf(root);
+    for (const [name, accepted] of [['seldon', true], ['seldon-broken', false]]) {
+      const r = run(['design-read', '--design', join(planning, name), '--first-phase', '1'], planning);
+      assert.equal(r.ok, accepted, `${stamped ? 'stamped' : 'unstamped'} ${name}: ${JSON.stringify(r)}`);
+      assert.deepEqual(treeOf(root), before, `${stamped ? 'stamped' : 'unstamped'} ${name} changed the project`);
+    }
+  }
+});
+
+// --- requirements and spine decisions -----------------------------------------
+
+const S03 = "A job runs once a day, reads the loan log and sends that day's reminders. Nothing sends email while a"
+  + ' request is being handled. When a run fails, the counter screen shows the volunteers a notice naming the'
+  + " reminders that didn't go out, until a volunteer dismisses it. [ASSUMPTION]";
+
+test('design-read: the PRD requirements come back in file order with their category and one-line text', (t) => {
+  const r = read(t, FIXTURE);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.requirements.map((q) => q.id),
+    ['CAT-01', 'CAT-02', 'LOAN-01', 'LOAN-02', 'LOAN-03', 'NFR-01', 'NFR-02']);
+  assert.deepEqual(r.requirements[0],
+    { id: 'CAT-01', category: 'Catalog', text: 'A volunteer adds a tool with a name, a category and a photo. [ASSUMPTION]' });
+  assert.equal(r.requirements[1].text, 'A member searches the catalog by name or category.');
+  assert.equal(r.requirements[6].category, 'Non-functional');
+});
+
+// each edit breaks one D-02 class; all four together are one answer
+const PRD_BREAKS = {
+  'a bold colon': (s) => s.replace('- **CAT-02**', '- **CAT-03:** text\n- **CAT-02**'),
+  'a second CAT-01': (s) => s.replace('### Loans\n', '### Loans\n- **CAT-01**: again\n'),
+  'a bullet above its category': (s) => s.replace('### Catalog\n- **CAT-01**: A volunteer adds a tool with a name, a category and a photo. [ASSUMPTION]\n',
+    '- **CAT-01**: A volunteer adds a tool with a name, a category and a photo. [ASSUMPTION]\n### Catalog\n'),
+  'no MVP scope': (s) => s.replace(/\n## MVP scope\n[^]*$/, '\n'),
+};
+
+test('design-read: each broken PRD is refused with one issue naming prd.md, and all four at once with four', (t) => {
+  for (const [name, edit] of Object.entries(PRD_BREAKS)) {
+    const r = read(t, designCopy(t, { 'prd.md': edit }));
+    assert.equal(r.ok, false, `${name}: ${JSON.stringify(r)}`);
+    assert.equal(r.issues.length, 1, `${name}: ${JSON.stringify(r.issues)}`);
+    assert.equal(r.issues[0].file, 'prd.md');
+    assert.ok(r.issues[0].section, `${name} names no section`);
+  }
+  const all = read(t, designCopy(t, { 'prd.md': (s) => Object.values(PRD_BREAKS).reduce((acc, edit) => edit(acc), s) }));
+  assert.equal(all.ok, false);
+  assert.ok(all.hint);
+  assert.equal(all.issues.length, 4, JSON.stringify(all.issues));
+  assert.ok(all.issues.every((i) => i.file === 'prd.md'));
+  assert.deepEqual(all.issues.filter((i) => i.id).map((i) => i.id), ['CAT-01', 'CAT-01']);
+});
+
+test('design-read: a spine decision reads as its kind and one-line text, quotes and source lines dropped', () => {
+  const texts = { 'brief.md': null, 'prd.md': null, 'epics.md': null };
+  const fixture = readDesign({ ...texts, 'spine.md': readFileSync(join(FIXTURE, 'spine.md'), 'utf8') });
+  assert.deepEqual(fixture.issues, []);
+  const s03 = fixture.decisions.get('S-03');
+  assert.equal(s03.kind, 'boundaries');
+  assert.equal(s03.text, S03);
+  const sourced = readDesign({ ...texts,
+    'spine.md': '# x\n\n## S-01: One file\nKind: stack\nThe data sits in one file.\n> a quote\n(src/db.js)\n' });
+  assert.equal(sourced.decisions.get('S-01').text, 'The data sits in one file.');
+});
+
+test('design-read: a malformed, a repeated and an empty spine decision are three issues naming spine.md', (t) => {
+  const design = designCopy(t, {
+    'spine.md': (s) => s.replace(/(## S-05: One small rented server\nKind: hosting\n)[^\n]*\n/, '$1')
+      + '\n## S-1: x\nKind: stack\nSomething.\n\n## S-02: again\nKind: stack\nSomething else.\n',
+  });
+  const r = read(t, design);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.issues.length, 3, JSON.stringify(r.issues));
+  assert.ok(r.issues.every((i) => i.file === 'spine.md'));
+});
+
+// --- epics onto phases ---------------------------------------------------------
+
+test('design-read: each epic is one phase numbered from --first-phase, with its goal, criteria and decisions', (t) => {
+  const r = read(t, FIXTURE, '4');
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.phases.map((p) => [p.number, p.name]), [[4, 'Catalog'], [5, 'Lending'], [6, 'Reminders']]);
+  const [catalog, lending, reminders] = r.phases;
+  assert.equal(catalog.goal, 'Volunteers keep a catalog of tools, and members can search it. Tools and their categories'
+    + ' only. No loans and no member records. It\'s epic E-01 of the Seldon design "Toolshed".');
+  assert.equal(catalog.description, 'Volunteers keep a catalog of tools, and members can search it.');
+  assert.equal(catalog.depends_on, 'Nothing');
+  assert.deepEqual(lending.success_criteria, [
+    'A checkout records the member, the tool and a due date.',
+    'A return closes the open loan for that tool.',
+    'Member contact details are hidden from anyone who isn\'t a volunteer.',
+    'Everything built so far, this epic included, works end to end, with every test passing and nothing half-built showing.',
+  ]);
+  assert.equal(lending.depends_on, 'Phase 4');
+  assert.deepEqual(lending.requirements, ['LOAN-01', 'LOAN-02', 'NFR-01', 'NFR-02']);
+  assert.deepEqual(lending.spine_decisions.map((d) => d.id), ['S-01', 'S-02', 'S-03', 'S-04', 'S-05', 'S-06']);
+  assert.equal(lending.spine_decisions[2].text, S03);
+  assert.equal(reminders.depends_on, 'Phase 5');
+  assert.deepEqual(r.uncovered, []);
+});
+
+test('design-read: phases follow file order, never the E- number', (t) => {
+  const design = designCopy(t, {
+    'epics.md': (s) => s.replace('## E-01:', '## E-07:').replace('## E-02:', '## E-03:').replace('## E-03: Reminders', '## E-05: Reminders')
+      .replace('**Depends on:** E-01', '**Depends on:** E-07').replace('**Depends on:** E-02', '**Depends on:** E-03'),
+  });
+  const r = read(t, design);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.phases.map((p) => [p.number, p.name, p.depends_on]),
+    [[1, 'Catalog', 'Nothing'], [2, 'Lending', 'Phase 1'], [3, 'Reminders', 'Phase 2']]);
+});
+
+test('design-read: broken epic fields are one issue each, and an unread PRD is not checked against', (t) => {
+  const r = read(t, designCopy(t, {
+    'epics.md': (s) => s.replace('**Depends on:** None', '**Depends on:** E-02')
+      .replace('**Requirements:** LOAN-01,', '**Requirements:** LOAN-09,')
+      .replace('**Spine decisions:** S-01, S-02, S-03, S-04, S-05, S-06', '**Spine decisions:** S-01, S-09')
+      .replace('**Boundaries:** The daily job and its emails. It only reads the loan log.\n', '')
+      .replace('**Requirements:** LOAN-03', '**Requirements:** loan-3'),
+  }));
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.deepEqual(r.issues.map((i) => [i.file, i.id, i.field]), [
+    ['epics.md', 'E-01', 'Depends on'],
+    ['epics.md', 'E-02', 'Requirements'],
+    ['epics.md', 'E-02', 'Spine decisions'],
+    ['epics.md', 'E-03', 'Boundaries'],
+    ['epics.md', 'E-03', 'Requirements'],
+  ]);
+  const unread = designCopy(t, { 'epics.md': (s) => s.replace('**Requirements:** LOAN-01,', '**Requirements:** LOAN-09,') });
+  rmSync(join(unread, 'prd.md'));
+  assert.deepEqual(read(t, unread).issues, [{ file: 'prd.md', problem: 'missing file' }]);
+});
+
+test('design-read: a requirement no epic names is accepted and listed as uncovered', (t) => {
+  const r = read(t, designCopy(t, { 'epics.md': (s) => s.replace('**Requirements:** LOAN-03', '**Requirements:** LOAN-02') }));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.uncovered, ['LOAN-03']);
+});
+
+test('design-read: multi-line values come back as one line, and a name or Outcome holding ** is refused once', (t) => {
+  const joined = read(t, designCopy(t, {
+    'epics.md': (s) => s.replace('**Outcome:** Volunteers keep a catalog of tools, and members',
+      '**Outcome:** Volunteers keep a catalog of tools,\nand members')
+      .replace('- A volunteer can add a tool with a name, a category', '- A volunteer can add a tool with a name,\n  a category'),
+  }));
+  assert.equal(joined.ok, true, JSON.stringify(joined));
+  assert.equal(joined.phases[0].description, 'Volunteers keep a catalog of tools, and members can search it.');
+  assert.deepEqual(joined.phases[0].success_criteria.slice(0, 2),
+    ['A volunteer can add a tool with a name, a category and a photo.', 'A member can find that tool by name or by category.']);
+  for (const [name, edit, where] of [
+    ['a bold name', (s) => s.replace('## E-01: Catalog', '## E-01: **Bold** name'), 'section'],
+    ['a bold Outcome', (s) => s.replace('**Outcome:** Volunteers keep a catalog of tools, and members can search it.',
+      '**Outcome:** a **b** c'), 'field'],
+    ['a name the judge refuses', (s) => s.replace('## E-01: Catalog', '## E-01: A** - B'), 'section'],
+  ]) {
+    const r = read(t, designCopy(t, { 'epics.md': edit }));
+    assert.equal(r.ok, false, `${name}: ${JSON.stringify(r)}`);
+    assert.equal(r.issues.length, 1, `${name}: ${JSON.stringify(r.issues)}`);
+    assert.equal(r.issues[0].file, 'epics.md');
+    assert.equal(r.issues[0].id, 'E-01');
+    assert.ok(r.issues[0][where], `${name} names no ${where}`);
+  }
+});
+
+// --- content the reader would otherwise drop -----------------------------------
+
+test('design-read: a repeated or unlisted section and a repeated epic field are refused, never read past', (t) => {
+  for (const [name, file, edit, issue] of [
+    ['a second ## Requirements', 'prd.md', (s) => s + '\n## Requirements\n### Extra\n- **EXT-01**: An extra requirement.\n',
+      { file: 'prd.md', section: 'Requirements', problem: 'section appears more than once' }],
+    ['a second ## Non-functional requirements', 'prd.md', (s) => s + '\n## Non-functional requirements\n- **NFR-03**: Another one.\n',
+      { file: 'prd.md', section: 'Non-functional requirements', problem: 'section appears more than once' }],
+    ['an unlisted prd section', 'prd.md', (s) => s + '\n## Security requirements\n- **SEC-01**: A security requirement.\n',
+      { file: 'prd.md', section: 'Security requirements', problem: 'not a section prd.md has' }],
+    ['a second ## Vision', 'brief.md', (s) => s + '\n## Vision\nA second vision.\n',
+      { file: 'brief.md', section: 'Vision', problem: 'section appears more than once' }],
+    ['an unlisted brief section', 'brief.md', (s) => s + '\n## Roadmap\nLater.\n',
+      { file: 'brief.md', section: 'Roadmap', problem: 'not a section brief.md has' }],
+    ['a second Requirements field', 'epics.md', (s) => s.replace('**Requirements:** CAT-01, CAT-02\n',
+      '**Requirements:** CAT-01, CAT-02\n**Requirements:** LOAN-03\n'),
+      { file: 'epics.md', id: 'E-01', field: 'Requirements', problem: 'field appears more than once' }],
+  ]) {
+    const design = designCopy(t, { [file]: edit });
+    assert.notEqual(readFileSync(join(design, file), 'utf8'), readFileSync(join(FIXTURE, file), 'utf8'), `${name} edited nothing`);
+    const r = read(t, design);
+    assert.equal(r.ok, false, `${name}: ${JSON.stringify(r)}`);
+    assert.deepEqual(r.issues, [issue], name);
+  }
+});
+
+// --- design-read --add: the project a design joins ----------------------------
+
+const ACTIVE = '# Requirements: Fixture\n\n## Active\n\n### Old\n\n- [ ] **OLD-01**: An old requirement.\n';
+
+/**
+ * A scratch project holding the roadmap phases named, stamped from them, with `requirements` as its REQUIREMENTS.md.
+ * @param {any} t @param {number[]} phases @param {string} [requirements]
+ */
+function project(t, phases, requirements = ACTIVE) {
+  const planning = makeTree({ roadmap: phases.map((n) => ({ n, name: `Old ${n}` })) }, t);
+  verifyChecked(planning);
+  writeFileSync(join(planning, 'REQUIREMENTS.md'), requirements);
+  return { planning, root: dirname(planning) };
+}
+
+/** design-read --add on `design` against `planning`, which it must leave byte-identical. */
+function add(t, planning, design = FIXTURE, extra = []) {
+  const root = dirname(planning);
+  const before = treeOf(root);
+  const r = run(['design-read', '--add', '--design', design, ...extra], planning);
+  assert.deepEqual(treeOf(root), before, `design-read --add changed the project: ${JSON.stringify(r)}`);
+  return r;
+}
+
+test('design-read --add: the new phases number from the highest phase in the state, never its count', (t) => {
+  const r = add(t, project(t, [1, 2, 2.1]).planning);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.phases.map((p) => p.number), [3, 4, 5]);
+  assert.equal(r.phases[1].depends_on, 'Phase 3');
+  const empty = add(t, project(t, []).planning);
+  assert.equal(empty.ok, true, JSON.stringify(empty));
+  assert.deepEqual(empty.phases.map((p) => p.number), [1, 2, 3]);
+});
+
+// every place an ID can sit in REQUIREMENTS.md, and three near misses that must not clash
+const CLASHING = `${ACTIVE}
+Old notes name CAT-2, XLOAN-03 and LOAN-031 in passing.
+
+## Shipped
+
+The first release shipped LOAN-02 with the counter screen.
+
+## v2 Requirements
+
+- **NFR-01**: A requirement put off to later.
+
+## Traceability
+
+| Requirement | Phase | Status |
+|---|---|---|
+| CAT-01 | Phase 1 | Complete |
+
+\`\`\`
+LOAN-01
+\`\`\`
+`;
+
+test('design-read --add: an ID anywhere in REQUIREMENTS.md clashes, in one answer beside the design issues', (t) => {
+  const { planning } = project(t, [1], CLASHING);
+  const r = add(t, planning);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.reason, 'design-refused');
+  assert.deepEqual(r.issues.map((i) => [i.file, i.id]),
+    [['prd.md', 'CAT-01'], ['prd.md', 'LOAN-01'], ['prd.md', 'LOAN-02'], ['prd.md', 'NFR-01']]);
+  assert.match(r.hint, /prd\.md/);
+  assert.match(r.hint, /epics\.md/);
+  const broken = designCopy(t, {
+    'epics.md': (s) => s.replace('**Boundaries:** The daily job and its emails. It only reads the loan log.\n', ''),
+  });
+  const both = add(t, planning, broken);
+  assert.equal(both.ok, false, JSON.stringify(both));
+  assert.deepEqual(both.issues.map((i) => [i.file, i.id, i.field]), [
+    ['epics.md', 'E-03', 'Boundaries'],
+    ['prd.md', 'CAT-01', undefined], ['prd.md', 'LOAN-01', undefined],
+    ['prd.md', 'LOAN-02', undefined], ['prd.md', 'NFR-01', undefined],
+  ]);
+});
+
+test('design-read --add: a file, an empty path, a project missing a file or heading, and --first-phase are refused', (t) => {
+  /** @type {[string, () => {planning: string, design?: string, extra?: string[]}][]} */
+  const cases = [
+    ['a file as --design', () => ({ planning: project(t, [1]).planning, design: join(FIXTURE, 'brief.md') })],
+    ['an empty --design', () => ({ planning: project(t, [1]).planning, design: '' })],
+    ['no REQUIREMENTS.md', () => {
+      const { planning } = project(t, [1]);
+      rmSync(join(planning, 'REQUIREMENTS.md'));
+      return { planning };
+    }],
+    ['a fenced ## Active', () => ({ planning: project(t, [1], '# Requirements\n\n```\n## Active\n```\n').planning })],
+    ['no ROADMAP.md', () => {
+      const { planning } = project(t, [1]);
+      rmSync(join(planning, 'ROADMAP.md'));
+      return { planning };
+    }],
+    ['a fenced ## Phase Details', () => {
+      const { planning } = project(t, [1]);
+      const file = join(planning, 'ROADMAP.md');
+      writeFileSync(file, readFileSync(file, 'utf8').replace('## Phase Details', '```\n## Phase Details\n```'));
+      return { planning };
+    }],
+    ['no state file', () => {
+      const planning = makeTree({ roadmap: [{ n: 1, name: 'Old 1' }] }, t);
+      writeFileSync(join(planning, 'REQUIREMENTS.md'), ACTIVE);
+      return { planning };
+    }],
+    ['--first-phase beside --add', () => ({ planning: project(t, [1]).planning, extra: ['--first-phase', '3'] })],
+  ];
+  for (const [name, build] of cases) {
+    const { planning, design = FIXTURE, extra = [] } = build();
+    const r = add(t, planning, design, extra);
+    assert.equal(r.ok, false, `${name}: ${JSON.stringify(r)}`);
+    assert.equal(r._exit, 1);
+    assert.ok(r.hint, `${name} carries no hint`);
+    if (name === 'no state file') assert.equal(existsSync(join(planning, 'records', 'state.json')), false);
+  }
+});
+
+// --- the rendered ## Active bullets and ### Phase N: sections -------------------
+
+// typed from the fixture's lines, never taken from the renderer
+const ACTIVE_TEXT = [
+  '### Catalog',
+  '',
+  '- [ ] **CAT-01**: A volunteer adds a tool with a name, a category and a photo. [ASSUMPTION]',
+  '- [ ] **CAT-02**: A member searches the catalog by name or category.',
+  '',
+  '### Loans',
+  '',
+  '- [ ] **LOAN-01**: A volunteer checks a tool out to a member with a due date.',
+  '- [ ] **LOAN-02**: A volunteer checks a tool back in.',
+  '- [ ] **LOAN-03**: A member gets an email reminder the day before a loan is due.',
+  '',
+  '### Non-functional',
+  '',
+  '- [ ] **NFR-01**: A checkout takes under three seconds on a phone over a slow connection. [ASSUMPTION]',
+  '- [ ] **NFR-02**: Member emails and addresses are visible only to volunteers. [ASSUMPTION]',
+].map((l) => `${l}\n`).join('');
+
+const CATALOG_SECTION = [
+  '### Phase 3: Catalog',
+  '**Goal:** Volunteers keep a catalog of tools, and members can search it. Tools and their categories only. No loans and'
+    + ' no member records. It\'s epic E-01 of the Seldon design "Toolshed".',
+  '**Depends on:** Nothing',
+  '**Requirements:** CAT-01, CAT-02',
+  '**Success Criteria:**',
+  '1. A volunteer can add a tool with a name, a category and a photo.',
+  '2. A member can find that tool by name or by category.',
+  '3. Everything built so far, this epic included, works end to end, with every test passing and nothing half-built showing.',
+  '**Spine decisions:**',
+  '- **S-02: One server-rendered web app** (design approach): The counter screens and the public catalog are pages of'
+    + ' one app. There\'s no separate API.',
+  '- **S-04: Node with one SQLite database** (stack): The app runs on Node and keeps the catalog, the members and the'
+    + ' loan log in one SQLite database file. [ASSUMPTION]',
+  '- **S-05: One small rented server** (hosting): The app and its database file run on one small rented virtual server.'
+    + ' [ASSUMPTION]',
+  '- **S-06: Members reach only the catalog** (boundaries): The catalog pages are the only part members and the public'
+    + ' reach from outside, and what they type there is only ever read as search text. Member emails and addresses sit'
+    + ' behind the volunteer login, and no catalog page shows them. [ASSUMPTION]',
+].map((l) => `${l}\n`).join('');
+
+/** The `### Phase N:` sections in `text`, by number. @param {string} text */
+const sectionsOf = (text) => Object.fromEntries(text.split(/\n(?=### Phase )/)
+  .map((s) => [Number(/^### Phase (\d+):/.exec(s)?.[1]), s.endsWith('\n') ? s : `${s}\n`]));
+
+test('design-read: the ## Active text and the phase sections carry every value byte for byte', (t) => {
+  const r = add(t, project(t, [1, 2]).planning);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.active_text, ACTIVE_TEXT);
+  assert.deepEqual([...r.sections_text.matchAll(/^### Phase .*$/gm)].map((m) => m[0]),
+    ['### Phase 3: Catalog', '### Phase 4: Lending', '### Phase 5: Reminders']);
+  const sections = sectionsOf(r.sections_text);
+  assert.equal(sections[3], CATALOG_SECTION);
+  assert.ok(sections[4].split('\n').includes(`- **S-03: Reminders run from a daily scheduled job** (boundaries): ${S03}`));
+});
+
+test('design-read: each Goal names its own epic, and an epic with no decisions has no Spine decisions line', (t) => {
+  const renamed = read(t, designCopy(t, {
+    'epics.md': (s) => s.replace('## E-01:', '## E-07:').replace('## E-02:', '## E-03:').replace('## E-03: Reminders', '## E-05: Reminders')
+      .replace('**Depends on:** E-01', '**Depends on:** E-07').replace('**Depends on:** E-02', '**Depends on:** E-03'),
+  }), '3');
+  assert.equal(renamed.ok, true, JSON.stringify(renamed));
+  assert.deepEqual([...renamed.sections_text.matchAll(/^\*\*Goal:\*\* .*It's epic (E-\d+) of the Seldon design "Toolshed"\.$/gm)]
+    .map((m) => m[1]), ['E-07', 'E-03', 'E-05']);
+  const none = read(t, designCopy(t, {
+    'epics.md': (s) => s.replace('**Spine decisions:** S-01, S-02, S-03, S-04, S-05\n', '**Spine decisions:** None\n'),
+  }), '3');
+  assert.equal(none.ok, true, JSON.stringify(none));
+  const sections = sectionsOf(none.sections_text);
+  assert.ok(sections[3].includes('**Spine decisions:**\n'));
+  assert.ok(sections[4].includes('**Spine decisions:**\n'));
+  assert.ok(!sections[5].includes('**Spine decisions:**'), sections[5]);
+});
+
+test('design-read: Cadence\'s own readers parse the rendered sections and ## Active bullets', (t) => {
+  const r = read(t, FIXTURE, '3');
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const roadmap = `# Roadmap: Fixture\n\n## Phases\n\n## Phase Details\n\n${r.sections_text}`;
+  assert.deepEqual(phaseRequirements(roadmap, 4).ids, ['LOAN-01', 'LOAN-02', 'NFR-01', 'NFR-02']);
+  assert.equal(phaseCriteria(roadmap, 4).count, 4);
+  const lines = roadmap.split('\n');
+  for (const n of [3, 4, 5]) assert.equal(phaseDetailSpans(lines, n).length, 1, `phase ${n}`);
+  const requirements = `# Requirements: Fixture\n\n## Active\n\n${r.active_text}\n## v2 Requirements\n`;
+  assert.deepEqual(classifyActiveSection(requirements),
+    { ids: ['CAT-01', 'CAT-02', 'LOAN-01', 'LOAN-02', 'LOAN-03', 'NFR-01', 'NFR-02'], issues: [] });
+});
+
+test('design-read: a lone \\r, U+2028 or U+2029 is refused by file and line, and CRLF line ends are not', (t) => {
+  for (const mark of ['\r', '\u2028', '\u2029']) {
+    const design = designCopy(t, {
+      'epics.md': (s) => s.replace('No loans and no member records.', `No loans.${mark}**Requirements:** EVIL-01`),
+    });
+    const r = read(t, design, '3');
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.ok(r.issues.some((i) => i.file === 'epics.md' && / on line 6 - /.test(i.problem)), JSON.stringify(r.issues));
+  }
+  const crlf = designCopy(t, Object.fromEntries(['brief.md', 'prd.md', 'spine.md', 'epics.md']
+    .map((f) => [f, (/** @type {string} */ s) => s.replace(/\n/g, '\r\n')])));
+  assert.equal(read(t, crlf, '3').ok, true);
+});
+
+test('design-read: an ID its phase\'s Requirements line would not read back is refused, naming the epic', (t) => {
+  const rename = (/** @type {string} */ s) => s.replaceAll('CAT-01', '2FA-01');
+  const r = read(t, designCopy(t, { 'prd.md': rename, 'epics.md': rename }), '3');
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.deepEqual(r.issues, [{ file: 'epics.md', id: 'E-01', field: 'Requirements',
+    problem: '"2FA-01" would not read back from phase 3\'s Requirements line - Cadence reads an ID there only when it opens with a letter' }]);
+});
+
+test('design-read: a spine decision its Spine decisions line would not read back is refused once, naming spine.md', (t) => {
+  const heading = (/** @type {string} */ s) => s.replace('## S-02: One server-rendered web app', '## S-02: One server** (rendered): web app');
+  const kind = (/** @type {string} */ s) => s.replace('Kind: stack\n', 'Kind: stack (runtime)\n');
+  const only = (/** @type {any} */ r) => {
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.equal(r.reason, 'design-refused');
+    assert.ok(r.hint);
+    return r.issues.map((/** @type {any} */ i) => [i.file, i.id]);
+  };
+  // S-02 sits in all three epics, so one issue is the dedupe
+  const split = read(t, designCopy(t, { 'spine.md': heading }), '3');
+  assert.deepEqual(only(split), [['spine.md', 'S-02']]);
+  assert.match(split.issues[0].problem, /^would not read back from phase 3's Spine decisions line - its heading holds `\*\* \(`/);
+  const paren = read(t, designCopy(t, { 'spine.md': kind }), '3');
+  assert.deepEqual(only(paren), [['spine.md', 'S-04']]);
+  assert.match(paren.issues[0].problem, /its Kind line holds a parenthesis/);
+  // S-04's line is a problem in every phase, and S-02's wrong title still comes back beside it to be compared
+  assert.deepEqual(only(read(t, designCopy(t, { 'spine.md': (s) => kind(heading(s)) }), '3')),
+    [['spine.md', 'S-02'], ['spine.md', 'S-04']]);
+});
+
+// --- the PROJECT.md text a new project starts from ------------------------------
+
+/** brief.md's `## <name>` body as the file has it, cut here so nothing is taken from the reader. @param {string} name */
+function briefSlice(name) {
+  const text = readFileSync(join(FIXTURE, 'brief.md'), 'utf8');
+  const start = text.indexOf(`\n## ${name}\n`) + `\n## ${name}\n`.length;
+  const next = text.indexOf('\n## ', start);
+  return text.slice(start, next === -1 ? text.length : next).replace(/\n+$/, '');
+}
+
+/** The text from `heading`'s line up to the next heading of that level or higher. @param {string} text @param {string} heading */
+function spanOf(text, heading) {
+  const start = text.indexOf(`\n${heading}\n`);
+  assert.ok(start >= 0, `no ${heading}`);
+  const level = heading.indexOf(' ');
+  const after = text.slice(start + heading.length + 2);
+  const end = after.search(new RegExp(`^#{1,${level}} `, 'm'));
+  return end === -1 ? after : after.slice(0, end);
+}
+
+test('design-read: a new project\'s PROJECT.md text carries the title and the eight brief sections byte for byte', (t) => {
+  const r = read(t, FIXTURE);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const text = r.project_text;
+  assert.ok(text.startsWith('# Toolshed\n'), text);
+  assert.deepEqual([...text.matchAll(/^## (.*)$/gm)].map((m) => m[1]),
+    ['What This Is', 'Core Value', 'Requirements', 'Context', 'Constraints', 'Key Decisions']);
+  const what = spanOf(text, '## What This Is');
+  for (const name of ['Problem', 'Solution', 'Who it serves', "What's different"]) {
+    assert.ok(what.includes(`### ${name}\n\n${briefSlice(name)}\n`), `${name}:\n${what}`);
+  }
+  assert.ok(briefSlice('Problem').split('\n').filter((l) => l.startsWith('> ')).length === 2);
+  assert.ok(briefSlice("What's different").includes('[ASSUMPTION]'));
+  assert.ok(spanOf(text, '### Out of Scope').includes(briefSlice('What it refuses')));
+  const context = spanOf(text, '## Context');
+  for (const name of ['Success criteria', 'Scope', 'Vision']) {
+    assert.ok(context.includes(`### ${name}\n\n${briefSlice(name)}\n`), `${name}:\n${context}`);
+  }
+});
+
+test('design-read: PROJECT.md\'s Constraints holds each stack and hosting decision once, and Core Value one bracketed line', (t) => {
+  const r = read(t, FIXTURE);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  // S-04 and S-05 sit on all three epics, so two lines is the once-each rule
+  assert.deepEqual(spanOf(r.project_text, '## Constraints').split('\n').filter((l) => l.trim() !== ''), [
+    '- **stack**: Node with one SQLite database - The app runs on Node and keeps the catalog, the members and the loan'
+      + ' log in one SQLite database file. [ASSUMPTION]',
+    '- **hosting**: One small rented server - The app and its database file run on one small rented virtual server.'
+      + ' [ASSUMPTION]',
+  ]);
+  const core = spanOf(r.project_text, '## Core Value').split('\n').filter((l) => l.trim() !== '');
+  assert.equal(core.length, 1, core.join('\n'));
+  assert.ok(core[0].startsWith('[') && core[0].endsWith(']'), core[0]);
+  const footer = r.project_text.split('\n').filter((l) => l.startsWith('*Last updated: '));
+  assert.equal(footer.length, 1);
+  assert.ok(footer[0].includes(today()), footer[0]);
+});
+
+test('design-read: a brief section that would hide or move a PROJECT.md heading is refused by name, --add unchanged', (t) => {
+  const brief = (/** @type {string} */ s) => s
+    .replace('\n## Solution\n', '\n```\nan example that never closes\n\n## Solution\n')
+    .replace('\n## What it refuses\n', '\n    ## Constraints\n\n## What it refuses\n');
+  const design = designCopy(t, { 'brief.md': brief });
+  const r = read(t, design);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.reason, 'design-refused');
+  assert.deepEqual(r.issues.map((/** @type {any} */ i) => [i.file, i.section]), [['brief.md', 'Problem'], ['brief.md', 'Scope']]);
+  // --add writes no PROJECT.md, so the same brief is no problem there
+  assert.equal(add(t, project(t, [1]).planning, design).ok, true);
+});
+
+test('design-read --add: the accepted answer carries no PROJECT.md text, its keys as they were', (t) => {
+  const r = add(t, project(t, [1]).planning);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(Object.keys(r).filter((k) => k !== '_exit').sort(),
+    ['active_text', 'brief', 'ok', 'phases', 'requirements', 'sections_text', 'title', 'uncovered']);
+});
+
+test('/cad-phase sends every --brief to phase-design.md, whose Route step refuses it on any op but add before the read', () => {
+  const doc = (/** @type {string} */ path) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', path), 'utf8');
+  const phase = doc('cadence-core/workflows/phase.md');
+  const route = phase.indexOf('## Route on $ARGUMENTS');
+  const pointer = phase.indexOf('Any `$ARGUMENTS` carrying `--brief`: Read `${CLAUDE_PLUGIN_ROOT}/cadence-core/workflows/phase-design.md`');
+  assert.ok(route >= 0 && pointer > route && pointer < phase.indexOf('### add', route), 'the pointer sits ahead of the op routes');
+  const design = doc('cadence-core/workflows/phase-design.md');
+  const step = design.slice(design.indexOf('## 1. Route'), design.indexOf('## 2. Check'));
+  assert.match(step, /`--brief` goes only with `add`\. Any other op carrying it is refused here,/);
+  assert.match(step, /before anything is read/);
+  assert.ok(design.indexOf('design-read --add') > design.indexOf('## 2. Check'), 'the refusal comes before the design-read call');
+});
+
+// --- the add end to end at the seams --------------------------------------------
+
+const PROJECT_MD = '# Fixture\n\nWhat this project is, which the add never touches.\n\n## Requirements\n\n### Active\n\nNo cycle open.\n';
+
+/** `insert` placed after the last non-blank line of `heading`'s section, one blank line before it, as the workflow's step 3 says. */
+function spliceInto(text, heading, insert) {
+  const lines = text.split('\n');
+  const { start, end } = sectionSpan(lines, heading);
+  let last = end - 1;
+  while (last > start && lines[last].trim() === '') last--;
+  return `${lines.slice(0, last + 1).join('\n')}\n\n${insert}${lines.slice(last + 1).join('\n')}`;
+}
+
+/** Are `before`'s lines all in `after`, byte-identical and in order? */
+function keepsLines(before, after) {
+  const rest = after.split('\n');
+  let i = 0;
+  for (const line of before.split('\n')) {
+    while (i < rest.length && rest[i] !== line) i++;
+    if (i === rest.length) return false;
+    i++;
+  }
+  return true;
+}
+
+test('design-read --add then phase-entry add per phase and the two texts keep every line already there', (t) => {
+  const open = makeTree({ roadmap: [{ n: 1, name: 'Old 1' }, { n: 2, name: 'Old 2' }] }, t);
+  verifyChecked(open);
+  const closed = makeTree({ roadmap: [] }, t);
+  stampState(closed);
+  for (const [label, planning] of [['open', open], ['closed', closed]]) {
+    writeFileSync(join(planning, 'REQUIREMENTS.md'), `${ACTIVE}\n## v2 Requirements\n\n- **LATER-01**: Put off.\n`);
+    writeFileSync(join(planning, 'PROJECT.md'), PROJECT_MD);
+    const before = Object.fromEntries(['REQUIREMENTS.md', 'ROADMAP.md', 'PROJECT.md']
+      .map((f) => [f, readFileSync(join(planning, f), 'utf8')]));
+    const design = run(['design-read', '--add', '--design', FIXTURE], planning);
+    assert.equal(design.ok, true, `${label}: ${JSON.stringify(design)}`);
+    const scratchDir = scratch('design-add-', t);
+    const adds = design.phases.map((p) => {
+      const name = join(scratchDir, `name-${p.number}.txt`);
+      const description = join(scratchDir, `description-${p.number}.txt`);
+      writeFileSync(name, p.name);
+      writeFileSync(description, p.description);
+      return run(['phase-entry', 'add', '--phase', String(p.number), '--name-file', name, '--description-file', description],
+        planning);
+    });
+    for (const a of adds) assert.equal(a.ok, true, `${label}: ${JSON.stringify(a)}`);
+    assert.deepEqual(adds.map((a) => a.opened_cycle === true), label === 'closed' ? [true, false, false] : [false, false, false]);
+    const reqFile = join(planning, 'REQUIREMENTS.md');
+    const roadmapFile = join(planning, 'ROADMAP.md');
+    writeFileSync(reqFile, spliceInto(readFileSync(reqFile, 'utf8'), '## Active', design.active_text));
+    writeFileSync(roadmapFile, spliceInto(readFileSync(roadmapFile, 'utf8'), '## Phase Details', design.sections_text));
+
+    const status = run(['status'], planning);
+    const added = design.phases.map((p) => [p.number, p.name]);
+    assert.deepEqual(status.phases.map((p) => [p.n, p.name]).slice(-3), added, label);
+    assert.deepEqual(added, label === 'open' ? [[3, 'Catalog'], [4, 'Lending'], [5, 'Reminders']]
+      : [[1, 'Catalog'], [2, 'Lending'], [3, 'Reminders']]);
+    for (const [file, text] of Object.entries(before)) {
+      const now = readFileSync(join(planning, file), 'utf8');
+      assert.ok(keepsLines(text, now), `${label}: ${file} lost or reordered a line it held\n${now}`);
+    }
+    assert.equal(readFileSync(join(planning, 'PROJECT.md'), 'utf8'), PROJECT_MD);
+    const requirements = readFileSync(reqFile, 'utf8');
+    assert.deepEqual(parseActiveIds(requirements),
+      ['OLD-01', 'CAT-01', 'CAT-02', 'LOAN-01', 'LOAN-02', 'LOAN-03', 'NFR-01', 'NFR-02']);
+    const roadmap = readFileSync(roadmapFile, 'utf8');
+    const epicIds = [['CAT-01', 'CAT-02'], ['LOAN-01', 'LOAN-02', 'NFR-01', 'NFR-02'], ['LOAN-03']];
+    for (const [i, p] of design.phases.entries()) {
+      assert.deepEqual(phaseRequirements(roadmap, p.number).ids, epicIds[i], `${label} phase ${p.number}`);
+    }
+  }
+});
+
+// --- the new project's check, run as new-project-design.md writes it -------------
+
+const NEW_PROJECT_DESIGN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'workflows', 'new-project-design.md');
+
+/** new-project-design.md's `## 1. Check` step, to the next `## ` heading or the end. @param {string} prose */
+function checkStep(prose) {
+  const start = prose.indexOf('## 1. Check');
+  assert.ok(start >= 0, 'no ## 1. Check step');
+  const next = prose.indexOf('\n## ', start);
+  return prose.slice(start, next === -1 ? prose.length : next);
+}
+
+test('the design route\'s check refuses a design missing documents or not parsing, and writes only its run directory', (t) => {
+  const scripts = [...readFileSync(NEW_PROJECT_DESIGN, 'utf8').matchAll(/node -e '([^']*)'/g)].map((m) => m[1]);
+  assert.equal(scripts.length, 1);
+  const missing = designCopy(t);
+  rmSync(join(missing, 'spine.md'));
+  rmSync(join(missing, 'epics.md'));
+  const unparsed = designCopy(t, { 'prd.md': PRD_BREAKS['a bullet above its category'] });
+  for (const [name, design] of [['missing', missing], ['unparsed', unparsed], ['fixture', FIXTURE]]) {
+    const root = scratch('new-project-root-', t);
+    const runDir = scratch('new-project-run-', t);
+    // the call as the step writes it: from the project root, no --dir, the answer redirected into the run directory
+    const call = spawnSync(process.execPath, [PLANNING, 'design-read', '--design', design, '--first-phase', '1'],
+      { cwd: root, encoding: 'utf8' });
+    assert.ok(call.stdout.length > 0, `${name}: ${call.stderr}`);
+    writeFileSync(join(runDir, 'design.json'), call.stdout);
+    const back = spawnSync(process.execPath, ['-e', scripts[0], runDir], { cwd: root, encoding: 'utf8' });
+    assert.equal(back.status, 0, `${name}: ${back.stderr}`);
+    const lines = back.stdout.split('\n');
+    const issues = lines.filter((l) => l.startsWith('- {')).map((l) => JSON.parse(l.slice(2)));
+    if (name === 'missing') {
+      assert.ok(lines[0].startsWith('REFUSED design-refused'), back.stdout);
+      for (const file of ['spine.md', 'epics.md']) {
+        assert.ok(issues.some((i) => i.file === file && i.problem === 'missing file'), `${file}: ${back.stdout}`);
+      }
+    } else if (name === 'unparsed') {
+      assert.ok(lines[0].startsWith('REFUSED'), back.stdout);
+      assert.ok(issues.some((i) => i.file === 'prd.md'), back.stdout);
+    } else {
+      const phases = lines.map((l) => /^phase \d+: .+ {2}name file: (.+) {2}description file: (.+)$/.exec(l)).filter(Boolean);
+      assert.equal(phases.length, 3, back.stdout);
+      // the count the commit subject and the report use, so the session never works it out
+      assert.ok(lines.includes('phases: 3  requirements: 7  uncovered: []'), back.stdout);
+      for (const [, nameFile, descriptionFile] of phases) {
+        for (const f of [nameFile, descriptionFile]) {
+          assert.equal(dirname(f), runDir, f);
+          assert.ok(existsSync(f), f);
+        }
+      }
+      const projectFile = lines.find((l) => l.startsWith('project text file: '))?.slice('project text file: '.length);
+      assert.ok(projectFile && dirname(projectFile) === runDir, back.stdout);
+      assert.equal(readFileSync(projectFile, 'utf8'), JSON.parse(call.stdout).project_text);
+    }
+    assert.deepEqual(treeOf(root), {}, `${name} wrote into the project root`);
+  }
+});
+
+test('new-project-design.md\'s check holds the call and the stop, with no git init, mkdir, config copy or ask', () => {
+  const prose = readFileSync(NEW_PROJECT_DESIGN, 'utf8');
+  const step = checkStep(prose);
+  assert.match(step, /planning\.mjs" design-read --design "<path>" --first-phase 1 > "\$D\/design\.json"/);
+  assert.match(step, /A `REFUSED`\s+answer: show the detail, every issue and the hint, then stop\./);
+  const before = prose.slice(0, prose.indexOf(step) + step.length);
+  for (const word of ['git init', 'mkdir', 'config.json']) assert.ok(!before.includes(word), `${word} before the check ends`);
+  assert.doesNotMatch(before, /\bcp\s/);
+  assert.doesNotMatch(prose, /^\s*- header:/m);
+});
+
+// --- the new project written end to end at the seams ----------------------------
+
+/** The new project's three files, built around the design-read answer as new-project-design.md's steps 2 to 5 say. */
+function newProjectFiles(r, core) {
+  const project = r.project_text.replace(/^\[.*\]$/m, core);
+  const requirements = `# Requirements: ${r.title}\n\n**Defined:** ${today()}\n**Core Value:** ${core}\n\n## Active\n\n`
+    + `${r.active_text}\n## v2 Requirements\n\n## Out of Scope\n\n| Feature | Reason |\n|---------|--------|\n`
+    + '| Fees | The library is free to its members. |\n\n## Traceability\n\n| Requirement | Phase | Status |\n'
+    + '|-------------|-------|--------|\n';
+  const roadmap = `# Roadmap: ${r.title}\n\n## Overview\n\nThe phases are the design's epics, in its order.\n\n## Phases\n\n`
+    + `## Phase Details\n\n${r.sections_text}`;
+  return { project, requirements, roadmap };
+}
+
+test('a new project from a design: PROJECT.md, ## Active, the phases, their decisions and the cursor read back', (t) => {
+  const withCat03 = designCopy(t, {
+    'prd.md': (s) => s.replace('  > a catalog members can look at from home\n',
+      '  > a catalog members can look at from home\n- **CAT-03**: A volunteer retires a broken tool.\n'),
+  });
+  for (const [label, design, uncovered] of [['fixture', FIXTURE, []], ['CAT-03', withCat03, ['CAT-03']]]) {
+    const root = scratch('new-project-design-', t);
+    const call = spawnSync(process.execPath, [PLANNING, 'design-read', '--design', design, '--first-phase', '1'],
+      { cwd: root, encoding: 'utf8' });
+    const r = JSON.parse(call.stdout);
+    assert.equal(r.ok, true, `${label}: ${call.stdout}`);
+    assert.deepEqual(r.uncovered, uncovered, label);
+    const planning = join(root, '.planning');
+    mkdirSync(planning);
+    // setup item 3 stamps the state file, without which every seam below refuses the roadmap
+    const ignore = spawnSync(process.execPath, [PLANNING, 'trace', 'ignore', '--root', root], { cwd: root, encoding: 'utf8' });
+    assert.equal(JSON.parse(ignore.stdout).ok, true, `${label}: ${ignore.stdout}`);
+
+    const core = 'A volunteer can check a tool out at the counter and see who has it.';
+    const files = newProjectFiles(r, core);
+    writeFileSync(join(planning, 'PROJECT.md'), files.project);
+    writeFileSync(join(planning, 'REQUIREMENTS.md'), files.requirements);
+    writeFileSync(join(planning, 'ROADMAP.md'), files.roadmap);
+    const runDir = scratch('new-project-design-run-', t);
+    for (const p of r.phases) {
+      const name = join(runDir, `name-${p.number}.txt`);
+      const description = join(runDir, `description-${p.number}.txt`);
+      writeFileSync(name, p.name);
+      writeFileSync(description, p.description);
+      const a = run(['phase-entry', 'add', '--phase', String(p.number), '--name-file', name, '--description-file', description],
+        planning);
+      assert.equal(a.ok, true, `${label} phase ${p.number}: ${JSON.stringify(a)}`);
+    }
+    const size = run(['criteria-size', '--roadmap-min', '2', '--roadmap-max', '5'], planning);
+    assert.equal(size.ok, true, `${label}: ${JSON.stringify(size)}`);
+    if (label === 'fixture') assert.deepEqual(size.over, []);
+    const cursor = run(['cursor', 'set', '--phase', '1', '--status', 'ready to plan', '--next', '/cad-context 1'], planning);
+    assert.equal(cursor.ok, true, `${label}: ${JSON.stringify(cursor)}`);
+
+    const ids = ['CAT-01', 'CAT-02', 'LOAN-01', 'LOAN-02', 'LOAN-03', 'NFR-01', 'NFR-02'];
+    if (label === 'CAT-03') ids.splice(2, 0, 'CAT-03');
+    assert.deepEqual(parseActiveIds(readFileSync(join(planning, 'REQUIREMENTS.md'), 'utf8')), ids, label);
+    const status = run(['status'], planning);
+    assert.deepEqual(status.phases.map((p) => [p.n, p.name]), [[1, 'Catalog'], [2, 'Lending'], [3, 'Reminders']], label);
+    assert.equal(status.cursor.phase, 1, label);
+    const roadmap = readFileSync(join(planning, 'ROADMAP.md'), 'utf8');
+    const epicIds = [['CAT-01', 'CAT-02'], ['LOAN-01', 'LOAN-02', 'NFR-01', 'NFR-02'], ['LOAN-03']];
+    for (const n of [1, 2, 3]) assert.deepEqual(phaseRequirements(roadmap, n).ids, epicIds[n - 1], `${label} phase ${n}`);
+    assert.deepEqual([...roadmap.matchAll(/^\*\*Depends on:\*\* (.*)$/gm)].map((m) => m[1]), ['Nothing', 'Phase 1', 'Phase 2']);
+    const decisions = [1, 2, 3].map((n) => run(['spine-decisions', '--phase', String(n)], planning));
+    for (const d of decisions) assert.equal(d.ok, true, `${label}: ${JSON.stringify(d)}`);
+    assert.deepEqual(decisions.map((d) => d.count), [4, 6, 5], label);
+    assert.ok(decisions[1].text.includes(S03), decisions[1].text);
+
+    // only the bracketed Core Value line differs from the answer's text
+    const was = r.project_text.split('\n');
+    const now = readFileSync(join(planning, 'PROJECT.md'), 'utf8').split('\n');
+    assert.equal(now.length, was.length);
+    const changed = was.flatMap((line, i) => (line === now[i] ? [] : [i]));
+    assert.equal(changed.length, 1, label);
+    assert.ok(was[changed[0]].startsWith('[') && now[changed[0]] === core, label);
+  }
+});
+
+const NEW_PROJECT_GATES = ["I think I understand what you're after", 'Does this list capture what you\'re building?',
+  'Is anything missing?', 'Does this roadmap structure work for you?', 'Which {category} features', 'Cross-check the Core Value'];
+
+test('new-project-design.md writes the project with no gate, one docs: commit and the texts unchanged', () => {
+  const prose = readFileSync(NEW_PROJECT_DESIGN, 'utf8');
+  const flat = prose.replace(/\s+/g, ' ');
+  assert.doesNotMatch(prose, /^\s*- header:/m);
+  for (const gate of NEW_PROJECT_GATES) assert.ok(!prose.includes(gate), `holds "${gate}"`);
+  for (const step of ['setup', 'testing_policy', 'state', 'done']) {
+    assert.ok(prose.includes(`\`${step}\``), `names no \`${step}\` step`);
+  }
+  assert.ok(prose.includes('criteria-size --roadmap-min 2 --roadmap-max 5'));
+  assert.ok(prose.includes('`--research`'));
+  const commits = flat.split(/(?<=\.) /).filter((s) => s.includes('`docs:'));
+  assert.equal(commits.length, 1, commits.join('\n'));
+  assert.equal(flat.split('`docs:').length, 2, 'names more than one docs: commit');
+  assert.ok(commits[0].includes('`.planning/records/state.json`'), commits[0]);
+  assert.ok(commits[0].includes('printed `phases:` count'), commits[0]);
+  assert.match(flat.slice(flat.indexOf('## 3. Report')), /`done` step, with the printed `phases:` count as its `\{N\}`/);
+  assert.match(flat, /`## Active` holding the active text unchanged/);
+  assert.match(flat, /`## Phase Details` holding the sections text unchanged/);
+  assert.match(flat, /one `phase-entry add` per printed phase line/);
+  assert.match(flat, /Copy the printed project text file to `\.planning\/PROJECT\.md` byte for byte/);
+  assert.match(flat, /replace its one bracketed Core Value line .* change no other line/);
+  assert.doesNotMatch(prose, /- \[ \] \*\*Phase/);
+});
+
+test('/cad-new-project sends a --brief directory to new-project-design.md before any write, a file and a miss as before', () => {
+  const prose = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'workflows', 'new-project.md'), 'utf8');
+  const setup = prose.indexOf('<step name="setup">');
+  const pointer = prose.indexOf('new-project-design.md');
+  assert.ok(setup >= 0 && pointer > setup, 'setup holds no pointer to new-project-design.md');
+  assert.equal(prose.split('new-project-design.md').length, 2, 'new-project-design.md is named more than once');
+  const paragraph = prose.slice(prose.lastIndexOf('\n\n', pointer), prose.indexOf('\n\n', pointer));
+  assert.match(paragraph, /directory/, paragraph);
+  assert.ok(pointer < prose.indexOf('With `--brief`, `Read` that file WHOLE'), 'the pointer comes after the freeform read');
+  assert.ok(pointer < prose.indexOf('git init'), 'the pointer comes after git init');
+  assert.ok(prose.replace(/\s+/g, ' ').includes('("No brief at `<path>`.")'), 'the No brief stop is gone');
+});
