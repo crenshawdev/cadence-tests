@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureRoadmap, isEntryFile, makeTree, run, scratch, stampState, treeOf, verifyChecked } from './planning.test.mjs';
 import { readDesign } from '../cadence-core/bin/lib/seldon-design.mjs';
-import { classifyActiveSection, phaseCriteria, phaseDetailSpans, phaseRequirements } from '../cadence-core/bin/lib/planning-files.mjs';
+import { classifyActiveSection, parseActiveIds, phaseCriteria, phaseDetailSpans, phaseRequirements, sectionSpan } from '../cadence-core/bin/lib/planning-files.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -492,4 +492,78 @@ test('design-read: Cadence\'s own readers parse the rendered sections and ## Act
   const requirements = `# Requirements: Fixture\n\n## Active\n\n${r.active_text}\n## v2 Requirements\n`;
   assert.deepEqual(classifyActiveSection(requirements),
     { ids: ['CAT-01', 'CAT-02', 'LOAN-01', 'LOAN-02', 'LOAN-03', 'NFR-01', 'NFR-02'], issues: [] });
+});
+
+// --- the add end to end at the seams --------------------------------------------
+
+const PROJECT_MD = '# Fixture\n\nWhat this project is, which the add never touches.\n\n## Requirements\n\n### Active\n\nNo cycle open.\n';
+
+/** `insert` placed after the last non-blank line of `heading`'s section, one blank line before it, as the workflow's step 3 says. */
+function spliceInto(text, heading, insert) {
+  const lines = text.split('\n');
+  const { start, end } = sectionSpan(lines, heading);
+  let last = end - 1;
+  while (last > start && lines[last].trim() === '') last--;
+  return `${lines.slice(0, last + 1).join('\n')}\n\n${insert}${lines.slice(last + 1).join('\n')}`;
+}
+
+/** Are `before`'s lines all in `after`, byte-identical and in order? */
+function keepsLines(before, after) {
+  const rest = after.split('\n');
+  let i = 0;
+  for (const line of before.split('\n')) {
+    while (i < rest.length && rest[i] !== line) i++;
+    if (i === rest.length) return false;
+    i++;
+  }
+  return true;
+}
+
+test('design-read --add then phase-entry add per phase and the two texts keep every line already there', (t) => {
+  const open = makeTree({ roadmap: [{ n: 1, name: 'Old 1' }, { n: 2, name: 'Old 2' }] }, t);
+  verifyChecked(open);
+  const closed = makeTree({ roadmap: [] }, t);
+  stampState(closed);
+  for (const [label, planning] of [['open', open], ['closed', closed]]) {
+    writeFileSync(join(planning, 'REQUIREMENTS.md'), `${ACTIVE}\n## v2 Requirements\n\n- **LATER-01**: Put off.\n`);
+    writeFileSync(join(planning, 'PROJECT.md'), PROJECT_MD);
+    const before = Object.fromEntries(['REQUIREMENTS.md', 'ROADMAP.md', 'PROJECT.md']
+      .map((f) => [f, readFileSync(join(planning, f), 'utf8')]));
+    const design = run(['design-read', '--add', '--design', FIXTURE], planning);
+    assert.equal(design.ok, true, `${label}: ${JSON.stringify(design)}`);
+    const scratchDir = scratch('design-add-', t);
+    const adds = design.phases.map((p) => {
+      const name = join(scratchDir, `name-${p.number}.txt`);
+      const description = join(scratchDir, `description-${p.number}.txt`);
+      writeFileSync(name, p.name);
+      writeFileSync(description, p.description);
+      return run(['phase-entry', 'add', '--phase', String(p.number), '--name-file', name, '--description-file', description],
+        planning);
+    });
+    for (const a of adds) assert.equal(a.ok, true, `${label}: ${JSON.stringify(a)}`);
+    assert.deepEqual(adds.map((a) => a.opened_cycle === true), label === 'closed' ? [true, false, false] : [false, false, false]);
+    const reqFile = join(planning, 'REQUIREMENTS.md');
+    const roadmapFile = join(planning, 'ROADMAP.md');
+    writeFileSync(reqFile, spliceInto(readFileSync(reqFile, 'utf8'), '## Active', design.active_text));
+    writeFileSync(roadmapFile, spliceInto(readFileSync(roadmapFile, 'utf8'), '## Phase Details', design.sections_text));
+
+    const status = run(['status'], planning);
+    const added = design.phases.map((p) => [p.number, p.name]);
+    assert.deepEqual(status.phases.map((p) => [p.n, p.name]).slice(-3), added, label);
+    assert.deepEqual(added, label === 'open' ? [[3, 'Catalog'], [4, 'Lending'], [5, 'Reminders']]
+      : [[1, 'Catalog'], [2, 'Lending'], [3, 'Reminders']]);
+    for (const [file, text] of Object.entries(before)) {
+      const now = readFileSync(join(planning, file), 'utf8');
+      assert.ok(keepsLines(text, now), `${label}: ${file} lost or reordered a line it held\n${now}`);
+    }
+    assert.equal(readFileSync(join(planning, 'PROJECT.md'), 'utf8'), PROJECT_MD);
+    const requirements = readFileSync(reqFile, 'utf8');
+    assert.deepEqual(parseActiveIds(requirements),
+      ['OLD-01', 'CAT-01', 'CAT-02', 'LOAN-01', 'LOAN-02', 'LOAN-03', 'NFR-01', 'NFR-02']);
+    const roadmap = readFileSync(roadmapFile, 'utf8');
+    const epicIds = [['CAT-01', 'CAT-02'], ['LOAN-01', 'LOAN-02', 'NFR-01', 'NFR-02'], ['LOAN-03']];
+    for (const [i, p] of design.phases.entries()) {
+      assert.deepEqual(phaseRequirements(roadmap, p.number).ids, epicIds[i], `${label} phase ${p.number}`);
+    }
+  }
 });
