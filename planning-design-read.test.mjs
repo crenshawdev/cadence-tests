@@ -769,3 +769,106 @@ test('new-project-design.md\'s check holds the call and the stop, with no git in
   assert.doesNotMatch(before, /\bcp\s/);
   assert.doesNotMatch(prose, /^\s*- header:/m);
 });
+
+// --- the new project written end to end at the seams ----------------------------
+
+/** The new project's three files, built around the design-read answer as new-project-design.md's steps 2 to 5 say. */
+function newProjectFiles(r, core) {
+  const project = r.project_text.replace(/^\[.*\]$/m, core);
+  const requirements = `# Requirements: ${r.title}\n\n**Defined:** ${today()}\n**Core Value:** ${core}\n\n## Active\n\n`
+    + `${r.active_text}\n## v2 Requirements\n\n## Out of Scope\n\n| Feature | Reason |\n|---------|--------|\n`
+    + '| Fees | The library is free to its members. |\n\n## Traceability\n\n| Requirement | Phase | Status |\n'
+    + '|-------------|-------|--------|\n';
+  const roadmap = `# Roadmap: ${r.title}\n\n## Overview\n\nThe phases are the design's epics, in its order.\n\n## Phases\n\n`
+    + `## Phase Details\n\n${r.sections_text}`;
+  return { project, requirements, roadmap };
+}
+
+test('a new project from a design: PROJECT.md, ## Active, the phases, their decisions and the cursor read back', (t) => {
+  const withCat03 = designCopy(t, {
+    'prd.md': (s) => s.replace('  > a catalog members can look at from home\n',
+      '  > a catalog members can look at from home\n- **CAT-03**: A volunteer retires a broken tool.\n'),
+  });
+  for (const [label, design, uncovered] of [['fixture', FIXTURE, []], ['CAT-03', withCat03, ['CAT-03']]]) {
+    const root = scratch('new-project-design-', t);
+    const call = spawnSync(process.execPath, [PLANNING, 'design-read', '--design', design, '--first-phase', '1'],
+      { cwd: root, encoding: 'utf8' });
+    const r = JSON.parse(call.stdout);
+    assert.equal(r.ok, true, `${label}: ${call.stdout}`);
+    assert.deepEqual(r.uncovered, uncovered, label);
+    const planning = join(root, '.planning');
+    mkdirSync(planning);
+    // setup item 3 stamps the state file, without which every seam below refuses the roadmap
+    const ignore = spawnSync(process.execPath, [PLANNING, 'trace', 'ignore', '--root', root], { cwd: root, encoding: 'utf8' });
+    assert.equal(JSON.parse(ignore.stdout).ok, true, `${label}: ${ignore.stdout}`);
+
+    const core = 'A volunteer can check a tool out at the counter and see who has it.';
+    const files = newProjectFiles(r, core);
+    writeFileSync(join(planning, 'PROJECT.md'), files.project);
+    writeFileSync(join(planning, 'REQUIREMENTS.md'), files.requirements);
+    writeFileSync(join(planning, 'ROADMAP.md'), files.roadmap);
+    const runDir = scratch('new-project-design-run-', t);
+    for (const p of r.phases) {
+      const name = join(runDir, `name-${p.number}.txt`);
+      const description = join(runDir, `description-${p.number}.txt`);
+      writeFileSync(name, p.name);
+      writeFileSync(description, p.description);
+      const a = run(['phase-entry', 'add', '--phase', String(p.number), '--name-file', name, '--description-file', description],
+        planning);
+      assert.equal(a.ok, true, `${label} phase ${p.number}: ${JSON.stringify(a)}`);
+    }
+    const size = run(['criteria-size', '--roadmap-min', '2', '--roadmap-max', '5'], planning);
+    assert.equal(size.ok, true, `${label}: ${JSON.stringify(size)}`);
+    if (label === 'fixture') assert.deepEqual(size.over, []);
+    const cursor = run(['cursor', 'set', '--phase', '1', '--status', 'ready to plan', '--next', '/cad-context 1'], planning);
+    assert.equal(cursor.ok, true, `${label}: ${JSON.stringify(cursor)}`);
+
+    const ids = ['CAT-01', 'CAT-02', 'LOAN-01', 'LOAN-02', 'LOAN-03', 'NFR-01', 'NFR-02'];
+    if (label === 'CAT-03') ids.splice(2, 0, 'CAT-03');
+    assert.deepEqual(parseActiveIds(readFileSync(join(planning, 'REQUIREMENTS.md'), 'utf8')), ids, label);
+    const status = run(['status'], planning);
+    assert.deepEqual(status.phases.map((p) => [p.n, p.name]), [[1, 'Catalog'], [2, 'Lending'], [3, 'Reminders']], label);
+    assert.equal(status.cursor.phase, 1, label);
+    const roadmap = readFileSync(join(planning, 'ROADMAP.md'), 'utf8');
+    const epicIds = [['CAT-01', 'CAT-02'], ['LOAN-01', 'LOAN-02', 'NFR-01', 'NFR-02'], ['LOAN-03']];
+    for (const n of [1, 2, 3]) assert.deepEqual(phaseRequirements(roadmap, n).ids, epicIds[n - 1], `${label} phase ${n}`);
+    assert.deepEqual([...roadmap.matchAll(/^\*\*Depends on:\*\* (.*)$/gm)].map((m) => m[1]), ['Nothing', 'Phase 1', 'Phase 2']);
+    const decisions = [1, 2, 3].map((n) => run(['spine-decisions', '--phase', String(n)], planning));
+    for (const d of decisions) assert.equal(d.ok, true, `${label}: ${JSON.stringify(d)}`);
+    assert.deepEqual(decisions.map((d) => d.count), [4, 6, 5], label);
+    assert.ok(decisions[1].text.includes(S03), decisions[1].text);
+
+    // only the bracketed Core Value line differs from the answer's text
+    const was = r.project_text.split('\n');
+    const now = readFileSync(join(planning, 'PROJECT.md'), 'utf8').split('\n');
+    assert.equal(now.length, was.length);
+    const changed = was.flatMap((line, i) => (line === now[i] ? [] : [i]));
+    assert.equal(changed.length, 1, label);
+    assert.ok(was[changed[0]].startsWith('[') && now[changed[0]] === core, label);
+  }
+});
+
+const NEW_PROJECT_GATES = ["I think I understand what you're after", 'Does this list capture what you\'re building?',
+  'Is anything missing?', 'Does this roadmap structure work for you?', 'Which {category} features', 'Cross-check the Core Value'];
+
+test('new-project-design.md writes the project with no gate, one docs: commit and the texts unchanged', () => {
+  const prose = readFileSync(NEW_PROJECT_DESIGN, 'utf8');
+  const flat = prose.replace(/\s+/g, ' ');
+  assert.doesNotMatch(prose, /^\s*- header:/m);
+  for (const gate of NEW_PROJECT_GATES) assert.ok(!prose.includes(gate), `holds "${gate}"`);
+  for (const step of ['setup', 'testing_policy', 'state', 'done']) {
+    assert.ok(prose.includes(`\`${step}\``), `names no \`${step}\` step`);
+  }
+  assert.ok(prose.includes('criteria-size --roadmap-min 2 --roadmap-max 5'));
+  assert.ok(prose.includes('`--research`'));
+  const commits = flat.split(/(?<=\.) /).filter((s) => s.includes('`docs:'));
+  assert.equal(commits.length, 1, commits.join('\n'));
+  assert.equal(flat.split('`docs:').length, 2, 'names more than one docs: commit');
+  assert.ok(commits[0].includes('`.planning/records/state.json`'), commits[0]);
+  assert.match(flat, /`## Active` holding the active text unchanged/);
+  assert.match(flat, /`## Phase Details` holding the sections text unchanged/);
+  assert.match(flat, /one `phase-entry add` per printed phase line/);
+  assert.match(flat, /Copy the printed project text file to `\.planning\/PROJECT\.md` byte for byte/);
+  assert.match(flat, /replace its one bracketed Core Value line .* change no other line/);
+  assert.doesNotMatch(prose, /- \[ \] \*\*Phase/);
+});
