@@ -275,3 +275,33 @@ test('context.md: write_context opens ## Durable decisions with the spine decisi
   assert.match(flat, /spine decisions, `## Durable decisions` opens with that `text`, inserted unchanged/);
   assert.match(flat, /The spine decisions go ahead of every other decision and skip the durability filter\./);
 });
+
+test('context.md: confirm_decisions keeps the spine decisions out of its question and its multiSelect', () => {
+  const step = stepOf('confirm_decisions');
+  assert.match(step, /- question: "Do these decisions look right to you\?"\n/);
+  assert.match(step.replace(/\s+/g, ' '), /The spine decisions are locked, so they stay out of the picture above, out of "Do these decisions look right to you\?" and out of the "Change some" multiSelect\./);
+});
+
+test('context.md: the analyzer payload carries the spine decisions as locked, between prior decisions and recalled memory', () => {
+  const step = stepOf('analyze');
+  const open = step.indexOf('```\n', step.indexOf('Prompt payload:'));
+  const fence = step.slice(open + 4, step.indexOf('```', open + 4));
+  const line = fence.split('\n').find((l) => l.startsWith('<spine_decisions>'));
+  assert.ok(line, 'the payload has no spine decisions line');
+  assert.match(line, /locked/);
+  assert.ok(fence.indexOf('<prior_decisions>') < fence.indexOf(line), 'the line sits above <prior_decisions>');
+  assert.ok(fence.indexOf(line) < fence.indexOf('<recalled_memory>'), 'the line sits below <recalled_memory>');
+});
+
+test('context.md: success_criteria lets the spine decisions trace to their field, not to a confirmation', () => {
+  const start = CONTEXT_MD.indexOf('<success_criteria>');
+  const block = CONTEXT_MD.slice(start, CONTEXT_MD.indexOf('</success_criteria>', start)).replace(/\s+/g, ' ');
+  assert.match(block, /Every decision traces to a user confirmation or correction, with evidence cited - except the spine decisions, which trace to the phase's `\*\*Spine decisions:\*\*` field/);
+});
+
+test('context.md: still exactly 8 asks, and resolve_phase locks the spine decisions for every ask on both spend_gate arms', () => {
+  assert.equal(CONTEXT_MD.split('\n').filter((l) => /^\s*- header:/.test(l)).length, 8);
+  // the skip arm never enters analyze, so this sentence is its only guard
+  assert.match(stepOf('resolve_phase').replace(/\s+/g, ' '),
+    /Held spine decisions are locked: no ask this run makes is about one of them, on either `spend_gate` arm, the skip arm's own gray areas included\./);
+});
