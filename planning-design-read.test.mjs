@@ -596,6 +596,19 @@ test('design-read: PROJECT.md\'s Constraints holds each stack and hosting decisi
   assert.ok(footer[0].includes(today()), footer[0]);
 });
 
+test('design-read: a brief section that would hide or move a PROJECT.md heading is refused by name, --add unchanged', (t) => {
+  const brief = (/** @type {string} */ s) => s
+    .replace('\n## Solution\n', '\n```\nan example that never closes\n\n## Solution\n')
+    .replace('\n## What it refuses\n', '\n    ## Constraints\n\n## What it refuses\n');
+  const design = designCopy(t, { 'brief.md': brief });
+  const r = read(t, design);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.reason, 'design-refused');
+  assert.deepEqual(r.issues.map((/** @type {any} */ i) => [i.file, i.section]), [['brief.md', 'Problem'], ['brief.md', 'Scope']]);
+  // --add writes no PROJECT.md, so the same brief is no problem there
+  assert.equal(add(t, project(t, [1]).planning, design).ok, true);
+});
+
 test('design-read --add: the accepted answer carries no PROJECT.md text, its keys as they were', (t) => {
   const r = add(t, project(t, [1]).planning);
   assert.equal(r.ok, true, JSON.stringify(r));
