@@ -547,6 +547,8 @@ const CALLSITES = [
   { file: 'seed-reqs.mjs', fn: 'cmdSeedReqs', ordinal: 1, disposition: 'unconditional',
     why: 'a WRITE face: the traceability rows it seeds carry the phase, so a lossy spelling is refused'
       + ' whatever is on disk (D-07)' },
+  { file: 'spine-decisions.mjs', fn: 'cmdSpineDecisions', ordinal: 1, disposition: 'tree-aware',
+    why: 'reads that phase\'s Spine decisions out of ROADMAP.md by the caller\'s spelling' },
   { file: 'testing-policy.mjs', fn: 'cmdCiStatus', ordinal: 1, disposition: 'tree-aware',
     why: 'reads and rewrites the phase UAT.md to record the commit' },
   { file: 'trace.mjs', fn: 'checkpointPlanTasks', ordinal: 1, disposition: 'exempt',
@@ -618,10 +620,10 @@ test('census: every phase-guard call and direct phase-argument parse under plann
     'CALLSITES names a callsite the walk no longer finds - delete the row if the callsite is gone,'
     + ' or re-key it if its enclosing function was renamed.');
 
-  // CADENCE-CENSUS: phase-spelling-callsites | asserts: 30 phase-guard calls and direct phase-argument parses under cadence-core/bin/planning/, 15 of them tree-aware, 4 unconditional and 11 exempt
-  assert.equal(found.length, 30, `callsite count moved: ${found.length}`);
+  // CADENCE-CENSUS: phase-spelling-callsites | asserts: 31 phase-guard calls and direct phase-argument parses under cadence-core/bin/planning/, 16 of them tree-aware, 4 unconditional and 11 exempt
+  assert.equal(found.length, 31, `callsite count moved: ${found.length}`);
   const by = (d) => CALLSITES.filter((c) => c.disposition === d).length;
-  assert.equal(by('tree-aware'), 15);
+  assert.equal(by('tree-aware'), 16);
   assert.equal(by('unconditional'), 4);
   assert.equal(by('exempt'), 11);
 });
