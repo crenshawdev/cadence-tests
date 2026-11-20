@@ -238,3 +238,40 @@ test('spine-decisions: Cadence\'s CONTEXT readers take the answer\'s lines as de
   assert.deepEqual(contextDecisions(context).map((d) => d.slice(0, 4)),
     ['D-01', 'D-02', 'D-03', 'D-04', 'D-05', 'D-06', 'D-07', 'D-08']);
 });
+
+// --- /cad-context: where the workflow reads them and where it writes them ----------
+//
+// The session runs the read and does the Write, and no test can run a session, so these arms pin the prose that
+// tells it to.
+
+const CONTEXT_MD = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'workflows', 'context.md'), 'utf8');
+
+/** One step of context.md, from its `<step name="...">` to its `</step>`. @param {string} name */
+function stepOf(name) {
+  const start = CONTEXT_MD.indexOf(`<step name="${name}">`);
+  assert.notEqual(start, -1, `context.md has no ${name} step`);
+  return CONTEXT_MD.slice(start, CONTEXT_MD.indexOf('</step>', start));
+}
+
+const READ_CALL = 'planning.mjs" spine-decisions --phase';
+
+test('context.md: resolve_phase makes the one spine-decisions read, above spend_gate', () => {
+  assert.equal(CONTEXT_MD.split(READ_CALL).length - 1, 1);
+  const at = CONTEXT_MD.indexOf(READ_CALL);
+  const resolve = CONTEXT_MD.indexOf('<step name="resolve_phase">');
+  assert.ok(resolve < at && at < resolve + stepOf('resolve_phase').length, 'the read sits outside resolve_phase');
+  assert.ok(at < CONTEXT_MD.indexOf('<step name="spend_gate">'), 'the read comes after the spend question');
+});
+
+test('context.md: after the read, ok:false stops before writing and a phase with none carries on unchanged', () => {
+  const step = stepOf('resolve_phase');
+  const after = step.slice(step.indexOf(READ_CALL)).replace(/\s+/g, ' ');
+  assert.match(after, /On `ok:false`[^.]*\bstop\. Nothing is written, CONTEXT\.md included\./);
+  assert.match(after, /With `count` 0, carry on exactly as below, with no question, section or remark\./);
+});
+
+test('context.md: write_context opens ## Durable decisions with the spine decisions, ahead of every other', () => {
+  const flat = stepOf('write_context').replace(/\s+/g, ' ');
+  assert.match(flat, /spine decisions, `## Durable decisions` opens with that `text`, inserted unchanged/);
+  assert.match(flat, /The spine decisions go ahead of every other decision and skip the durability filter\./);
+});
