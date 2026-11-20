@@ -494,6 +494,41 @@ test('design-read: Cadence\'s own readers parse the rendered sections and ## Act
     { ids: ['CAT-01', 'CAT-02', 'LOAN-01', 'LOAN-02', 'LOAN-03', 'NFR-01', 'NFR-02'], issues: [] });
 });
 
+test('design-read: a lone \\r, U+2028 or U+2029 is refused by file and line, and CRLF line ends are not', (t) => {
+  for (const mark of ['\r', '\u2028', '\u2029']) {
+    const design = designCopy(t, {
+      'epics.md': (s) => s.replace('No loans and no member records.', `No loans.${mark}**Requirements:** EVIL-01`),
+    });
+    const r = read(t, design, '3');
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.ok(r.issues.some((i) => i.file === 'epics.md' && / on line 6 - /.test(i.problem)), JSON.stringify(r.issues));
+  }
+  const crlf = designCopy(t, Object.fromEntries(['brief.md', 'prd.md', 'spine.md', 'epics.md']
+    .map((f) => [f, (/** @type {string} */ s) => s.replace(/\n/g, '\r\n')])));
+  assert.equal(read(t, crlf, '3').ok, true);
+});
+
+test('design-read: an ID its phase\'s Requirements line would not read back is refused, naming the epic', (t) => {
+  const rename = (/** @type {string} */ s) => s.replaceAll('CAT-01', '2FA-01');
+  const r = read(t, designCopy(t, { 'prd.md': rename, 'epics.md': rename }), '3');
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.deepEqual(r.issues, [{ file: 'epics.md', id: 'E-01', field: 'Requirements',
+    problem: '"2FA-01" would not read back from phase 3\'s Requirements line - Cadence reads an ID there only when it opens with a letter' }]);
+});
+
+test('/cad-phase sends every --brief to phase-design.md, whose Route step refuses it on any op but add before the read', () => {
+  const doc = (/** @type {string} */ path) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', path), 'utf8');
+  const phase = doc('cadence-core/workflows/phase.md');
+  const route = phase.indexOf('## Route on $ARGUMENTS');
+  const pointer = phase.indexOf('Any `$ARGUMENTS` carrying `--brief`: Read `${CLAUDE_PLUGIN_ROOT}/cadence-core/workflows/phase-design.md`');
+  assert.ok(route >= 0 && pointer > route && pointer < phase.indexOf('### add', route), 'the pointer sits ahead of the op routes');
+  const design = doc('cadence-core/workflows/phase-design.md');
+  const step = design.slice(design.indexOf('## 1. Route'), design.indexOf('## 2. Check'));
+  assert.match(step, /`--brief` goes only with `add`\. Any other op carrying it is refused here,/);
+  assert.match(step, /before anything is read/);
+  assert.ok(design.indexOf('design-read --add') > design.indexOf('## 2. Check'), 'the refusal comes before the design-read call');
+});
+
 // --- the add end to end at the seams --------------------------------------------
 
 const PROJECT_MD = '# Fixture\n\nWhat this project is, which the add never touches.\n\n## Requirements\n\n### Active\n\nNo cycle open.\n';
