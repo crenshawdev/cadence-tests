@@ -745,6 +745,8 @@ test('the design route\'s check refuses a design missing documents or not parsin
     } else {
       const phases = lines.map((l) => /^phase \d+: .+ {2}name file: (.+) {2}description file: (.+)$/.exec(l)).filter(Boolean);
       assert.equal(phases.length, 3, back.stdout);
+      // the count the commit subject and the report use, so the session never works it out
+      assert.ok(lines.includes('phases: 3  requirements: 7  uncovered: []'), back.stdout);
       for (const [, nameFile, descriptionFile] of phases) {
         for (const f of [nameFile, descriptionFile]) {
           assert.equal(dirname(f), runDir, f);
@@ -865,6 +867,8 @@ test('new-project-design.md writes the project with no gate, one docs: commit an
   assert.equal(commits.length, 1, commits.join('\n'));
   assert.equal(flat.split('`docs:').length, 2, 'names more than one docs: commit');
   assert.ok(commits[0].includes('`.planning/records/state.json`'), commits[0]);
+  assert.ok(commits[0].includes('printed `phases:` count'), commits[0]);
+  assert.match(flat.slice(flat.indexOf('## 3. Report')), /`done` step, with the printed `phases:` count as its `\{N\}`/);
   assert.match(flat, /`## Active` holding the active text unchanged/);
   assert.match(flat, /`## Phase Details` holding the sections text unchanged/);
   assert.match(flat, /one `phase-entry add` per printed phase line/);
