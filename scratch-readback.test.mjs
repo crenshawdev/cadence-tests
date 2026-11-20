@@ -18,7 +18,7 @@
 // written down here is the fixture and the ARGUMENTS each script takes -
 // facts about how the surrounding step calls it, not a copy of the script.
 //
-// TWO OF THE SEVEN READ-BACKS NEED NOTHING HERE, and this is why. The cross-model
+// TWO OF THE EIGHT READ-BACKS NEED NOTHING HERE, and this is why. The cross-model
 // payload file is read by `review-provider.mjs --payload`, whose named
 // `bad-payload` refusal before any network call is already proved by
 // `review-provider.test.mjs`'s malformed-payload row - and it
@@ -202,15 +202,36 @@ const READBACKS = [
       },
     ],
   },
+  {
+    // the new project's check: the same directory argument and files, plus the PROJECT.md text, which this answer lacks
+    surface: 'cadence-core/workflows/new-project-design.md',
+    cases: [
+      {
+        name: 'an answer truncated mid-object', reason: 'scratch-unreadable',
+        setup: (d) => {
+          writeFileSync(join(d, 'design.json'), '{"ok":true,"title":"Toolshed","phases":[{"number":1,"na');
+          return [d];
+        },
+      },
+      {
+        name: 'a well-formed accepted answer with no PROJECT.md text', reason: 'scratch-shape',
+        setup: (d) => {
+          writeFileSync(join(d, 'design.json'), '{"ok":true,"title":"Toolshed","phases":[{"number":1,"name":"Catalog",'
+            + '"description":"x"}],"requirements":[],"uncovered":[],"active_text":"a\\n","sections_text":"s\\n"}');
+          return [d];
+        },
+      },
+    ],
+  },
 ];
 
-test('the five prose surfaces ship exactly one read-back script each', () => {
+test('the six prose surfaces ship exactly one read-back script each', () => {
   // Pinned the way bulk-output.test.mjs pins its row count: a site that loses
   // its read-back turns this file RED rather than quietly shrinking the set
   // the assertions below prove.
   const counts = READBACKS.map((r) => scriptsIn(r.surface).length);
-  assert.deepEqual(counts, [1, 1, 1, 1, 1], JSON.stringify(counts));
-  assert.equal(counts.reduce((a, b) => a + b, 0), 5);
+  assert.deepEqual(counts, [1, 1, 1, 1, 1, 1], JSON.stringify(counts));
+  assert.equal(counts.reduce((a, b) => a + b, 0), 6);
 });
 
 for (const { surface, cases } of READBACKS) {

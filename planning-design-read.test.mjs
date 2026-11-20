@@ -9,10 +9,11 @@
 // a sibling that imports from here registers nothing twice.
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ensureRoadmap, isEntryFile, makeTree, run, scratch, stampState, today, treeOf, verifyChecked } from './planning.test.mjs';
+import { PLANNING, ensureRoadmap, isEntryFile, makeTree, run, scratch, stampState, today, treeOf, verifyChecked } from './planning.test.mjs';
 import { readDesign } from '../cadence-core/bin/lib/seldon-design.mjs';
 import { classifyActiveSection, parseActiveIds, phaseCriteria, phaseDetailSpans, phaseRequirements, sectionSpan } from '../cadence-core/bin/lib/planning-files.mjs';
 
@@ -687,4 +688,71 @@ test('design-read --add then phase-entry add per phase and the two texts keep ev
       assert.deepEqual(phaseRequirements(roadmap, p.number).ids, epicIds[i], `${label} phase ${p.number}`);
     }
   }
+});
+
+// --- the new project's check, run as new-project-design.md writes it -------------
+
+const NEW_PROJECT_DESIGN = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'workflows', 'new-project-design.md');
+
+/** new-project-design.md's `## 1. Check` step, to the next `## ` heading or the end. @param {string} prose */
+function checkStep(prose) {
+  const start = prose.indexOf('## 1. Check');
+  assert.ok(start >= 0, 'no ## 1. Check step');
+  const next = prose.indexOf('\n## ', start);
+  return prose.slice(start, next === -1 ? prose.length : next);
+}
+
+test('the design route\'s check refuses a design missing documents or not parsing, and writes only its run directory', (t) => {
+  const scripts = [...readFileSync(NEW_PROJECT_DESIGN, 'utf8').matchAll(/node -e '([^']*)'/g)].map((m) => m[1]);
+  assert.equal(scripts.length, 1);
+  const missing = designCopy(t);
+  rmSync(join(missing, 'spine.md'));
+  rmSync(join(missing, 'epics.md'));
+  const unparsed = designCopy(t, { 'prd.md': PRD_BREAKS['a bullet above its category'] });
+  for (const [name, design] of [['missing', missing], ['unparsed', unparsed], ['fixture', FIXTURE]]) {
+    const root = scratch('new-project-root-', t);
+    const runDir = scratch('new-project-run-', t);
+    // the call as the step writes it: from the project root, no --dir, the answer redirected into the run directory
+    const call = spawnSync(process.execPath, [PLANNING, 'design-read', '--design', design, '--first-phase', '1'],
+      { cwd: root, encoding: 'utf8' });
+    assert.ok(call.stdout.length > 0, `${name}: ${call.stderr}`);
+    writeFileSync(join(runDir, 'design.json'), call.stdout);
+    const back = spawnSync(process.execPath, ['-e', scripts[0], runDir], { cwd: root, encoding: 'utf8' });
+    assert.equal(back.status, 0, `${name}: ${back.stderr}`);
+    const lines = back.stdout.split('\n');
+    const issues = lines.filter((l) => l.startsWith('- {')).map((l) => JSON.parse(l.slice(2)));
+    if (name === 'missing') {
+      assert.ok(lines[0].startsWith('REFUSED design-refused'), back.stdout);
+      for (const file of ['spine.md', 'epics.md']) {
+        assert.ok(issues.some((i) => i.file === file && i.problem === 'missing file'), `${file}: ${back.stdout}`);
+      }
+    } else if (name === 'unparsed') {
+      assert.ok(lines[0].startsWith('REFUSED'), back.stdout);
+      assert.ok(issues.some((i) => i.file === 'prd.md'), back.stdout);
+    } else {
+      const phases = lines.map((l) => /^phase \d+: .+ {2}name file: (.+) {2}description file: (.+)$/.exec(l)).filter(Boolean);
+      assert.equal(phases.length, 3, back.stdout);
+      for (const [, nameFile, descriptionFile] of phases) {
+        for (const f of [nameFile, descriptionFile]) {
+          assert.equal(dirname(f), runDir, f);
+          assert.ok(existsSync(f), f);
+        }
+      }
+      const projectFile = lines.find((l) => l.startsWith('project text file: '))?.slice('project text file: '.length);
+      assert.ok(projectFile && dirname(projectFile) === runDir, back.stdout);
+      assert.equal(readFileSync(projectFile, 'utf8'), JSON.parse(call.stdout).project_text);
+    }
+    assert.deepEqual(treeOf(root), {}, `${name} wrote into the project root`);
+  }
+});
+
+test('new-project-design.md\'s check holds the call and the stop, with no git init, mkdir, config copy or ask', () => {
+  const prose = readFileSync(NEW_PROJECT_DESIGN, 'utf8');
+  const step = checkStep(prose);
+  assert.match(step, /planning\.mjs" design-read --design "<path>" --first-phase 1 > "\$D\/design\.json"/);
+  assert.match(step, /A `REFUSED`\s+answer: show the detail, every issue and the hint, then stop\./);
+  const before = prose.slice(0, prose.indexOf(step) + step.length);
+  for (const word of ['git init', 'mkdir', 'config.json']) assert.ok(!before.includes(word), `${word} before the check ends`);
+  assert.doesNotMatch(before, /\bcp\s/);
+  assert.doesNotMatch(prose, /^\s*- header:/m);
 });
