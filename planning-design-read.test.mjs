@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureRoadmap, isEntryFile, makeTree, run, scratch, stampState, treeOf, verifyChecked } from './planning.test.mjs';
 import { readDesign } from '../cadence-core/bin/lib/seldon-design.mjs';
+import { classifyActiveSection, phaseCriteria, phaseDetailSpans, phaseRequirements } from '../cadence-core/bin/lib/planning-files.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
 const test = isEntryFile(import.meta.url) ? nodeTest : () => {};
@@ -402,4 +403,93 @@ test('design-read --add: a file, an empty path, a project missing a file or head
     assert.ok(r.hint, `${name} carries no hint`);
     if (name === 'no state file') assert.equal(existsSync(join(planning, 'records', 'state.json')), false);
   }
+});
+
+// --- the rendered ## Active bullets and ### Phase N: sections -------------------
+
+// typed from the fixture's lines, never taken from the renderer
+const ACTIVE_TEXT = [
+  '### Catalog',
+  '',
+  '- [ ] **CAT-01**: A volunteer adds a tool with a name, a category and a photo. [ASSUMPTION]',
+  '- [ ] **CAT-02**: A member searches the catalog by name or category.',
+  '',
+  '### Loans',
+  '',
+  '- [ ] **LOAN-01**: A volunteer checks a tool out to a member with a due date.',
+  '- [ ] **LOAN-02**: A volunteer checks a tool back in.',
+  '- [ ] **LOAN-03**: A member gets an email reminder the day before a loan is due.',
+  '',
+  '### Non-functional',
+  '',
+  '- [ ] **NFR-01**: A checkout takes under three seconds on a phone over a slow connection. [ASSUMPTION]',
+  '- [ ] **NFR-02**: Member emails and addresses are visible only to volunteers. [ASSUMPTION]',
+].map((l) => `${l}\n`).join('');
+
+const CATALOG_SECTION = [
+  '### Phase 3: Catalog',
+  '**Goal:** Volunteers keep a catalog of tools, and members can search it. Tools and their categories only. No loans and'
+    + ' no member records. It\'s epic E-01 of the Seldon design "Toolshed".',
+  '**Depends on:** Nothing',
+  '**Requirements:** CAT-01, CAT-02',
+  '**Success Criteria:**',
+  '1. A volunteer can add a tool with a name, a category and a photo.',
+  '2. A member can find that tool by name or by category.',
+  '3. Everything built so far, this epic included, works end to end, with every test passing and nothing half-built showing.',
+  '**Spine decisions:**',
+  '- **S-02: One server-rendered web app** (design approach): The counter screens and the public catalog are pages of'
+    + ' one app. There\'s no separate API.',
+  '- **S-04: Node with one SQLite database** (stack): The app runs on Node and keeps the catalog, the members and the'
+    + ' loan log in one SQLite database file. [ASSUMPTION]',
+  '- **S-05: One small rented server** (hosting): The app and its database file run on one small rented virtual server.'
+    + ' [ASSUMPTION]',
+  '- **S-06: Members reach only the catalog** (boundaries): The catalog pages are the only part members and the public'
+    + ' reach from outside, and what they type there is only ever read as search text. Member emails and addresses sit'
+    + ' behind the volunteer login, and no catalog page shows them. [ASSUMPTION]',
+].map((l) => `${l}\n`).join('');
+
+/** The `### Phase N:` sections in `text`, by number. @param {string} text */
+const sectionsOf = (text) => Object.fromEntries(text.split(/\n(?=### Phase )/)
+  .map((s) => [Number(/^### Phase (\d+):/.exec(s)?.[1]), s.endsWith('\n') ? s : `${s}\n`]));
+
+test('design-read: the ## Active text and the phase sections carry every value byte for byte', (t) => {
+  const r = add(t, project(t, [1, 2]).planning);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.active_text, ACTIVE_TEXT);
+  assert.deepEqual([...r.sections_text.matchAll(/^### Phase .*$/gm)].map((m) => m[0]),
+    ['### Phase 3: Catalog', '### Phase 4: Lending', '### Phase 5: Reminders']);
+  const sections = sectionsOf(r.sections_text);
+  assert.equal(sections[3], CATALOG_SECTION);
+  assert.ok(sections[4].split('\n').includes(`- **S-03: Reminders run from a daily scheduled job** (boundaries): ${S03}`));
+});
+
+test('design-read: each Goal names its own epic, and an epic with no decisions has no Spine decisions line', (t) => {
+  const renamed = read(t, designCopy(t, {
+    'epics.md': (s) => s.replace('## E-01:', '## E-07:').replace('## E-02:', '## E-03:').replace('## E-03: Reminders', '## E-05: Reminders')
+      .replace('**Depends on:** E-01', '**Depends on:** E-07').replace('**Depends on:** E-02', '**Depends on:** E-03'),
+  }), '3');
+  assert.equal(renamed.ok, true, JSON.stringify(renamed));
+  assert.deepEqual([...renamed.sections_text.matchAll(/^\*\*Goal:\*\* .*It's epic (E-\d+) of the Seldon design "Toolshed"\.$/gm)]
+    .map((m) => m[1]), ['E-07', 'E-03', 'E-05']);
+  const none = read(t, designCopy(t, {
+    'epics.md': (s) => s.replace('**Spine decisions:** S-01, S-02, S-03, S-04, S-05\n', '**Spine decisions:** None\n'),
+  }), '3');
+  assert.equal(none.ok, true, JSON.stringify(none));
+  const sections = sectionsOf(none.sections_text);
+  assert.ok(sections[3].includes('**Spine decisions:**\n'));
+  assert.ok(sections[4].includes('**Spine decisions:**\n'));
+  assert.ok(!sections[5].includes('**Spine decisions:**'), sections[5]);
+});
+
+test('design-read: Cadence\'s own readers parse the rendered sections and ## Active bullets', (t) => {
+  const r = read(t, FIXTURE, '3');
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const roadmap = `# Roadmap: Fixture\n\n## Phases\n\n## Phase Details\n\n${r.sections_text}`;
+  assert.deepEqual(phaseRequirements(roadmap, 4).ids, ['LOAN-01', 'LOAN-02', 'NFR-01', 'NFR-02']);
+  assert.equal(phaseCriteria(roadmap, 4).count, 4);
+  const lines = roadmap.split('\n');
+  for (const n of [3, 4, 5]) assert.equal(phaseDetailSpans(lines, n).length, 1, `phase ${n}`);
+  const requirements = `# Requirements: Fixture\n\n## Active\n\n${r.active_text}\n## v2 Requirements\n`;
+  assert.deepEqual(classifyActiveSection(requirements),
+    { ids: ['CAT-01', 'CAT-02', 'LOAN-01', 'LOAN-02', 'LOAN-03', 'NFR-01', 'NFR-02'], issues: [] });
 });
