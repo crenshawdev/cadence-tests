@@ -9,10 +9,10 @@
 // a sibling that imports from here registers nothing twice.
 import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ensureRoadmap, isEntryFile, run, scratch, stampState, treeOf } from './planning.test.mjs';
+import { ensureRoadmap, isEntryFile, makeTree, run, scratch, stampState, treeOf, verifyChecked } from './planning.test.mjs';
 import { readDesign } from '../cadence-core/bin/lib/seldon-design.mjs';
 
 /** `node:test`'s `test` when run directly, a no-op when imported (see header). */
@@ -284,5 +284,122 @@ test('design-read: a repeated or unlisted section and a repeated epic field are 
     const r = read(t, design);
     assert.equal(r.ok, false, `${name}: ${JSON.stringify(r)}`);
     assert.deepEqual(r.issues, [issue], name);
+  }
+});
+
+// --- design-read --add: the project a design joins ----------------------------
+
+const ACTIVE = '# Requirements: Fixture\n\n## Active\n\n### Old\n\n- [ ] **OLD-01**: An old requirement.\n';
+
+/**
+ * A scratch project holding the roadmap phases named, stamped from them, with `requirements` as its REQUIREMENTS.md.
+ * @param {any} t @param {number[]} phases @param {string} [requirements]
+ */
+function project(t, phases, requirements = ACTIVE) {
+  const planning = makeTree({ roadmap: phases.map((n) => ({ n, name: `Old ${n}` })) }, t);
+  verifyChecked(planning);
+  writeFileSync(join(planning, 'REQUIREMENTS.md'), requirements);
+  return { planning, root: dirname(planning) };
+}
+
+/** design-read --add on `design` against `planning`, which it must leave byte-identical. */
+function add(t, planning, design = FIXTURE, extra = []) {
+  const root = dirname(planning);
+  const before = treeOf(root);
+  const r = run(['design-read', '--add', '--design', design, ...extra], planning);
+  assert.deepEqual(treeOf(root), before, `design-read --add changed the project: ${JSON.stringify(r)}`);
+  return r;
+}
+
+test('design-read --add: the new phases number from the highest phase in the state, never its count', (t) => {
+  const r = add(t, project(t, [1, 2, 2.1]).planning);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.phases.map((p) => p.number), [3, 4, 5]);
+  assert.equal(r.phases[1].depends_on, 'Phase 3');
+  const empty = add(t, project(t, []).planning);
+  assert.equal(empty.ok, true, JSON.stringify(empty));
+  assert.deepEqual(empty.phases.map((p) => p.number), [1, 2, 3]);
+});
+
+// every place an ID can sit in REQUIREMENTS.md, and three near misses that must not clash
+const CLASHING = `${ACTIVE}
+Old notes name CAT-2, XLOAN-03 and LOAN-031 in passing.
+
+## Shipped
+
+The first release shipped LOAN-02 with the counter screen.
+
+## v2 Requirements
+
+- **NFR-01**: A requirement put off to later.
+
+## Traceability
+
+| Requirement | Phase | Status |
+|---|---|---|
+| CAT-01 | Phase 1 | Complete |
+
+\`\`\`
+LOAN-01
+\`\`\`
+`;
+
+test('design-read --add: an ID anywhere in REQUIREMENTS.md clashes, in one answer beside the design issues', (t) => {
+  const { planning } = project(t, [1], CLASHING);
+  const r = add(t, planning);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.reason, 'design-refused');
+  assert.deepEqual(r.issues.map((i) => [i.file, i.id]),
+    [['prd.md', 'CAT-01'], ['prd.md', 'LOAN-01'], ['prd.md', 'LOAN-02'], ['prd.md', 'NFR-01']]);
+  assert.match(r.hint, /prd\.md/);
+  assert.match(r.hint, /epics\.md/);
+  const broken = designCopy(t, {
+    'epics.md': (s) => s.replace('**Boundaries:** The daily job and its emails. It only reads the loan log.\n', ''),
+  });
+  const both = add(t, planning, broken);
+  assert.equal(both.ok, false, JSON.stringify(both));
+  assert.deepEqual(both.issues.map((i) => [i.file, i.id, i.field]), [
+    ['epics.md', 'E-03', 'Boundaries'],
+    ['prd.md', 'CAT-01', undefined], ['prd.md', 'LOAN-01', undefined],
+    ['prd.md', 'LOAN-02', undefined], ['prd.md', 'NFR-01', undefined],
+  ]);
+});
+
+test('design-read --add: a file, an empty path, a project missing a file or heading, and --first-phase are refused', (t) => {
+  /** @type {[string, () => {planning: string, design?: string, extra?: string[]}][]} */
+  const cases = [
+    ['a file as --design', () => ({ planning: project(t, [1]).planning, design: join(FIXTURE, 'brief.md') })],
+    ['an empty --design', () => ({ planning: project(t, [1]).planning, design: '' })],
+    ['no REQUIREMENTS.md', () => {
+      const { planning } = project(t, [1]);
+      rmSync(join(planning, 'REQUIREMENTS.md'));
+      return { planning };
+    }],
+    ['a fenced ## Active', () => ({ planning: project(t, [1], '# Requirements\n\n```\n## Active\n```\n').planning })],
+    ['no ROADMAP.md', () => {
+      const { planning } = project(t, [1]);
+      rmSync(join(planning, 'ROADMAP.md'));
+      return { planning };
+    }],
+    ['a fenced ## Phase Details', () => {
+      const { planning } = project(t, [1]);
+      const file = join(planning, 'ROADMAP.md');
+      writeFileSync(file, readFileSync(file, 'utf8').replace('## Phase Details', '```\n## Phase Details\n```'));
+      return { planning };
+    }],
+    ['no state file', () => {
+      const planning = makeTree({ roadmap: [{ n: 1, name: 'Old 1' }] }, t);
+      writeFileSync(join(planning, 'REQUIREMENTS.md'), ACTIVE);
+      return { planning };
+    }],
+    ['--first-phase beside --add', () => ({ planning: project(t, [1]).planning, extra: ['--first-phase', '3'] })],
+  ];
+  for (const [name, build] of cases) {
+    const { planning, design = FIXTURE, extra = [] } = build();
+    const r = add(t, planning, design, extra);
+    assert.equal(r.ok, false, `${name}: ${JSON.stringify(r)}`);
+    assert.equal(r._exit, 1);
+    assert.ok(r.hint, `${name} carries no hint`);
+    if (name === 'no state file') assert.equal(existsSync(join(planning, 'records', 'state.json')), false);
   }
 });
