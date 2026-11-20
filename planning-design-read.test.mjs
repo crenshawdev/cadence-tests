@@ -872,3 +872,16 @@ test('new-project-design.md writes the project with no gate, one docs: commit an
   assert.match(flat, /replace its one bracketed Core Value line .* change no other line/);
   assert.doesNotMatch(prose, /- \[ \] \*\*Phase/);
 });
+
+test('/cad-new-project sends a --brief directory to new-project-design.md before any write, a file and a miss as before', () => {
+  const prose = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'workflows', 'new-project.md'), 'utf8');
+  const setup = prose.indexOf('<step name="setup">');
+  const pointer = prose.indexOf('new-project-design.md');
+  assert.ok(setup >= 0 && pointer > setup, 'setup holds no pointer to new-project-design.md');
+  assert.equal(prose.split('new-project-design.md').length, 2, 'new-project-design.md is named more than once');
+  const paragraph = prose.slice(prose.lastIndexOf('\n\n', pointer), prose.indexOf('\n\n', pointer));
+  assert.match(paragraph, /directory/, paragraph);
+  assert.ok(pointer < prose.indexOf('With `--brief`, `Read` that file WHOLE'), 'the pointer comes after the freeform read');
+  assert.ok(pointer < prose.indexOf('git init'), 'the pointer comes after git init');
+  assert.ok(prose.replace(/\s+/g, ' ').includes('("No brief at `<path>`.")'), 'the No brief stop is gone');
+});
