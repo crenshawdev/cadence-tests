@@ -516,6 +516,27 @@ test('design-read: an ID its phase\'s Requirements line would not read back is r
     problem: '"2FA-01" would not read back from phase 3\'s Requirements line - Cadence reads an ID there only when it opens with a letter' }]);
 });
 
+test('design-read: a spine decision its Spine decisions line would not read back is refused once, naming spine.md', (t) => {
+  const heading = (/** @type {string} */ s) => s.replace('## S-02: One server-rendered web app', '## S-02: One server** (rendered): web app');
+  const kind = (/** @type {string} */ s) => s.replace('Kind: stack\n', 'Kind: stack (runtime)\n');
+  const only = (/** @type {any} */ r) => {
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.equal(r.reason, 'design-refused');
+    assert.ok(r.hint);
+    return r.issues.map((/** @type {any} */ i) => [i.file, i.id]);
+  };
+  // S-02 sits in all three epics, so one issue is the dedupe
+  const split = read(t, designCopy(t, { 'spine.md': heading }), '3');
+  assert.deepEqual(only(split), [['spine.md', 'S-02']]);
+  assert.match(split.issues[0].problem, /^would not read back from phase 3's Spine decisions line - its heading holds `\*\* \(`/);
+  const paren = read(t, designCopy(t, { 'spine.md': kind }), '3');
+  assert.deepEqual(only(paren), [['spine.md', 'S-04']]);
+  assert.match(paren.issues[0].problem, /its Kind line holds a parenthesis/);
+  // S-04's line is a problem in every phase, and S-02's wrong title still comes back beside it to be compared
+  assert.deepEqual(only(read(t, designCopy(t, { 'spine.md': (s) => kind(heading(s)) }), '3')),
+    [['spine.md', 'S-02'], ['spine.md', 'S-04']]);
+});
+
 test('/cad-phase sends every --brief to phase-design.md, whose Route step refuses it on any op but add before the read', () => {
   const doc = (/** @type {string} */ path) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', path), 'utf8');
   const phase = doc('cadence-core/workflows/phase.md');
