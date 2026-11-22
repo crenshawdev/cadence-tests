@@ -129,9 +129,8 @@ test('a redirect at a spelled-out tmp path is reported however it is quoted', ()
 });
 
 test('the UAT fixture paths under /tmp are not transports and are never reported', () => {
-  // references/acceptance-criteria.md's demonstration-fixture recipe, verbatim.
-  // The rule watches REDIRECT TARGETS, not every mention of /tmp, and this is
-  // the one shape in the tree that would otherwise need an exemption list.
+  // /tmp paths named in prose, never redirected to. The rule watches REDIRECT
+  // TARGETS, not every mention of /tmp, so these must stay unreported.
   const recipe = [
     '- `/tmp/cadence-phase5-fixture/fail/.planning` - `/cad-audit` must FAIL, naming',
     '- `/tmp/cadence-phase5-fixture/pass/.planning` - `/cad-audit` must PASS.',
