@@ -42,7 +42,7 @@ test('plan-graph.md names the three markers and depends_on, and Reads is no leas
 });
 
 test('plan-graph.md puts anchors on Reads and not Files, and a task with nothing leaves the field out and never writes none', () => {
-  assert.match(GRAPH, /any anchor your contract would carry onto a path goes on `Reads:` instead/);
+  assert.match(GRAPH, /an anchor goes on `Reads:` and never on `Files:`/);
   assert.match(GRAPH, /leaves that field out and never writes `none`/);
 });
 
@@ -171,7 +171,7 @@ test('the planner stretch\'s bracket value is the composed path, gaps adds its f
   assert.match(plannerFlat, /In gaps mode it is that path plus `\.planning\/phases\/\{N\}\/UAT\.md` and the existing PLAN\* and SUMMARY\* files/);
   assert.doesNotMatch(PLANNER_STRETCH, /--bracket-read\s/, 'a flag followed by whitespace is a second open to the trace census');
   assert.doesNotMatch(PLANNER_STRETCH, /ROADMAP\.md|REQUIREMENTS\.md|PROJECT\.md|CONTEXT\.md/);
-  assert.match(plannerFlat, /names that file by its absolute path in place of its four document lines, and keeps the gaps line and the source-files line/);
+  assert.match(plannerFlat, /names that file by its absolute path and keeps the gaps line and the source-files line/);
   assert.match(plannerFlat, /\*\*A refused or unreadable answer\.\*\* Print one line with what it names, and dispatch with the four document lines the prompt below lists/);
 });
 

@@ -668,6 +668,15 @@ test('agentFileText: a stem the table does not name renders nothing', () => {
 // The reviewer contract was re-pinned when phase 1 of the size-cut cycle cut its restated rationale and stated its
 // write allowance once, in the guardrails, every pinned rule kept word for word (D-01, D-04, D-06) - a deliberate
 // change, approved with the phase.
+// The planner contract was re-pinned when phase 2 of the size-cut cycle dropped the three rules plan-graph.md now
+// states, its copies of the test-policy, plan-order and heading rules, and its restated rationale (D-08, D-09, D-14) -
+// a deliberate change, approved with the phase.
+// The plan-checker contract was re-pinned when phase 2 of the size-cut cycle pointed its testing-policy sentence at
+// test-policy.md and cut the rung detail and dimension 6's rationale, every pinned rule kept word for word (D-08, D-14)
+// - a deliberate change, approved with the phase.
+// templates/PLAN.md was re-pinned when phase 2 of the size-cut cycle dropped its files: comment's plan-order clause and
+// shortened its braced guidance, every rule the inline planner reads from it kept (D-08, D-14) - a deliberate change,
+// approved with the phase.
 
 const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-assumptions-analyzer-high.md': '28de11d2f99891fda6a35f57e8cf9b60e28493fa29d05b51fc76791c4ead6c8d',
@@ -701,11 +710,11 @@ const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-verifier-xhigh.md': 'd5020ea3f037c0aedaa468b3d5d9682ba4f085deee1a9aad2f06743472bef883',
   'agents/cad-verifier.md': '8db2621ba6f5a811ac11f50a1d5a94b6ea43e2b3a56a266b4c298329c98179b8',
   'cadence-core/references/reviewer-brief.md': '6974d26ea29421e245cf335cc973103abf4f65098c7b73255b5aa1aa4de085ad',
-  'cadence-core/templates/PLAN.md': 'a59f5a282a9b98fff322ccdd0ce76e2266235ac55c968a1735b9609d39446a71',
+  'cadence-core/templates/PLAN.md': '198575472986a5f81469d2ee8306442d8cfa9f2ac971016517eb648e59e389ee',
   'skills/cad-assumptions-analyzer-contract/SKILL.md': '637c7940cc7b645e762843a2b597fcc8fb4776824ef9d4183007ebab21368f0c',
   'skills/cad-executor-contract/SKILL.md': 'bf9e520f96668648d724b96fd86106e70bed1c4a47c742d2b3e6bb3502c26039',
-  'skills/cad-plan-checker-contract/SKILL.md': 'e7cb7328fe60c3e6fe0347498161b221cc1d045f83a9ba24ed8188ac4bdf73e4',
-  'skills/cad-planner-contract/SKILL.md': '233174ee1c1fc5d627df408e7f5c9af21f2a0930068a367214717096b3391618',
+  'skills/cad-plan-checker-contract/SKILL.md': '329ee090555cd3f9e7d46d13a1aef7f3651bedce653c23756909debf874d5168',
+  'skills/cad-planner-contract/SKILL.md': '5fab25824fd354e7547d49c8c32b37d1dd0a50ff6b8aca657757f779762cb440',
   'skills/cad-reviewer-contract/SKILL.md': 'c00b2a5ec5bea8304620081582d5fd90be4852b7a8143bcc25d072a78d71b23b',
   'skills/cad-verifier-contract/SKILL.md': 'df602d06ebda57b2f861c715e48b945c7c182542ce8cce3c0d3d6f79017e31b3',
 };
