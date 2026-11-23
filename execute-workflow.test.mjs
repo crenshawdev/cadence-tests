@@ -205,7 +205,7 @@ test('a checkpoint merges the settled plans first, holds the next wave, and cont
   assert.match(arm, /Route the checkpoint as `handle_checkpoint` does/);
   assert.match(arm, /The stopped plan's branch waits for the answer and then merges, its report moving in with that merge/);
   assert.match(arm, /runs in the normal tree on today's sequential dispatch under worker key `<k>`, the way the parallel path's fix dispatch runs, never back into a worktree/);
-  assert.match(arm, /replaces the closing sentence of `execute-parallel\.md`/);
+  assert.match(arm, /replaces `execute-parallel\.md`'s closing paragraph on checkpoints/);
 });
 
 test('a one-plan wave\'s dead slot checks git log and asks, and only a wider wave checks a branch or reads the scratch report', () => {
