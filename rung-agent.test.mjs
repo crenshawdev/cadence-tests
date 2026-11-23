@@ -716,7 +716,7 @@ const CONTRACT_SURFACE_DIGESTS = {
   'skills/cad-plan-checker-contract/SKILL.md': '329ee090555cd3f9e7d46d13a1aef7f3651bedce653c23756909debf874d5168',
   'skills/cad-planner-contract/SKILL.md': '5fab25824fd354e7547d49c8c32b37d1dd0a50ff6b8aca657757f779762cb440',
   'skills/cad-reviewer-contract/SKILL.md': 'c00b2a5ec5bea8304620081582d5fd90be4852b7a8143bcc25d072a78d71b23b',
-  'skills/cad-verifier-contract/SKILL.md': 'df602d06ebda57b2f861c715e48b945c7c182542ce8cce3c0d3d6f79017e31b3',
+  'skills/cad-verifier-contract/SKILL.md': 'c3d717df40483894629f0015d94ab671a3f4c6565e2e9aaf80e9b729559975f9',
 };
 
 test('a switch\'s text written into a contract surface changes its 3.8.6 digest', () => {
