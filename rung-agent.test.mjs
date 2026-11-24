@@ -711,7 +711,7 @@ const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-verifier.md': '8db2621ba6f5a811ac11f50a1d5a94b6ea43e2b3a56a266b4c298329c98179b8',
   'cadence-core/references/reviewer-brief.md': '6974d26ea29421e245cf335cc973103abf4f65098c7b73255b5aa1aa4de085ad',
   'cadence-core/templates/PLAN.md': '198575472986a5f81469d2ee8306442d8cfa9f2ac971016517eb648e59e389ee',
-  'skills/cad-assumptions-analyzer-contract/SKILL.md': '637c7940cc7b645e762843a2b597fcc8fb4776824ef9d4183007ebab21368f0c',
+  'skills/cad-assumptions-analyzer-contract/SKILL.md': 'd566cf8317ac5e82627ee3fb3f1023279cc8225067489abfd903ea0ab6001515',
   'skills/cad-executor-contract/SKILL.md': 'bf9e520f96668648d724b96fd86106e70bed1c4a47c742d2b3e6bb3502c26039',
   'skills/cad-plan-checker-contract/SKILL.md': '329ee090555cd3f9e7d46d13a1aef7f3651bedce653c23756909debf874d5168',
   'skills/cad-planner-contract/SKILL.md': '5fab25824fd354e7547d49c8c32b37d1dd0a50ff6b8aca657757f779762cb440',
