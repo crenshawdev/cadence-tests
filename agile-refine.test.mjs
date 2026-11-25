@@ -37,7 +37,7 @@ const story = (over = {}) => ({ title: 'Add a tool', size: 'S', builds_on: [], r
 const list = () => ({ decisions: ['Photos are kept on disk beside the database.'], stories: [story(),
   story({ title: 'Search: by name or category', size: 'M', builds_on: ['E-01-1'], requirements: ['CAT-02', 'CAT-01'], accepted_when: ['Searching "drill" finds it.', 'A category lists its tools.'] })] });
 function send(dir, call, payload, epic = 'E-01') {
-  const file = join(scratch('cad-agile-payload-'), 'payload.json');
+  const file = join(dirname(dir), 'payload.json');
   writeFileSync(file, typeof payload === 'string' ? payload : JSON.stringify({ epic, ...payload }));
   return run(dir, call, '--payload', file);
 }
