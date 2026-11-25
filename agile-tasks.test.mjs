@@ -167,6 +167,30 @@ test('a finding said no to lands in declined.md and one filed in filed.md, and n
   for (const name of ['DECLINED.md', 'FILED.md']) assert.equal(existsSync(join(dir, 'records', name)), false, name);
 });
 
+test('a todo, a seed and a note land in the backlog under their own headings with no phase, and recall finds them', (t) => {
+  const { root, dir, top } = taskRun(t);
+  const capture = (...args) => planning(root, 'capture', ...args);
+  for (const [kind, text] of [['todo', 'weigh the marquee poles'], ['seed', 'lend a marquee'], ['note', 'the marquee is in the shed']]) {
+    const r = capture('--kind', kind, '--text', text);
+    assert.deepEqual([r.ok, r.file], [true, join('.planning', 'agile', 'backlog.md')], JSON.stringify(r));
+  }
+  const text = readFileSync(join(dir, 'agile', 'backlog.md'), 'utf8');
+  const under = (heading) => text.slice(text.indexOf(heading)).split('\n## ')[0];
+  assert.match(under('## Todos'), /^- \[ \] weigh the marquee poles$/m);
+  assert.match(under('## Seeds'), /^- lend a marquee$/m);
+  assert.match(under('## Notes'), /^- \d{4}-\d\d-\d\d the marquee is in the shed$/m);
+  const found = planning(root, 'recall', 'marquee').results;
+  assert.deepEqual([found.length, new Set(found.map((h) => h.source))], [3, new Set(['agile/backlog.md'])]);
+  const phased = capture('--kind', 'todo', '--text', 'x', '--phase', '2');
+  assert.deepEqual([phased.ok, phased.reason], [false, 'bad-args'], JSON.stringify(phased));
+  assert.equal(readFileSync(join(dir, 'agile', 'backlog.md'), 'utf8'), text);
+  // the --cadence queue is nobody's project
+  const queue = join(root, 'queue', 'CAPTURE.md');
+  assert.equal(capture('--kind', 'note', '--text', 'a Cadence note', '--file', queue).ok, true);
+  assert.ok(existsSync(queue));
+  assert.deepEqual(readdirSync(dir).sort(), top);
+});
+
 test('a project marked with no release refuses each write and makes nothing, so the next start still finishes', (t) => {
   const { root, dir, base } = taskRun(t);
   rmSync(join(dir, 'agile'), { recursive: true });
@@ -174,6 +198,8 @@ test('a project marked with no release refuses each write and makes nothing, so 
   const r = record(root, base);
   assert.deepEqual([r.ok, r.written], [true, false], JSON.stringify(r));
   assert.match(r.reason, /\/cad-agile/);
+  const captured = planning(root, 'capture', '--kind', 'todo', '--text', 'x');
+  assert.deepEqual([captured.ok, captured.reason], [false, 'no-release'], JSON.stringify(captured));
   const { env, log } = fakeForge(root);
   const answers = file(root, 'answers.json', { entries: [{ finding: YES, disposition: 'accept' }] });
   for (const sub of ['file', 'unfixed']) {

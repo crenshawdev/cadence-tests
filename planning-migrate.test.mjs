@@ -453,7 +453,7 @@ test('the converting call says a commit is due, or not, and no other call carrie
 });
 
 /** The seams an agile project runs too; agile-calls.test.mjs drives each of them there. */
-const AGILE_CALLS = ['adjudication', 'codemap', 'detect-commands', 'detect-surfaces', 'recall', 'review-file', 'risk-check',
+const AGILE_CALLS = ['adjudication', 'capture', 'codemap', 'detect-commands', 'detect-surfaces', 'recall', 'review-file', 'risk-check',
   'task-record', 'test-policy', 'trace', 'workflow-run'];
 
 test('on a marked project every other seam refuses agile-path naming /cad-agile, through a link too, and the marker stays', (t) => {
