@@ -332,8 +332,13 @@ test('the conversation settles its branch, asks and has the list checked before 
   assert.deepEqual(order.map(at), order.map(at).sort((a, b) => a - b));
   // the one agent is offered in the file read only for an unknown, and on phase 0, where an agile project's calls are recorded
   const unknown = workflow('agile-unknown.md');
-  const agent = unknown.indexOf('resolve --role cad-assumptions-analyzer --phase 0');
-  assert.ok(unknown.indexOf('header: "Unknown"') > 0 && agent > unknown.indexOf('header: "Unknown"') && unknown.indexOf('trace close --phase 0 --plan {id}') > agent);
+  const agent = unknown.indexOf('resolve --role cad-assumptions-analyzer --phase 0 --bracket-read ".planning/agile/epics/{id}/epic.md" --bracket-plan {id}\n');
+  assert.ok(unknown.indexOf('header: "Unknown"') > 0 && agent > unknown.indexOf('header: "Unknown"') && unknown.indexOf('trace close --phase 0 --plan {id} --role cad-assumptions-analyzer') > agent);
+  // only a Confident finding settles an unknown, and a guess stays one after a clear
+  assert.match(unknown, /answered by an assumption about it rated Confident/);
+  assert.match(unknown, /The answer saved is "Guess: " and the guess/);
+  assert.ok(at('opens with "Guess:" isn\'t asked') < at('**Then the choices.**') && at('Resting on a guess') > at('Picked for you'));
+  assert.match(prose, /a validated or invalidated spike's verdict/);
   assert.doesNotMatch(prose, /resolve --role|subagent/);
   // the late commit of a refinement cut short is the same one
   const command = workflow('agile.md');
