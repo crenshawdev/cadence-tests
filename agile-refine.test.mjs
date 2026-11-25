@@ -328,8 +328,13 @@ test('the conversation settles its branch, asks and has the list checked before 
     assert.equal(prose.split(words).length, 2, `${words} is there once`);
     return prose.indexOf(words);
   };
-  const order = ['apply section 1', 'mktemp -d', '## 2. Ask', 'agile.mjs" answer', '## 3. Cut', 'agile.mjs" propose', 'Do you want {id} built from these stories?', '## 5. Write', 'agile.mjs" refine', 'git add -A -- "$@"', 'git commit -m "docs: refine {id}" -- "$@"'];
+  const order = ['apply section 1', 'mktemp -d', '## 2. Ask', 'workflows/agile-unknown.md', '**Then the choices.**', 'agile.mjs" answer', '## 3. Cut', 'agile.mjs" propose', 'Do you want {id} built from these stories?', '## 5. Write', 'agile.mjs" refine', 'git add -A -- "$@"', 'git commit -m "docs: refine {id}" -- "$@"'];
   assert.deepEqual(order.map(at), order.map(at).sort((a, b) => a - b));
+  // the one agent is offered in the file read only for an unknown, and on phase 0, where an agile project's calls are recorded
+  const unknown = workflow('agile-unknown.md');
+  const agent = unknown.indexOf('resolve --role cad-assumptions-analyzer --phase 0');
+  assert.ok(unknown.indexOf('header: "Unknown"') > 0 && agent > unknown.indexOf('header: "Unknown"') && unknown.indexOf('trace close --phase 0 --plan {id}') > agent);
+  assert.doesNotMatch(prose, /resolve --role|subagent/);
   // the late commit of a refinement cut short is the same one
   const command = workflow('agile.md');
   const late = command.indexOf('<step name="refine">');
