@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync }
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
-import { agileBacklogFile, epicFile, storyFile } from '../cadence-core/bin/lib/agile-paths.mjs';
+import { agileBacklogFile, epicFile, requirementsFile, storyFile } from '../cadence-core/bin/lib/agile-paths.mjs';
 import { readStoryFile } from '../cadence-core/bin/lib/agile-read.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -227,6 +227,117 @@ test('the refinement\'s commit holds its own files and no others, from the same 
   git('reset', '-q');
   writeFileSync(backlog, '## Todos\n\n- [ ] search by photo\n- [ ] a new one\n');
   assert.deepEqual(commit(), own);
+});
+
+const asked = (dir) => readFileSync(requirementsFile(agile(dir)), 'utf8');
+const LABEL = 'A volunteer prints a label for a tool.';
+const labels = story({ title: 'Labels', requirements: ['CAT-03'] });
+
+test('a deferred requirement moves under Deferred and off the epic and what its stories carry', (t) => {
+  const dir = started(t);
+  const only = { decisions: [], stories: [story()] };
+  assert.match(JSON.stringify(send(dir, 'propose', only).issues), /CAT-02 is on no story/);
+  const r = refine(dir, { ...only, defer: ['CAT-02'] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const [held, deferred] = asked(dir).split('## Deferred\n\n');
+  assert.doesNotMatch(held, /CAT-02/);
+  assert.equal(deferred, '- **CAT-02**: A member searches the catalog by name or category.\n');
+  assert.match(readFileSync(epicFile(agile(dir), 'E-01'), 'utf8'), /^requirements: CAT-01$/m);
+});
+
+test('an added requirement takes the next number of its prefix, deferred ones counted, and goes on the epic', (t) => {
+  const dir = started(t);
+  assert.match(JSON.stringify(send(dir, 'propose', { ...list(), add: [{ id: 'CAT-03', text: LABEL }] }).issues), /CAT-03 is on no story/);
+  const r = refine(dir, { ...list(), add: [{ id: 'CAT-03', text: LABEL }], stories: [...list().stories, labels] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(asked(dir).includes(`category.\n- **CAT-03**: ${LABEL}\n\n### Loans`), asked(dir));
+  assert.match(readFileSync(epicFile(agile(dir), 'E-01'), 'utf8'), /^requirements: CAT-01, CAT-02, CAT-03$/m);
+
+  // a later epic counts a deferred one, and an added one whose prefix has none left gets a heading of its own
+  const two = started(t);
+  assert.equal(refine(two, { decisions: [], stories: [story()], defer: ['CAT-02'] }).ok, true);
+  status(storyFile(agile(two), 'E-01-1'), 'done');
+  status(epicFile(agile(two), 'E-01'), 'done');
+  const wanted = ['LOAN-01', 'LOAN-02', 'NFR-01', 'NFR-02'];
+  const carry = (...add) => ({ decisions: [], add, stories: [story({ requirements: [...wanted, ...add.map((a) => a.id)] })] });
+  assert.match(JSON.stringify(send(two, 'propose', carry({ id: 'CAT-02', text: LABEL }), 'E-02').issues), /is CAT-02, and the next CAT is CAT-03/);
+  assert.equal(refine(two, carry({ id: 'CAT-03', text: LABEL }, { id: 'CAT-04', text: 'A member sees who has a tool.' }), 'E-02').ok, true);
+  assert.ok(asked(two).includes(`- **CAT-01**: A volunteer adds a tool with a name, a category and a photo. [ASSUMPTION]\n- **CAT-03**: ${LABEL}\n- **CAT-04**: A member sees who has a tool.\n\n### Loans`), asked(two));
+  assert.match(readFileSync(epicFile(agile(two), 'E-02'), 'utf8'), /^requirements: LOAN-01, LOAN-02, NFR-01, NFR-02, CAT-03, CAT-04$/m);
+  const three = started(t);
+  assert.equal(refine(three, { decisions: [], defer: ['CAT-02'], add: [{ id: 'CAT-03', text: LABEL }], stories: [story({ requirements: ['CAT-01', 'CAT-03'] })] }).ok, true);
+  assert.ok(asked(three).includes(`- **CAT-01**: A volunteer adds a tool with a name, a category and a photo. [ASSUMPTION]\n- **CAT-03**: ${LABEL}\n\n### Loans`), asked(three));
+});
+
+test('a defer or an add that can\'t be applied is refused with nothing written', (t) => {
+  const dir = started(t);
+  const all = [...list().stories, labels];
+  /** @type {[string, Record<string, unknown>, string, RegExp][]} */
+  const bad = [
+    ['another epic\'s', { defer: ['LOAN-01'] }, 'defer', /names LOAN-01, which isn't one of the epic's/],
+    ['not a list', { defer: 'CAT-02' }, 'defer', /is a list/],
+    ['every one', { defer: ['CAT-01', 'CAT-02'], add: [] }, 'defer', /leaves the epic no requirement/],
+    ['a number past the next', { add: [{ id: 'CAT-04', text: LABEL }] }, 'add', /is CAT-04, and the next CAT is CAT-03/],
+    ['the next without its width', { add: [{ id: 'CAT-3', text: LABEL }] }, 'add', /the next CAT is CAT-03/],
+    ['a prefix the file doesn\'t use', { add: [{ id: 'TAG-01', text: LABEL }] }, 'add', /no prefix REQUIREMENTS\.md uses/],
+    ['one an epic already has', { add: [{ id: 'CAT-01', text: 'A volunteer adds a tool with a name, a category and a photo. [ASSUMPTION]' }] }, 'add', /is CAT-01, and the next CAT is CAT-03/],
+    ['two lines', { add: [{ id: 'CAT-03', text: 'a\nb' }] }, 'add', /each on one line/],
+    ['another field', { add: [{ id: 'CAT-03', text: LABEL, size: 'S' }] }, 'add', /"id" and a "text"/],
+    ['given twice', { add: [{ id: 'CAT-03', text: LABEL }, { id: 'CAT-03', text: LABEL }] }, 'add', /given once/],
+    ['not a list', { add: { id: 'CAT-03', text: LABEL } }, 'add', /is a list/],
+  ];
+  for (const [name, change, field, problem] of bad) {
+    for (const call of ['propose', 'refine']) {
+      const before = tree(dir);
+      const r = send(dir, call, { decisions: [], stories: all, add: [{ id: 'CAT-03', text: LABEL }], ...change });
+      assert.deepEqual([r.ok, r.reason], [false, 'stories-refused'], `${name}: ${JSON.stringify(r)}`);
+      assert.ok(r.issues.some((i) => i.field === field && problem.test(i.problem)), `${name}: ${JSON.stringify(r.issues)}`);
+      assert.deepEqual(tree(dir), before, name);
+    }
+  }
+  writeFileSync(requirementsFile(agile(dir)), asked(dir).replace('## Deferred', '## Later'));
+  const r = send(dir, 'propose', list());
+  assert.deepEqual([r.ok, r.reason], [false, 'release-damaged'], JSON.stringify(r));
+  assert.match(r.detail, /REQUIREMENTS\.md/);
+});
+
+test('a refinement killed after REQUIREMENTS.md and before its epic turned is finished by the same list', (t) => {
+  const contents = (dir) => tree(agile(dir)).map(([p, , text]) => [p, text]);
+  const payload = { decisions: [], defer: ['CAT-02'], add: [{ id: 'CAT-03', text: LABEL }], stories: [story(), labels] };
+  const clean = started(t);
+  assert.equal(refine(clean, payload).ok, true);
+  const dir = started(t);
+  const epic = readFileSync(epicFile(agile(dir), 'E-01'), 'utf8');
+  assert.equal(refine(dir, payload).ok, true);
+  // where the dead run stopped: the stories and REQUIREMENTS.md written, the epic as it was, and a write in the air
+  writeFileSync(epicFile(agile(dir), 'E-01'), epic);
+  writeFileSync(join(agile(dir), 'REQUIREMENTS.md.4242.7.tmp'), 'half');
+  assert.equal(run(dir, 'next').next.step, 'refine');
+  // the deferred one is off the epic, and the added one is on none
+  assert.equal(send(dir, 'propose', { decisions: [], stories: [story()] }).ok, true);
+  assert.equal(refine(dir, payload).ok, true);
+  assert.deepEqual(contents(dir), contents(clean));
+});
+
+test('the refinement\'s commit holds REQUIREMENTS.md only when the epic\'s requirements changed', (t) => {
+  const prose = readFileSync(join(HERE, '..', 'cadence-core', 'workflows', 'agile-refine.md'), 'utf8');
+  const block = /```\n(set -- [\s\S]*?git commit [^\n]*)\n```/.exec(prose)[1].replaceAll('{id}', 'E-01');
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
+    GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
+  for (const [payload, held] of [[list(), false], [{ decisions: [], stories: [story()], defer: ['CAT-02'] }, true]]) {
+    const dir = started(t);
+    const root = dirname(dir);
+    const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', env });
+    git('init', '-q');
+    git('add', '-A');
+    assert.equal(git('commit', '-q', '-m', 'start').status, 0);
+    // the user's own edit, which only a change to the ask takes along
+    writeFileSync(requirementsFile(agile(dir)), asked(dir).replace('under three seconds', 'under two seconds'));
+    assert.equal(refine(dir, payload).ok, true);
+    assert.equal(spawnSync('sh', ['-c', block], { cwd: root, encoding: 'utf8', env }).status, 0);
+    const files = git('show', '--name-only', '--format=').stdout.trim().split('\n');
+    assert.equal(files.includes('.planning/agile/REQUIREMENTS.md'), held, files.join(', '));
+  }
 });
 
 test('a later epic\'s story may build on an earlier epic and on its stories', (t) => {
