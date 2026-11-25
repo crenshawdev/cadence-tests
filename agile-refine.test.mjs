@@ -154,7 +154,7 @@ test('answers that can\'t be saved are refused with nothing written', (t) => {
   const dir = started(t);
   const before = tree(dir);
   const good = { question: 'Q?', answer: 'A' };
-  for (const answers of [[], 'x', ['x'], [{ question: 'Q?' }], [{ ...good, answer: 'a\n## Result' }], [{ ...good, why: 'x' }], [good, null]]) {
+  for (const answers of [[], 'x', ['x'], [{ question: 'Q?' }], [{ ...good, answer: 'a\n## Result' }], [{ ...good, why: 'x' }], [good, null], [good, { ...good, answer: 'B' }], [{ ...good, question: 'Which **/ paths?' }]]) {
     const r = send(dir, 'answer', { answers });
     assert.deepEqual([r.ok, r.reason, r._exit], [false, 'answers-refused', 1], JSON.stringify(answers));
     assert.ok(r.issues.some((i) => i.field === 'answers'), JSON.stringify(r));
@@ -171,7 +171,7 @@ test('answers that can\'t be saved are refused with nothing written', (t) => {
 test('the backlog items a list takes are gone once it\'s written, and one that isn\'t there is refused', (t) => {
   const dir = started(t);
   const file = agileBacklogFile(agile(dir));
-  const text = '## Todos\n\n- [ ] search by photo\n- [ ] print a label\n  on the counter printer\n\n## Seeds\n\n- lend to other libraries\n';
+  const text = '## Todos\n\n- [ ] search by photo\n- [ ] print a label\n  on the counter printer\n\n  one per drill\n- [ ] tab\there\n\n## Seeds\n\n- lend to other libraries\n';
   writeFileSync(file, text);
   const taking = (...backlog) => ({ ...list(), backlog });
   for (const line of ['- [ ] print labels', '  on the counter printer', '## Seeds', '- [ ] search']) {
@@ -181,8 +181,52 @@ test('the backlog items a list takes are gone once it\'s written, and one that i
   }
   assert.equal(send(dir, 'propose', taking('- [ ] print a label')).ok, true);
   assert.equal(readFileSync(file, 'utf8'), text);
-  assert.equal(refine(dir, taking('- [ ] print a label', '- lend to other libraries')).ok, true);
+  assert.equal(refine(dir, taking('- [ ] print a label', '- lend to other libraries', '- [ ] tab\there')).ok, true);
   assert.equal(readFileSync(file, 'utf8'), '## Todos\n\n- [ ] search by photo\n\n## Seeds\n\n');
+});
+
+test('a backlog that can\'t be written leaves the stories standing and says which file still holds the items', (t) => {
+  const dir = started(t);
+  const file = agileBacklogFile(agile(dir));
+  writeFileSync(file, '## Todos\n\n- [ ] print a label\n');
+  // a live writer's lock, the one refusal a test can hold still
+  writeFileSync(`${file}.lock`, '');
+  const r = refine(dir, { ...list(), backlog: ['- [ ] print a label'] });
+  assert.deepEqual([r.ok, r.next.step, r.warnings?.length], [true, 'build', 1], JSON.stringify(r));
+  assert.ok(r.warnings[0].includes(file), r.warnings[0]);
+  assert.equal(run(dir, 'next').next.story.id, 'E-01-1');
+});
+
+test('the refinement\'s commit holds its own files and no others, from the same lines the workflow gives', (t) => {
+  const dir = started(t);
+  const root = dirname(dir);
+  const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
+    GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' } });
+  const prose = readFileSync(join(HERE, '..', 'cadence-core', 'workflows', 'agile-refine.md'), 'utf8');
+  const block = /```\n(set -- [\s\S]*?git commit [^\n]*)\n```/.exec(prose)[1].replaceAll('{id}', 'E-01');
+  const commit = () => {
+    const r = spawnSync('sh', ['-c', block], { cwd: root, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
+      GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' } });
+    assert.equal(r.status, 0, r.stderr);
+    return git('show', '--name-only', '--format=').stdout.trim().split('\n').map((p) => p.replace('.planning/agile/', ''));
+  };
+  const own = ['epics/E-01/E-01-1.md', 'epics/E-01/E-01-2.md', 'epics/E-01/epic.md'];
+  const backlog = agileBacklogFile(agile(dir));
+  writeFileSync(backlog, '## Todos\n\n- [ ] print a label\n- [ ] search by photo\n');
+  git('init', '-q');
+  git('add', '-A');
+  assert.equal(git('commit', '-q', '-m', 'start').status, 0);
+  writeFileSync(join(folder(dir), 'notes.md'), 'mine\n');
+  writeFileSync(join(root, 'staged.txt'), 'mine\n');
+  git('add', 'staged.txt', '.planning/agile/epics/E-01/notes.md');
+  assert.equal(refine(dir, { ...list(), backlog: ['- [ ] print a label'] }).ok, true);
+  assert.deepEqual(commit(), ['backlog.md', ...own]);
+  assert.deepEqual(git('diff', '--cached', '--name-only').stdout.trim().split('\n'), ['.planning/agile/epics/E-01/notes.md', 'staged.txt']);
+  // a capture not yet committed stays the user's, and a project with no backlog has none to name
+  git('reset', '-q', '--soft', 'HEAD~1');
+  git('reset', '-q');
+  writeFileSync(backlog, '## Todos\n\n- [ ] search by photo\n- [ ] a new one\n');
+  assert.deepEqual(commit(), own);
 });
 
 test('a later epic\'s story may build on an earlier epic and on its stories', (t) => {
@@ -284,7 +328,7 @@ test('the conversation settles its branch, asks and has the list checked before 
     assert.equal(prose.split(words).length, 2, `${words} is there once`);
     return prose.indexOf(words);
   };
-  const order = ['apply section 1', '## 2. Ask', 'agile.mjs" answer', '## 3. Cut', 'agile.mjs" propose', 'Do you want {id} built from these stories?', '## 5. Write', 'agile.mjs" refine', 'git add -- "$@"', 'git commit -m "docs: refine {id}" -- "$@"'];
+  const order = ['apply section 1', 'mktemp -d', '## 2. Ask', 'agile.mjs" answer', '## 3. Cut', 'agile.mjs" propose', 'Do you want {id} built from these stories?', '## 5. Write', 'agile.mjs" refine', 'git add -A -- "$@"', 'git commit -m "docs: refine {id}" -- "$@"'];
   assert.deepEqual(order.map(at), order.map(at).sort((a, b) => a - b));
   // the late commit of a refinement cut short is the same one
   const command = workflow('agile.md');
