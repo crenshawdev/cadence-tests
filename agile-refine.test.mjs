@@ -525,18 +525,55 @@ test('an epic holding an L is cut again: done stories keep their bytes, and the 
   assert.equal(readFileSync(storyFile(agile(dir), 'E-01-1'), 'utf8'), done);
 });
 
-test('cut again, a story in progress or in review is refused with nothing written', (t) => {
+test('a story in progress or in review is built before an L is cut again, and nothing is written meanwhile', (t) => {
   for (const word of ['in-progress', 'review']) {
     const dir = withL(t);
     status(storyFile(agile(dir), 'E-01-1'), word);
+    assert.deepEqual(run(dir, 'next').next.story, { id: 'E-01-1', title: 'Add a tool', size: 'S', status: word });
     const before = tree(dir);
     for (const call of ['propose', 'refine']) {
       const r = send(dir, call, halves());
-      assert.deepEqual([r.ok, r.reason], [false, 'stories-begun'], JSON.stringify(r));
-      assert.match(r.detail, new RegExp(`E-01-1 is ${word}`));
+      assert.deepEqual([r.ok, r.reason], [false, 'not-refinable'], JSON.stringify(r));
+      assert.match(r.detail, /build E-01-1/);
     }
     assert.deepEqual(tree(dir), before);
+    status(storyFile(agile(dir), 'E-01-1'), 'done');
+    assert.equal(run(dir, 'next').next.step, 'refine');
   }
+});
+
+test('cut again, what a done story carries stays on the epic, and a list may be empty when nothing is left', (t) => {
+  const dir = withL(t);
+  const before = tree(dir);
+  assert.match(JSON.stringify(send(dir, 'propose', { ...halves(), defer: ['CAT-01'] }).issues), /names CAT-01, which a done story already carries/);
+  const take = { ...cut({ requirements: ['CAT-01'], moves: ['A volunteer can add a tool with a name, a category and a photo.'] }), stories: halves().stories };
+  assert.match(JSON.stringify(send(dir, 'refine', take).issues), /requirements names CAT-01, which a done story already carries/);
+  assert.deepEqual(tree(dir), before);
+  // the L's work left for later, and the done story carries the rest
+  const r = refine(dir, { decisions: [], defer: ['CAT-02'], stories: [] });
+  assert.deepEqual([r.ok, r.stories, r.next], [true, [], { id: 'E-01', name: 'Catalog', status: 'in-progress', step: 'accept' }], JSON.stringify(r));
+  assert.deepEqual(readdirSync(folder(dir)).sort(), ['E-01-1.md', 'epic.md']);
+  assert.match(decisions(dir), /^- Cut again: E-01-2 left with no story in its place\.$/m);
+  assert.match(readFileSync(epicFile(agile(dir), 'E-01'), 'utf8'), /^requirements: CAT-01$/m);
+  // a first refinement still needs a story
+  assert.match(JSON.stringify(send(started(t), 'propose', { decisions: [], stories: [] }).issues), /at least one story/);
+});
+
+test('a cut again that left no story is committed late by the check agile.md runs on accept', (t) => {
+  const check = readFileSync(join(HERE, '..', 'cadence-core', 'workflows', 'agile.md'), 'utf8').split('\n')
+    .find((l) => l.includes("epics/{next.id}/epic.md") && l.includes('echo REFINED')).trim().replaceAll('{next.id}', 'E-01');
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
+    GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
+  const dir = withL(t);
+  const root = dirname(dir);
+  const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', env });
+  git('init', '-q');
+  git('add', '-A');
+  assert.equal(git('commit', '-q', '-m', 'built').status, 0);
+  const refined = () => spawnSync('sh', ['-c', check], { cwd: root, encoding: 'utf8', env }).stdout.trim();
+  assert.equal(refined(), 'REFINED');
+  assert.equal(refine(dir, { decisions: [], defer: ['CAT-02'], stories: [] }).ok, true);
+  assert.equal(refined(), '');
 });
 
 test('cut again and stopped before the L was removed, the next run replaces both and numbers past them', (t) => {
@@ -650,9 +687,9 @@ test('an epic in progress whose stories don\'t read back is refused naming the f
     ['no checks', (f) => edit(f, '## Accepted when', '## Accepted'), /E-01-1\.md/],
     ['no result', (f) => edit(f, '## Result', '## Outcome'), /E-01-1\.md/],
     ['a field twice', (f) => edit(f, 'status: backlog', 'status: backlog\nstatus: done'), /E-01-1\.md/],
-    ['no story left', (f) => { rmSync(f); rmSync(f.replace('E-01-1.md', 'E-01-2.md')); }, /holds no story/],
+    ['no story left', (f) => { rmSync(f); rmSync(f.replace('E-01-1.md', 'E-01-2.md')); }, /holds no story/, /^put its story files back from git or your backup, then re-run/],
   ];
-  for (const [name, spoil, detail] of breaks) {
+  for (const [name, spoil, detail, hint] of breaks) {
     const dir = started(t);
     assert.equal(refine(dir, list()).ok, true);
     spoil(storyFile(agile(dir), 'E-01-1'));
@@ -660,6 +697,7 @@ test('an epic in progress whose stories don\'t read back is refused naming the f
     const r = run(dir, 'next');
     assert.deepEqual([r.ok, r.reason, r._exit], [false, 'release-damaged', 1], name);
     assert.match(r.detail, detail, name);
+    if (hint) assert.match(r.hint, hint, name);
     assert.deepEqual(tree(dir), before, name);
   }
 });
