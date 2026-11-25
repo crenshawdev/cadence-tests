@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PLANNING, makeTree, run, scratch, stampState } from './planning.test.mjs';
 import { importState } from '../cadence-core/bin/planning/state-import.mjs';
-import { readState, statePath, STAMP_KEY, STATE_LAYOUT } from '../cadence-core/bin/lib/project-state.mjs';
+import { markAgile, readState, statePath, STAMP_KEY, STATE_LAYOUT } from '../cadence-core/bin/lib/project-state.mjs';
 
 /** Every file outside records/, as path -> bytes, for the byte-identical checks. */
 function snapshot(dir, rel = '') {
@@ -450,6 +450,22 @@ test('the converting call says a commit is due, or not, and no other call carrie
 
   // not due outside a repository
   assert.equal(run(['status'], v40(t)).migration.commit_due, false);
+});
+
+test('on a marked project every seam but design-read refuses agile-path naming /cad-agile, and the marker stays', (t) => {
+  const dir = join(scratch('cad-migrate-agile-', t), '.planning');
+  mkdirSync(dir);
+  assert.equal(markAgile(dir).ok, true);
+  const marker = readFileSync(statePath(dir), 'utf8');
+  const seams = run([], dir).detail.match(/subcommand: (.*) \(got/)[1].split(' | ').filter((s) => s !== 'design-read');
+  assert.ok(seams.includes('status') && seams.includes('state-rebuild'));
+  for (const seam of seams) {
+    const r = run([seam], dir);
+    assert.deepEqual([r.ok, r.reason], [false, 'agile-path'], seam);
+    assert.match(r.hint, /\/cad-agile/, seam);
+  }
+  assert.equal(readFileSync(statePath(dir), 'utf8'), marker);
+  assert.deepEqual(readdirSync(dir), ['records']);
 });
 
 // --- rebuilding a state file that does not parse -----------------------------
