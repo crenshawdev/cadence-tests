@@ -100,6 +100,12 @@ test('a task\'s review and rulings land beside its plan, and a receipt is counte
   assert.deepEqual(readdirSync(dir).sort(), top);
 });
 
+test('each debug fix opens its own run before its risk check, so one session can\'t spend another\'s re-arm', () => {
+  const prose = readFileSync(join(HERE, '..', 'cadence-core', 'workflows', 'debug.md'), 'utf8');
+  const anchor = prose.indexOf('--event phase_start');
+  assert.ok(anchor > prose.indexOf('## Resolve') && anchor < prose.indexOf('risk-check run'));
+});
+
 test('a debug session\'s staged fix is reviewed under its slug, and its receipt is counted there', (t) => {
   const { root, dir } = taskRun(t);
   writeFileSync(join(root, 'login.mjs'), 'export function login(password) { return password === process.env.SECRET; }\n');
