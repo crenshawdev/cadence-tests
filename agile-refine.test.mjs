@@ -360,8 +360,9 @@ test('the refinement\'s commit holds REQUIREMENTS.md only when the ask changed i
     git('config', 'diff.external', 'false');
     git('add', '-A');
     assert.equal(git('commit', '-q', '-m', 'start').status, 0);
-    // the user's own edit, which only a change to the ask takes along
+    // the user's own edits, which only a change to the ask or a split takes along
     writeFileSync(requirementsFile(agile(dir)), asked(dir).replace('under three seconds', 'under two seconds'));
+    edit(join(agile(dir), 'release.md'), 'under a minute', 'under two minutes');
     assert.equal(refine(dir, payload).ok, true);
     assert.equal(spawnSync('sh', ['-c', block], { cwd: root, encoding: 'utf8', env }).status, 0);
     const files = git('show', '--name-only', '--format=').stdout.trim().split('\n');
@@ -379,9 +380,10 @@ const epics = (dir) => readFileSync(join(agile(dir), 'release.md'), 'utf8').spli
 test('a split makes the rest the next epic, every requirement on one of the two, and next reaches it after the first', (t) => {
   const dir = started(t);
   const first = readEpicFile(readFileSync(epicFile(agile(dir), 'E-01'), 'utf8'));
-  assert.deepEqual(send(dir, 'propose', cut()).split, { id: 'E-04', name: 'Search' });
+  const shown = [{ id: 'E-04', name: 'Search', requirements: ['CAT-02'], done_when: [FIND, E2E] }];
+  assert.deepEqual(send(dir, 'propose', cut()).splits, shown);
   const r = refine(dir, cut());
-  assert.deepEqual([r.ok, r.split], [true, { id: 'E-04', name: 'Search' }], JSON.stringify(r));
+  assert.deepEqual([r.ok, r.splits], [true, shown], JSON.stringify(r));
   assert.deepEqual(epics(dir), ['- E-01: Catalog', '- E-04: Search', '- E-02: Lending', '- E-03: Reminders']);
   const one = readEpicFile(readFileSync(epicFile(agile(dir), 'E-01'), 'utf8'));
   const rest = readFileSync(epicFile(agile(dir), 'E-04'), 'utf8');
@@ -452,7 +454,40 @@ test('a split stopped before its epic turned is finished by the same list, and a
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(epics(dir), ['- E-01: Catalog', '- E-04: Search', '- E-02: Lending', '- E-03: Reminders']);
   assert.match(readFileSync(epicFile(agile(dir), 'E-01'), 'utf8'), /^requirements: CAT-01$/m);
-  assert.match(r.warnings.join(), /E-04 was split off E-01 by a run cut short.*"A member can find that tool by name or by category\."/);
+  assert.match(r.warnings.join(), /E-04 was split off E-01 by a run cut short.*"A member can find that tool by name or by category\.".* - remove from E-01 the ones only E-04 needs/);
+});
+
+test('a stopped run\'s rest is shown before approval, and a finished split\'s rest is never written over', (t) => {
+  const dir = started(t);
+  const epic = readFileSync(epicFile(agile(dir), 'E-01'), 'utf8');
+  assert.equal(refine(dir, cut()).ok, true);
+  writeFileSync(epicFile(agile(dir), 'E-01'), epic);
+  // a list that still carries what the rest took is told why it can't
+  const refused = send(dir, 'propose', { decisions: [], stories: [story({ requirements: ['CAT-01', 'CAT-02'] })] });
+  assert.ok(refused.issues.some((i) => /E-04 Search was split off E-01 by a run cut short and carries CAT-02/.test(i.problem)), JSON.stringify(refused.issues));
+  const p = send(dir, 'propose', { decisions: [], stories: [story()] });
+  assert.deepEqual(p.splits, [{ id: 'E-04', name: 'Search', requirements: ['CAT-02'], done_when: [FIND, E2E], cut_short: true }]);
+  assert.match(p.warnings.join(), /remove from E-01 the ones only E-04 needs/);
+
+  // refined whole, sent back to refinement and split again by the same name: a new rest, and the first keeps its own
+  const two = started(t);
+  const ADD = 'A volunteer marks a tool broken.';
+  assert.equal(refine(two, { ...cut(), add: [{ id: 'CAT-03', text: ADD }], stories: [story({ requirements: ['CAT-01', 'CAT-03'] })] }).ok, true);
+  const rest = readFileSync(epicFile(agile(two), 'E-04'), 'utf8');
+  status(epicFile(agile(two), 'E-01'), 'backlog');
+  const again = cut({ requirements: ['CAT-03'], moves: ['A volunteer can add a tool with a name, a category and a photo.'], done_when: [] });
+  const r = refine(two, { ...again, stories: [story()] });
+  assert.deepEqual([r.ok, r.splits?.[0].id], [true, 'E-05'], JSON.stringify(r));
+  assert.equal(readFileSync(epicFile(agile(two), 'E-04'), 'utf8'), rest);
+  const lines = ['E-01', 'E-04', 'E-05'].map((id) => readEpicFile(readFileSync(epicFile(agile(two), id), 'utf8')).requirements);
+  assert.deepEqual(lines, [['CAT-01'], ['CAT-02'], ['CAT-03']]);
+});
+
+test('a Done when line written with a trailing space or a star moves like any other', (t) => {
+  const dir = started(t);
+  edit(epicFile(agile(dir), 'E-01'), `- ${FIND}`, `* ${FIND} `);
+  assert.equal(refine(dir, cut()).ok, true);
+  assert.deepEqual(readEpicFile(readFileSync(epicFile(agile(dir), 'E-01'), 'utf8')).done_when, ['A volunteer can add a tool with a name, a category and a photo.', E2E]);
 });
 
 test('a later epic\'s story may build on an earlier epic and on its stories', (t) => {
