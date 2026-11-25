@@ -75,7 +75,7 @@ test('a start cut short after its marker still checks clean, so the next one ask
 test('a start renders the accepted testing policy, on a marked project too, and leaves a file that already holds it alone', (t) => {
   const rendered = (dir) => readFileSync(join(dirname(dir), POLICY_FILE), 'utf8');
   const planner = (dir) => spawnSync('node', [join(dirname(AGILE), 'planning.mjs'), 'test-policy', 'render', '--root', '.'], { encoding: 'utf8', cwd: dirname(dir) });
-  // what the old path's own render writes for these answers
+  // what `test-policy render` writes for these answers
   const want = answerSetup(planning(t));
   assert.equal(JSON.parse(planner(want).stdout).ok, true);
 
@@ -83,10 +83,9 @@ test('a start renders the accepted testing policy, on a marked project too, and 
   assert.equal(start(fresh).ok, true);
   assert.equal(rendered(fresh), rendered(want));
 
-  // marked by a start that died, when the old path's render refuses the project
+  // marked by a start that died before it wrote the policy
   const marked = answerSetup(planning(t));
   assert.equal(markAgile(marked).ok, true);
-  assert.equal(JSON.parse(planner(marked).stdout).reason, 'agile-path');
   assert.equal(start(marked).ok, true);
   assert.equal(rendered(marked), rendered(want));
 

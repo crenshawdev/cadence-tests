@@ -452,17 +452,27 @@ test('the converting call says a commit is due, or not, and no other call carrie
   assert.equal(run(['status'], v40(t)).migration.commit_due, false);
 });
 
-test('on a marked project every seam but design-read refuses agile-path naming /cad-agile, and the marker stays', (t) => {
+/** The seams an agile project runs too; agile-calls.test.mjs drives each of them there. */
+const AGILE_CALLS = ['codemap', 'detect-commands', 'detect-surfaces', 'recall', 'risk-check', 'test-policy', 'trace'];
+
+test('on a marked project every other seam refuses agile-path naming /cad-agile, through a link too, and the marker stays', (t) => {
   const dir = join(scratch('cad-migrate-agile-', t), '.planning');
   mkdirSync(dir);
   assert.equal(markAgile(dir).ok, true);
   const marker = readFileSync(statePath(dir), 'utf8');
-  const seams = run([], dir).detail.match(/subcommand: (.*) \(got/)[1].split(' | ').filter((s) => s !== 'design-read');
-  assert.ok(seams.includes('status') && seams.includes('state-rebuild'));
-  for (const seam of seams) {
-    const r = run([seam], dir);
-    assert.deepEqual([r.ok, r.reason], [false, 'agile-path'], seam);
-    assert.match(r.hint, /\/cad-agile/, seam);
+  const link = join(scratch('cad-migrate-agile-link-', t), '.planning');
+  symlinkSync(dir, link);
+  const seams = run([], dir).detail.match(/subcommand: (.*) \(got/)[1].split(' | ');
+  for (const seam of AGILE_CALLS) assert.ok(seams.includes(seam), seam);
+  const refused = seams.filter((s) => s !== 'design-read' && !AGILE_CALLS.includes(s));
+  assert.ok(refused.includes('status') && refused.includes('state-rebuild'));
+  // `trace ignore` is what the old commands' stops ask, so it refuses though the rest of its family runs
+  for (const args of [...refused.map((s) => [s]), ['trace', 'ignore'], ['trace', 'ignore', '--check']]) {
+    for (const at of [dir, link]) {
+      const r = run(args, at);
+      assert.deepEqual([r.ok, r.reason], [false, 'agile-path'], `${args.join(' ')} at ${at}`);
+      assert.match(r.hint, /\/cad-agile/, args.join(' '));
+    }
   }
   assert.equal(readFileSync(statePath(dir), 'utf8'), marker);
   assert.deepEqual(readdirSync(dir), ['records']);

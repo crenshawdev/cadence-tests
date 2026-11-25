@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
 import { markAgile, readState, statePath } from '../cadence-core/bin/lib/project-state.mjs';
+import { appendRead } from '../cadence-core/bin/lib/read-trace.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CORE = join(HERE, '..', 'cadence-core');
@@ -70,12 +71,16 @@ test('an agile project whose marker is gone or unreadable is neither stamped nor
     const link = join(scratch('cad-stray-link-', t), '.planning');
     symlinkSync(dir, link);
     const before = tree(dir);
-    for (const args of [['status'], ['cursor', 'get'], ['state-rebuild']]) {
-      const r = seam('planning.mjs', ...args, '--dir', dir);
-      assert.deepEqual([r.ok, r.reason], [false, 'agile-path'], `${name}: ${args.join(' ')}: ${JSON.stringify(r)}`);
-      assert.match(r.hint, /\/cad-agile/);
+    const append = ['trace', 'append', '--phase', '0', '--family', 'lifecycle', '--event', 'phase_start', '--sha', 'abc1234'];
+    for (const args of [['status'], ['cursor', 'get'], ['state-rebuild'], ['recall', 'tool'], append]) {
+      for (const at of [dir, link]) {
+        const r = seam('planning.mjs', ...args, '--dir', at);
+        assert.deepEqual([r.ok, r.reason], [false, 'agile-path'], `${name}: ${args.join(' ')} at ${at}: ${JSON.stringify(r)}`);
+        assert.match(r.hint, /\/cad-agile/);
+      }
     }
-    assert.equal(seam('planning.mjs', 'state-rebuild', '--dir', link).ok, false, name);
+    // the hooks write past the gate, and a marker they can't read is no stamp
+    assert.equal(appendRead(dir, { ts: '2026-01-01T00:00:00.000Z', tool: 'Read', target: '/a' }).written, false, name);
     assert.deepEqual(tree(dir), before, name);
   }
 });
