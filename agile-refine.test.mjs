@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync }
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
-import { epicFile, storyFile } from '../cadence-core/bin/lib/agile-paths.mjs';
+import { agileBacklogFile, epicFile, storyFile } from '../cadence-core/bin/lib/agile-paths.mjs';
 import { readStoryFile } from '../cadence-core/bin/lib/agile-read.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -36,11 +36,13 @@ const story = (over = {}) => ({ title: 'Add a tool', size: 'S', builds_on: [], r
   delivers: 'A volunteer adds a tool with a name, a category and a photo.', accepted_when: ['Adding a tool with a photo shows it in the list.'], ...over });
 const list = () => ({ decisions: ['Photos are kept on disk beside the database.'], stories: [story(),
   story({ title: 'Search: by name or category', size: 'M', builds_on: ['E-01-1'], requirements: ['CAT-02', 'CAT-01'], accepted_when: ['Searching "drill" finds it.', 'A category lists its tools.'] })] });
-function refine(dir, payload, epic = 'E-01') {
+function send(dir, call, payload, epic = 'E-01') {
   const file = join(scratch('cad-agile-payload-'), 'payload.json');
   writeFileSync(file, typeof payload === 'string' ? payload : JSON.stringify({ epic, ...payload }));
-  return run(dir, 'refine', '--payload', file);
+  return run(dir, call, '--payload', file);
 }
+const refine = (dir, payload, epic) => send(dir, 'refine', payload, epic);
+const decisions = (dir, epic = 'E-01') => readFileSync(epicFile(agile(dir), epic), 'utf8').split('## Decisions\n\n')[1];
 
 test('an approved list is written as stories that read back, turns the epic and adds its decisions, and touches nothing else', (t) => {
   const dir = started(t);
@@ -114,12 +116,73 @@ test('a list that breaks a rule is refused naming the story and the field, with 
     ['a payload field that is not one', { ...one({}), notes: 'x' }, undefined, 'notes', /not a field/],
   ];
   for (const [name, payload, id, field, problem] of cases) {
-    const r = refine(dir, payload);
-    assert.deepEqual([r.ok, r.reason, r._exit], [false, 'stories-refused', 1], `${name}: ${JSON.stringify(r)}`);
-    assert.ok(r.issues.some((i) => i.story === id && i.field === field && problem.test(i.problem)), `${name}: ${JSON.stringify(r.issues)}`);
-    assert.match(r.hint, /nothing was written/, name);
-    assert.deepEqual(tree(dir), before, name);
+    for (const call of ['propose', 'refine']) {
+      const r = send(dir, call, payload);
+      assert.deepEqual([r.ok, r.reason, r._exit], [false, 'stories-refused', 1], `${name}: ${JSON.stringify(r)}`);
+      assert.ok(r.issues.some((i) => i.story === id && i.field === field && problem.test(i.problem)), `${name}: ${JSON.stringify(r.issues)}`);
+      assert.match(r.hint, /nothing was written/, name);
+      assert.deepEqual(tree(dir), before, name);
+    }
   }
+});
+
+test('propose answers what refine would name, and writes nothing', (t) => {
+  const dir = started(t);
+  const before = tree(dir);
+  const r = send(dir, 'propose', list());
+  assert.deepEqual(tree(dir), before);
+  assert.deepEqual(r, { ok: true, epic: 'E-01', stories: refine(dir, list()).stories, _exit: 0 });
+});
+
+test('an answer is saved under its question as it\'s given, over an earlier one, and the picks go under it', (t) => {
+  const dir = started(t);
+  const others = () => tree(dir).filter(([p]) => !p.startsWith('agile/epics/E-01'));
+  const before = others();
+  const epic = readFileSync(epicFile(agile(dir), 'E-01'), 'utf8');
+  const save = (...answers) => send(dir, 'answer', { answers });
+  assert.deepEqual(save({ question: 'Where do photos go?', answer: 'On disk' }, { question: 'Who adds a tool?', answer: 'Any volunteer' }), { ok: true, epic: 'E-01', saved: 2, _exit: 0 });
+  assert.equal(save({ question: 'Where do photos go?', answer: 'In the database' }).ok, true);
+  assert.equal(decisions(dir), '- **Where do photos go?** In the database\n- **Who adds a tool?** Any volunteer\n');
+  assert.equal(readFileSync(epicFile(agile(dir), 'E-01'), 'utf8').split('## Decisions')[0], epic.split('## Decisions')[0]);
+  assert.deepEqual(others(), before);
+  assert.equal(run(dir, 'next').next.step, 'refine');
+  assert.equal(refine(dir, list()).ok, true);
+  assert.equal(decisions(dir), '- **Where do photos go?** In the database\n- **Who adds a tool?** Any volunteer\n- Photos are kept on disk beside the database.\n');
+});
+
+test('answers that can\'t be saved are refused with nothing written', (t) => {
+  const dir = started(t);
+  const before = tree(dir);
+  const good = { question: 'Q?', answer: 'A' };
+  for (const answers of [[], 'x', ['x'], [{ question: 'Q?' }], [{ ...good, answer: 'a\n## Result' }], [{ ...good, why: 'x' }], [good, null]]) {
+    const r = send(dir, 'answer', { answers });
+    assert.deepEqual([r.ok, r.reason, r._exit], [false, 'answers-refused', 1], JSON.stringify(answers));
+    assert.ok(r.issues.some((i) => i.field === 'answers'), JSON.stringify(r));
+  }
+  assert.equal(send(dir, 'answer', { answers: [good], notes: 'x' }).issues[0].field, 'notes');
+  assert.equal(send(dir, 'answer', { answers: [good] }, 'E-02').reason, 'not-refinable');
+  assert.deepEqual(tree(dir), before);
+  assert.equal(refine(dir, list()).ok, true);
+  const after = tree(dir);
+  for (const call of ['answer', 'propose']) assert.equal(send(dir, call, { ...list(), answers: [good] }).reason, 'not-refinable');
+  assert.deepEqual(tree(dir), after);
+});
+
+test('the backlog items a list takes are gone once it\'s written, and one that isn\'t there is refused', (t) => {
+  const dir = started(t);
+  const file = agileBacklogFile(agile(dir));
+  const text = '## Todos\n\n- [ ] search by photo\n- [ ] print a label\n  on the counter printer\n\n## Seeds\n\n- lend to other libraries\n';
+  writeFileSync(file, text);
+  const taking = (...backlog) => ({ ...list(), backlog });
+  for (const line of ['- [ ] print labels', '  on the counter printer', '## Seeds', '- [ ] search']) {
+    const r = refine(dir, taking(line));
+    assert.deepEqual([r.reason, r.issues[0].field], ['stories-refused', 'backlog'], line);
+    assert.equal(readFileSync(file, 'utf8'), text);
+  }
+  assert.equal(send(dir, 'propose', taking('- [ ] print a label')).ok, true);
+  assert.equal(readFileSync(file, 'utf8'), text);
+  assert.equal(refine(dir, taking('- [ ] print a label', '- lend to other libraries')).ok, true);
+  assert.equal(readFileSync(file, 'utf8'), '## Todos\n\n- [ ] search by photo\n\n## Seeds\n\n');
 });
 
 test('a later epic\'s story may build on an earlier epic and on its stories', (t) => {
@@ -212,4 +275,20 @@ test('an epic in progress whose stories don\'t read back is refused naming the f
     assert.match(r.detail, detail, name);
     assert.deepEqual(tree(dir), before, name);
   }
+});
+
+test('the conversation settles its branch, asks and has the list checked before it shows or writes one, and commits by path', () => {
+  const workflow = (name) => readFileSync(join(HERE, '..', 'cadence-core', 'workflows', name), 'utf8');
+  const prose = workflow('agile-refine.md');
+  const at = (words) => {
+    assert.equal(prose.split(words).length, 2, `${words} is there once`);
+    return prose.indexOf(words);
+  };
+  const order = ['apply section 1', '## 2. Ask', 'agile.mjs" answer', '## 3. Cut', 'agile.mjs" propose', 'Do you want {id} built from these stories?', '## 5. Write', 'agile.mjs" refine', 'git add -- "$@"', 'git commit -m "docs: refine {id}" -- "$@"'];
+  assert.deepEqual(order.map(at), order.map(at).sort((a, b) => a - b));
+  // the late commit of a refinement cut short is the same one
+  const command = workflow('agile.md');
+  const late = command.indexOf('<step name="refine">');
+  assert.ok(late > command.indexOf('<step name="commit">') && late < command.indexOf('<step name="report">'));
+  assert.ok(command.slice(late).includes('workflows/agile-refine.md'));
 });
