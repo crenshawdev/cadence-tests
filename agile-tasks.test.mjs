@@ -100,6 +100,26 @@ test('a task\'s review and rulings land beside its plan, and a receipt is counte
   assert.deepEqual(readdirSync(dir).sort(), top);
 });
 
+test('an on-demand review opens its own run on an agile project and its bracket closes under it', (t) => {
+  const { root } = taskRun(t);
+  for (const name of ['decision-review.md', 'minimalism-review.md']) {
+    const prose = readFileSync(join(HERE, '..', 'cadence-core', 'workflows', name), 'utf8');
+    assert.ok(prose.indexOf('--event phase_start') > 0 && prose.indexOf('--event phase_start') < prose.indexOf('--event dispatch'), name);
+  }
+  const skill = readFileSync(join(HERE, '..', 'skills', 'cad-plan-review', 'SKILL.md'), 'utf8');
+  assert.ok(skill.indexOf('--event phase_start') > 0);
+  const trace = (...args) => planning(root, 'trace', ...args);
+  const runs = ['one', 'two'].map((token) => {
+    assert.equal(trace('append', '--phase', '0', '--family', 'lifecycle', '--event', 'phase_start', '--sha', `abc1234-${token}`).written, true);
+    const sent = trace('append', '--phase', '0', '--family', 'lifecycle', '--event', 'dispatch', '--plan', 'cad-reviewer', '--role', 'cad-reviewer',
+      '--reviewer', 'claude-subagent', '--read', 'ladder.txt');
+    assert.equal(trace('close', '--phase', '0', '--plan', 'cad-reviewer', '--role', 'cad-reviewer', '--reviewer', 'claude-subagent', '--tokens', '10').written, true);
+    return sent.corr;
+  });
+  assert.deepEqual(runs, ['0-abc1234-one', '0-abc1234-two']);
+  assert.equal(trace('render', '--phase', '0').brackets.filter((b) => b.role === 'cad-reviewer').length > 0, true);
+});
+
 test('each debug fix opens its own run before its risk check, so one session can\'t spend another\'s re-arm', () => {
   const prose = readFileSync(join(HERE, '..', 'cadence-core', 'workflows', 'debug.md'), 'utf8');
   const anchor = prose.indexOf('--event phase_start');
