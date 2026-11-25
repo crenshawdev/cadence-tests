@@ -230,6 +230,8 @@ test('the command asks for every answer before anything it writes, and commits t
   const commit = command.slice(command.indexOf('<step name="commit">'), command.indexOf('<step name="report">'));
   assert.ok(read > 0 && read < command.indexOf('<step name="commit">'), 'the start is read before the commit');
   for (const file of ['.planning/config.json', '.github/cadence/coverage-policy.json']) assert.ok(commit.includes(file), file);
+  // a task's own files sit in the same folder, and a late first commit must not sweep them in
+  assert.doesNotMatch(commit, /set -- .*\.planning\/agile(?!\/)/);
   // both commits offer the release's branch: the start before the release is on disk, the later run off decide
   assert.ok(prose.slice(ask, write).includes("with the check's `decide`"), 'the start does not ask about the branch');
   assert.doesNotMatch(commit, /integration branch/, 'the later commit skips the branch decide names');

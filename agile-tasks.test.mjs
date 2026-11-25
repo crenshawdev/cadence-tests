@@ -78,6 +78,10 @@ test('a task\'s review and rulings land beside its plan, and a receipt is counte
     assert.deepEqual([r.ok, r.reason], [false, 'no-task-dir'], JSON.stringify(r));
     assert.match(r.detail, /agile\/tasks\/lend-ladder\//);
   }
+  for (const [name, args] of [['no task', []], ['a bad one', ['--task', 'a/b']]]) {
+    const r = planning(root, 'adjudication', '--phase', '0', ...args, ...fire.slice(4), '--payload', rulings);
+    assert.deepEqual([r.ok, /\.planning\/agile\/tasks\/<slug>\//.test(`${r.detail} ${r.hint}`)], [false, true], `${name}: ${JSON.stringify(r)}`);
+  }
   mkdirSync(join(dir, 'agile', 'tasks', 'lend-ladder'), { recursive: true });
   const ruled = planning(root, 'adjudication', ...fire, '--payload', rulings);
   assert.equal(ruled.ok, true, JSON.stringify(ruled));
