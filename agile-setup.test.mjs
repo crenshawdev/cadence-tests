@@ -148,3 +148,26 @@ test('a relative planning folder reads its own config, wherever the call is made
   const r = check(join('..', 'project', '.planning'), { cwd: join(root, 'elsewhere'), global: join(root, 'no-global.json') });
   assert.deepEqual([r.ok, r.unanswered, r.reviewers?.list], [true, [], ['claude-subagent']], JSON.stringify(r));
 });
+
+test('the command asks for every answer before anything it writes, and commits the settings with the release', () => {
+  const workflow = (name) => readFileSync(join(HERE, '..', 'cadence-core', 'workflows', name), 'utf8');
+  const prose = workflow('agile-start.md');
+  const [check, ask, write] = ['## 1. Check', '## 2. Ask', '## 3. Write'].map((h) => prose.indexOf(h));
+  assert.ok(check > 0 && ask > check && write > ask, 'check, ask and write in that order');
+  for (const call of ['agile.mjs" check', 'forge.mjs" detect']) {
+    assert.ok(prose.indexOf(call) > check && prose.indexOf(call) < ask, `${call} is not in the check`);
+  }
+  for (const question of ['**Outside reviewers.**', '**Forge**', '**Risk surfaces**', '**Testing policy**', '**The branch**']) {
+    assert.ok(prose.indexOf(question) > ask && prose.indexOf(question) < write, `${question} is not asked before the write`);
+  }
+  for (const call of ['git init', 'git checkout -b', 'mkdir -p .planning', 'config.mjs" set', 'agile.mjs" start']) {
+    assert.ok(prose.indexOf(call) > write, `${call} comes before the write, or is gone`);
+    assert.equal(prose.indexOf(call), prose.lastIndexOf(call), `${call} is there twice`);
+  }
+  assert.ok(prose.indexOf('config.mjs" set') < prose.indexOf('agile.mjs" start'), 'the settings go in before the release');
+  const command = workflow('agile.md');
+  const read = command.indexOf('workflows/agile-start.md');
+  const commit = command.slice(command.indexOf('<step name="commit">'), command.indexOf('<step name="report">'));
+  assert.ok(read > 0 && read < command.indexOf('<step name="commit">'), 'the start is read before the commit');
+  for (const file of ['.planning/config.json', '.github/cadence/coverage-policy.json']) assert.ok(commit.includes(file), file);
+});
