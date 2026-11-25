@@ -179,7 +179,8 @@ test('every refusal of a check leaves the tree exactly as it was', (t) => {
   assert.match(check(planning(t), { env: NOBODY }).hint, /user\.name.*user\.email/);
 });
 
-test('a key that can\'t sign is refused with nothing written, and one that can, or commits that aren\'t signed, check clean', (t) => {
+/** A key that signs, a temp folder of its own, and the settings of a run that signs with one of its names. */
+function signer(t) {
   const keys = scratch('cad-agile-keys-', t);
   const tmp = join(keys, 'tmp');
   mkdirSync(tmp);
@@ -187,6 +188,11 @@ test('a key that can\'t sign is refused with nothing written, and one that can, 
   assert.equal(made.status, 0, made.stderr);
   const signs = (key, on = 'true') => ({ env: { ...WHO, TMPDIR: tmp, GIT_CONFIG_COUNT: '3', GIT_CONFIG_KEY_0: 'commit.gpgsign', GIT_CONFIG_VALUE_0: on,
     GIT_CONFIG_KEY_1: 'gpg.format', GIT_CONFIG_VALUE_1: 'ssh', GIT_CONFIG_KEY_2: 'user.signingkey', GIT_CONFIG_VALUE_2: join(keys, key) } });
+  return { keys, tmp, signs };
+}
+
+test('a key that can\'t sign is refused with nothing written, and one that can, or commits that aren\'t signed, check clean', (t) => {
+  const { tmp, signs } = signer(t);
   for (const repo of [true, false]) {
     const dir = answerSetup(planning(t));
     if (repo) spawnSync('git', ['init', '-q', dirname(dir)]);
@@ -199,6 +205,56 @@ test('a key that can\'t sign is refused with nothing written, and one that can, 
     assert.deepEqual(tree(dirname(dir)), before);
     assert.deepEqual(readdirSync(tmp), []);
   }
+});
+
+test('the signing check leaves a repository\'s index alone, and judges the key and the setting whatever the environment holds', async (t) => {
+  const { keys, tmp, signs } = signer(t);
+  const project = (repo) => {
+    const dir = answerSetup(planning(t));
+    const git = (...args) => spawnSync('git', ['-C', dirname(dir), ...args],
+      { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
+    if (repo) assert.equal(git('init', '-q').status, 0);
+    return { dir, root: dirname(dir), git };
+  };
+
+  await t.test('a split index and a hook on it', () => {
+    const { dir, root, git } = project(true);
+    git('config', 'core.splitIndex', 'true');
+    writeFileSync(join(root, 'a.txt'), 'a\n');
+    assert.equal(git('add', 'a.txt').status, 0);
+    // past splitIndex.sharedIndexExpire, so the next index written here would remove it
+    const shared = readdirSync(join(root, '.git')).filter((n) => n.startsWith('sharedindex.'));
+    assert.equal(shared.length, 1);
+    utimesSync(join(root, '.git', shared[0]), 1, 1);
+    mkdirSync(join(root, '.git', 'hooks'), { recursive: true });
+    writeFileSync(join(root, '.git', 'hooks', 'post-index-change'), '#!/bin/sh\ntouch .git/hook-ran\n', { mode: 0o755 });
+    const before = tree(root);
+    assert.equal(check(dir, signs('good')).ok, true);
+    assert.deepEqual(tree(root), before);
+    assert.match(git('status', '--porcelain').stdout, /^A  a\.txt$/m);
+  });
+
+  await t.test('an object folder in the environment', () => {
+    const { dir, root } = project(true);
+    const { env } = signs('good');
+    const r = check(dir, { env: { ...env, GIT_OBJECT_DIRECTORY: join(root, '.git', 'objects') } });
+    assert.equal(r.ok, true, JSON.stringify(r));
+  });
+
+  await t.test('a relative temp folder, called from elsewhere', () => {
+    const { dir, root } = project(false);
+    const before = tree(root);
+    const r = check(dir, { cwd: keys, env: { ...signs('good').env, TMPDIR: 'tmp' } });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(tree(root), before);
+    assert.deepEqual(readdirSync(tmp), []);
+  });
+
+  await t.test('a commit.gpgsign git can\'t read', () => {
+    const r = check(project(true).dir, signs('good', 'ssh'));
+    assert.deepEqual([r.ok, r._exit, r.reason], [false, 1, 'signing-failed'], JSON.stringify(r));
+    assert.match(r.detail, /'ssh'.*commit\.gpgsign/);
+  });
 });
 
 test('an outside reviewer no firing review would run is dropped, and one a single review would run is not', (t) => {
