@@ -22,8 +22,9 @@ const NOBODY = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
 
 /** One agile.mjs call with no user-global config unless the case writes one. */
 function run(dir, args, { global = join(dir, 'no-global.json'), env = WHO, cwd = undefined } = {}) {
-  const base = { ...process.env };
-  for (const key of [...Object.keys(WHO), ...Object.keys(NOBODY)]) delete base[key];
+  // nor this machine's own git settings: a developer who signs would have every check sign with their key
+  const base = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+  for (const key of [...Object.keys(WHO), 'GIT_CONFIG_COUNT', 'EMAIL']) delete base[key];
   const r = spawnSync('node', [AGILE, ...args, '--dir', dir], { encoding: 'utf8', cwd, env: { ...base, CADENCE_GLOBAL_CONFIG: global, ...env } });
   return { ...JSON.parse(r.stdout), _exit: r.status };
 }
@@ -176,6 +177,28 @@ test('every refusal of a check leaves the tree exactly as it was', (t) => {
   }
   assert.ok(check(planning(t), { design: broken }).issues.length, 'a refused design names its issues');
   assert.match(check(planning(t), { env: NOBODY }).hint, /user\.name.*user\.email/);
+});
+
+test('a key that can\'t sign is refused with nothing written, and one that can, or commits that aren\'t signed, check clean', (t) => {
+  const keys = scratch('cad-agile-keys-', t);
+  const tmp = join(keys, 'tmp');
+  mkdirSync(tmp);
+  const made = spawnSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', join(keys, 'good')], { encoding: 'utf8' });
+  assert.equal(made.status, 0, made.stderr);
+  const signs = (key, on = 'true') => ({ env: { ...WHO, TMPDIR: tmp, GIT_CONFIG_COUNT: '3', GIT_CONFIG_KEY_0: 'commit.gpgsign', GIT_CONFIG_VALUE_0: on,
+    GIT_CONFIG_KEY_1: 'gpg.format', GIT_CONFIG_VALUE_1: 'ssh', GIT_CONFIG_KEY_2: 'user.signingkey', GIT_CONFIG_VALUE_2: join(keys, key) } });
+  for (const repo of [true, false]) {
+    const dir = answerSetup(planning(t));
+    if (repo) spawnSync('git', ['init', '-q', dirname(dir)]);
+    const before = tree(dirname(dir));
+    const r = check(dir, signs('missing'));
+    assert.deepEqual([r.ok, r._exit, r.reason], [false, 1, 'signing-failed'], JSON.stringify(r));
+    assert.match(r.detail, /Couldn't load public key .*missing/);
+    assert.match(r.hint, /user\.signingkey/);
+    for (const opts of [signs('good'), signs('missing', 'false')]) assert.equal(check(dir, opts).ok, true, JSON.stringify(check(dir, opts)));
+    assert.deepEqual(tree(dirname(dir)), before);
+    assert.deepEqual(readdirSync(tmp), []);
+  }
 });
 
 test('an outside reviewer no firing review would run is dropped, and one a single review would run is not', (t) => {
