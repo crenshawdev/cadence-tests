@@ -65,6 +65,20 @@ test('with everything answered, check has nothing to ask and start goes ahead', 
   assert.equal(start(dir).ok, true);
 });
 
+test('the branch a start suggests is the one a later commit on main is offered, and a configured name is both', (t) => {
+  for (const [name, want] of [[undefined, 'cadence/toolshed'], ['seldon/hardin', 'seldon/hardin'], ['-D', null]]) {
+    const dir = answerSetup(planning(t));
+    const config = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'));
+    config.git.integration_branch_name = name;
+    writeFileSync(join(dir, 'config.json'), JSON.stringify(config));
+    assert.equal(check(dir).branch, want);
+    assert.equal(start(dir).ok, true);
+    const r = spawnSync('node', [join(dirname(AGILE), 'git-branch.mjs'), 'decide', '--dir', dirname(dir), '--branch', 'main'],
+      { encoding: 'utf8', env: { ...process.env, CADENCE_GLOBAL_CONFIG: join(dir, 'no-global.json') } });
+    assert.deepEqual([JSON.parse(r.stdout).action, JSON.parse(r.stdout).branch], ['ask', want]);
+  }
+});
+
 test('a start cut short after its marker still checks clean, so the next one asks nothing again', (t) => {
   const dir = answerSetup(planning(t));
   assert.equal(markAgile(dir).ok, true);
@@ -205,4 +219,7 @@ test('the command asks for every answer before anything it writes, and commits t
   const commit = command.slice(command.indexOf('<step name="commit">'), command.indexOf('<step name="report">'));
   assert.ok(read > 0 && read < command.indexOf('<step name="commit">'), 'the start is read before the commit');
   for (const file of ['.planning/config.json', '.github/cadence/coverage-policy.json']) assert.ok(commit.includes(file), file);
+  // both commits offer the release's branch: the start before the release is on disk, the later run off decide
+  assert.ok(prose.slice(ask, write).includes("suggesting the check's `branch`"), 'the start does not suggest the branch');
+  assert.doesNotMatch(commit, /integration branch/, 'the later commit skips the branch decide names');
 });

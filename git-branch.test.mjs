@@ -5,10 +5,12 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { agileDir, releaseFile } from '../cadence-core/bin/lib/agile-paths.mjs';
+import { markAgile } from '../cadence-core/bin/lib/project-state.mjs';
 
 const SEAM = join(dirname(fileURLToPath(import.meta.url)), '..', 'cadence-core', 'bin', 'git-branch.mjs');
 // Hermetic global config (never read the dev's real ~/.claude one).
@@ -264,6 +266,73 @@ function tags(dir) {
   return JSON.parse(execFileSync('node', [SEAM, 'tags', '--dir', dir],
     { encoding: 'utf8', env }));
 }
+
+/** A marked project whose release.md holds `release`, or which has no release at all. */
+function agileFixture(t, gitConfig, release = '# Release: Tool Shed\n\n## Goal\n\nLend tools.\n\n## Epics\n\n- E-01: Catalog\n') {
+  const dir = tmp(t, 'cad-gb-agile-');
+  const planning = join(dir, '.planning');
+  mkdirSync(planning);
+  writeFileSync(join(planning, 'config.json'), JSON.stringify({ git: gitConfig }));
+  assert.equal(markAgile(planning).ok, true);
+  if (release !== null) {
+    mkdirSync(agileDir(planning));
+    writeFileSync(releaseFile(agileDir(planning)), release);
+  }
+  return dir;
+}
+
+test('agile: on a protected base the release names the branch, and every setting acts on it as on the old path', (t) => {
+  for (const [gitConfig, action, branch] of [
+    [{}, 'ask', 'cadence/tool-shed'],
+    [{ auto_branch: 'auto' }, 'create', 'cadence/tool-shed'],
+    [{ auto_branch: 'off' }, 'stay', 'cadence/tool-shed'],
+    [{ integration_branch: 'trunk' }, 'stay', null],
+    [{ integration_branch_name: 'seldon/hardin' }, 'ask', 'seldon/hardin'],
+    [{ auto_branch: 'auto', integration_branch_name: 'seldon/hardin' }, 'create', 'seldon/hardin'],
+    [{ auto_branch: 'auto', integration_branch_name: '-D' }, 'ask', null],
+  ]) {
+    const r = decide(agileFixture(t, gitConfig), 'main');
+    assert.deepEqual([r.ok, r.action, r.branch], [true, action, branch], JSON.stringify([gitConfig, r]));
+  }
+  const off = decide(agileFixture(t, { auto_branch: 'auto' }), 'feat/thing');
+  assert.deepEqual([off.action, off.branch], ['stay', 'feat/thing']);
+});
+
+test('agile: through a linked .planning the release still names the branch', (t) => {
+  const real = agileFixture(t, {});
+  const dir = tmp(t, 'cad-gb-link-');
+  symlinkSync(join(real, '.planning'), join(dir, '.planning'));
+  assert.equal(decide(dir, 'main').branch, 'cadence/tool-shed');
+});
+
+test('agile: a release that gives no name asks without one, whatever old-path files are left beside it', (t) => {
+  for (const [name, release, gitConfig, branch] of [
+    ['a start killed after its marker', null, {}, null],
+    ['a release file that does not read back', '# Release: Tool Shed\n\n## Epics\n\nE-01 Catalog\n', {}, null],
+    ['a title with no letter or digit', '# Release: --\n\n## Epics\n\n- E-01: Catalog\n', {}, null],
+    ['no release, under a configured name', null, { integration_branch_name: 'seldon/hardin' }, 'seldon/hardin'],
+  ]) {
+    const dir = agileFixture(t, { auto_branch: 'auto', ...gitConfig }, release);
+    writeFileSync(join(dir, '.planning', 'PROJECT.md'), '### Active\n\n`v1.0.0` - the round\n');
+    writeFileSync(join(dir, '.planning', 'ROADMAP.md'), '# Roadmap: v1.0.0\n');
+    const r = decide(dir, 'main');
+    assert.deepEqual([r.action, r.branch], [branch ? 'create' : 'ask', branch], name);
+    if (branch) continue;
+    assert.match(r.reason, /^naming-problem: .*\.planning\/agile.*git\.integration_branch_name.*stay on the base \/ abort$/, name);
+    assert.doesNotMatch(r.reason, /PROJECT|ROADMAP/, name);
+  }
+});
+
+test('agile: a tag for the version a leftover PROJECT.md names says nothing about the release', (t) => {
+  const dir = agileFixture(t, { auto_branch: 'auto' });
+  writeFileSync(join(dir, '.planning', 'PROJECT.md'), '### Active\n\n`v1.0.0` - the round\n');
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'ignore', env: GIT_ENV });
+  git('init', '-q');
+  git('commit', '--allow-empty', '-q', '-m', 'root');
+  git('tag', 'v1.0.0');
+  const r = decide(dir, 'main');
+  assert.deepEqual([r.action, r.branch], ['create', 'cadence/tool-shed']);
+});
 
 test('tags: the repository at --dir answers with its own tag list', (t) => {
   const dir = taggedFixture(t, {}, 'v9.9.0', ['v9.9.0']);
