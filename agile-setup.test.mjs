@@ -3,12 +3,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
 import { markAgile } from '../cadence-core/bin/lib/project-state.mjs';
 import { namedReviewers, unanswered } from '../cadence-core/bin/lib/agile-setup.mjs';
+import { POLICY_FILE } from '../cadence-core/bin/planning/testing-policy.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGILE = join(HERE, '..', 'cadence-core', 'bin', 'agile.mjs');
@@ -69,6 +70,36 @@ test('a start cut short after its marker still checks clean, so the next one ask
   assert.equal(markAgile(dir).ok, true);
   assert.deepEqual(check(dir).unanswered, []);
   assert.equal(start(dir).ok, true);
+});
+
+test('a start renders the accepted testing policy, on a marked project too, and leaves a file that already holds it alone', (t) => {
+  const rendered = (dir) => readFileSync(join(dirname(dir), POLICY_FILE), 'utf8');
+  const planner = (dir) => spawnSync('node', [join(dirname(AGILE), 'planning.mjs'), 'test-policy', 'render', '--root', '.'], { encoding: 'utf8', cwd: dirname(dir) });
+  // what the old path's own render writes for these answers
+  const want = answerSetup(planning(t));
+  assert.equal(JSON.parse(planner(want).stdout).ok, true);
+
+  const fresh = answerSetup(planning(t));
+  assert.equal(start(fresh).ok, true);
+  assert.equal(rendered(fresh), rendered(want));
+
+  // marked by a start that died, when the old path's render refuses the project
+  const marked = answerSetup(planning(t));
+  assert.equal(markAgile(marked).ok, true);
+  assert.equal(JSON.parse(planner(marked).stdout).reason, 'agile-path');
+  assert.equal(start(marked).ok, true);
+  assert.equal(rendered(marked), rendered(want));
+
+  for (const [text, kept] of [['{}\n', false], [rendered(want), true]]) {
+    const dir = answerSetup(planning(t));
+    const file = join(dirname(dir), POLICY_FILE);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, text);
+    utimesSync(file, 1, 1);
+    assert.equal(start(dir).ok, true);
+    assert.equal(rendered(dir), rendered(want));
+    assert.equal(statSync(file).mtimeMs === 1000, kept, 'only a file holding something else is written');
+  }
 });
 
 test('a question is answered only by the layer that may answer it, and half a forge is no forge', () => {
@@ -139,6 +170,9 @@ test('an outside reviewer no firing review would run is dropped, and one a singl
   assert.deepEqual(check(dir).reviewers.dropped, ['openai', 'gemini']);
   assert.deepEqual(namedReviewers({ review: { reviewers: ['openai'] } },
     { review: { plan: 'advisory', diff: 'off' }, reviewers: { plan: ['claude-subagent'], diff: ['openai'] } }).dropped, ['openai']);
+  // with every gate off no review fires, which is nothing wrong with the reviewer
+  const off = { review: { plan: 'off', diff: 'off' }, reviewers: { plan: ['claude-subagent'], diff: ['openai'] } };
+  assert.deepEqual(namedReviewers({ review: { reviewers: ['openai', 'gemini'] } }, off), { list: ['openai', 'gemini'], outside: ['openai'], dropped: ['gemini'] });
 });
 
 test('a relative planning folder reads its own config, wherever the call is made from', (t) => {
@@ -164,7 +198,9 @@ test('the command asks for every answer before anything it writes, and commits t
     assert.ok(prose.indexOf(call) > write, `${call} comes before the write, or is gone`);
     assert.equal(prose.indexOf(call), prose.lastIndexOf(call), `${call} is there twice`);
   }
-  assert.ok(prose.indexOf('config.mjs" set') < prose.indexOf('agile.mjs" start'), 'the settings go in before the release');
+  const create = prose.indexOf('`forge.mjs create`');
+  assert.ok(prose.indexOf('config.mjs" set') < create && create < prose.indexOf('agile.mjs" start'), 'the settings, then the repository, then the release');
+  assert.doesNotMatch(prose.slice(write), /test-policy/, 'a render or a check on the old path refuses a marked project');
   const command = workflow('agile.md');
   const read = command.indexOf('workflows/agile-start.md');
   const commit = command.slice(command.indexOf('<step name="commit">'), command.indexOf('<step name="report">'));
