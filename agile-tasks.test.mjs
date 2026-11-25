@@ -181,8 +181,10 @@ test('a todo, a seed and a note land in the backlog under their own headings wit
   assert.match(under('## Notes'), /^- \d{4}-\d\d-\d\d the marquee is in the shed$/m);
   const found = planning(root, 'recall', 'marquee').results;
   assert.deepEqual([found.length, new Set(found.map((h) => h.source))], [3, new Set(['agile/backlog.md'])]);
-  const phased = capture('--kind', 'todo', '--text', 'x', '--phase', '2');
-  assert.deepEqual([phased.ok, phased.reason], [false, 'bad-args'], JSON.stringify(phased));
+  for (const kind of ['todo', 'seed', 'note']) {
+    const phased = capture('--kind', kind, '--text', 'x', '--phase', '2');
+    assert.deepEqual([phased.ok, phased.reason, /backlog/.test(phased.hint)], [false, 'bad-args', true], JSON.stringify(phased));
+  }
   assert.equal(readFileSync(join(dir, 'agile', 'backlog.md'), 'utf8'), text);
   // the --cadence queue is nobody's project
   const queue = join(root, 'queue', 'CAPTURE.md');
