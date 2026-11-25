@@ -295,10 +295,35 @@ test('a defer or an add that can\'t be applied is refused with nothing written',
       assert.deepEqual(tree(dir), before, name);
     }
   }
-  writeFileSync(requirementsFile(agile(dir)), asked(dir).replace('## Deferred', '## Later'));
-  const r = send(dir, 'propose', list());
+  // a line its writer wouldn't write blocks only a change to the ask, which would rewrite the file without it
+  writeFileSync(requirementsFile(agile(dir)), asked(dir).replace('### Loans', '### '));
+  assert.equal(send(dir, 'propose', { ...list(), defer: ['CAT-02'], stories: [story()] }).ok, true);
+  writeFileSync(requirementsFile(agile(dir)), asked(dir).replace('## Deferred', 'A note of mine.\n\n## Deferred'));
+  assert.equal(send(dir, 'propose', list()).ok, true);
+  const before = tree(dir);
+  const r = refine(dir, { ...list(), defer: ['CAT-02'], stories: [story()] });
   assert.deepEqual([r.ok, r.reason], [false, 'release-damaged'], JSON.stringify(r));
-  assert.match(r.detail, /REQUIREMENTS\.md/);
+  assert.match(r.detail, /REQUIREMENTS\.md holds a line/);
+  assert.deepEqual(tree(dir), before);
+  assert.equal(refine(dir, list()).ok, true);
+});
+
+test('a #41 kind of ID is added at its next number, and one whose prefix has none left gets a heading of its own', (t) => {
+  const dir = started(t);
+  for (const file of [requirementsFile(agile(dir)), epicFile(agile(dir), 'E-01')]) edit(file, /CAT-0(\d)/g, '#4$1');
+  assert.match(JSON.stringify(send(dir, 'propose', { ...list(), add: [{ id: '#44', text: LABEL }] }).issues), /is #44, and the next # is #43/);
+  const stories = [story({ requirements: ['#41'] }), story({ title: 'Search', requirements: ['#42'] }), story({ title: 'Labels', requirements: ['#43'] })];
+  assert.equal(refine(dir, { decisions: [], add: [{ id: '#43', text: LABEL }], stories }).ok, true);
+  assert.ok(asked(dir).includes(`category.\n- **#43**: ${LABEL}\n\n### Loans`), asked(dir));
+
+  const two = started(t);
+  assert.equal(refine(two, list()).ok, true);
+  const finish = (epic, n) => { for (let i = 1; i <= n; i++) status(storyFile(agile(two), `${epic}-${i}`), 'done'); status(epicFile(agile(two), epic), 'done'); };
+  finish('E-01', 2);
+  assert.equal(refine(two, { decisions: [], defer: ['NFR-01', 'NFR-02'], stories: [story({ requirements: ['LOAN-01', 'LOAN-02'] })] }, 'E-02').ok, true);
+  finish('E-02', 1);
+  assert.equal(refine(two, { decisions: [], add: [{ id: 'NFR-03', text: 'A reminder never shows a member\'s address.' }], stories: [story({ requirements: ['LOAN-03', 'NFR-03'] })] }, 'E-03').ok, true);
+  assert.ok(asked(two).includes('- **LOAN-03**: A member gets an email reminder the day before a loan is due.\n\n### NFR\n\n- **NFR-03**: A reminder never shows a member\'s address.\n\n## Deferred'), asked(two));
 });
 
 test('a refinement killed after REQUIREMENTS.md and before its epic turned is finished by the same list', (t) => {
@@ -313,8 +338,9 @@ test('a refinement killed after REQUIREMENTS.md and before its epic turned is fi
   writeFileSync(epicFile(agile(dir), 'E-01'), epic);
   writeFileSync(join(agile(dir), 'REQUIREMENTS.md.4242.7.tmp'), 'half');
   assert.equal(run(dir, 'next').next.step, 'refine');
-  // the deferred one is off the epic, and the added one is on none
-  assert.equal(send(dir, 'propose', { decisions: [], stories: [story()] }).ok, true);
+  // the deferred one is off the epic, and the added one is on none, which propose lists
+  const r = send(dir, 'propose', { decisions: [], stories: [story()] });
+  assert.deepEqual([r.ok, r.unplaced], [true, [{ id: 'CAT-03', text: LABEL }]], JSON.stringify(r));
   assert.equal(refine(dir, payload).ok, true);
   assert.deepEqual(contents(dir), contents(clean));
 });
@@ -329,6 +355,9 @@ test('the refinement\'s commit holds REQUIREMENTS.md only when the epic\'s requi
     const root = dirname(dir);
     const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', env });
     git('init', '-q');
+    // settings that change what git diff prints, which the check mustn't read through
+    git('config', 'color.ui', 'always');
+    git('config', 'diff.external', 'false');
     git('add', '-A');
     assert.equal(git('commit', '-q', '-m', 'start').status, 0);
     // the user's own edit, which only a change to the ask takes along
