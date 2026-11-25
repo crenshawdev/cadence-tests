@@ -318,7 +318,7 @@ test('agile: a release that gives no name asks without one, whatever old-path fi
     const r = decide(dir, 'main');
     assert.deepEqual([r.action, r.branch], [branch ? 'create' : 'ask', branch], name);
     if (branch) continue;
-    assert.match(r.reason, /^naming-problem: .*\.planning\/agile.*git\.integration_branch_name.*stay on the base \/ abort$/, name);
+    assert.match(r.reason, /^naming-problem: the release .*git\.integration_branch_name.*stay on the base \/ abort$/, name);
     assert.doesNotMatch(r.reason, /PROJECT|ROADMAP/, name);
   }
 });

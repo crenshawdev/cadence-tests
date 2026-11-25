@@ -65,17 +65,28 @@ test('with everything answered, check has nothing to ask and start goes ahead', 
   assert.equal(start(dir).ok, true);
 });
 
-test('the branch a start suggests is the one a later commit on main is offered, and a configured name is both', (t) => {
-  for (const [name, want] of [[undefined, 'cadence/toolshed'], ['seldon/hardin', 'seldon/hardin'], ['-D', null]]) {
+test('a start is told about the branch exactly what decide answers once its release is on disk', (t) => {
+  for (const [git, action, branch] of [
+    [{}, 'ask', 'cadence/toolshed'],
+    [{ auto_branch: 'auto' }, 'create', 'cadence/toolshed'],
+    [{ integration_branch_name: 'seldon/hardin' }, 'ask', 'seldon/hardin'],
+    [{ integration_branch_name: '-D' }, 'ask', null],
+    [{ integration_branch: 'trunk', integration_branch_name: 'seldon/hardin' }, 'stay', null],
+    [{ protected_branches: ['release'] }, 'stay', 'main'],
+  ]) {
     const dir = answerSetup(planning(t));
+    const root = dirname(dir);
+    spawnSync('git', ['init', '-q', '-b', 'main', root]);
+    spawnSync('git', ['-C', root, 'commit', '-q', '--allow-empty', '--no-gpg-sign', '-m', 'root'], { env: { ...process.env, ...WHO } });
     const config = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'));
-    config.git.integration_branch_name = name;
+    Object.assign(config.git, git);
     writeFileSync(join(dir, 'config.json'), JSON.stringify(config));
-    assert.equal(check(dir).branch, want);
+    const told = check(dir).decide;
+    assert.deepEqual([told.action, told.branch], [action, branch], JSON.stringify([git, told]));
     assert.equal(start(dir).ok, true);
-    const r = spawnSync('node', [join(dirname(AGILE), 'git-branch.mjs'), 'decide', '--dir', dirname(dir), '--branch', 'main'],
+    const r = spawnSync('node', [join(dirname(AGILE), 'git-branch.mjs'), 'decide', '--dir', root],
       { encoding: 'utf8', env: { ...process.env, CADENCE_GLOBAL_CONFIG: join(dir, 'no-global.json') } });
-    assert.deepEqual([JSON.parse(r.stdout).action, JSON.parse(r.stdout).branch], ['ask', want]);
+    assert.deepEqual(JSON.parse(r.stdout), { ok: true, ...told, warnings: [] });
   }
 });
 
@@ -220,6 +231,6 @@ test('the command asks for every answer before anything it writes, and commits t
   assert.ok(read > 0 && read < command.indexOf('<step name="commit">'), 'the start is read before the commit');
   for (const file of ['.planning/config.json', '.github/cadence/coverage-policy.json']) assert.ok(commit.includes(file), file);
   // both commits offer the release's branch: the start before the release is on disk, the later run off decide
-  assert.ok(prose.slice(ask, write).includes("suggesting the check's `branch`"), 'the start does not suggest the branch');
+  assert.ok(prose.slice(ask, write).includes("with the check's `decide`"), 'the start does not ask about the branch');
   assert.doesNotMatch(commit, /integration branch/, 'the later commit skips the branch decide names');
 });
