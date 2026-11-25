@@ -43,14 +43,15 @@ test('with no release, next says so and makes nothing, and a start cut short bef
 
 test('next is the first epic in build order that is not done, which a start already answers', (t) => {
   const dir = answerSetup(planning(t));
-  const first = { id: 'E-01', name: 'Catalog', status: 'backlog' };
+  const first = { id: 'E-01', name: 'Catalog', status: 'backlog', step: 'refine' };
   assert.deepEqual(run(dir, 'start', '--design', FIXTURE).next, first);
   const before = tree(dir);
   assert.deepEqual(run(dir, 'next'), { ok: true, release: 'Toolshed', next: first, _exit: 0 });
   assert.deepEqual(tree(dir), before);
   status(dir, 'E-01', 'done');
-  status(dir, 'E-02', 'in-progress');
-  assert.deepEqual(run(dir, 'next').next, { id: 'E-02', name: 'Lending', status: 'in-progress' });
+  assert.deepEqual(run(dir, 'next').next, { id: 'E-02', name: 'Lending', status: 'backlog', step: 'refine' });
+  status(dir, 'E-02', 'review');
+  assert.deepEqual(run(dir, 'next').next, { id: 'E-02', name: 'Lending', status: 'review', step: 'accept' });
   status(dir, 'E-02', 'done');
   status(dir, 'E-03', 'done');
   assert.deepEqual(run(dir, 'next'), { ok: true, release: 'Toolshed', next: null, _exit: 0 });
