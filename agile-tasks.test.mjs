@@ -100,6 +100,26 @@ test('a task\'s review and rulings land beside its plan, and a receipt is counte
   assert.deepEqual(readdirSync(dir).sort(), top);
 });
 
+test('a debug session\'s staged fix is reviewed under its slug, and its receipt is counted there', (t) => {
+  const { root, dir } = taskRun(t);
+  writeFileSync(join(root, 'login.mjs'), 'export function login(password) { return password === process.env.SECRET; }\n');
+  git(root, 'add', 'login.mjs');
+  const staged = planning(root, 'risk-check', 'run', '--phase', '0', '--base', 'HEAD', '--staged');
+  assert.ok(staged.matches.length > 0, JSON.stringify(staged));
+  const head = git(root, 'rev-parse', 'HEAD');
+  mkdirSync(join(dir, 'agile', 'tasks', 'login-fails'), { recursive: true });
+  const fire = ['--phase', '0', '--task', 'login-fails', '--trigger', 'risk_surface', '--discriminator', `debug-${head.slice(0, 7)}`, '--base', head, '--head', head];
+  const rulings = file(root, 'rulings.json', { voices: [{ voice: 'claude-subagent', model: 'opus', returned: { findings: [
+    { file: 'login.mjs', line: 1, severity: 'low', claim: 'plain compare', failure_scenario: 'a timing guess' }] },
+  rulings: [{ finding: 0, ruling: 'survived', claim: 'plain compare', failure_scenario: 'a timing guess' }] }] });
+  const ruled = planning(root, 'adjudication', ...fire, '--payload', rulings);
+  assert.equal(ruled.record.split(/[/\\]/).join('/'), `agile/tasks/login-fails/ADJUDICATION-risk_surface-debug-${head.slice(0, 7)}.json`, JSON.stringify(ruled));
+  const receipt = (survivors) => planning(root, 'trace', 'append', '--phase', '0', '--family', 'outcome', '--event', 'gate_pass',
+    '--trigger', 'risk_surface', '--sha', head, '--survivors', survivors, '--downgraded', '0', '--refuted', '0');
+  assert.equal(receipt('9').reason, 'count-disagreement');
+  assert.equal(receipt('1').ok, true);
+});
+
 /** A `gh` that says the repository is public and creates whatever it's asked to. */
 function fakeForge(root) {
   const bin = join(root, 'bin');
