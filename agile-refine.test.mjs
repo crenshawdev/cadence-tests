@@ -72,7 +72,17 @@ test('decisions go under what the epic already holds, and an epic with none says
   assert.ok(text.endsWith('## Decisions\n\n- The counter comes first.\n- Photos are kept on disk beside the database.\n\n## Notes\n\nMine.\n'), text);
   const none = started(t);
   assert.equal(refine(none, { ...list(), decisions: [] }).ok, true);
-  assert.ok(readFileSync(epicFile(agile(none), 'E-01'), 'utf8').endsWith('## Decisions\n\nNone.\n'));
+  assert.ok(readFileSync(epicFile(agile(none), 'E-01'), 'utf8').endsWith('## Decisions\n\nNone yet.\n'));
+});
+
+test('an epic file with Windows line endings keeps them, and every line but its status and decisions', (t) => {
+  const dir = started(t);
+  const file = epicFile(agile(dir), 'E-01');
+  const text = readFileSync(file, 'utf8').replace('## Done when', '```sql\nselect 1\n```\n\n## Done when').replaceAll('\n', '\r\n');
+  writeFileSync(file, text);
+  assert.equal(refine(dir, list()).ok, true);
+  assert.equal(readFileSync(file, 'utf8'), text.replace('status: backlog', 'status: in-progress')
+    .replace('## Decisions\r\n\r\nNone yet.', '## Decisions\r\n\r\n- Photos are kept on disk beside the database.'));
 });
 
 test('a list that breaks a rule is refused naming the story and the field, with nothing written', (t) => {
@@ -94,6 +104,8 @@ test('a list that breaks a rule is refused naming the story and the field, with 
     ['a title on two lines', one({ title: 'a\nstatus: done' }), 'E-01-1', 'title', /one line/],
     ['no delivers', one({ delivers: ' ' }), 'E-01-1', 'delivers', /one line/],
     ['delivers that reads as a heading', one({ delivers: '## Result' }), 'E-01-1', 'stories', /read back/],
+    ['half an emoji', one({ delivers: 'x \ud83d y' }), 'E-01-1', 'delivers', /one line/],
+    ['no epic', { epic: undefined, ...one({}) }, undefined, 'epic', /E-01/],
     ['delivers that opens a fence', one({ delivers: '```' }), 'E-01-1', 'stories', /read back/],
     ['a field that is not one', one({ plan: 'x' }), 'E-01-1', 'plan', /not a story's field/],
     ['a story that is not one', { decisions: [], stories: [story({ requirements: ['CAT-01', 'CAT-02'] }), 'x'] }, 'E-01-2', 'stories', /not a story/],
@@ -126,6 +138,7 @@ test('a refinement killed before its epic turned is finished by the next, which 
   assert.equal(refine(dir, { decisions: [], stories: [...list().stories, story({ title: 'A third' })] }).ok, true);
   // where the dead run stopped: its three stories are there, the epic hasn't turned, and two writes were in the air
   status(epicFile(agile(dir), 'E-01'), 'backlog');
+  writeFileSync(storyFile(agile(dir), 'E-01-2'), '');
   for (const name of ['E-01-3.md.4242.2.tmp', 'epic.md.4242.3.tmp', 'E-01-9.md']) {
     writeFileSync(join(folder(dir), name), name.endsWith('.tmp') ? 'half' : readFileSync(storyFile(agile(dir), 'E-01-3'), 'utf8').replaceAll('E-01-3', 'E-01-9'));
   }
@@ -145,7 +158,7 @@ test('refine takes only the epic the release is up to, and leaves one already be
   };
   const unchanged = (call) => { const before = tree(dir); call(); assert.deepEqual(tree(dir), before); };
   unchanged(() => refused(refine(dir, list(), 'E-02'), 'not-refinable', /E-02.*E-01/));
-  for (const payload of ['null', '[]', '"E-01"']) unchanged(() => refused(refine(dir, payload), 'not-refinable', /E-01/));
+  for (const payload of ['null', '[]', '"E-01"']) unchanged(() => refused(refine(dir, payload), 'stories-refused', /E-01/));
   unchanged(() => refused(refine(dir, 'not json'), 'bad-payload', /./));
   unchanged(() => refused(run(dir, 'refine', '--payload', join(dir, 'nowhere.json')), 'no-payload', /nowhere/));
   edit(epicFile(agile(dir), 'E-01'), '## Decisions', '## Picked');
