@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scratch } from './planning.test.mjs';
+import { answerSetup, scratch } from './planning.test.mjs';
 import { markAgile, statePath } from '../cadence-core/bin/lib/project-state.mjs';
 import { epicFile, releaseFile } from '../cadence-core/bin/lib/agile-paths.mjs';
 
@@ -42,7 +42,7 @@ test('with no release, next says so and makes nothing, and a start cut short bef
 });
 
 test('next is the first epic in build order that is not done, which a start already answers', (t) => {
-  const dir = planning(t);
+  const dir = answerSetup(planning(t));
   const first = { id: 'E-01', name: 'Catalog', status: 'backlog' };
   assert.deepEqual(run(dir, 'start', '--design', FIXTURE).next, first);
   const before = tree(dir);
@@ -84,7 +84,7 @@ test('a release file that does not read back is refused naming the file, and no 
   ];
   for (const [name, file, spoil] of breaks) {
     const dir = planning(t);
-    assert.equal(run(dir, 'start', '--design', FIXTURE).ok, true);
+    assert.equal(run(answerSetup(dir), 'start', '--design', FIXTURE).ok, true);
     spoil(dir);
     const before = tree(dir);
     const r = run(dir, 'next');
@@ -98,7 +98,7 @@ test('a release file that does not read back is refused naming the file, and no 
 test('a marker too damaged to read is refused as this path\'s own, and state-rebuild leaves it alone', (t) => {
   for (const text of ['<<<<\n', '{"path":"agile"}\n', '{"layout":1,"path":"agile"}\n']) {
     const dir = planning(t);
-    assert.equal(run(dir, 'start', '--design', FIXTURE).ok, true);
+    assert.equal(run(answerSetup(dir), 'start', '--design', FIXTURE).ok, true);
     writeFileSync(statePath(dir), text);
     const before = tree(dir);
     for (const args of [['next'], ['start', '--design', FIXTURE]]) {

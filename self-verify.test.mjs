@@ -1626,8 +1626,8 @@ test('check 12: *.test.mjs is off the walk - a test may write any shape', (t) =>
   assert.deepEqual(mergeProblems(binFixture(t, { 'seam.test.mjs': BARE_CALL })), []);
 });
 
-// CADENCE-CENSUS: self-verify-merge-layers | asserts: twenty-one mergeLayers callsites over fifteen files, each in one of the two warning-surfacing arms
-test('check 12: the live tree is TWENTY-ONE callsites over FIFTEEN files, each in an arm', () => {
+// CADENCE-CENSUS: self-verify-merge-layers | asserts: twenty-two mergeLayers callsites over sixteen files, each in one of the two warning-surfacing arms
+test('check 12: the live tree is TWENTY-TWO callsites over SIXTEEN files, each in an arm', () => {
   // The count is taken here INDEPENDENTLY of the rule (a plain line scan), so a
   // miscount in either direction fails rather than passing quietly, and a
   // new callsite cannot be added without choosing an arm.
@@ -1643,7 +1643,8 @@ test('check 12: the live tree is TWENTY-ONE callsites over FIFTEEN files, each i
   // read of its own - the persisted instance whose port a `--remote-url` must
   // name - so that file now holds two: nineteen reads over the same fourteen
   // files. Then planning/phase-entry.mjs read workflow.skip_discuss for the
-  // cursor an add writes: twenty-one reads over fifteen files. The title moves
+  // cursor an add writes: twenty-one reads over fifteen files. Then agile.mjs
+  // read which setup questions are answered: twenty-two over sixteen. The title moves
   // with census-registry.mjs, which quotes it verbatim.
   const binDir = join(REPO, 'cadence-core', 'bin');
   const skip = join(binDir, 'lib', 'config-merge.mjs');
@@ -1677,8 +1678,8 @@ test('check 12: the live tree is TWENTY-ONE callsites over FIFTEEN files, each i
       }
     }
   }
-  assert.equal(total, 21, `callsites: ${files.join(', ')}`);
-  assert.equal(files.length, 15, files.join(', '));
+  assert.equal(total, 22, `callsites: ${files.join(', ')}`);
+  assert.equal(files.length, 16, files.join(', '));
   // a file holding a callsite that the registry row doesn't name is one a plan can move without the census firing
   const row = CENSUSES.find((e) => e.id === 'self-verify-merge-layers');
   assert.deepEqual(files.map((f) => f.split('\\').join('/')).filter((f) => !row?.subjects.includes(f)), [],

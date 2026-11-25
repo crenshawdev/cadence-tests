@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scratch } from './planning.test.mjs';
+import { answerSetup, scratch } from './planning.test.mjs';
 import { markAgile, readState, statePath } from '../cadence-core/bin/lib/project-state.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -65,7 +65,7 @@ test('an agile project whose marker is gone or unreadable is neither stamped nor
   ];
   for (const [name, spoil] of cases) {
     const dir = join(scratch('cad-stray-', t), '.planning');
-    assert.equal(seam('agile.mjs', 'start', '--design', FIXTURE, '--dir', dir).ok, true);
+    assert.equal(seam('agile.mjs', 'start', '--design', FIXTURE, '--dir', answerSetup(dir)).ok, true);
     spoil(dir);
     const link = join(scratch('cad-stray-link-', t), '.planning');
     symlinkSync(dir, link);

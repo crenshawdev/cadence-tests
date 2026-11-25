@@ -124,6 +124,17 @@ export function scratch(prefix, t) {
   return root;
 }
 
+/** A planning folder holding the setup answers an agile start asks for, made when it isn't there. @param {string} dir */
+export function answerSetup(dir) {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'config.json'), `${JSON.stringify({
+    git: { forge_provider: 'github', forge_repo: 'octo/toolshed' },
+    review: { reviewers: ['claude-subagent'], triggers: { risk_surface: { surfaces: ['auth', 'secrets'] } } },
+    testing: { scope: 'focused' },
+  }, null, 2)}\n`);
+  return dir;
+}
+
 // ---------------------------------------------------------------------------
 // Fixture builder: fabricate a .planning tree from a compact spec.
 //   makeTree({
