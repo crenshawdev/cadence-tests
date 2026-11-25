@@ -117,6 +117,7 @@ test('words that would not read back from the agile path\'s files are refused na
     ['an Outcome that opens a section', 'epics.md', '**Outcome:** Volunteers keep', '**Outcome:** ## Done when Volunteers keep', 'E-01', 'Outcome'],
     ['a Boundaries that opens a fence', 'epics.md', boundaries, '**Boundaries:** ```', 'E-01', 'Boundaries'],
     ['a fence that never closes', 'brief.md', '- Overdue tools', '```\n- Overdue tools', '', 'Success criteria'],
+    ['a fence closed too far in to close it', 'brief.md', '- Overdue tools', '   ```sh\n   npm test\n    ```\n- Overdue tools', '', 'Success criteria'],
     ['a line that reads as a heading', 'brief.md', '- Overdue tools', '  ## Epics\n- Overdue tools', '', 'Success criteria'],
   ];
   for (const [name, file, from, to, id, where] of cases) {

@@ -41,7 +41,7 @@ test('/cad-new-project and /cad-adopt run the check in their first stop, before 
     const prose = workflow(name);
     const at = prose.indexOf(CHECK);
     const stop = prose.slice(prose.lastIndexOf('1. If `.planning/PROJECT.md` exists, stop', at), at).replace(/\s+/g, ' ');
-    assert.match(stop, /on `ok:false` with reason `agile-path`, print its `hint` and stop/, name);
+    assert.match(stop, /when `\.planning\/agile\/` exists or the call below, which writes nothing, answers reason `agile-path`, stop:.*\/cad-agile/, name);
     for (const write of writes) {
       assert.ok(prose.indexOf(write) > at, `${name}: ${JSON.stringify(write)} comes before the check, or is gone`);
     }

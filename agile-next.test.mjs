@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync }
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scratch } from './planning.test.mjs';
-import { markAgile } from '../cadence-core/bin/lib/project-state.mjs';
+import { markAgile, statePath } from '../cadence-core/bin/lib/project-state.mjs';
 import { epicFile, releaseFile } from '../cadence-core/bin/lib/agile-paths.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -92,5 +92,23 @@ test('a release file that does not read back is refused naming the file, and no 
     assert.ok(r.detail.includes(file(dir)), `${name}: ${r.detail}`);
     assert.ok(r.hint, name);
     assert.deepEqual(tree(dir), before, name);
+  }
+});
+
+test('a marker too damaged to read is refused as this path\'s own, and state-rebuild leaves it alone', (t) => {
+  for (const text of ['<<<<\n', '{"path":"agile"}\n', '{"layout":1,"path":"agile"}\n']) {
+    const dir = planning(t);
+    assert.equal(run(dir, 'start', '--design', FIXTURE).ok, true);
+    writeFileSync(statePath(dir), text);
+    const before = tree(dir);
+    for (const args of [['next'], ['start', '--design', FIXTURE]]) {
+      const r = run(dir, ...args);
+      assert.deepEqual([r.ok, r.reason], [false, 'unmarked'], `${text}${args[0]}`);
+      assert.match(r.hint, /git or your backup/);
+      assert.doesNotMatch(r.hint, /state-rebuild/);
+    }
+    const rebuilt = spawnSync('node', [join(dirname(AGILE), 'planning.mjs'), 'state-rebuild', '--dir', dir], { encoding: 'utf8' });
+    assert.equal(JSON.parse(rebuilt.stdout).reason, 'agile-path', rebuilt.stdout);
+    assert.deepEqual(tree(dir), before);
   }
 });
