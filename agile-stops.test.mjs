@@ -52,6 +52,14 @@ test('/cad-new-project and /cad-adopt run the check in their first stop, before 
   assert.ok(item > 0 && item < design.indexOf('design-read --design'), 'the design route reads the design before that stop');
 });
 
+test('each old command opens its process with the stop, before it can read or write anything', () => {
+  for (const name of ['audit', 'context', 'coverage', 'execute', 'health', 'milestone', 'pause', 'phase', 'plan', 'progress', 'report', 'suggest', 'undo', 'verify']) {
+    const process = readFileSync(join(HERE, '..', 'skills', `cad-${name}`, 'SKILL.md'), 'utf8').split('<process>')[1].replace(/\s+/g, ' ');
+    assert.ok(process.startsWith(' On an agile project (`.planning/agile/` exists and `.planning/PROJECT.md` doesn\'t), stop before anything else, '
+      + 'with this line and nothing after it: "This project is on the agile path. /cad-agile shows what comes next."'), name);
+  }
+});
+
 const FIXTURE = join(HERE, 'fixtures', 'seldon-design');
 const seam = (script, ...args) => JSON.parse(spawnSync('node', [join(CORE, 'bin', script), ...args], { encoding: 'utf8' }).stdout);
 
