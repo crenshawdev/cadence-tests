@@ -153,6 +153,13 @@ test('marking refuses any state file that is already there and leaves its bytes'
   }
 });
 
+test('a state that holds nothing is no old-path project, so marking replaces it', () => {
+  const root = tmp();
+  writeState(root, { cycleOpen: false, cursor: null, phases: [], requirements: [] });
+  assert.deepEqual(markAgile(root), { ok: true, changed: true });
+  assert.equal(readState(root).reason, 'agile-path');
+});
+
 test('an old-path save never takes the marker\'s layout number', () => {
   assert.notEqual(STATE_LAYOUT, AGILE_LAYOUT);
 });

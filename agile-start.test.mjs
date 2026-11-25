@@ -67,8 +67,8 @@ test('every refusal names its next step and leaves the tree exactly as it was', 
   writeFileSync(epics, readFileSync(epics, 'utf8').replace('**Boundaries:** Tools and their categories only. No loans and no member records.\n', ''));
   rmSync(join(broken, 'brief.md'));
   const put = (dir, name, text = 'x\n') => { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, name), text); };
-  const old = { cycleOpen: false, cursor: null, phases: [], requirements: [] };
-  /** @type {[string, string, (dir: string) => void, string?][]} */
+  const old = { cycleOpen: true, cursor: null, phases: [], requirements: [] };
+  /** @type {[string, string, (dir: string) => void, string?, string?][]} */
   const cases = [
     ['a bad design', 'design-refused', () => {}, broken],
     ['no design folder', 'no-design-dir', () => {}, join(broken, 'nowhere')],
@@ -87,18 +87,74 @@ test('every refusal names its next step and leaves the tree exactly as it was', 
     ['a file where .planning goes', 'planning-dir', (d) => writeFileSync(d, 'x')],
     ['a linked .planning', 'planning-dir', (d) => symlinkSync(scratch('cad-agile-elsewhere-', t), d)],
   ];
-  for (const [name, reason, build, design = FIXTURE] of cases) {
+  for (const name of ['a release already open', 'a linked .planning']) {
+    const found = cases.find((c) => c[0] === name);
+    cases.push([`${name}, spelled with a trailing slash`, found[1], found[2], FIXTURE, '/']);
+  }
+  for (const [name, reason, build, design = FIXTURE, slash = ''] of cases) {
     const dir = planning(t);
     build(dir);
     const root = dirname(dir);
     const before = tree(root);
-    const r = start(dir, design);
+    const r = start(dir + slash, design);
     assert.deepEqual([r.ok, r._exit, r.reason], [false, 1, reason], `${name}: ${JSON.stringify(r)}`);
     assert.ok(r.hint, name);
     assert.deepEqual(tree(root), before, name);
   }
   const bad = start(planning(t), broken);
   assert.deepEqual(bad.issues.map((i) => i.file).sort(), ['brief.md', 'epics.md']);
+});
+
+test('words that would not read back from the agile path\'s files are refused naming where they are, and nothing is written', (t) => {
+  const boundaries = '**Boundaries:** Tools and their categories only. No loans and no member records.';
+  const item = '- A volunteer can add a tool with a name, a category and a photo.';
+  /** @type {[string, string, string, string, string, string][]} */
+  const cases = [
+    ['a starred item', 'epics.md', item, `* ${item.slice(2)}`, 'E-01', 'Done when'],
+    ['an item cut by an unindented line', 'epics.md', item, '- A volunteer can add\na tool.', 'E-01', 'Done when'],
+    ['text on the Done when line', 'epics.md', '**Done when:**', '**Done when:** it works', 'E-01', 'Done when'],
+    ['six items', 'epics.md', item, `${item}\n- two\n- three\n- four`, 'E-01', 'Done when'],
+    ['an Outcome that opens a section', 'epics.md', '**Outcome:** Volunteers keep', '**Outcome:** ## Done when Volunteers keep', 'E-01', 'Outcome'],
+    ['a Boundaries that opens a fence', 'epics.md', boundaries, '**Boundaries:** ```', 'E-01', 'Boundaries'],
+    ['a fence that never closes', 'brief.md', '- Overdue tools', '```\n- Overdue tools', '', 'Success criteria'],
+    ['a line that reads as a heading', 'brief.md', '- Overdue tools', '  ## Epics\n- Overdue tools', '', 'Success criteria'],
+  ];
+  for (const [name, file, from, to, id, where] of cases) {
+    const design = join(scratch('cad-agile-words-', t), 'design');
+    cpSync(FIXTURE, design, { recursive: true });
+    const text = readFileSync(join(design, file), 'utf8');
+    assert.ok(text.includes(from), name);
+    writeFileSync(join(design, file), text.replace(from, to));
+    const dir = planning(t);
+    const r = start(dir, design);
+    assert.equal(r.reason, 'design-refused', `${name}: ${JSON.stringify(r)}`);
+    assert.ok(r.issues.some((i) => i.file === file && (i.id ?? '') === id && (i.field ?? i.section) === where), `${name}: ${JSON.stringify(r.issues)}`);
+    assert.equal(tree(dir), null, name);
+  }
+});
+
+test('a brief section may hold its own subheadings and closed fences', (t) => {
+  const design = join(scratch('cad-agile-sub-', t), 'design');
+  cpSync(FIXTURE, design, { recursive: true });
+  const brief = join(design, 'brief.md');
+  writeFileSync(brief, readFileSync(brief, 'utf8').replace('- Overdue tools', '### Later\n```\n# a comment\n```\n- Overdue tools'));
+  assert.equal(start(planning(t), design).ok, true);
+});
+
+test('a .planning that only an earlier seam call stamped is a new project', (t) => {
+  const dir = planning(t);
+  mkdirSync(join(dir, 'seldon'), { recursive: true });
+  spawnSync('node', [join(dirname(AGILE), 'planning.mjs'), 'status', '--dir', dir]);
+  assert.equal(readState(dir).kind, 'valid');
+  assert.equal(start(dir).ok, true);
+  assert.equal(readState(dir).reason, 'agile-path');
+});
+
+test('a start killed as it made the records folder still leaves its ignore file', (t) => {
+  const dir = planning(t);
+  mkdirSync(join(dir, 'records'), { recursive: true });
+  assert.equal(start(dir).ok, true);
+  assert.deepEqual(files(dir), FILES);
 });
 
 test('a start killed halfway is finished by the next one, which clears the dead run\'s folder and not a live one\'s', (t) => {

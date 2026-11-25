@@ -10,11 +10,12 @@ import {
 } from '../cadence-core/bin/lib/agile-render.mjs';
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'seldon-design');
-const design = () => {
-  const { read, issues } = readDesignFolder(FIXTURE);
-  assert.deepEqual(issues, []);
-  return read.design;
+const read = () => {
+  const got = readDesignFolder(FIXTURE);
+  assert.deepEqual(got.issues, []);
+  return got.read;
 };
+const design = () => read().design;
 
 test('each epic file holds its own epic: fields, done-when items, what it builds on and its spine decisions', () => {
   const d = design();
@@ -52,10 +53,26 @@ test('the release lists its epics in order under the brief\'s goal, and the proj
   const release = renderReleaseFile(d.title, d.brief, d.phases);
   assert.ok(release.includes(`## Goal\n\n${d.brief['Success criteria']}\n`));
   assert.ok(release.endsWith(`## Epics\n\n${d.phases.map((e) => `- ${e.epic}: ${e.name}`).join('\n')}\n`));
-  const project = renderProjectFile(d.title, d.brief, d.phases);
+  const project = renderProjectFile(d.title, d.brief, d.phases, [...read().decisions.values()]);
   for (const section of Object.values(d.brief)) assert.ok(project.includes(section));
-  const limits = [...new Set(d.phases.flatMap((e) => e.spine_decisions).filter((s) => ['stack', 'hosting'].includes(s.kind)).map((s) => s.id))];
-  for (const s of d.phases.flatMap((e) => e.spine_decisions).filter((x) => limits.includes(x.id))) {
-    assert.equal(project.split(`- **${s.kind}**: ${s.title} - ${s.text}`).length, 2, s.id);
+});
+
+test('every spine decision is in some file, the one no epic names included', () => {
+  const { design: d, decisions } = read();
+  const [first] = decisions.values();
+  const extra = [
+    { id: 'S-90', title: 'Nightly backups', kind: 'hosting', text: 'Copied each night.' },
+    { id: 'S-91', title: 'One clock', kind: 'design approach', text: 'All times are UTC.' },
+  ];
+  const all = [...decisions.values(), ...extra];
+  const project = renderProjectFile(d.title, d.brief, d.phases, all);
+  const limits = project.slice(project.indexOf('## Constraints'), project.indexOf('## Key decisions'));
+  const key = project.slice(project.indexOf('## Key decisions'));
+  for (const s of all.filter((x) => ['stack', 'hosting'].includes(x.kind))) {
+    assert.equal(limits.split(`- **${s.id}: ${s.title}** (${s.kind}): ${s.text}`).length, 2, s.id);
   }
+  assert.ok(key.includes('- **S-91: One clock** (design approach): All times are UTC.'));
+  assert.ok(!key.includes(`**${first.id}:`));
+  const epics = d.phases.map(renderEpicFile).join('\n');
+  for (const s of all) assert.ok((project + epics).includes(`- **${s.id}: ${s.title}** (${s.kind}): ${s.text}`), s.id);
 });
