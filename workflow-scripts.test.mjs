@@ -105,6 +105,15 @@ test('review-panel: a refuted ruling comes back, the reviewer object verbatim, a
   assert.ok(h.calls.every((c) => !('model' in c.opts)));
 });
 
+test('review-panel: checkers false runs no checker and hands back every finding unruled, and a non-boolean starts nothing', async () => {
+  const h = host((label) => (label.startsWith('reviewer') ? { findings: [find('a.js', 'first'), find('b.js', 'second')] } : assert.fail(`${label} started`)));
+  const out = await runScript(PANEL, h, { ...ARGS, checkers: false });
+  assert.deepEqual(h.calls.map((c) => c.opts.label), ['reviewer claude-subagent']);
+  assert.deepEqual(out.voices[0].counts, { raised: 2, proved: 0, refuted: 0, neither: 0, unruled: 2 });
+  const none = host(() => assert.fail('an agent started'));
+  assert.match(await runScript(PANEL, none, { ...ARGS, checkers: 'no' }), /started no agent/);
+});
+
 test('review-panel: two voices of two and one findings, one identical, give two checkers and three rulings', async () => {
   const shared = find('a.js', 'same claim');
   const sets = [[shared, find('b.js', 'second')], [shared]];
