@@ -130,3 +130,68 @@ test('a close stopped after the deferred ones moved reads them deferred and asks
   assert.equal(send(dir, { version: '0.10.0', defer: ['CAT-02'] }).reason, 'close-refused');
   assert.equal(send(dir, { version: '0.10.0' }).ok, true);
 });
+
+const prose = (name) => readFileSync(join(HERE, '..', 'cadence-core', 'workflows', name), 'utf8');
+const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
+  GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
+const commitBlock = (version) => /```\n(set -- '\.planning\/agile\/releases\/\{version\}'[\s\S]*?git commit [^\n]*)\n```/.exec(prose('agile-close.md'))[1].replaceAll('{version}', version);
+const lateBlock = () => /```\n\s*node "\$\{CLAUDE_PLUGIN_ROOT\}\/cadence-core\/bin\/config\.mjs" get planning\.commit_docs\n\s*(for d in [^\n]*)\n/.exec(prose('agile.md'))[1];
+
+test('the close\'s commit takes the moved release and a bumped manifest, and nothing the user staged or edited elsewhere', (t) => {
+  for (const untracked of [false, true]) {
+    const { root, dir } = finished(t);
+    const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', env });
+    mkdirSync(join(root, '.claude-plugin'));
+    writeFileSync(join(root, '.claude-plugin', 'plugin.json'), '{\n  "name": "toolshed",\n  "version": "0.9.0"\n}\n');
+    writeFileSync(join(root, 'CHANGELOG.md'), '# Changelog\n');
+    git('init', '-q');
+    git('config', 'color.ui', 'always');
+    git('add', '-A');
+    // a file git never tracked has no deletion to stage, and git add mustn't be handed it
+    if (untracked) git('rm', '-q', '--cached', '.planning/agile/REQUIREMENTS.md');
+    assert.equal(git('commit', '-q', '-m', 'start').status, 0);
+    writeFileSync(join(root, 'staged.txt'), 'mine\n');
+    git('add', 'staged.txt');
+    edit(join(agile(dir), 'project.md'), '## Out of scope', '## Out of scope\n\nMine.');
+    assert.equal(send(dir, { version: '0.10.0', defer: ['CAT-02'] }).ok, true);
+    edit(join(root, '.claude-plugin', 'plugin.json'), '0.9.0', '0.10.0');
+    const r = spawnSync('sh', ['-c', commitBlock('0.10.0')], { cwd: root, encoding: 'utf8', env });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(git('log', '-1', '--format=%s').stdout.trim(), 'docs: close the release 0.10.0');
+    // renames off, so a moved file shows on both sides
+    const files = git('show', '--name-only', '--no-renames', '--format=').stdout.trim().split('\n');
+    assert.ok(files.includes('.claude-plugin/plugin.json') && files.includes('.planning/agile/releases/0.10.0/release.md'), files.join(', '));
+    assert.equal(files.includes('.planning/agile/release.md'), true);
+    assert.equal(files.includes('.planning/agile/REQUIREMENTS.md'), !untracked);
+    for (const theirs of ['staged.txt', '.planning/agile/project.md', 'CHANGELOG.md']) assert.equal(files.includes(theirs), false, theirs);
+    assert.deepEqual(git('diff', '--cached', '--name-only').stdout.trim().split('\n'), ['staged.txt']);
+  }
+});
+
+test('agile.md names a close moved and not committed, and finishes it with the close\'s own commit', (t) => {
+  const { root, dir } = finished(t);
+  const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', env });
+  git('init', '-q');
+  git('add', '-A');
+  assert.equal(git('commit', '-q', '-m', 'start').status, 0);
+  const late = () => spawnSync('sh', ['-c', lateBlock()], { cwd: root, encoding: 'utf8', env }).stdout.trim();
+  assert.equal(late(), '');
+  assert.equal(send(dir, { version: '0.10.0', defer: ['CAT-02'] }).ok, true);
+  assert.equal(late(), 'UNCOMMITTED 0.10.0');
+  assert.equal(spawnSync('sh', ['-c', commitBlock('0.10.0')], { cwd: root, encoding: 'utf8', env }).status, 0);
+  assert.equal(late(), '');
+});
+
+test('the close shows, asks, closes, bumps and commits in that order, and agile.md sends the close step there', () => {
+  const text = prose('agile-close.md');
+  const at = (words) => {
+    assert.equal(text.split(words).length, 2, `${words} is there once`);
+    return text.indexOf(words);
+  };
+  const order = ['agile.mjs" close\n', '## 2. Show and ask', 'git-branch.mjs" tags --dir .', 'header: "Version"', 'header: "Open"', 'agile.mjs" close --payload',
+    'release-bump.mjs" bump --dir . --version', 'git add -A -- "$@"', 'git commit -m "docs: close the release {version}" -- "$@"', '## 4. Report'];
+  assert.deepEqual(order.map(at), order.map(at).sort((a, b) => a - b));
+  const command = prose('agile.md');
+  assert.ok(command.indexOf('`next.step` is `close`') > 0 && command.slice(command.indexOf('`next.step` is `close`')).includes('workflows/agile-close.md'));
+  assert.ok(command.indexOf('UNCOMMITTED') < command.indexOf('`release` is null, with `--brief`'));
+});

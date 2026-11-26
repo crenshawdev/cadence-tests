@@ -182,6 +182,6 @@ test('a marker too damaged to read is refused as this path\'s own, and state-reb
 
 test('the reports name the close and show each requirement still open', () => {
   const workflow = (name) => readFileSync(join(HERE, '..', 'cadence-core', 'workflows', name), 'utf8').replace(/\s+/g, ' ');
-  assert.ok(workflow('agile.md').includes('`Requirements: {N} done, {N} deferred, {N} open` from `next.requirements` and, for each one open, `Open: {id}: {text}`'));
-  for (const name of ['agile.md', 'agile-accept.md']) assert.ok(workflow(name).includes('"Next: close the release, with /cad-agile"'), name);
+  assert.ok(workflow('agile-close.md').includes('Show `Requirements: {N} done, {N} deferred, {N} open` from `next.requirements`, then `Open: {id}: {text}` for each one open'));
+  for (const name of ['agile-close.md', 'agile-accept.md']) assert.ok(workflow(name).includes('"Next: close the release, with /cad-agile"'), name);
 });
