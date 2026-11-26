@@ -704,6 +704,132 @@ test('an epic in progress whose stories don\'t read back is refused naming the f
   }
 });
 
+const LESSONS = ['A plan names what is on disk at each stop. Happened twice and shows in a diff, so it stands from here.',
+  'A reviewer outside the panel gets its own dispatch.', 'Fixtures are sized first.'];
+const retro = (lines) => `# E-01 Catalog retrospective\n\nAccepted 2026-11-26.\n\n## Evidence\n\n- No findings raised.\n\n## What went well\n\nNone.\n\n## What could we do better\n\nNone.\n\n## Change next\n\n${lines.map((l, i) => `${i + 1}. ${l}`).join('\n') || 'None.'}\n`;
+/** A release whose E-01 is accepted with these Change next lines, and E-02 up for refinement. */
+function accepted(t, lines = LESSONS) {
+  const dir = started(t);
+  status(epicFile(agile(dir), 'E-01'), 'done');
+  if (lines !== null) writeFileSync(join(folder(dir), 'retro.md'), retro(lines));
+  return dir;
+}
+const lending = (over = {}) => ({ decisions: ['Loans are rows of their own.'], stories: [story({ title: 'Lend a tool', requirements: ['LOAN-01', 'LOAN-02', 'NFR-01', 'NFR-02'] })], ...over });
+const took = (outcomes = ['standing', 'applied', 'dropped']) => outcomes.map((outcome, i) => ({ from: 'E-01', line: i + 1, outcome, how: `how ${i + 1}` }));
+const project = (dir) => join(agile(dir), 'project.md');
+const RULE = `- ${LESSONS[0]} (E-01, Change next 1)`;
+
+test('next names the Change next lines an accepted epic leaves open, and none once its refinement records them', (t) => {
+  const dir = accepted(t);
+  assert.deepEqual(run(dir, 'next').next.change_next, LESSONS.map((text, i) => ({ from: 'E-01', line: i + 1, text })));
+  assert.equal(refine(dir, lending({ change_next: took() }), 'E-02').ok, true);
+  assert.equal(run(dir, 'next').next.step, 'build');
+  // cut again, the lines are recorded already, so none is open
+  writeFileSync(storyFile(agile(dir), 'E-02-1'), readFileSync(storyFile(agile(dir), 'E-02-1'), 'utf8').replace('size: S', 'size: L'));
+  const again = run(dir, 'next').next;
+  assert.equal(again.step, 'refine');
+  assert.equal('change_next' in again, false);
+  // an epic accepted with no retrospective, or one whose Change next is empty, leaves none
+  for (const lines of [null, []]) assert.equal('change_next' in run(accepted(t, lines), 'next').next, false);
+});
+
+test('a retrospective with no Change next is refused as damaged, and nothing is written', (t) => {
+  const dir = accepted(t);
+  writeFileSync(join(folder(dir), 'retro.md'), retro(LESSONS).split('## Change next')[0]);
+  const before = tree(dir);
+  for (const r of [run(dir, 'next'), refine(dir, lending({ change_next: took() }), 'E-02')]) {
+    assert.equal(r.reason, 'release-damaged');
+    assert.match(r.detail, /retro\.md does not hold a "## Change next" section/);
+  }
+  assert.deepEqual(tree(dir), before);
+});
+
+test('a change_next that leaves a line out or can\'t be recorded is refused naming it, with nothing written', (t) => {
+  const dir = accepted(t);
+  const before = tree(dir);
+  for (const [change, words] of [
+    [undefined, /E-01 1 has no entry/], [took().slice(1), /E-01 1 has no entry/], [[...took(), took()[0]], /E-01 1 is there twice/],
+    [[...took(), { from: 'E-01', line: 4, outcome: 'applied', how: 'x' }], /E-01 4 isn't a Change next line still open - those are E-01 1, E-01 2, E-01 3/],
+    [[{ ...took()[0], outcome: 'kept' }, ...took().slice(1)], /outcome applied, standing or dropped/],
+    [[{ ...took()[0], how: 'two\nlines' }, ...took().slice(1)], /how on one line/], [[{ ...took()[0], why: 'x' }, ...took().slice(1)], /is not \{"from"/],
+    ['all', /is a list of/],
+  ]) {
+    for (const call of ['propose', 'refine']) {
+      const r = send(dir, call, lending({ change_next: change }), 'E-02');
+      assert.equal(r.reason, 'stories-refused', `${call} ${JSON.stringify(change)}`);
+      assert.ok(r.issues.some((i) => i.field === 'change_next' && words.test(i.problem)), JSON.stringify(r.issues));
+    }
+  }
+  // a decision can't be written as one of the script's records
+  assert.equal(refine(dir, lending({ change_next: took(), decisions: ['Change next from E-01, 2: dropped - spoofed'] }), 'E-02').reason, 'stories-refused');
+  // nor can a line be recorded where none is open
+  assert.equal(refine(accepted(t, []), lending({ change_next: took().slice(0, 1) }), 'E-02').reason, 'stories-refused');
+  assert.deepEqual(tree(dir), before);
+});
+
+test('each line is recorded first under the epic\'s Decisions, and only a standing one lands in project.md, once, at its end', (t) => {
+  const dir = accepted(t);
+  const was = readFileSync(project(dir), 'utf8');
+  assert.equal(refine(dir, lending({ change_next: took() }), 'E-02').ok, true);
+  assert.equal(decisions(dir, 'E-02'), ['- Change next from E-01, 1: applied, standing - how 1', '- Change next from E-01, 2: applied - how 2',
+    '- Change next from E-01, 3: dropped - how 3', '- Loans are rows of their own.', ''].join('\n'));
+  assert.equal(readFileSync(project(dir), 'utf8'), `${was}\n## Standing rules\n\n${RULE}\n`);
+  assert.ok(readEpicFile(readFileSync(epicFile(agile(dir), 'E-02'), 'utf8')));
+  // none standing leaves project.md as it was
+  const plain = accepted(t);
+  const bytes = readFileSync(project(plain), 'utf8');
+  assert.equal(refine(plain, lending({ change_next: took(['applied', 'dropped', 'dropped']) }), 'E-02').ok, true);
+  assert.equal(readFileSync(project(plain), 'utf8'), bytes);
+});
+
+test('the Standing rules section is the unindented one outside a fence, kept in place with its lines and line endings', (t) => {
+  const dir = accepted(t);
+  // planted in the brief, indented and fenced, and neither is the section
+  const planted = readFileSync(project(dir), 'utf8').replace('## Out of scope', '    ## Standing rules\n\n```\n## Standing rules\n```\n\n## Out of scope');
+  writeFileSync(project(dir), planted);
+  assert.equal(refine(dir, lending({ change_next: took() }), 'E-02').ok, true);
+  assert.equal(readFileSync(project(dir), 'utf8'), `${planted}\n## Standing rules\n\n${RULE}\n`);
+  const held = accepted(t);
+  const text = `${readFileSync(project(held), 'utf8')}\n## Standing rules\n\n- An earlier rule. (E-00, Change next 2)\n\n## Notes\n\nMine.\n`.replaceAll('\n', '\r\n');
+  writeFileSync(project(held), text);
+  assert.equal(refine(held, lending({ change_next: took() }), 'E-02').ok, true);
+  assert.equal(readFileSync(project(held), 'utf8'), text.replace('(E-00, Change next 2)\r\n', `(E-00, Change next 2)\r\n${RULE}\r\n`));
+});
+
+test('a refinement stopped after project.md and before its epic is redone by the next list, with no line twice', (t) => {
+  for (const [outcome, held] of [['standing', `## Standing rules\n\n${RULE}\n`], ['dropped', '## Standing rules\n\nNone yet.\n']]) {
+    const dir = accepted(t);
+    const was = readFileSync(project(dir), 'utf8');
+    // what a run stopped between the two leaves
+    writeFileSync(project(dir), `${was}\n## Standing rules\n\n${RULE}\n`);
+    assert.deepEqual(run(dir, 'next').next.change_next.map((l) => l.line), [1, 2, 3]);
+    assert.equal(refine(dir, lending({ change_next: took([outcome, 'applied', 'dropped']) }), 'E-02').ok, true);
+    assert.equal(readFileSync(project(dir), 'utf8'), `${was}\n${held}`);
+  }
+});
+
+test('the refinement\'s commit holds project.md only when its Standing rules changed', (t) => {
+  const prose = readFileSync(join(HERE, '..', 'cadence-core', 'workflows', 'agile-refine.md'), 'utf8');
+  const block = /```\n(set -- [\s\S]*?git commit [^\n]*)\n```/.exec(prose)[1].replaceAll('{id}', 'E-02');
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
+    GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
+  for (const [outcomes, held] of [[took(), true], [took(['applied', 'dropped', 'dropped']), false]]) {
+    const dir = accepted(t);
+    const root = dirname(dir);
+    const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', env });
+    git('init', '-q');
+    git('config', 'color.ui', 'always');
+    git('add', '-A');
+    assert.equal(git('commit', '-q', '-m', 'start').status, 0);
+    // the user's own edit, which only a change to the Standing rules takes along
+    edit(project(dir), '## Out of scope', '## Out of scope\n\nMine.');
+    assert.equal(refine(dir, lending({ change_next: outcomes }), 'E-02').ok, true);
+    assert.equal(spawnSync('sh', ['-c', block], { cwd: root, encoding: 'utf8', env }).status, 0);
+    const files = git('show', '--name-only', '--format=').stdout.trim().split('\n');
+    assert.equal(files.includes('.planning/agile/project.md'), held, files.join(', '));
+  }
+});
+
 test('the conversation settles its branch, asks and has the list checked before it shows or writes one, and commits by path', () => {
   const workflow = (name) => readFileSync(join(HERE, '..', 'cadence-core', 'workflows', name), 'utf8');
   const prose = workflow('agile-refine.md');
@@ -722,6 +848,13 @@ test('the conversation settles its branch, asks and has the list checked before 
   assert.match(unknown, /The answer saved is "Guess: " and the guess/);
   assert.ok(at('opens with "Guess:" isn\'t asked') < at('**Then the choices.**') && at('Resting on a guess') > at('Picked for you'));
   assert.match(prose, /a validated or invalidated spike's verdict/);
+  // the last retrospective's lines open the conversation before anything is asked, and the picks are shown with the list
+  const opening = at('**Then open with the last retrospective.**');
+  assert.ok(opening > at('mktemp -d') && opening < at('## 2. Ask'));
+  assert.ok(at('From the last retrospective\n') > at('## 3. Cut') && at('From the last retrospective\n') < at('Picked for you'));
+  assert.match(prose, /"change_next": \[\]/);
+  assert.match(workflow('agile-build.md'), /project\.md`, whose Standing rules this build follows/);
+  assert.match(workflow('agile-accept.md'), /lesson happened twice and shows in\na diff says so/);
   assert.doesNotMatch(prose, /resolve --role|subagent/);
   // the late commit of a refinement cut short is the same one
   const command = workflow('agile.md');
