@@ -128,17 +128,75 @@ test('the late commit reads only the frontmatter\'s status, whatever the body sa
   assert.equal(unaccepted(), 'UNACCEPTED E-01');
 });
 
-test('the accept shows the Done when and the checks, asks, writes, then commits the epic file alone, and Not yet writes nothing', () => {
+test('the accept shows the Done when and the checks, asks, writes, then commits the epic file alone, and Not yet saves what is missing and commits it', () => {
   const prose = workflow('agile-accept.md').replace(/\s+/g, ' ');
   const at = (words) => { const i = prose.indexOf(words); assert.ok(i >= 0, `${words} is there`); return i; };
   const order = ['each item under the epic\'s Done when', '`- Check` lines', 'header: "Accept"', '"Accept - {id} is done',
-    '"Not yet - nothing is written', 'agile.mjs" accept', 'git add -- \'.planning/agile/epics/{id}/epic.md\'',
-    'git commit -m "docs: accept {id}" -- \'.planning/agile/epics/{id}/epic.md\''];
+    '"Not yet - say what\'s missing', 'ask in plain words what\'s missing from {id}', 'agile.mjs" accept', 'git add -- \'.planning/agile/epics/{id}/epic.md\'',
+    'git commit -m "docs: accept {id}" -- \'.planning/agile/epics/{id}/epic.md\'', 'agile.mjs" not-yet --payload', 'with the message `docs: not yet {id}`'];
   order.reduce((last, words) => { const i = at(words); assert.ok(i > last, `${words} comes after what precedes it`); return i; }, -1);
-  assert.ok(at('"Not yet" ends the run: go to section 4.') < at('agile.mjs" accept'));
+  // a refinement knows why an epic in progress with every story done is back
+  assert.ok(workflow('agile-refine.md').replace(/\s+/g, ' ').includes('After a Not yet, open with what\'s missing, and the list adds the stories that deliver it.'));
   // agile.md finishes a cut-short acceptance before any arm, and hands an accept step to this file
   const main = workflow('agile.md');
   const step = main.slice(main.indexOf('<step name="refine">'), main.indexOf('<step name="report">'));
   assert.ok(step.indexOf('UNACCEPTED') > 0 && step.indexOf('UNACCEPTED') < step.indexOf('On `build` and `accept`'));
   assert.ok(step.indexOf('workflows/agile-accept.md') > step.indexOf('`next.step` is `accept`'));
+});
+
+const send = (dir, call, payload) => {
+  const file = join(dirname(dir), '..', `${call}.json`);
+  writeFileSync(file, JSON.stringify(payload));
+  return run(dir, call, '--payload', file);
+};
+const decisions = (text) => text.slice(text.indexOf('## Decisions')).trim().split('\n').filter((l) => l.startsWith('- '));
+
+test('Not yet saves what is missing, sends the epic back to a cut again that adds after the done stories, and the cut closes it', (t) => {
+  const { dir, agile } = finished(t);
+  const done = ['E-01-1', 'E-01-2'].map((id) => readFileSync(storyFile(agile, id), 'utf8'));
+  const r = send(dir, 'not-yet', { epic: 'E-01', missing: 'Nothing adds a tool yet' });
+  assert.deepEqual([r.ok, r.epic, r.missing, r.next], [true, 'E-01', 'Nothing adds a tool yet', { id: 'E-01', name: 'Catalog', status: 'in-progress', step: 'refine', first: 'E-01-3' }], JSON.stringify(r));
+  assert.equal(decisions(readFileSync(epicFile(agile, 'E-01'), 'utf8')).at(-1), '- Not yet: Nothing adds a tool yet');
+  assert.equal(run(dir, 'accept').reason, 'not-accepting');
+  const cut = send(dir, 'refine', { epic: 'E-01', decisions: [], stories: [{ title: 'Add a tool', size: 'S', builds_on: ['E-01-1'], requirements: ['CAT-01'],
+    delivers: 'node add.mjs <name> adds a tool.', accepted_when: ['Adding a drill lists it.'] }] });
+  assert.equal(cut.ok, true, JSON.stringify(cut));
+  assert.deepEqual(['E-01-1', 'E-01-2'].map((id) => readFileSync(storyFile(agile, id), 'utf8')), done);
+  assert.deepEqual(decisions(readFileSync(epicFile(agile, 'E-01'), 'utf8')).slice(-2), ['- Not yet: Nothing adds a tool yet', '- Cut again for what was missing: E-01-3.']);
+  assert.deepEqual([run(dir, 'next').next.step, run(dir, 'next').next.story?.id], ['build', 'E-01-3']);
+});
+
+test('a cut again for what was missing may add nothing, and the epic is asked about again', (t) => {
+  const { dir, agile } = finished(t);
+  assert.equal(send(dir, 'not-yet', { missing: 'A photo for each tool' }).ok, true);
+  assert.equal(send(dir, 'refine', { epic: 'E-01', decisions: ['The photo waits for the next release.'], stories: [] }).ok, true);
+  assert.deepEqual(decisions(readFileSync(epicFile(agile, 'E-01'), 'utf8')).slice(-3),
+    ['- Not yet: A photo for each tool', '- The photo waits for the next release.', '- Cut again for what was missing: no story.']);
+  assert.equal(run(dir, 'next').next.step, 'accept');
+});
+
+test('a Not yet off accept, a bad payload, and a decision that reads as the script\'s own line are each refused with nothing written', (t) => {
+  const { root, dir } = finished(t, ['done', 'backlog']);
+  let before = tree(root);
+  const off = send(dir, 'not-yet', { epic: 'E-01', missing: 'More' });
+  assert.deepEqual([off.ok, off.reason, off.detail], [false, 'not-accepting', 'E-01 is at build, not accept']);
+  assert.deepEqual(tree(root), before);
+  const ready = finished(t);
+  before = tree(ready.root);
+  for (const [name, payload, field] of [
+    ['no words', { missing: '  ' }, 'missing'], ['two lines', { missing: 'one\ntwo' }, 'missing'], ['not text', { missing: 3 }, 'missing'],
+    ['another epic', { epic: 'E-02', missing: 'More' }, 'epic'], ['an extra field', { missing: 'More', size: 'S' }, 'size'], ['not an object', ['More'], 'payload'],
+  ]) {
+    const r = send(ready.dir, 'not-yet', payload);
+    assert.deepEqual([r.ok, r.reason, r.issues?.[0]?.field], [false, 'not-yet-refused', field], `${name}: ${JSON.stringify(r)}`);
+    assert.deepEqual(tree(ready.root), before, name);
+  }
+  assert.equal(send(ready.dir, 'not-yet', { missing: 'More' }).ok, true);
+  before = tree(ready.root);
+  for (const d of ['Not yet: nothing', 'Cut again for what was missing: no story.']) {
+    const r = send(ready.dir, 'refine', { epic: 'E-01', decisions: [d], stories: [] });
+    assert.deepEqual([r.ok, r.reason], [false, 'stories-refused'], d);
+    assert.match(JSON.stringify(r.issues), /starts the way a line the script writes does/, d);
+    assert.deepEqual(tree(ready.root), before, d);
+  }
 });
