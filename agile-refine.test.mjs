@@ -164,7 +164,9 @@ test('answers that can\'t be saved are refused with nothing written', (t) => {
   assert.deepEqual(tree(dir), before);
   assert.equal(refine(dir, list()).ok, true);
   const after = tree(dir);
-  for (const call of ['answer', 'propose']) assert.equal(send(dir, call, { ...list(), answers: [good] }).reason, 'not-refinable');
+  // the epic is being built now: a proposal is out, and an answer is the findings rule's, judged as one
+  assert.equal(send(dir, 'propose', { ...list(), answers: [good] }).reason, 'not-refinable');
+  assert.equal(send(dir, 'answer', { ...list(), answers: [good] }).reason, 'answers-refused');
   assert.deepEqual(tree(dir), after);
 });
 

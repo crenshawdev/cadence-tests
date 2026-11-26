@@ -64,7 +64,7 @@ test('the register is frozen, rows and all', () => {
   assert.equal(CAPTURE_PATH, '.planning/CAPTURE.md');
 });
 
-// CADENCE-CENSUS: capture-writers-register | asserts: the register is 4 rows, none of them durable
+// CADENCE-CENSUS: capture-writers-register | asserts: the register is 5 rows, none of them durable
 test('the register pins its row count', () => {
   // The count is the enumeration's own claim: this phase examined these sites
   // and no others. Adding a site without deciding whether its write can
@@ -72,7 +72,7 @@ test('the register pins its row count', () => {
   // moves in the commit that adds the row and never on its own. Every live row
   // is non-durable BY CONSTRUCTION - a durable one is a reported problem on the
   // live tree, so a `durable: true` row here would redden self-verify.
-  assert.equal(CAPTURE_WRITERS.length, 4);
+  assert.equal(CAPTURE_WRITERS.length, 5);
   assert.equal(CAPTURE_WRITERS.filter((r) => r.durable).length, 0);
 });
 
