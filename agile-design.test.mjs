@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
@@ -52,9 +52,27 @@ test('design-folder refuses a folder that holds a design, a title with nothing t
     ['design-there', 'Toolshed Lending', (dir) => {
       mkdirSync(join(dir, 'seldon', 'toolshed-lending'), { recursive: true });
       writeFileSync(join(dir, 'seldon', 'brief.md'), '# Toolshed\n');
-      writeFileSync(join(dir, 'seldon', 'toolshed-lending', 'prd.md'), '# Toolshed Lending - PRD\n');
+      writeFileSync(join(dir, 'seldon', 'toolshed-lending', 'brief.md'), '# Toolshed Lending\n');
+    }],
+    // anything in the named folder takes the name, an architecture.md left from another design included
+    ['design-there', 'Toolshed Lending', (dir) => {
+      mkdirSync(join(dir, 'seldon', 'toolshed-lending'), { recursive: true });
+      writeFileSync(join(dir, 'seldon', 'brief.md'), '# Toolshed\n');
+      writeFileSync(join(dir, 'seldon', 'toolshed-lending', 'architecture.md'), '# Toolshed Lending - architecture\n');
+    }],
+    ['design-started', 'Toolshed Lending', (dir) => {
+      mkdirSync(join(dir, 'seldon'), { recursive: true });
+      writeFileSync(join(dir, 'seldon', 'prd.md'), '# Toolshed - PRD\n');
     }],
     ['title-slug', '!!! ---', () => {}],
+    ['title-slug', 'Architecture', (dir) => { mkdirSync(join(dir, 'seldon'), { recursive: true }); writeFileSync(join(dir, 'seldon', 'brief.md'), '# Toolshed\n'); }],
+    ['title-slug', 'a'.repeat(65), () => {}],
+    ['design-folder', 'Toolshed', (dir, root) => {
+      mkdirSync(join(root, 'elsewhere'), { recursive: true });
+      mkdirSync(join(dir, 'seldon'), { recursive: true });
+      writeFileSync(join(dir, 'seldon', 'brief.md'), '# Toolshed\n');
+      symlinkSync(join(root, 'elsewhere'), join(dir, 'seldon', 'toolshed'));
+    }],
     ['design-folder', 'Toolshed', (dir, root) => {
       mkdirSync(join(root, 'elsewhere'), { recursive: true });
       mkdirSync(dir, { recursive: true });
@@ -70,6 +88,19 @@ test('design-folder refuses a folder that holds a design, a title with nothing t
     const r = run(dir, 'design-folder', '--title', title);
     assert.deepEqual([r.ok, r.reason], [false, reason], JSON.stringify(r));
     assert.deepEqual(tree(root), before, reason);
-    if (reason === 'design-there') assert.ok(r.hint.includes(`/cad-agile --brief '${join(dir, 'seldon', 'toolshed-lending')}'`), r.hint);
+    if (reason === 'design-there') {
+      const named = existsSync(join(dir, 'seldon', 'toolshed-lending', 'brief.md'));
+      assert.equal(r.hint.includes(`/cad-agile --brief '${join(dir, 'seldon', 'toolshed-lending')}'`), named, r.hint);
+    }
   }
+});
+
+test('design-folder answers the top while no brief.md is there, whatever sits at the named path, and refuses a path /cad-agile --brief would', (t) => {
+  const { dir } = project(t);
+  mkdirSync(join(dir, 'seldon'), { recursive: true });
+  writeFileSync(join(dir, 'seldon', 'toolshed'), 'a file where a named design could go\n');
+  assert.deepEqual([run(dir, 'design-folder', '--title', 'Toolshed').folder], [join(dir, 'seldon')]);
+  const quoted = join(scratch('cad-agile-design-', t), "o'b x", '.planning');
+  const r = run(quoted, 'design-folder', '--title', 'Toolshed');
+  assert.deepEqual([r.ok, r.reason], [false, 'design-path'], JSON.stringify(r));
 });
