@@ -125,6 +125,9 @@ test("the build asks the findings rule first, records the commands before the re
   assert.ok(prose.includes("over each `payload-*.json` in `.planning/agile/tasks/{story}/`"));
   // an unpicked blocker or high is the user's override, or its record is refused
   assert.ok(prose.includes('carries `overridden: true`'));
+  // the story's own record commits and the checks' writes aren't a fix, or a run's one round goes by with nothing fixed
+  assert.ok(prose.includes('touches something outside `.planning/` is a fix already made'));
+  assert.ok(prose.includes('With none, when the command is what\'s wrong'));
   // a done story with no record is picked up there, and the branch guard is agile.md's alone
   assert.ok(prose.includes('`done`: section 8'));
   assert.ok(!prose.includes('apply section 1'));
