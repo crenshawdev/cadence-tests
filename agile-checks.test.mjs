@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
 import { storyFile } from '../cadence-core/bin/lib/agile-paths.mjs';
-import { readStoryChecks, readStoryFile } from '../cadence-core/bin/lib/agile-read.mjs';
+import { readStoryChecks, readStoryFile, readStoryResult } from '../cadence-core/bin/lib/agile-read.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGILE = join(HERE, '..', 'cadence-core', 'bin', 'agile.mjs');
@@ -62,7 +62,7 @@ test('recorded commands keep the rest of Result, and all passing turns a reviewe
   assert.equal(run(dir, 'next').next.story.id, 'E-01-2');
 });
 
-test('one failing check sends the story back to in-progress and names it, and a command recorded again owes a new review', (t) => {
+test('one failing check sends the story back to in-progress and names it, and a command recorded again owes a new review and keeps the round noted', (t) => {
   const { dir, file } = building(t);
   record(dir, [node("console.log('fine')"), node("console.log('trying'); console.error('\\u001b[31mno name check\\u001b[0m'); process.exit(3)")]);
   reviewed(file);
@@ -74,7 +74,8 @@ test('one failing check sends the story back to in-progress and names it, and a 
   writeFileSync(file, readFileSync(file, 'utf8').replace('- Review: one reviewer, nothing raised', '- Review: one reviewer, nothing raised\n- Fix round: check 2 tried'));
   assert.deepEqual(record(dir, [node('1'), node('1')]), { ok: true, story: 'E-01-1', commands: 2, review_cleared: true, _exit: 0 });
   const text = readFileSync(file, 'utf8');
-  assert.doesNotMatch(text, /- Review: |- Fix round: /);
+  assert.doesNotMatch(text, /- Review: /);
+  assert.equal(readStoryResult(text).fix_round, 'check 2 tried');
   assert.deepEqual(readStoryChecks(text).map((c) => c.result), ['not run', 'not run']);
   // put back in review by hand, it still waits for the review's note
   status(file, 'review');
@@ -94,7 +95,12 @@ test('commands are recorded only while the story is built or reviewed, and check
     assert.equal(run(dir, 'run-checks').reason, 'not-reviewed', word);
     assert.deepEqual(tree(dir), at);
   }
-  // in review, new commands send it back to being built, and the review is owed again
+  // in review before its note, new commands are that review's own fix and it stays in review
+  status(file, 'review');
+  const fixed = record(dir, [node('4'), node('4')]);
+  assert.deepEqual([fixed.ok, fixed.review_cleared], [true, undefined]);
+  assert.equal(readStoryFile(readFileSync(file, 'utf8'))?.status, 'review');
+  // once the review is noted, new commands send it back to being built, and the review is owed again
   reviewed(file);
   assert.equal(record(dir, [node('2'), node('2')]).review_cleared, true);
   const text = readFileSync(file, 'utf8');

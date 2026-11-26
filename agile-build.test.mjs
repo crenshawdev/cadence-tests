@@ -81,9 +81,11 @@ test('a note writes the commits since the base and its lines, keeping the checks
   assert.deepEqual([said.commits, said.review, said.differently, said.fix_round], [made, 'one reviewer, nothing raised', 'nothing', null]);
   assert.equal(readStoryChecks(story(file)).length, 2);
   assert.match(story(file), /## Result\n\n- Base: \w+\n- Commits: \w+\n- Review: one reviewer, nothing raised\n- Done differently: nothing\n- Check 1: `true` - not run\n- Check 2: `true` - not run\n/);
-  // a later note replaces its own lines and keeps the rest
+  // a later note replaces its own lines and keeps the rest, and a fix round's sets checks that ran back to not run
+  writeFileSync(file, story(file).replace('- Check 2: `true` - not run', '- Check 2: `true` - exit 1, failed'));
   send(dir, 'note', { story: 'E-01-1', fix_round: 'check 2 fixed in abc' });
   assert.deepEqual([readStoryResult(story(file)).review, readStoryResult(story(file)).fix_round], ['one reviewer, nothing raised', 'check 2 fixed in abc']);
+  assert.deepEqual(readStoryChecks(story(file)).map((c) => [c.command, c.result]), [['true', 'not run'], ['true', 'not run']]);
   const at = tree(root);
   for (const payload of [{ story: 'E-01-1', review: 'two\nlines' }, { story: 'E-01-1', review: 7 }, { review: 'x' }, { story: 'E-01-2', review: 'x' }]) {
     assert.equal(send(dir, 'note', payload).ok, false, JSON.stringify(payload));
@@ -91,12 +93,18 @@ test('a note writes the commits since the base and its lines, keeping the checks
   }
 });
 
-test("the findings rule is saved under the epic's Decisions while its stories are built", (t) => {
-  const { dir } = refined(t);
+test("the findings rule is saved under the epic's Decisions while its stories are built, and no other answer is", (t) => {
+  const { root, dir } = refined(t);
   run(dir, 'move', '--to', 'in-progress');
-  const r = send(dir, 'answer', { epic: 'E-01', answers: [{ question: 'How are review findings handled?', answer: 'Fix mediums and up, ask me about lows.' }] });
+  const before = tree(root);
+  for (const answers of [[{ question: 'q', answer: 'a' }], [{ question: 'How are review findings handled?', answer: 'Fix everything' }],
+    [{ question: 'How are review findings handled?', answer: 'Ask me each time' }, { question: 'q', answer: 'a' }]]) {
+    assert.equal(send(dir, 'answer', { epic: 'E-01', answers }).reason, 'answers-refused', JSON.stringify(answers));
+    assert.deepEqual(tree(root), before, JSON.stringify(answers));
+  }
+  const r = send(dir, 'answer', { epic: 'E-01', answers: [{ question: 'How are review findings handled?', answer: 'Fix them, ask about lows' }] });
   assert.deepEqual([r.ok, r.saved], [true, 1]);
-  assert.match(readFileSync(epicFile(join(dir, 'agile'), 'E-01'), 'utf8'), /- \*\*How are review findings handled\?\*\* Fix mediums and up, ask me about lows\./);
+  assert.match(readFileSync(epicFile(join(dir, 'agile'), 'E-01'), 'utf8'), /- \*\*How are review findings handled\?\*\* Fix them, ask about lows\n/);
   assert.equal(send(dir, 'answer', { epic: 'E-02', answers: [{ question: 'q', answer: 'a' }] }).reason, 'not-refinable');
 });
 
@@ -112,11 +120,18 @@ test("the build asks the findings rule first, records the commands before the re
   order.reduce((last, words) => { const i = at(words); assert.ok(i > last, `${words} comes after what precedes it`); return i; }, -1);
   // a done story takes no more notes, so what was done differently is noted before the checks can make it done
   assert.ok(at('with `differently`') < at('agile.mjs" run-checks'));
-  // the review's payload outlives a clear, so the lows can still be put to the user
-  assert.ok(prose.includes('write `.planning/agile/tasks/{story}/payload.json`'));
-  // agile.md hands a build step to it, after finishing a refinement cut short
+  // each review's payload outlives a clear, named for the heads it was read at and recorded at, so the lows can still be put to the user
+  assert.ok(prose.includes('write `.planning/agile/tasks/{story}/payload-{reviewed}-{HEAD}.json`'));
+  assert.ok(prose.includes("over each `payload-*.json` in `.planning/agile/tasks/{story}/`"));
+  // an unpicked blocker or high is the user's override, or its record is refused
+  assert.ok(prose.includes('carries `overridden: true`'));
+  // a done story with no record is picked up there, and the branch guard is agile.md's alone
+  assert.ok(prose.includes('`done`: section 8'));
+  assert.ok(!prose.includes('apply section 1'));
+  // agile.md hands a build step to it, after finishing a done story's record and a refinement cut short
   const main = workflow('agile.md');
-  assert.ok(main.indexOf('workflows/agile-build.md') > main.indexOf('REFINED'));
+  assert.ok(main.lastIndexOf('workflows/agile-build.md') > main.indexOf('REFINED'));
+  assert.ok(main.indexOf('UNRECORDED') < main.indexOf('REFINED'));
 });
 
 test("the record's commit takes the story, its review files and a ledger it changed, and nothing else that's staged", (t) => {
@@ -127,10 +142,29 @@ test("the record's commit takes the story, its review files and a ledger it chan
   execFileSync('mkdir', ['-p', join(root, '.planning', 'agile', 'tasks', 'E-01-1')]);
   writeFileSync(join(root, '.planning', 'agile', 'tasks', 'E-01-1', 'ADJUDICATION-diff-a-b.json'), '{}\n');
   writeFileSync(join(root, '.planning', 'agile', 'declined.md'), '# Declined\n');
+  const epic = epicFile(join(root, '.planning', 'agile'), 'E-01');
+  writeFileSync(epic, readFileSync(epic, 'utf8').concat('- **How are review findings handled?** Ask me each time\n'));
   writeFileSync(join(root, 'other.txt'), 'the user\'s\n');
   git(root, 'add', 'other.txt');
   execFileSync('bash', ['-c', block], { cwd: root, env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'commit.gpgsign', GIT_CONFIG_VALUE_0: 'false' } });
   assert.deepEqual(git(root, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(),
-    ['.planning/agile/declined.md', '.planning/agile/epics/E-01/E-01-1.md', '.planning/agile/tasks/E-01-1/ADJUDICATION-diff-a-b.json']);
+    ['.planning/agile/declined.md', '.planning/agile/epics/E-01/E-01-1.md', '.planning/agile/epics/E-01/epic.md', '.planning/agile/tasks/E-01-1/ADJUDICATION-diff-a-b.json']);
   assert.equal(git(root, 'diff', '--cached', '--name-only'), 'other.txt');
+});
+
+test('agile.md finds a done story whose record was never made, by its payload left or its file changed, and no other', (t) => {
+  const { root, file } = refined(t);
+  const block = /```\n(for f in '\.planning\/agile\/epics\/\{next\.id\}[^\n]*)\n```/.exec(workflow('agile.md'))[1].replaceAll('{next.id}', 'E-01');
+  const found = () => execFileSync('bash', ['-c', block], { cwd: root, encoding: 'utf8' }).trim();
+  const done = story(file).replace(/^status: .*$/m, 'status: done');
+  writeFileSync(file, story(file).replace('None yet.', '- Base: abc1234'));
+  assert.equal(found(), '');
+  writeFileSync(file, done);
+  assert.equal(found(), 'UNRECORDED E-01-1');
+  git(root, 'commit', '-q', '-am', 'docs(E-01-1): record its build');
+  assert.equal(found(), '');
+  const tasks = join(root, '.planning', 'agile', 'tasks', 'E-01-1');
+  execFileSync('mkdir', ['-p', tasks]);
+  writeFileSync(join(tasks, 'payload-abc1234-def5678.json'), '{}\n');
+  assert.equal(found(), 'UNRECORDED E-01-1');
 });
