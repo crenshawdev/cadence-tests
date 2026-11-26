@@ -114,25 +114,20 @@ test("an M's plan is written once it's begun and only once, and every payload th
   assert.deepEqual(tree(root), planned);
 });
 
-test('an S that needs a plan becomes an M of two or three tasks saying why, and not once its commands are recorded', (t) => {
-  const { root, dir, file } = refined(t);
+test('an S takes no plan, and an M takes none once its commands are recorded', (t) => {
+  const { root, dir } = refined(t);
   run(dir, 'move', '--to', 'in-progress');
   const begun = tree(root);
-  for (const payload of [{ story: 'E-01-1', size: 'M', plan: ['the list', 'the form'] }, { story: 'E-01-1', size: 'M', plan: ['the list'], why: 'it needs a plan' }]) {
+  for (const payload of [{ story: 'E-01-1', size: 'M', plan: ['the list', 'the form'] }, { story: 'E-01-1', size: 'M', plan: ['the list', 'the form'], why: 'two changes' }]) {
     assert.equal(send(dir, 'size', payload).reason, 'size-refused', JSON.stringify(payload));
     assert.deepEqual(tree(root), begun, JSON.stringify(payload));
   }
-  assert.deepEqual(send(dir, 'size', { story: 'E-01-1', size: 'M', plan: ['the list', 'the form'], why: 'the list and the form are two changes' }),
-    { ok: true, story: 'E-01-1', size: 'M', tasks: 2, resized: 'S', _exit: 0 });
-  assert.deepEqual([readStoryFile(story(file))?.size, readStoryFile(story(file))?.status], ['M', 'in-progress']);
-  assert.deepEqual(readStoryPlan(story(file)), ['- Task 1: the list', '- Task 2: the form']);
-  assert.match(story(file), /- A tool with no name is refused\.\n\n## Plan\n\n- Task 1: the list\n- Task 2: the form\n\n## Result\n\n- Base: \w+\n- Resized: S to M - the list and the form are two changes\n$/);
-  const other = refined(t);
-  run(other.dir, 'move', '--to', 'in-progress');
-  send(other.dir, 'check-commands', { story: 'E-01-1', commands: ['true', 'true'] });
-  const recorded = tree(other.root);
-  assert.equal(send(other.dir, 'size', { story: 'E-01-1', size: 'M', plan: ['a', 'b'], why: 'two changes' }).reason, 'not-sizable');
-  assert.deepEqual(tree(other.root), recorded);
+  const m = refined(t, { size: 'M' });
+  run(m.dir, 'move', '--to', 'in-progress');
+  send(m.dir, 'check-commands', { story: 'E-01-1', commands: ['true', 'true'] });
+  const recorded = tree(m.root);
+  assert.equal(send(m.dir, 'size', { story: 'E-01-1', size: 'M', plan: ['a', 'b'] }).reason, 'not-sizable');
+  assert.deepEqual(tree(m.root), recorded);
 });
 
 test('one bigger than an M goes back to backlog as an L and the epic is refined again, but not once its work is begun', (t) => {
