@@ -98,6 +98,11 @@ test("a story's deferred fire queues its findings in the story's folder, and the
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.record, `agile/tasks/E-01-1/DEFERRED-risk_surface-${base.slice(0, 7)}-${head.slice(0, 7)}.json`);
   assert.equal(JSON.parse(readFileSync(join(dir, r.record), 'utf8')).findings.length, 1);
+  // forgetting --task is told to pass it, not that this call can't take one
+  const bare = call(root, 'planning.mjs', 'deferred', 'record', '--phase', '0', '--trigger', 'risk_surface', '--discriminator', 'x-y',
+    '--base', base, '--head', head, '--payload', payload);
+  assert.equal(bare.reason, 'bad-args');
+  assert.match(bare.hint, /takes it for an agile story only/);
   for (const args of [['deferred', 'list'], ['deferred', 'carry', '--phase', '1']]) {
     assert.equal(call(root, 'planning.mjs', ...args).reason, 'agile-path', args.join(' '));
   }
