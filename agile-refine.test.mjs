@@ -830,6 +830,34 @@ test('the refinement\'s commit holds project.md only when its Standing rules cha
   }
 });
 
+test('the refinement\'s commit finds a standing rule past a fence, and never commits a project.md the user removed', (t) => {
+  const prose = readFileSync(join(HERE, '..', 'cadence-core', 'workflows', 'agile-refine.md'), 'utf8');
+  const block = /```\n(set -- [\s\S]*?git commit [^\n]*)\n```/.exec(prose)[1].replaceAll('{id}', 'E-02');
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
+    GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
+  const fenced = '\n## Standing rules\n\n- Keep this shape:\n\n```md\n## Example\n```\n';
+  const earlier = '\n## Standing rules\n\n- An earlier rule. (E-00, Change next 2)\n';
+  // a fenced heading inside the section, which the script steps over and the commit mustn't stop at; then a removed file
+  for (const [added, removed, outcomes, held] of [[fenced, false, took(), true], [earlier, true, [], false]]) {
+    // removed, it's a refinement with no line open, which never reads project.md
+    const dir = accepted(t, removed ? [] : LESSONS);
+    const root = dirname(dir);
+    const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', env });
+    writeFileSync(project(dir), `${readFileSync(project(dir), 'utf8')}${added}`);
+    git('init', '-q');
+    git('add', '-A');
+    assert.equal(git('commit', '-q', '-m', 'start').status, 0);
+    if (removed) rmSync(project(dir));
+    const got = refine(dir, lending({ change_next: outcomes }), 'E-02');
+    assert.equal(got.ok, true, JSON.stringify(got));
+    const r = spawnSync('sh', ['-c', block], { cwd: root, encoding: 'utf8', env });
+    assert.equal(r.status, 0, r.stderr);
+    const files = git('show', '--name-only', '--format=').stdout.trim().split('\n');
+    assert.equal(files.includes('.planning/agile/project.md'), held, files.join(', '));
+    if (held) assert.match(git('show', 'HEAD:.planning/agile/project.md').stdout, /```\n- [^\n]* \(E-01, Change next 1\)\n$/);
+  }
+});
+
 test('the conversation settles its branch, asks and has the list checked before it shows or writes one, and commits by path', () => {
   const workflow = (name) => readFileSync(join(HERE, '..', 'cadence-core', 'workflows', name), 'utf8');
   const prose = workflow('agile-refine.md');
