@@ -111,11 +111,42 @@ test('a start after a close stopped after each move is finished by the next, whi
   }
 });
 
+test('a start after a close stopped by a move that fails leaves no release open, and the next start finishes it', (t) => {
+  const { dir } = closed(t);
+  const before = kept(dir);
+  // a folder where REQUIREMENTS.md goes stops the start after its epics moved, so whatever moved before release.md shows
+  mkdirSync(join(agile(dir), 'REQUIREMENTS.md', 'blocker'), { recursive: true });
+  const stopped = run(dir, 'start', '--design', second(t));
+  assert.equal(stopped.ok, false, JSON.stringify(stopped));
+  assert.deepEqual(readdirSync(join(agile(dir), 'epics')).sort(), ['E-04', 'E-05', 'E-06']);
+  assert.equal(existsSync(join(agile(dir), 'release.md')), false);
+  assert.match(readFileSync(join(agile(dir), 'project.md'), 'utf8'), /^# Toolshed\n/);
+  assert.equal(run(dir, 'next').release, null);
+  rmSync(join(agile(dir), 'REQUIREMENTS.md'), { recursive: true });
+  const r = run(dir, 'start', '--design', second(t));
+  assert.deepEqual([r.ok, r.epics.map((e) => e.id)], [true, ['E-04', 'E-05', 'E-06']], JSON.stringify(r));
+  assert.deepEqual(readdirSync(dirname(agile(dir))).filter((n) => n.startsWith('agile.new.')), []);
+  assert.deepEqual(kept(dir), before);
+});
+
+test('a start after a close passes over an empty build folder, whatever its pid, and clears it', (t) => {
+  const { dir } = closed(t);
+  mkdirSync(buildDir(dir, process.pid), { recursive: true });
+  assert.equal(run(dir, 'start', '--design', second(t)).ok, true);
+  assert.equal(existsSync(buildDir(dir, process.pid)), false);
+});
+
 test('a start after a close that can\'t be made is refused before anything is written', (t) => {
   const cases = [
     ['design-refused', (dir, design) => rmSync(join(design, 'epics.md'))],
     ['project-file', (dir) => { rmSync(join(agile(dir), 'project.md')); symlinkSync(join(agile(dir), 'backlog.md'), join(agile(dir), 'project.md')); }],
-    ['start-running', (dir) => mkdirSync(buildDir(dir, process.pid), { recursive: true })],
+    ['start-running', (dir) => { mkdirSync(join(buildDir(dir, process.pid), 'epics'), { recursive: true }); }],
+    // two IDs that are one number would land on one folder once moved past E-03
+    ['epic-numbers', (dir, design) => {
+      edit(join(design, 'epics.md'), '## E-02:', '## E-001:');
+      edit(join(design, 'epics.md'), '**Depends on:** E-02', '**Depends on:** E-001');
+    }],
+    ['epic-numbers', (dir) => mkdirSync(join(agile(dir), 'releases', '0.10.0', 'epics', 'E-9007199254740990'))],
   ];
   for (const [reason, set] of cases) {
     const { root, dir } = closed(t);
@@ -125,5 +156,6 @@ test('a start after a close that can\'t be made is refused before anything is wr
     const r = run(dir, 'start', '--design', design);
     assert.deepEqual([r.ok, r.reason], [false, reason], JSON.stringify(r));
     assert.deepEqual(tree(root), before, reason);
+    if (reason === 'start-running') assert.ok(r.hint.includes(buildDir(dir, process.pid)), r.hint);
   }
 });
