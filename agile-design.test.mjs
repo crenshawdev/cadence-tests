@@ -104,3 +104,39 @@ test('design-folder answers the top while no brief.md is there, whatever sits at
   const r = run(quoted, 'design-folder', '--title', 'Toolshed');
   assert.deepEqual([r.ok, r.reason], [false, 'design-path'], JSON.stringify(r));
 });
+
+const WORKFLOWS = join(HERE, '..', 'cadence-core', 'workflows');
+const SKELETONS = join(HERE, '..', 'cadence-core', 'templates', 'design');
+const prose = (name) => readFileSync(join(WORKFLOWS, name), 'utf8');
+
+test('the four skeletons, filled with plain words, are a design the start takes', (t) => {
+  const { root, dir } = project(t);
+  const design = join(root, 'design');
+  mkdirSync(design, { recursive: true });
+  for (const name of readdirSync(SKELETONS)) {
+    const text = readFileSync(join(SKELETONS, name), 'utf8').replaceAll('<Title>', 'Lending Shelf').replaceAll('<PREFIX>', 'SHELF')
+      .replace(/^Kind: <[^>]+>$/m, 'Kind: stack').replace(/<[^>]+>/g, 'Plain words');
+    writeFileSync(join(design, name), text);
+  }
+  answerSetup(dir);
+  const r = run(dir, 'start', '--design', design);
+  assert.deepEqual([r.ok, r.release, r.epics.map((e) => e.id)], [true, 'Lending Shelf', ['E-01']], JSON.stringify(r));
+});
+
+test('agile.md sends /cad-agile with no release and no --brief to the interview, which asks once, writes after a yes and checks before the start', () => {
+  assert.match(prose('agile.md'), /- `release` is null, without it -> Read\n  `\$\{CLAUDE_PLUGIN_ROOT\}\/cadence-core\/workflows\/agile-design\.md` and follow it,\n  then go to `commit`\./);
+  assert.doesNotMatch(prose('agile.md'), /No release is open here/);
+  const text = prose('agile-design.md');
+  assert.match(text, /One message, every question at once/);
+  assert.equal((text.match(/^\d\. /gm) ?? []).length, 6);
+  assert.match(text, /The turn ends there\. Nothing is written\./);
+  const folder = 'node "${CLAUDE_PLUGIN_ROOT}/cadence-core/bin/agile.mjs" design-folder --title \'<the short name>\'';
+  const at = (s) => { const i = text.indexOf(s); assert.ok(i >= 0, s); return i; };
+  // the folder is asked before the draft is shown, again just before the write, then the check, then the start
+  assert.ok(at(folder) < at('question: "Write this design and start the release from it?"'));
+  assert.ok(at('run the same `design-folder` line again') < at('Write the four files there with\nthe Write tool'));
+  assert.ok(at('Write the four files there') < at('agile.mjs" check --design \'<folder>\''));
+  assert.match(text, /at\nmost twice/);
+  assert.ok(at('agile.mjs" check --design') < at('cadence-core/workflows/agile-start.md'));
+  assert.match(text, /The design isn't committed, as on `--brief`\./);
+});
