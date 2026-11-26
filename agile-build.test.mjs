@@ -1,4 +1,4 @@
-// Zero-dep tests for a story's build on the agile path: agile.mjs move and note, answer on a build step, and the build's prose.
+// Zero-dep tests for a story's build on the agile path: agile.mjs move, size and note, answer on a build step, and the build's prose.
 // Run: node --test tests/agile-build.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
 import { epicFile, storyFile } from '../cadence-core/bin/lib/agile-paths.mjs';
-import { readStoryChecks, readStoryFile, readStoryResult } from '../cadence-core/bin/lib/agile-read.mjs';
+import { readStoryChecks, readStoryFile, readStoryPlan, readStoryResult } from '../cadence-core/bin/lib/agile-read.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGILE = join(HERE, '..', 'cadence-core', 'bin', 'agile.mjs');
@@ -27,15 +27,15 @@ const git = (root, ...args) => execFileSync('git', ['-C', root, '-c', 'user.name
 const tree = (root) => readdirSync(root, { recursive: true }).map(String).filter((p) => !p.startsWith('.git')).sort()
   .map((p) => [p, statSync(join(root, p)).mtimeMs, statSync(join(root, p)).isFile() ? readFileSync(join(root, p), 'utf8') : '']);
 
-/** A refined release in a repository, its first story E-01-1 an S with two checks, committed. */
-function refined(t) {
+/** A refined release in a repository, its first story E-01-1 an S with two checks unless `first` says otherwise, committed. */
+function refined(t, first = {}) {
   const root = join(scratch('cad-agile-build-', t), 'repo');
   execFileSync('git', ['init', '-q', '-b', 'work', root]);
   const dir = answerSetup(join(root, '.planning'));
   assert.equal(run(dir, 'start', '--design', FIXTURE).ok, true);
   const story = (over) => ({ title: 'Add a tool', size: 'S', builds_on: [], requirements: ['CAT-01'],
     delivers: 'A volunteer adds a tool.', accepted_when: ['Adding a tool shows it in the list.', 'A tool with no name is refused.'], ...over });
-  assert.equal(send(dir, 'refine', { epic: 'E-01', decisions: [], stories: [story(), story({ title: 'Search', size: 'M', builds_on: ['E-01-1'], requirements: ['CAT-02'] })] }).ok, true);
+  assert.equal(send(dir, 'refine', { epic: 'E-01', decisions: [], stories: [story(first), story({ title: 'Search', size: 'M', builds_on: ['E-01-1'], requirements: ['CAT-02'] })] }).ok, true);
   git(root, 'add', '-A');
   git(root, 'commit', '-q', '-m', 'refined');
   return { root, dir, file: storyFile(join(dir, 'agile'), 'E-01-1') };
@@ -91,6 +91,72 @@ test('a note writes the commits since the base and its lines, keeping the checks
     assert.equal(send(dir, 'note', payload).ok, false, JSON.stringify(payload));
     assert.deepEqual(tree(root), at, JSON.stringify(payload));
   }
+});
+
+test("an M's plan is written once it's begun and only once, and every payload that can't be is refused with nothing written", (t) => {
+  const { root, dir, file } = refined(t, { size: 'M' });
+  const fresh = tree(root);
+  assert.equal(send(dir, 'size', { story: 'E-01-1', size: 'M', plan: ['the list'] }).reason, 'not-sizable');
+  assert.deepEqual(tree(root), fresh);
+  run(dir, 'move', '--to', 'in-progress');
+  const begun = tree(root);
+  for (const payload of [{ story: 'E-01-1', size: 'M' }, { story: 'E-01-1', size: 'M', plan: [] }, { story: 'E-01-1', size: 'M', plan: ['a', 'b', 'c', 'd'] },
+    { story: 'E-01-1', size: 'M', plan: ['two\nlines'] }, { story: 'E-01-1', size: 'M', plan: ['a'], why: 'it was cut as one' },
+    { story: 'E-01-1', size: 'S', plan: ['a'] }, { size: 'M', plan: ['a'] }, { story: 'E-01-2', size: 'M', plan: ['a'] }]) {
+    assert.equal(send(dir, 'size', payload).ok, false, JSON.stringify(payload));
+    assert.deepEqual(tree(root), begun, JSON.stringify(payload));
+  }
+  assert.deepEqual(send(dir, 'size', { story: 'E-01-1', size: 'M', plan: ['the list', ' the form '] }), { ok: true, story: 'E-01-1', size: 'M', tasks: 2, _exit: 0 });
+  assert.match(story(file), /\n## Plan\n\n- Task 1: the list\n- Task 2: the form\n\n## Result\n\n- Base: \w+\n$/);
+  assert.deepEqual([readStoryFile(story(file))?.size, readStoryResult(story(file)).resized], ['M', null]);
+  const planned = tree(root);
+  assert.equal(send(dir, 'size', { story: 'E-01-1', size: 'M', plan: ['another'] }).reason, 'not-sizable');
+  assert.deepEqual(tree(root), planned);
+});
+
+test('an S that needs a plan becomes an M saying why, and not once its commands are recorded', (t) => {
+  const { root, dir, file } = refined(t);
+  run(dir, 'move', '--to', 'in-progress');
+  const begun = tree(root);
+  assert.equal(send(dir, 'size', { story: 'E-01-1', size: 'M', plan: ['the list', 'the form'] }).reason, 'size-refused');
+  assert.deepEqual(tree(root), begun);
+  assert.deepEqual(send(dir, 'size', { story: 'E-01-1', size: 'M', plan: ['the list', 'the form'], why: 'the list and the form are two changes' }),
+    { ok: true, story: 'E-01-1', size: 'M', tasks: 2, resized: 'S', _exit: 0 });
+  assert.deepEqual([readStoryFile(story(file))?.size, readStoryFile(story(file))?.status], ['M', 'in-progress']);
+  assert.deepEqual(readStoryPlan(story(file)), ['- Task 1: the list', '- Task 2: the form']);
+  assert.match(story(file), /- A tool with no name is refused\.\n\n## Plan\n\n- Task 1: the list\n- Task 2: the form\n\n## Result\n\n- Base: \w+\n- Resized: S to M - the list and the form are two changes\n$/);
+  const other = refined(t);
+  run(other.dir, 'move', '--to', 'in-progress');
+  send(other.dir, 'check-commands', { story: 'E-01-1', commands: ['true', 'true'] });
+  const recorded = tree(other.root);
+  assert.equal(send(other.dir, 'size', { story: 'E-01-1', size: 'M', plan: ['a', 'b'], why: 'two changes' }).reason, 'not-sizable');
+  assert.deepEqual(tree(other.root), recorded);
+});
+
+test('one bigger than an M goes back to backlog as an L and the epic is refined again, but not once a commit is past its base', (t) => {
+  const { root, dir, file } = refined(t, { size: 'M' });
+  const fresh = tree(root);
+  for (const payload of [{ story: 'E-01-1', size: 'L' }, { story: 'E-01-1', size: 'L', why: 'three stories', plan: ['a'] }]) {
+    assert.equal(send(dir, 'size', payload).reason, 'size-refused', JSON.stringify(payload));
+    assert.deepEqual(tree(root), fresh, JSON.stringify(payload));
+  }
+  const r = send(dir, 'size', { story: 'E-01-1', size: 'L', why: 'the list, the form and the search are three stories' });
+  assert.deepEqual([r.ok, r.size, r.status, r.next?.step, r.next?.first], [true, 'L', 'backlog', 'refine', 'E-01-3']);
+  assert.deepEqual([readStoryFile(story(file))?.size, readStoryFile(story(file))?.status], ['L', 'backlog']);
+  assert.equal(readStoryResult(story(file)).resized, 'M to L - the list, the form and the search are three stories');
+  assert.equal(run(dir, 'next').next.step, 'refine');
+  const begun = refined(t);
+  run(begun.dir, 'move', '--to', 'in-progress');
+  assert.equal(send(begun.dir, 'size', { story: 'E-01-1', size: 'L', why: 'three stories' }).status, 'backlog');
+  assert.deepEqual([readStoryResult(story(begun.file)).base, readStoryResult(story(begun.file)).resized], [null, 'S to L - three stories']);
+  const made = refined(t);
+  run(made.dir, 'move', '--to', 'in-progress');
+  writeFileSync(join(made.root, 'tool.mjs'), 'export const tool = 1;\n');
+  git(made.root, 'add', 'tool.mjs');
+  git(made.root, 'commit', '-q', '-m', 'feat(E-01-1): add a tool');
+  const committed = tree(made.root);
+  assert.equal(send(made.dir, 'size', { story: 'E-01-1', size: 'L', why: 'three stories' }).reason, 'not-sizable');
+  assert.deepEqual(tree(made.root), committed);
 });
 
 test("the findings rule is saved under the epic's Decisions while its stories are built, and no other answer is", (t) => {
