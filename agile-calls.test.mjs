@@ -87,6 +87,22 @@ test('every shared call runs on a started release, the run is recorded, and the 
   assert.equal(git(root, 'status', '--porcelain', '--', '.planning'), '');
 });
 
+test("a story's deferred fire queues its findings in the story's folder, and the queue's readers stay the old path's", (t) => {
+  const { root, dir, base, head } = started(t);
+  const tasks = join(dir, 'agile', 'tasks', 'E-01-1');
+  mkdirSync(tasks, { recursive: true });
+  const payload = join(root, 'payload.json');
+  writeFileSync(payload, JSON.stringify({ findings: [{ file: 'src/login.mjs', line: 1, severity: 'high', claim: 'a plain compare', failure_scenario: 'timing tells' }] }));
+  const r = call(root, 'planning.mjs', 'deferred', 'record', '--phase', '0', '--trigger', 'risk_surface', '--discriminator', `${base.slice(0, 7)}-${head.slice(0, 7)}`,
+    '--base', base, '--head', head, '--payload', payload, '--task', 'E-01-1');
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.record, `agile/tasks/E-01-1/DEFERRED-risk_surface-${base.slice(0, 7)}-${head.slice(0, 7)}.json`);
+  assert.equal(JSON.parse(readFileSync(join(dir, r.record), 'utf8')).findings.length, 1);
+  for (const args of [['deferred', 'list'], ['deferred', 'carry', '--phase', '1']]) {
+    assert.equal(call(root, 'planning.mjs', ...args).reason, 'agile-path', args.join(' '));
+  }
+});
+
 test('a shared call on a project whose start died after its marker is recorded, and the next start finishes', (t) => {
   const root = scratch('cad-agile-half-', t);
   const dir = answerSetup(join(root, '.planning'));
