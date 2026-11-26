@@ -100,3 +100,15 @@ test('the router and an outside reviewer record under phase 0 on an agile projec
   assert.deepEqual(got.map((e) => [`${e.family}/${e.event}`, String(e.phase), e.corr]), [
     ['lifecycle/dispatch', '0', run], ['routing/resolve', '0', run], ['provider/request', '0', run]]);
 });
+
+test("an agent id seen only before this close's own dispatch is a reused one, and doesn't move the close", (t) => {
+  const { root } = started(t);
+  const first = open(root, 'aaaaaaa-1');
+  dispatch(root, 'e-01-1-review', 'cad-reviewer');
+  close(root, 'e-01-1-review', 'cad-reviewer', '--agent-id', 'a1', '--tokens', '100');
+  const second = open(root, 'bbbbbbb-2');
+  dispatch(root, 'e-01-1-review', 'cad-reviewer');
+  assert.notEqual(first, second);
+  assert.equal(close(root, 'e-01-1-review', 'cad-reviewer', '--agent-id', 'a1', '--tokens', '200').corr, second);
+  assert.deepEqual(planning(root, 'trace', 'render', '--phase', '0').unpaired, []);
+});
