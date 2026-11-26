@@ -86,6 +86,8 @@ test('a close that can\'t be made is refused naming why, with nothing written', 
     [{ version: '0.10.0', defer: ['CAT-02', 'CAT-02'] }, /each once/],
     [{ version: '../x', defer: ['CAT-02'] }, /letters, digits and \._\+- only/], [{ version: '-rc', defer: ['CAT-02'] }, /starting with a letter or digit/],
     [{ version: 'a b', defer: ['CAT-02'] }, /letters, digits/], [{ defer: ['CAT-02'] }, /letters, digits/],
+    // what git won't take as a tag, though each character is one it would
+    ...['1..0', '1.0.', 'x.lock'].map((version) => [{ version, defer: ['CAT-02'] }, /git takes as a tag/]),
     [{ version: '1.0.0', defer: ['CAT-02'], tag: 'x' }, /is not a field/], ['[]', /is an object with version and defer/],
   ]) {
     const r = send(dir, payload);
@@ -134,11 +136,11 @@ test('a close stopped after the deferred ones moved reads them deferred and asks
 const prose = (name) => readFileSync(join(HERE, '..', 'cadence-core', 'workflows', name), 'utf8');
 const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
   GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c' };
-const commitBlock = (version) => /```\n(set -- '\.planning\/agile\/releases\/\{version\}'[\s\S]*?git commit [^\n]*)\n```/.exec(prose('agile-close.md'))[1].replaceAll('{version}', version);
+const commitBlock = (version) => /```\n(b='\{version\}'; b="\$\{b#v\}"\nset -- '\.planning\/agile\/releases\/\{version\}'[\s\S]*?git commit [^\n]*)\n```/.exec(prose('agile-close.md'))[1].replaceAll('{version}', version);
 const lateBlock = () => /```\n\s*node "\$\{CLAUDE_PLUGIN_ROOT\}\/cadence-core\/bin\/config\.mjs" get planning\.commit_docs\n\s*(for d in [^\n]*)\n/.exec(prose('agile.md'))[1];
 
 test('the close\'s commit takes the moved release and a bumped manifest, and nothing the user staged or edited elsewhere', (t) => {
-  for (const untracked of [false, true]) {
+  for (const [untracked, version] of [[false, '0.10.0'], [true, 'v0.10.0']]) {
     const { root, dir } = finished(t);
     const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', env });
     mkdirSync(join(root, '.claude-plugin'));
@@ -153,19 +155,40 @@ test('the close\'s commit takes the moved release and a bumped manifest, and not
     writeFileSync(join(root, 'staged.txt'), 'mine\n');
     git('add', 'staged.txt');
     edit(join(agile(dir), 'project.md'), '## Out of scope', '## Out of scope\n\nMine.');
-    assert.equal(send(dir, { version: '0.10.0', defer: ['CAT-02'] }).ok, true);
+    // a note of the user's under no heading of the version is theirs, though the file differs from HEAD
+    writeFileSync(join(root, 'CHANGELOG.md'), '# Changelog\n\n## [Unreleased]\n\n- half written\n');
+    // what the bump writes, the manifest without the tag's v
     edit(join(root, '.claude-plugin', 'plugin.json'), '0.9.0', '0.10.0');
-    const r = spawnSync('sh', ['-c', commitBlock('0.10.0')], { cwd: root, encoding: 'utf8', env });
+    assert.equal(send(dir, { version, defer: ['CAT-02'] }).ok, true);
+    const r = spawnSync('sh', ['-c', commitBlock(version)], { cwd: root, encoding: 'utf8', env });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(git('log', '-1', '--format=%s').stdout.trim(), 'docs: close the release 0.10.0');
+    assert.equal(git('log', '-1', '--format=%s').stdout.trim(), `docs: close the release ${version}`);
     // renames off, so a moved file shows on both sides
     const files = git('show', '--name-only', '--no-renames', '--format=').stdout.trim().split('\n');
-    assert.ok(files.includes('.claude-plugin/plugin.json') && files.includes('.planning/agile/releases/0.10.0/release.md'), files.join(', '));
+    assert.ok(files.includes('.claude-plugin/plugin.json') && files.includes(`.planning/agile/releases/${version}/release.md`), files.join(', '));
     assert.equal(files.includes('.planning/agile/release.md'), true);
     assert.equal(files.includes('.planning/agile/REQUIREMENTS.md'), !untracked);
     for (const theirs of ['staged.txt', '.planning/agile/project.md', 'CHANGELOG.md']) assert.equal(files.includes(theirs), false, theirs);
     assert.deepEqual(git('diff', '--cached', '--name-only').stdout.trim().split('\n'), ['staged.txt']);
   }
+});
+
+test('the close\'s commit takes CHANGELOG.md with the version\'s heading, and a manifest HEAD already holds at the version stays out', (t) => {
+  const { root, dir } = finished(t);
+  const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', env });
+  mkdirSync(join(root, '.claude-plugin'));
+  writeFileSync(join(root, '.claude-plugin', 'plugin.json'), '{\n  "name": "toolshed",\n  "version": "0.10.0"\n}\n');
+  writeFileSync(join(root, 'CHANGELOG.md'), '# Changelog\n');
+  git('init', '-q');
+  git('add', '-A');
+  assert.equal(git('commit', '-q', '-m', 'start').status, 0);
+  // already at the version, the bump wrote nothing there, and the user's edit is theirs
+  edit(join(root, '.claude-plugin', 'plugin.json'), '"name": "toolshed"', '"name": "toolshed", "description": "mine"');
+  writeFileSync(join(root, 'CHANGELOG.md'), '# Changelog\n\n## [0.10.0] - 2026-11-26\n');
+  assert.equal(send(dir, { version: '0.10.0', defer: ['CAT-02'] }).ok, true);
+  assert.equal(spawnSync('sh', ['-c', commitBlock('0.10.0')], { cwd: root, encoding: 'utf8', env }).status, 0);
+  const files = git('show', '--name-only', '--no-renames', '--format=').stdout.trim().split('\n');
+  assert.deepEqual([files.includes('CHANGELOG.md'), files.includes('.claude-plugin/plugin.json')], [true, false], files.join(', '));
 });
 
 test('agile.md names a close moved and not committed, and finishes it with the close\'s own commit', (t) => {
@@ -188,10 +211,15 @@ test('the close shows, asks, closes, bumps and commits in that order, and agile.
     assert.equal(text.split(words).length, 2, `${words} is there once`);
     return text.indexOf(words);
   };
-  const order = ['agile.mjs" close\n', '## 2. Show and ask', 'git-branch.mjs" tags --dir .', 'header: "Version"', 'header: "Open"', 'agile.mjs" close --payload',
-    'release-bump.mjs" bump --dir . --version', 'git add -A -- "$@"', 'git commit -m "docs: close the release {version}" -- "$@"', '## 4. Report'];
+  // the bump goes first, so a version the manifest won't take stops the close with nothing moved
+  const order = ['agile.mjs" close\n', '## 2. Show and ask', 'git-branch.mjs" tags --dir .', 'header: "Version"', 'header: "Open"',
+    'release-bump.mjs" bump --dir . --version', 'agile.mjs" close --payload', 'git add -A -- "$@"', 'git commit -m "docs: close the release {version}" -- "$@"', '## 4. Report'];
   assert.deepEqual(order.map(at), order.map(at).sort((a, b) => a - b));
   const command = prose('agile.md');
   assert.ok(command.indexOf('`next.step` is `close`') > 0 && command.slice(command.indexOf('`next.step` is `close`')).includes('workflows/agile-close.md'));
   assert.ok(command.indexOf('UNCOMMITTED') < command.indexOf('`release` is null, with `--brief`'));
+  // the late commit is guarded like any other, and doesn't bump again
+  const late = command.slice(command.indexOf('UNCOMMITTED'), command.indexOf('`release` is null, with `--brief`'));
+  assert.ok(late.indexOf('references/git-guard.md') > 0 && late.indexOf('references/git-guard.md') < late.indexOf('workflows/agile-close.md'));
+  assert.match(late, /section 3's \*\*Commit\*\*/);
 });
