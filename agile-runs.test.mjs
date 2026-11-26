@@ -7,7 +7,6 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
-import { appendEvent } from '../cadence-core/bin/lib/trace.mjs';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -33,6 +32,9 @@ const events = (dir) => readFileSync(join(recordsDir(dir), 'trace.jsonl'), 'utf8
 const open = (root, sha) => planning(root, 'trace', 'append', '--phase', '0', '--family', 'lifecycle', '--event', 'phase_start', '--sha', sha).corr;
 const dispatch = (root, plan, role) => planning(root, 'trace', 'append', '--phase', '0', '--family', 'lifecycle', '--event', 'dispatch', '--plan', plan, '--role', role);
 const close = (root, plan, role, ...more) => planning(root, 'trace', 'close', '--phase', '0', '--plan', plan, '--role', role, ...more);
+// the SubagentStop hook itself, for a worker that stopped with no transcript to read
+const stop = (root, id) => spawnSync('node', [join(BIN, 'subagent-trace.mjs')],
+  { input: JSON.stringify({ cwd: root, agent_type: 'cadence:cad-reviewer', agent_id: id }), encoding: 'utf8' });
 
 test('two pieces of work open at once each close under their own run, and nothing is left unpaired', (t) => {
   const { root } = started(t);
@@ -49,15 +51,34 @@ test('two pieces of work open at once each close under their own run, and nothin
   assert.equal(render.roles['cad-reviewer'].tokens, 100);
 });
 
-test("a close after the stop hook's return for its worker joins that worker's run", (t) => {
+test('two live runs each sending a reviewer: the real stop hook and the hand-written closes give each its own bracket', (t) => {
   const { root, dir } = started(t);
   const first = open(root, 'aaaaaaa-1');
   dispatch(root, 'e-01-1-review', 'cad-reviewer');
-  open(root, 'bbbbbbb-2');
-  // the hook writes its return under the dispatch's corr before the hand-written close
-  appendEvent(dir, { corr: first, phase: '0', family: 'lifecycle', event: 'return', plan: 'e-01-1-review', role: 'cad-reviewer', agent_id: 'a1', cache_read_input_tokens: 5 });
+  const second = open(root, 'bbbbbbb-2');
+  dispatch(root, 'e-01-2-review', 'cad-reviewer');
+  stop(root, 'a1');
   assert.equal(close(root, 'e-01-1-review', 'cad-reviewer', '--agent-id', 'a1', '--tokens', '100').corr, first);
-  assert.deepEqual(planning(root, 'trace', 'render', '--phase', '0').unpaired, []);
+  stop(root, 'b2');
+  assert.equal(close(root, 'e-01-2-review', 'cad-reviewer', '--agent-id', 'b2', '--tokens', '200').corr, second);
+  const render = planning(root, 'trace', 'render', '--phase', '0');
+  assert.deepEqual(render.unpaired, []);
+  assert.deepEqual(render.brackets.map((b) => [b.corr, b.plan, b.agent_id, b.tokens]),
+    [[first, 'e-01-1-review', 'a1', 100], [second, 'e-01-2-review', 'b2', 200]]);
+  // the hook stayed out of the first stop, where two runs each held an open reviewer, and closed the second
+  assert.deepEqual(events(dir).filter((e) => e.event === 'return' && e.tokens === undefined).map((e) => e.agent_id), ['b2']);
+});
+
+test("a close whose own dispatch never landed stays on its own run, leaving an earlier run's finished bracket alone", (t) => {
+  const { root } = started(t);
+  const first = open(root, 'aaaaaaa-1');
+  dispatch(root, 'cad-reviewer', 'cad-reviewer');
+  close(root, 'cad-reviewer', 'cad-reviewer', '--agent-id', 'a1', '--tokens', '100');
+  const before = planning(root, 'trace', 'render', '--phase', '0').brackets;
+  const second = open(root, 'bbbbbbb-2');
+  assert.equal(close(root, 'cad-reviewer', 'cad-reviewer', '--agent-id', 'b2', '--tokens', '200').corr, second);
+  const after = planning(root, 'trace', 'render', '--phase', '0').brackets.filter((b) => b.corr === first);
+  assert.deepEqual(after.map((b) => [b.end, b.tokens]), before.map((b) => [b.end, b.tokens]));
 });
 
 test('a close with no dispatch of its plan, or with --anchor, takes the run it took before', (t) => {
