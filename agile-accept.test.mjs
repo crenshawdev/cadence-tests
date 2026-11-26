@@ -58,6 +58,14 @@ test('an epic whose stories are all done is accepted, its status the one line ch
   assert.equal(run(dir, 'next').next.id, 'E-02');
 });
 
+test('accepting the last epic answers close, the release\'s step once every epic is done', (t) => {
+  const { dir, agile } = finished(t);
+  for (const id of ['E-02', 'E-03']) setStatus(epicFile(agile, id), 'done');
+  const r = accept(dir);
+  assert.deepEqual([r.ok, r.epic, r.next], [true, 'E-01', { step: 'close' }], JSON.stringify(r));
+  assert.equal(run(dir, 'next').next.step, 'close');
+});
+
 test('an epic with a story not done, one already accepted, and one marked review by hand are each refused with nothing written', (t) => {
   for (const [name, statuses, epic, detail] of [
     ['a story still in backlog', ['done', 'backlog'], 'in-progress', /^E-01 is at build, not accept$/],
