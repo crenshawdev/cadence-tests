@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { answerSetup, scratch } from './planning.test.mjs';
 import { closingDir, releasesDir } from '../cadence-core/bin/lib/agile-paths.mjs';
@@ -53,14 +53,21 @@ test('deferred list on an agile project names a story\'s queued findings in its 
   assert.deepEqual(json(PLANNING, ['--dir', dir, 'deferred', 'list'], root).members, []);
 });
 
+/** Close the started release as `version`, the moves agile.mjs close makes. */
+function close(dir, version) {
+  const agile = join(dir, 'agile');
+  mkdirSync(closingDir(agile, version), { recursive: true });
+  for (const name of ['epics', 'REQUIREMENTS.md', 'release.md']) renameSync(join(agile, name), join(closingDir(agile, version), name));
+  renameSync(closingDir(agile, version), join(releasesDir(agile), version));
+}
+
 test('land-cleanup names the branch from the open release, and after a close from the release it moved', (t) => {
-  const { root, dir } = started(t);
+  const { root, dir, git } = started(t);
+  // a second merged cadence/* branch, so the one-branch fallback can't name toolshed for it
+  git('branch', 'cadence/other');
   const branch = () => json(LAND, ['cleanup', '--base', 'main'], root).branch;
   assert.equal(branch(), 'cadence/toolshed');
-  const agile = join(dir, 'agile');
-  mkdirSync(closingDir(agile, '1.0.0'), { recursive: true });
-  for (const name of ['epics', 'REQUIREMENTS.md', 'release.md']) renameSync(join(agile, name), join(closingDir(agile, '1.0.0'), name));
-  renameSync(closingDir(agile, '1.0.0'), join(releasesDir(agile), '1.0.0'));
+  close(dir, '1.0.0');
   assert.equal(branch(), 'cadence/toolshed');
   // a configured name still wins, as on the old path
   const config = join(dir, 'config.json');
@@ -70,12 +77,38 @@ test('land-cleanup names the branch from the open release, and after a close fro
   assert.equal(branch(), 'cadence/mine');
 });
 
+test('land-cleanup prints the newest closed release for the tag: the highest version, and never a folder git would refuse as a tag', (t) => {
+  const { root, dir } = started(t);
+  const cleanup = () => json(LAND, ['cleanup', '--base', 'main'], root);
+  assert.equal(cleanup().release, null);
+  close(dir, '0.10.0');
+  const releases = releasesDir(join(dir, 'agile'));
+  utimesSync(join(releases, '0.10.0'), 1e9, 1e9);
+  // newer than 0.10.0, so a newest-by-mtime pick would take one of them
+  for (const name of ['0.9.0', 'notes', '9.9.9;touch pwned', '-f']) {
+    mkdirSync(join(releases, name));
+    writeFileSync(join(releases, name, 'release.md'), '# Release: Hostile\n\n## Epics\n\n- E-01: x\n');
+  }
+  const out = cleanup();
+  assert.deepEqual(out.release, { version: '0.10.0', title: 'Toolshed' }, JSON.stringify(out));
+  assert.equal(out.warnings.filter((w) => w.includes('9.9.9;touch pwned') || w.includes('"-f"')).length, 2, JSON.stringify(out.warnings));
+});
+
+test('land-cleanup on the old path prints no release', (t) => {
+  const root = join(scratch('cad-land-old-', t), 'repo');
+  mkdirSync(join(root, '.planning'), { recursive: true });
+  execFileSync('git', ['init', '-q', '-b', 'main', root], { env });
+  execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'x'], { cwd: root, env });
+  assert.equal('release' in json(LAND, ['cleanup', '--base', 'main'], root), false);
+});
+
 test('the land\'s merge gate reads each task\'s rulings on an agile project, and its tag takes the newest closed release', () => {
   const land = readFileSync(join(HERE, '..', 'skills', 'cad-land', 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
   assert.ok(land.includes('and on an agile project (`.planning/agile/` there) its one root, each task\'s folder `.planning/agile/tasks/*/`'));
   assert.ok(land.includes('Then name on `unruled` every `REVIEW-risk_surface*.md` nothing ruled - from those roots'));
-  assert.ok(land.includes('or on an agile project the newest folder under `.planning/agile/releases/`'));
-  assert.ok(land.includes('or the `# Release:` title in that folder\'s `release.md` on an agile project'));
+  assert.ok(land.includes('shipped version - on an agile project the `release.version` the `cleanup` call above printed'));
+  assert.ok(land.includes('else the manifest\'s `version`'));
+  assert.ok(land.includes('or that call\'s `release.title` on an agile project'));
   const skill = readFileSync(join(HERE, '..', 'skills', 'cad-agile', 'SKILL.md'), 'utf8');
   assert.match(skill, /^ {2}- SlashCommand$/m);
 });
