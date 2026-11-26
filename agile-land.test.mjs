@@ -69,3 +69,13 @@ test('land-cleanup names the branch from the open release, and after a close fro
   execFileSync('git', ['branch', 'cadence/mine'], { cwd: root, env });
   assert.equal(branch(), 'cadence/mine');
 });
+
+test('the land\'s merge gate reads each task\'s rulings on an agile project, and its tag takes the newest closed release', () => {
+  const land = readFileSync(join(HERE, '..', 'skills', 'cad-land', 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(land.includes('and on an agile project (`.planning/agile/` there) its one root, each task\'s folder `.planning/agile/tasks/*/`'));
+  assert.ok(land.includes('Then name on `unruled` every `REVIEW-risk_surface*.md` nothing ruled - from those roots'));
+  assert.ok(land.includes('or on an agile project the newest folder under `.planning/agile/releases/`'));
+  assert.ok(land.includes('or the `# Release:` title in that folder\'s `release.md` on an agile project'));
+  const skill = readFileSync(join(HERE, '..', 'skills', 'cad-agile', 'SKILL.md'), 'utf8');
+  assert.match(skill, /^ {2}- SlashCommand$/m);
+});

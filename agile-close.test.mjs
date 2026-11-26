@@ -213,7 +213,7 @@ test('the close shows, asks, closes, bumps and commits in that order, and agile.
   };
   // the bump goes first, so a version the manifest won't take stops the close with nothing moved
   const order = ['agile.mjs" close\n', '## 2. Show and ask', 'git-branch.mjs" tags --dir .', 'header: "Version"', 'header: "Open"',
-    'release-bump.mjs" bump --dir . --version', 'agile.mjs" close --payload', 'git add -A -- "$@"', 'git commit -m "docs: close the release {version}" -- "$@"', '## 4. Report'];
+    'release-bump.mjs" bump --dir . --version', 'agile.mjs" close --payload', 'git add -A -- "$@"', 'git commit -m "docs: close the release {version}" -- "$@"', 'git-publish.mjs" authorized --dir .', 'through the SlashCommand tool', '## 4. Report'];
   assert.deepEqual(order.map(at), order.map(at).sort((a, b) => a - b));
   const command = prose('agile.md');
   assert.ok(command.indexOf('`next.step` is `close`') > 0 && command.slice(command.indexOf('`next.step` is `close`')).includes('workflows/agile-close.md'));
