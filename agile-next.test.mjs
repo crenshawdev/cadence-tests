@@ -102,15 +102,24 @@ test('once every epic is done, next answers close with each requirement done, de
   assert.equal(got['CAT-01'], 'done');
 });
 
-test('a requirements file with no title is refused at the close, naming the file', (t) => {
-  const dir = finished(t);
-  const file = join(agile(dir), 'REQUIREMENTS.md');
-  writeFileSync(file, readFileSync(file, 'utf8').replace(/^# Requirements: .*\n/, ''));
-  const before = tree(dir);
-  const r = run(dir, 'next');
-  assert.equal(r.reason, 'release-damaged');
-  assert.match(r.detail, /REQUIREMENTS\.md does not hold a "# Requirements:" title/);
-  assert.deepEqual(tree(dir), before);
+test('a requirements file the close can\'t count whole, or an ID it lists nowhere, is refused naming the file', (t) => {
+  const file = (dir) => join(agile(dir), 'REQUIREMENTS.md');
+  const story = (dir) => storyFile(agile(dir), 'E-02-1');
+  for (const [damage, words] of [
+    [(dir) => writeFileSync(file(dir), readFileSync(file(dir), 'utf8').replace(/^# Requirements: .*\n/, '')), /REQUIREMENTS\.md does not hold only its writer's lines/],
+    [(dir) => writeFileSync(file(dir), readFileSync(file(dir), 'utf8').replace('## Requirements', '## Requirement')), /REQUIREMENTS\.md does not hold only its writer's lines/],
+    [(dir) => writeFileSync(file(dir), readFileSync(file(dir), 'utf8').replace('- **LOAN-01**', '  - **LOAN-01**')), /REQUIREMENTS\.md does not hold only its writer's lines/],
+    [(dir) => writeFileSync(story(dir), readFileSync(story(dir), 'utf8').replace(/^requirements: (.*)$/m, 'requirements: $1, ZZZ-09')), /E-02-1\.md names ZZZ-09, which .*REQUIREMENTS\.md lists nowhere/],
+    [(dir) => { const e = epicFile(agile(dir), 'E-03'); writeFileSync(e, readFileSync(e, 'utf8').replace(/^requirements: (.*)$/m, 'requirements: $1, ZZZ-09')); }, /E-03\/epic\.md names ZZZ-09/],
+  ]) {
+    const dir = finished(t);
+    damage(dir);
+    const before = tree(dir);
+    const r = run(dir, 'next');
+    assert.equal(r.reason, 'release-damaged', JSON.stringify(r));
+    assert.match(r.detail, words);
+    assert.deepEqual(tree(dir), before);
+  }
 });
 
 
