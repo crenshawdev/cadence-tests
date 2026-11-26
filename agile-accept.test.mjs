@@ -95,6 +95,13 @@ test('an acceptance that finds the epic after it damaged says so, and never read
   assert.ok(workflow('agile-accept.md').replace(/\s+/g, ' ').includes('With `next_refusal`, its `detail` and `hint` take the `Next:` line\'s place'));
 });
 
+/** agile.md's late acceptance commit for epic `e`, run as it stands in the step. */
+function lateCommit(root, step, e) {
+  const block = /```\n(set -- '\.planning\/agile\/epics\/\{e\}\/epic\.md';[^\n]*\ngit add -- "\$@"\ngit commit -m "docs: accept \{e\}" -- "\$@")\n```/.exec(step)?.[1];
+  assert.ok(block, 'the late commit is there');
+  execFileSync('sh', ['-c', block.replaceAll('{e}', e)], { cwd: root, env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@e.c', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@e.c', GIT_CONFIG_GLOBAL: '/dev/null' } });
+}
+
 test('an acceptance cut short before its commit is named by agile.md, and a committed one is not', (t) => {
   const { root, dir } = finished(t);
   const prose = workflow('agile.md');
@@ -106,13 +113,16 @@ test('an acceptance cut short before its commit is named by agile.md, and a comm
   assert.equal(unaccepted(), 'UNACCEPTED E-01');
   // the commit is agile.md's own, since that's the file in hand when the check names one
   const step = prose.slice(prose.indexOf('<step name="refine">'), prose.indexOf('On `build` and `accept`'));
-  for (const line of ["git add -- '.planning/agile/epics/{e}/epic.md'", 'git commit -m "docs: accept {e}" -- \'.planning/agile/epics/{e}/epic.md\'']) {
-    assert.ok(step.includes(line), line);
-    execFileSync('sh', ['-c', line.replaceAll('{e}', 'E-01')], { cwd: root, env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@e.c', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@e.c', GIT_CONFIG_GLOBAL: '/dev/null' } });
-  }
   assert.doesNotMatch(step, /section 3/);
-  assert.equal(git(root, 'show', '--name-only', '--format=%s', 'HEAD'), 'docs: accept E-01\n\n.planning/agile/epics/E-01/epic.md');
+  lateCommit(root, step, 'E-01');
+  assert.equal(git(root, 'show', '--name-only', '--format=%s', 'HEAD'), 'docs: accept E-01\n\n.planning/agile/epics/E-01/epic.md\n.planning/agile/epics/E-01/retro.md');
   assert.equal(unaccepted(), '');
+  // an epic accepted before retrospectives were written has none, and the commit takes its file alone
+  const old = finished(t);
+  assert.equal(accept(old.dir).ok, true);
+  rmSync(retroFile(old.agile, 'E-01'));
+  lateCommit(old.root, step, 'E-01');
+  assert.equal(git(old.root, 'show', '--name-only', '--format=%s', 'HEAD'), 'docs: accept E-01\n\n.planning/agile/epics/E-01/epic.md');
 });
 
 test('the late commit reads only the frontmatter\'s status, whatever the body says or how lines end', (t) => {
@@ -135,12 +145,18 @@ test('the late commit reads only the frontmatter\'s status, whatever the body sa
   assert.equal(unaccepted(), 'UNACCEPTED E-01');
 });
 
-test('the accept shows the Done when and the checks, asks, writes, then commits the epic file alone, and Not yet saves what is missing and commits it', () => {
+test('the accept skips to the write after a stop, else shows the checks, the Evidence and a drafted retrospective, asks once, writes, and commits the epic with it; Not yet commits the epic alone', () => {
   const prose = workflow('agile-accept.md').replace(/\s+/g, ' ');
   const at = (words) => { const i = prose.indexOf(words); assert.ok(i >= 0, `${words} is there`); return i; };
-  const order = ['each item under the epic\'s Done when', '`- Check` lines', 'header: "Accept"', '"Accept - {id} is done',
-    '"Not yet - say what\'s missing', 'ask in plain words what\'s missing from {id}', 'agile.mjs" accept', 'git add -- \'.planning/agile/epics/{id}/epic.md\'',
-    'git commit -m "docs: accept {id}" -- \'.planning/agile/epics/{id}/epic.md\'', 'agile.mjs" not-yet --payload', 'with the message `docs: not yet {id}`'];
+  const both = "'.planning/agile/epics/{id}/epic.md' '.planning/agile/epics/{id}/retro.md'";
+  const order = ["[ -f '.planning/agile/epics/{id}/retro.md' ] && echo RETRO", 'ask nothing, and go to section 3\'s **Accept** with no payload',
+    '`.planning/agile/tasks/{id}-*/ADJUDICATION-*.json`', 'agile.mjs" evidence', 'Draft the retrospective from the Evidence, the stories\' Results and the review records',
+    'each item under the epic\'s Done when', '`- Check` lines', 'the Evidence, `text`\'s lines as they are', 'header: "Accept"',
+    '"Accept - {id} is done with this retrospective', '"Change the retrospective - say what to change', '"Not yet - say what\'s missing',
+    'Make those changes and no others, then section 3\'s **Accept**, asking nothing more', 'ask in plain words what\'s missing from {id}',
+    'agile.mjs" accept --payload <that file>', 'After `RETRO`, the same call without `--payload`', `git add -- ${both}`, `git commit -m "docs: accept {id}" -- ${both}`,
+    'agile.mjs" not-yet --payload', 'git add -- \'.planning/agile/epics/{id}/epic.md\' git commit -m "docs: not yet {id}" -- \'.planning/agile/epics/{id}/epic.md\'',
+    'Retrospective: {the accept call\'s retro'];
   order.reduce((last, words) => { const i = at(words); assert.ok(i > last, `${words} comes after what precedes it`); return i; }, -1);
   // a refinement knows why an epic in progress with every story done is back
   assert.ok(workflow('agile-refine.md').replace(/\s+/g, ' ').includes('After a Not yet, open with what\'s missing, and the list adds the stories that deliver it.'));
@@ -252,6 +268,8 @@ test('with no payload, an epic with no retro.md is refused, and one whose retro.
   git(root, 'checkout', '-q', '--', '.planning/agile/epics/E-01/epic.md');
   const written = readFileSync(retroFile(agile, 'E-01'), 'utf8');
   assert.equal(run(dir, 'next').next.step, 'accept');
+  const retro = /```\n(\[ -f '[^\n]*retro\.md' \] && echo RETRO)\n```/.exec(workflow('agile-accept.md'))?.[1];
+  assert.equal(execFileSync('sh', ['-c', `${retro.replaceAll('{id}', 'E-01')}; true`], { cwd: root, encoding: 'utf8' }).trim(), 'RETRO');
   // a Not yet there would be asked after the user approved, so it's refused and the acceptance finished
   before = tree(root);
   const notYet = send(dir, 'not-yet', { missing: 'More' });
