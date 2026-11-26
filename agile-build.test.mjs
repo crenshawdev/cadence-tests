@@ -197,6 +197,8 @@ test("the build asks the findings rule first, sizes the story before it's built,
   assert.ok(!prose.includes('An M stops here'));
   assert.ok(at('agile.mjs" size --payload') < at('Then make it, an M task by task'));
   assert.ok(prose.includes('sends it back to backlog for the next run to cut again: section 8, with nothing built'));
+  // a name filter that matches nothing exits 0, so a check built on one passes after its test is renamed
+  assert.ok(prose.includes('A filter that matches no test still passes'));
   // a done story takes no more notes, so what was done differently is noted before the checks can make it done
   assert.ok(at('with `differently`') < at('agile.mjs" run-checks'));
   // each review's payload outlives a clear, named for the heads it was read at and recorded at, so the lows can still be put to the user
