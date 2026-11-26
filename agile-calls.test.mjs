@@ -87,7 +87,7 @@ test('every shared call runs on a started release, the run is recorded, and the 
   assert.equal(git(root, 'status', '--porcelain', '--', '.planning'), '');
 });
 
-test("a story's deferred fire queues its findings in the story's folder, and the queue's readers stay the old path's", (t) => {
+test("a story's deferred fire queues its findings in the story's folder, a land's list names it, and carry stays the old path's", (t) => {
   const { root, dir, base, head } = started(t);
   const tasks = join(dir, 'agile', 'tasks', 'E-01-1');
   mkdirSync(tasks, { recursive: true });
@@ -103,9 +103,9 @@ test("a story's deferred fire queues its findings in the story's folder, and the
     '--base', base, '--head', head, '--payload', payload);
   assert.equal(bare.reason, 'bad-args');
   assert.match(bare.hint, /takes it for an agile story only/);
-  for (const args of [['deferred', 'list'], ['deferred', 'carry', '--phase', '1']]) {
-    assert.equal(call(root, 'planning.mjs', ...args).reason, 'agile-path', args.join(' '));
-  }
+  const listed = call(root, 'planning.mjs', 'deferred', 'list');
+  assert.deepEqual([listed.ok, listed.members.map((m) => m.path)], [true, [r.record]], JSON.stringify(listed));
+  assert.equal(call(root, 'planning.mjs', 'deferred', 'carry', '--phase', '1').reason, 'agile-path');
 });
 
 test('a shared call on a project whose start died after its marker is recorded, and the next start finishes', (t) => {
