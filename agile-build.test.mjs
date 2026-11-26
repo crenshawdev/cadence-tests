@@ -176,14 +176,18 @@ test("the findings rule is saved under the epic's Decisions while its stories ar
 
 const workflow = (name) => readFileSync(join(HERE, '..', 'cadence-core', 'workflows', name), 'utf8');
 
-test("the build asks the findings rule first, records the commands before the review, and runs the checks after it", () => {
+test("the build asks the findings rule first, sizes the story before it's built, records the commands before the review, and runs the checks after it", () => {
   const prose = workflow('agile-build.md').replace(/\s+/g, ' ');
   const at = (words) => { const i = prose.indexOf(words); assert.ok(i >= 0, `${words} is there`); return i; };
-  const order = ['**An M stops here**', 'How are review findings handled?', 'agile.mjs" move --to in-progress', 'planning.mjs" capture --kind todo',
+  const order = ['How are review findings handled?', 'agile.mjs" move --to in-progress', 'agile.mjs" size --payload', 'planning.mjs" capture --kind todo',
     'agile.mjs" check-commands', 'agile.mjs" move --to review', 'risk-check run --phase 0 --base {Base} --head HEAD',
     'route.mjs" resolve --role cad-reviewer --phase 0', 'planning.mjs" adjudication --phase 0 --trigger diff', 'agile.mjs" run-checks',
     '"fix_round"', 'issue-filing.mjs unfixed', 'git commit -m "docs({story}): record its build"', 'trace close --phase 0 --plan {story} --role cad-agile'];
   order.reduce((last, words) => { const i = at(words); assert.ok(i > last, `${words} comes after what precedes it`); return i; }, -1);
+  // an M is built, its plan written before anything is changed, and one too big goes back without being built
+  assert.ok(!prose.includes('An M stops here'));
+  assert.ok(at('agile.mjs" size --payload') < at('Then make it, an M task by task'));
+  assert.ok(prose.includes('sends it back to backlog for the next run to cut again: section 8, with nothing built'));
   // a done story takes no more notes, so what was done differently is noted before the checks can make it done
   assert.ok(at('with `differently`') < at('agile.mjs" run-checks'));
   // each review's payload outlives a clear, named for the heads it was read at and recorded at, so the lows can still be put to the user
