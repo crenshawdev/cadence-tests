@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
@@ -102,7 +102,7 @@ test('a finished epic\'s Evidence matches git over its span, each finding by how
     stories: [{ id: 'E-01-1', title: 'List the tools', size: 'S' }, { id: 'E-01-2', title: 'Find a tool', size: 'M' }],
     since: base, commits, files, insertions: plus, deletions: minus,
     findings: { raised: 6, severity: { medium: 3, high: 1, low: 2 }, outcome: { fixed: 1, refuted: 1, 'let stand': 1, declined: 1, filed: 1, open: 1 } },
-    tokens: { total: 385, role: { 'cad-reviewer': 305, 'review-checker': 50, 'cad-assumptions-analyzer': 30 } },
+    tokens: { total: 385, role: { 'cad-reviewer': 305, 'review-checker': 50, 'cad-assumptions-analyzer': 30 } }, unread: [],
   });
   assert.ok(commits >= 4 && files >= 2 && plus > 0, stat);
   assert.deepEqual(r.text, [
@@ -129,5 +129,84 @@ test('the Evidence is only of an epic at its acceptance, and asking off it write
   const before = tree(root);
   const r = run(dir, 'evidence');
   assert.deepEqual([r.ok, r.reason, r.detail, r._exit], [false, 'not-accepting', 'E-01 is at refine, not accept', 1]);
+  assert.deepEqual(tree(root), before);
+});
+
+const setBase = (agile, id, base) => {
+  const file = join(agile, 'epics', 'E-01', `${id}.md`);
+  writeFileSync(file, readFileSync(file, 'utf8').replace(/^- Base: .*$/m, `- Base: ${base}`));
+};
+
+test('a Base that is not a commit is named and left out, and nothing in it reaches git as an option', (t) => {
+  const { root, dir, agile } = built(t);
+  const outside = join(root, '..', 'outside');
+  setBase(agile, 'E-01-2', `--output=${outside}`);
+  const r = run(dir, 'evidence');
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(existsSync(`${outside}..HEAD`), false);
+  assert.match(r.text.at(-1), /^- Left out, since they couldn't be read: Base "--output=.*", not a commit here\.$/);
+  setBase(agile, 'E-01-1', 'deadbeefdeadbeef');
+  const none = run(dir, 'evidence');
+  assert.deepEqual([none.ok, none.evidence.since, none.evidence.commits], [true, null, 0]);
+  assert.equal(none.text[1], '- No story recorded where it began, so no commits are counted.');
+  assert.equal(none.evidence.unread.length, 2);
+});
+
+test('a damaged review record is named and left out while the rest is counted, and odd entries and keys stay plain counts', (t) => {
+  const { dir, agile } = built(t);
+  const home = join(agileTasksDir(agile), 'E-01-1');
+  mkdirSync(join(home, 'ADJUDICATION-dir.json'), { recursive: true });
+  writeFileSync(join(home, 'ADJUDICATION-cut.json'), '{"entries": [ trunc');
+  writeFileSync(join(home, 'ADJUDICATION-odd.json'), JSON.stringify({ entries: [null, 3, { severity: '__proto__', ruling: 'refuted' },
+    { severity: 'constructor', fix_commit: 'abc1234' }, { ruling: 'survived' }, { severity: 'low', ruling: 'survived' }] }));
+  writeFileSync(join(agileTasksDir(agile), 'E-01-2'), 'a file where a folder goes');
+  const r = run(dir, 'evidence');
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.evidence.findings, { raised: 4, severity: { unrated: 3, low: 1 }, outcome: { refuted: 1, fixed: 1, open: 2 } });
+  assert.deepEqual(r.evidence.unread, ["E-01-1's ADJUDICATION-cut.json", "E-01-1's ADJUDICATION-dir.json", "E-01-2's review folder"]);
+  assert.equal(r.text[2], '- 4 findings raised: 1 low, 3 unrated. 1 fixed, 1 refuted, 2 open.');
+});
+
+test('a repeated close counts once, as the record\'s renderer counts it, and only whole non-negative tokens count', (t) => {
+  const { dir } = built(t);
+  mkdirSync(join(dir, 'records'), { recursive: true });
+  const close = JSON.stringify({ corr: 'A', phase: '0', ts: 'T1', family: 'lifecycle', event: 'return', plan: 'E-01-1-review', role: 'cad-reviewer', tokens: 100, turns: 4 });
+  writeFileSync(join(dir, 'records', 'trace.jsonl'), [
+    JSON.stringify({ corr: 'A', event: 'dispatch', plan: 'E-01-1', role: 'cad-agile' }), close, close,
+    JSON.stringify({ corr: 'A', ts: 'T2', event: 'return', plan: 'E-01-1-review', role: 'cad-reviewer', tokens: 100, turns: 4 }),
+    '{"corr":"A","ts":"T3","event":"return","plan":"x","role":"cad-executor","tokens":1e999}',
+    JSON.stringify({ corr: 'A', ts: 'T4', event: 'return', plan: 'x', role: 'cad-executor', tokens: -50 }),
+    JSON.stringify({ corr: 'A', ts: 'T5', event: 'return', plan: 'x', role: 'cad-executor', tokens: 1.5 }),
+    JSON.stringify({ corr: 'A', ts: 'T6', event: 'return', plan: 'x', role: '__proto__', tokens: 7 }),
+    JSON.stringify({ corr: 'A', ts: 'T7', event: 'return', plan: 'x', role: 'constructor', tokens: 3 }),
+  ].join('\n') + '\n');
+  const r = run(dir, 'evidence');
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.evidence.tokens.total, 210);
+  assert.deepEqual(Object.entries(r.evidence.tokens.role), [['cad-reviewer', 200], ['__proto__', 7], ['constructor', 3]]);
+});
+
+test('the record is read as far as its own reader reads it, the first 1 MiB of each file', (t) => {
+  const { dir } = built(t);
+  mkdirSync(join(dir, 'records'), { recursive: true });
+  const pad = JSON.stringify({ corr: 'Z', event: 'note', pad: 'x'.repeat(1000) });
+  writeFileSync(join(dir, 'records', 'trace.jsonl'), [
+    JSON.stringify({ corr: 'A', event: 'dispatch', plan: 'E-01-1', role: 'cad-agile' }),
+    JSON.stringify({ corr: 'A', ts: 'T1', event: 'return', plan: 'p', role: 'cad-reviewer', tokens: 10 }),
+    ...Array(1100).fill(pad),
+    JSON.stringify({ corr: 'A', ts: 'T2', event: 'return', plan: 'p', role: 'cad-reviewer', tokens: 5000 }),
+  ].join('\n') + '\n');
+  assert.equal(run(dir, 'evidence').evidence.tokens.total, 10);
+});
+
+test('an epic marked review by hand with a story not done, or with none, gives no Evidence, as it gets no acceptance', (t) => {
+  const { root, dir, agile } = built(t);
+  const epic = join(agile, 'epics', 'E-01', 'epic.md');
+  writeFileSync(epic, readFileSync(epic, 'utf8').replace(/^status: .*$/m, 'status: review'));
+  const story = join(agile, 'epics', 'E-01', 'E-01-2.md');
+  writeFileSync(story, readFileSync(story, 'utf8').replace(/^status: .*$/m, 'status: in-progress'));
+  const before = tree(root);
+  const r = run(dir, 'evidence');
+  assert.deepEqual([r.ok, r.reason, r.detail], [false, 'not-accepting', "E-01-2 of E-01 isn't done"]);
   assert.deepEqual(tree(root), before);
 });
