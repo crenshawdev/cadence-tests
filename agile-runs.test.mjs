@@ -112,3 +112,15 @@ test("an agent id seen only before this close's own dispatch is a reused one, an
   assert.equal(close(root, 'e-01-1-review', 'cad-reviewer', '--agent-id', 'a1', '--tokens', '200').corr, second);
   assert.deepEqual(planning(root, 'trace', 'render', '--phase', '0').unpaired, []);
 });
+
+test("another session's dispatch of the same key between this worker's stop and its close doesn't take the close", (t) => {
+  const { root } = started(t);
+  const first = open(root, 'aaaaaaa-1');
+  dispatch(root, '1', 'cad-reviewer');
+  stop(root, 'a1');
+  const second = open(root, 'bbbbbbb-2');
+  dispatch(root, '1', 'cad-reviewer');
+  assert.equal(close(root, '1', 'cad-reviewer', '--agent-id', 'a1', '--tokens', '100').corr, first);
+  assert.equal(close(root, '1', 'cad-reviewer', '--agent-id', 'b2', '--tokens', '200').corr, second);
+  assert.deepEqual(planning(root, 'trace', 'render', '--phase', '0').unpaired, []);
+});

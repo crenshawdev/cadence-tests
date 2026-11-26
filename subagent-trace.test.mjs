@@ -961,6 +961,8 @@ test('agile stop: a worker its own close already carries states only its figures
 test('agile stop: two open in one run, or with no start to go by two open anywhere, close nothing', () => {
   const sameRun = render([inRun('0-aaaa-1', 'e-01-1-review', T(1)), { ...inRun('0-aaaa-1', 'e-01-2-review', T(2)) }]);
   assert.deepEqual(closeForStop(REVIEWER, sameRun, AGILE(ran(T(3), T(4)))), []);
+  // no close, but the figures keep their run, where the hand-written close's id folds them in
+  assert.deepEqual(closeForStop(REVIEWER, sameRun, AGILE(billedStop('end_turn'))).map((e) => [e.event, e.corr]), [['worker_cache', '0-aaaa-1']]);
   const twoRuns = render([inRun('0-aaaa-1', 'e-01-1-review', T(1)), inRun('0-bbbb-2', 'e-01-2-review', T(3))]);
   assert.deepEqual(closeForStop(REVIEWER, twoRuns, AGILE(undefined)), []);
   assert.equal(closeForStop(REVIEWER, render([inRun('0-bbbb-2', 'e-01-2-review', T(3))]), AGILE(undefined))[0].corr, '0-bbbb-2');
