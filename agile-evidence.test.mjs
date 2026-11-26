@@ -3,11 +3,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
 import { agileDeclinedFile, agileFiledFile, agileTasksDir } from '../cadence-core/bin/lib/agile-paths.mjs';
+import { epicEvidence } from '../cadence-core/bin/lib/agile-evidence.mjs';
 import { fingerprint } from '../cadence-core/bin/lib/filing-decision.mjs';
 import { AGILE_DECLINED_PREAMBLE, AGILE_FILED_PREAMBLE, appendDeclinedRow, appendFiledRow } from '../cadence-core/bin/lib/planning-files.mjs';
 
@@ -179,11 +180,13 @@ test('a repeated close counts once, as the record\'s renderer counts it, and onl
     JSON.stringify({ corr: 'A', ts: 'T5', event: 'return', plan: 'x', role: 'cad-executor', tokens: 1.5 }),
     JSON.stringify({ corr: 'A', ts: 'T6', event: 'return', plan: 'x', role: '__proto__', tokens: 7 }),
     JSON.stringify({ corr: 'A', ts: 'T7', event: 'return', plan: 'x', role: 'constructor', tokens: 3 }),
+    JSON.stringify({ corr: 'A', ts: 'T8', event: 'return', plan: 'x', tokens: 2 }),
+    JSON.stringify({ corr: 'A', ts: 'T9', event: 'return', plan: 'x', role: {}, tokens: 1 }),
   ].join('\n') + '\n');
   const r = run(dir, 'evidence');
   assert.equal(r.ok, true, JSON.stringify(r));
-  assert.equal(r.evidence.tokens.total, 210);
-  assert.deepEqual(Object.entries(r.evidence.tokens.role), [['cad-reviewer', 200], ['__proto__', 7], ['constructor', 3]]);
+  assert.equal(r.evidence.tokens.total, 213);
+  assert.deepEqual(Object.entries(r.evidence.tokens.role), [['cad-reviewer', 200], ['__proto__', 7], ['constructor', 3], ['unnamed', 3]]);
 });
 
 test('the record is read as far as its own reader reads it, the first 1 MiB of each file', (t) => {
@@ -209,4 +212,20 @@ test('an epic marked review by hand with a story not done, or with none, gives n
   const r = run(dir, 'evidence');
   assert.deepEqual([r.ok, r.reason, r.detail], [false, 'not-accepting', "E-01-2 of E-01 isn't done"]);
   assert.deepEqual(tree(root), before);
+  for (const id of ['E-01-1', 'E-01-2']) rmSync(join(agile, 'epics', 'E-01', `${id}.md`));
+  const gone = tree(root);
+  const none = run(dir, 'evidence');
+  assert.deepEqual([none.ok, none.reason, none.detail], [false, 'not-accepting', 'E-01 has no story, so nothing of it was built']);
+  assert.deepEqual(tree(root), gone);
+});
+
+test('a Base as long as a SHA-256 commit\'s is a commit, and its span is counted', (t) => {
+  const root = join(scratch('cad-agile-evidence-', t), 'sha256');
+  execFileSync('git', ['init', '-q', '--object-format=sha256', '-b', 'work', root]);
+  for (const n of [1, 2, 3]) { writeFileSync(join(root, `f${n}`), `${n}\n`); git(root, 'add', `f${n}`); git(root, 'commit', '-q', '-m', `c${n}`); }
+  const base = git(root, 'rev-parse', 'HEAD~2');
+  assert.equal(base.length, 64);
+  mkdirSync(join(root, '.planning'));
+  const e = epicEvidence({ planning: join(root, '.planning'), root, epic: 'E-01', stories: [{ id: 'E-01-1', title: 'One', size: 'S', base }] });
+  assert.deepEqual([e.since, e.commits, e.files, e.unread], [base, 2, 2, []]);
 });
