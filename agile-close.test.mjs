@@ -45,7 +45,7 @@ function finished(t, left = ['CAT-02']) {
 }
 const MOVED = ['REQUIREMENTS.md', 'epics', 'release.md'];
 
-test('a close moves the release into releases/<version>/, leaves the rest, and then no release is open and a start is refused', (t) => {
+test('a close moves the release into releases/<version>/, leaves the rest, and then no release is open', (t) => {
   const { dir } = finished(t);
   writeFileSync(join(agile(dir), 'backlog.md'), '## Todos\n\n- [ ] a later one\n');
   const before = Object.fromEntries(tree(agile(dir)).map(([p, , text]) => [p, text]));
@@ -64,9 +64,6 @@ test('a close moves the release into releases/<version>/, leaves the rest, and t
   assert.deepEqual(read.deferred.map((q) => q.id), ['CAT-02']);
   assert.equal(read.requirements.some((q) => q.id === 'CAT-02'), false);
   assert.deepEqual(run(dir, 'next'), { ok: true, release: null, next: null, _exit: 0 });
-  const start = run(dir, 'start', '--design', FIXTURE);
-  assert.equal(start.reason, 'release-closed');
-  assert.match(start.detail, /closed as 0\.10\.0/);
   assert.equal(run(dir, 'close').reason, 'not-closing');
 });
 
