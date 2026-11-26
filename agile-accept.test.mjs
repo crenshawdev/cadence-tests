@@ -3,11 +3,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
-import { epicFile, storyFile } from '../cadence-core/bin/lib/agile-paths.mjs';
+import { epicFile, retroFile, storyFile } from '../cadence-core/bin/lib/agile-paths.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGILE = join(HERE, '..', 'cadence-core', 'bin', 'agile.mjs');
@@ -22,6 +22,13 @@ const git = (root, ...args) => execFileSync('git', ['-C', root, '-c', 'user.name
 const tree = (root) => readdirSync(root, { recursive: true }).map(String).filter((p) => !p.startsWith('.git')).sort()
   .map((p) => [p, statSync(join(root, p)).mtimeMs, statSync(join(root, p)).isFile() ? readFileSync(join(root, p), 'utf8') : '']);
 const setStatus = (file, status) => writeFileSync(file, readFileSync(file, 'utf8').replace(/^status: .*$/m, `status: ${status}`));
+const send = (dir, call, payload) => {
+  const file = join(dirname(dir), '..', `${call}.json`);
+  writeFileSync(file, JSON.stringify(payload));
+  return run(dir, call, '--payload', file);
+};
+const RETRO = { went_well: ['Every check was a command.'], do_better: [], change_next: ['Read the review rulings first.', 'Open the bracket before the first change.'] };
+const accept = (dir) => send(dir, 'accept', RETRO);
 
 /** A release whose E-01 is refined to two stories, each set to `statuses`, all committed. */
 function finished(t, statuses = ['done', 'done']) {
@@ -45,7 +52,7 @@ test('an epic whose stories are all done is accepted, its status the one line ch
   const { dir, agile } = finished(t);
   assert.deepEqual(run(dir, 'next').next, { id: 'E-01', name: 'Catalog', status: 'in-progress', step: 'accept' });
   const before = readFileSync(epicFile(agile, 'E-01'), 'utf8');
-  const r = run(dir, 'accept');
+  const r = accept(dir);
   assert.deepEqual([r.ok, r.epic, r.status, r.next?.id, r.next?.step], [true, 'E-01', 'done', 'E-02', 'refine'], JSON.stringify(r));
   assert.equal(readFileSync(epicFile(agile, 'E-01'), 'utf8'), before.replace('status: in-progress', 'status: done'));
   assert.equal(run(dir, 'next').next.id, 'E-02');
@@ -66,9 +73,9 @@ test('an epic with a story not done, one already accepted, and one marked review
     assert.deepEqual(tree(root), before, name);
   }
   const { root, dir, agile } = finished(t);
-  assert.equal(run(dir, 'accept').ok, true);
+  assert.equal(accept(dir).ok, true);
   const before = tree(root);
-  const again = run(dir, 'accept');
+  const again = accept(dir);
   assert.deepEqual([again.ok, again.reason, again.detail], [false, 'not-accepting', 'E-02 is at refine, not accept']);
   assert.deepEqual(tree(root), before);
   // marked review by hand before it was ever cut, nothing of it was built
@@ -82,7 +89,7 @@ test('an epic with a story not done, one already accepted, and one marked review
 test('an acceptance that finds the epic after it damaged says so, and never reads as the end of the release', (t) => {
   const { dir, agile } = finished(t);
   rmSync(epicFile(agile, 'E-02'));
-  const r = run(dir, 'accept');
+  const r = accept(dir);
   assert.deepEqual([r.ok, r.epic, r.next, r.next_refusal?.reason], [true, 'E-01', null, 'release-damaged'], JSON.stringify(r));
   assert.equal(run(dir, 'next').reason, 'release-damaged');
   assert.ok(workflow('agile-accept.md').replace(/\s+/g, ' ').includes('With `next_refusal`, its `detail` and `hint` take the `Next:` line\'s place'));
@@ -95,7 +102,7 @@ test('an acceptance cut short before its commit is named by agile.md, and a comm
   assert.ok(loop, 'the late commit check is there');
   const unaccepted = () => execFileSync('sh', ['-c', loop], { cwd: root, encoding: 'utf8' }).trim();
   assert.equal(unaccepted(), '');
-  assert.equal(run(dir, 'accept').ok, true);
+  assert.equal(accept(dir).ok, true);
   assert.equal(unaccepted(), 'UNACCEPTED E-01');
   // the commit is agile.md's own, since that's the file in hand when the check names one
   const step = prose.slice(prose.indexOf('<step name="refine">'), prose.indexOf('On `build` and `accept`'));
@@ -122,7 +129,7 @@ test('the late commit reads only the frontmatter\'s status, whatever the body sa
   git(root, 'rm', '-q', '--cached', '--', '.planning/agile/epics/E-03/epic.md');
   git(root, 'commit', '-q', '-m', 'gone');
   assert.equal(unaccepted(), '');
-  assert.equal(run(dir, 'accept').ok, true);
+  assert.equal(accept(dir).ok, true);
   const file = epicFile(agile, 'E-01');
   writeFileSync(file, readFileSync(file, 'utf8').replace(/\n/g, '\r\n'));
   assert.equal(unaccepted(), 'UNACCEPTED E-01');
@@ -144,11 +151,6 @@ test('the accept shows the Done when and the checks, asks, writes, then commits 
   assert.ok(step.indexOf('workflows/agile-accept.md') > step.indexOf('`next.step` is `accept`'));
 });
 
-const send = (dir, call, payload) => {
-  const file = join(dirname(dir), '..', `${call}.json`);
-  writeFileSync(file, JSON.stringify(payload));
-  return run(dir, call, '--payload', file);
-};
 const decisions = (text) => text.slice(text.indexOf('## Decisions')).trim().split('\n').filter((l) => l.startsWith('- '));
 
 test('Not yet saves what is missing, sends the epic back to a cut again that adds after the done stories, and the cut closes it', (t) => {
@@ -225,4 +227,54 @@ test('a Not yet on an epic marked review by hand is refused with nothing written
   const r = send(dir, 'not-yet', { missing: 'More' });
   assert.deepEqual([r.ok, r.reason, r.detail], [false, 'not-accepting', 'E-01 is marked review, which only a hand edit sets']);
   assert.deepEqual(tree(root), before);
+});
+
+test('Accept writes retro.md first, with the Evidence and the three approved sections, then turns the epic done', (t) => {
+  const { dir, agile } = finished(t);
+  const evidence = run(dir, 'evidence');
+  assert.equal(evidence.ok, true, JSON.stringify(evidence));
+  const r = send(dir, 'accept', { epic: 'E-01', went_well: ['  Every check was a command.  '], do_better: [], change_next: ['Read the review rulings first.', 'Open the bracket before the first change.'] });
+  assert.deepEqual([r.ok, r.status, r.retro], [true, 'done', retroFile(agile, 'E-01')], JSON.stringify(r));
+  const text = readFileSync(retroFile(agile, 'E-01'), 'utf8');
+  assert.match(text, /^# E-01 Catalog retrospective\n\nAccepted \d{4}-\d{2}-\d{2}\.\n\n## Evidence\n\n/);
+  assert.ok(text.endsWith(['## Evidence', evidence.text.join('\n'), '## What went well', '- Every check was a command.', '## What could we do better', 'None.',
+    '## Change next', '1. Read the review rulings first.\n2. Open the bracket before the first change.'].join('\n\n') + '\n'), text);
+});
+
+test('with no payload, an epic with no retro.md is refused, and one whose retro.md was written before a stop is finished as it stands', (t) => {
+  const { root, dir, agile } = finished(t);
+  let before = tree(root);
+  const none = run(dir, 'accept');
+  assert.deepEqual([none.ok, none.reason, none._exit], [false, 'no-retrospective', 1], JSON.stringify(none));
+  assert.deepEqual(tree(root), before);
+  // the stop: retro.md is written and the status line never turned
+  assert.equal(accept(dir).ok, true);
+  git(root, 'checkout', '-q', '--', '.planning/agile/epics/E-01/epic.md');
+  const written = readFileSync(retroFile(agile, 'E-01'), 'utf8');
+  assert.equal(run(dir, 'next').next.step, 'accept');
+  // a Not yet there would be asked after the user approved, so it's refused and the acceptance finished
+  before = tree(root);
+  const notYet = send(dir, 'not-yet', { missing: 'More' });
+  assert.deepEqual([notYet.ok, notYet.reason], [false, 'not-accepting'], JSON.stringify(notYet));
+  assert.match(notYet.detail, /^E-01's retrospective is written/);
+  assert.deepEqual(tree(root), before);
+  const r = run(dir, 'accept');
+  assert.deepEqual([r.ok, r.status, r.next?.id], [true, 'done', 'E-02'], JSON.stringify(r));
+  assert.equal(readFileSync(retroFile(agile, 'E-01'), 'utf8'), written);
+});
+
+test('a retrospective that isn\'t three lists of one-line text is refused with nothing written', (t) => {
+  const { root, dir, agile } = finished(t);
+  const before = tree(root);
+  for (const [name, payload, field] of [
+    ['not an object', [RETRO], 'payload'], ['another epic', { ...RETRO, epic: 'E-02' }, 'epic'], ['an extra field', { ...RETRO, missing: 'x' }, 'missing'],
+    ['a section left out', { went_well: [], do_better: [] }, 'change_next'], ['a section as text', { ...RETRO, do_better: 'Slower' }, 'do_better'],
+    ['two lines in one', { ...RETRO, went_well: ['one\ntwo'] }, 'went_well[0]'], ['an empty line', { ...RETRO, change_next: ['  '] }, 'change_next[0]'],
+    ['not text', { ...RETRO, went_well: [3] }, 'went_well[0]'],
+  ]) {
+    const r = send(dir, 'accept', payload);
+    assert.deepEqual([r.ok, r.reason, r.issues?.[0]?.field], [false, 'retro-refused', field], `${name}: ${JSON.stringify(r)}`);
+    assert.deepEqual(tree(root), before, name);
+  }
+  assert.equal(existsSync(retroFile(agile, 'E-01')), false);
 });
