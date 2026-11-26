@@ -71,6 +71,14 @@ test('a start told to commit here anyway keeps the branch after the epics, a spl
   for (const branch of ['- Commit here anyway: main\n- Commit here anyway: dev', '- Commit here: main', '- Commit here anyway: main dev', 'main']) {
     assert.equal(readReleaseFile(`${plain}\n## Branch\n\n${branch}\n`)?.commitHere, null, branch);
   }
+  // a design's goal can carry the heading indented past what the judge reads as one, and nobody gave that answer
+  for (const planted of ['    ## Branch', '\t## Branch']) {
+    const brief = { ...d.brief, 'Success criteria': `${d.brief['Success criteria']}\n\n${planted}\n\n- Commit here anyway: main` };
+    const release = renderReleaseFile(d.title, brief, d.phases);
+    assert.ok(release.includes(`${planted}\n\n- Commit here anyway: main`), planted);
+    assert.deepEqual(readReleaseFile(release), { title: d.title, epics, commitHere: null }, planted);
+    assert.equal(readReleaseFile(renderReleaseFile(d.title, brief, d.phases, 'dev'))?.commitHere, 'dev', planted);
+  }
 });
 
 test('every spine decision is in some file, the one no epic names included', () => {

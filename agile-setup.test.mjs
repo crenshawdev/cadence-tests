@@ -340,7 +340,7 @@ test('a start holds "Commit here anyway" for its release, and the guard asks not
   const [ask, write] = ['## 2. Ask', '## 3. Write'].map((h) => prose.indexOf(h));
   const held = prose.indexOf('and so is that answer, with the branch it names');
   assert.ok(held > ask && held < write, 'the answer is not held for the write');
-  assert.ok(prose.includes('"Commit here anyway - this release\'s commits go on {branch}, and this isn\'t asked again"'));
+  assert.ok(prose.includes('"Commit here anyway - this release\'s commits go on {branch}, and this question isn\'t asked again"'));
   assert.ok(prose.includes("agile.mjs\" start --design '<folder>' [--commit-here '<branch>']"), 'the start is not told the answer');
   // every later run reaches the question through agile.md's commit step, and decide's kept answer is what spares it
   const guard = read('references', 'git-guard.md');
