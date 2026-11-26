@@ -114,12 +114,14 @@ test("an M's plan is written once it's begun and only once, and every payload th
   assert.deepEqual(tree(root), planned);
 });
 
-test('an S that needs a plan becomes an M saying why, and not once its commands are recorded', (t) => {
+test('an S that needs a plan becomes an M of two or three tasks saying why, and not once its commands are recorded', (t) => {
   const { root, dir, file } = refined(t);
   run(dir, 'move', '--to', 'in-progress');
   const begun = tree(root);
-  assert.equal(send(dir, 'size', { story: 'E-01-1', size: 'M', plan: ['the list', 'the form'] }).reason, 'size-refused');
-  assert.deepEqual(tree(root), begun);
+  for (const payload of [{ story: 'E-01-1', size: 'M', plan: ['the list', 'the form'] }, { story: 'E-01-1', size: 'M', plan: ['the list'], why: 'it needs a plan' }]) {
+    assert.equal(send(dir, 'size', payload).reason, 'size-refused', JSON.stringify(payload));
+    assert.deepEqual(tree(root), begun, JSON.stringify(payload));
+  }
   assert.deepEqual(send(dir, 'size', { story: 'E-01-1', size: 'M', plan: ['the list', 'the form'], why: 'the list and the form are two changes' }),
     { ok: true, story: 'E-01-1', size: 'M', tasks: 2, resized: 'S', _exit: 0 });
   assert.deepEqual([readStoryFile(story(file))?.size, readStoryFile(story(file))?.status], ['M', 'in-progress']);
@@ -133,7 +135,7 @@ test('an S that needs a plan becomes an M saying why, and not once its commands 
   assert.deepEqual(tree(other.root), recorded);
 });
 
-test('one bigger than an M goes back to backlog as an L and the epic is refined again, but not once a commit is past its base', (t) => {
+test('one bigger than an M goes back to backlog as an L and the epic is refined again, but not once its work is begun', (t) => {
   const { root, dir, file } = refined(t, { size: 'M' });
   const fresh = tree(root);
   for (const payload of [{ story: 'E-01-1', size: 'L' }, { story: 'E-01-1', size: 'L', why: 'three stories', plan: ['a'] }]) {
@@ -157,6 +159,13 @@ test('one bigger than an M goes back to backlog as an L and the epic is refined 
   const committed = tree(made.root);
   assert.equal(send(made.dir, 'size', { story: 'E-01-1', size: 'L', why: 'three stories' }).reason, 'not-sizable');
   assert.deepEqual(tree(made.root), committed);
+  // half made and not committed is the same: no story would own it
+  const half = refined(t);
+  run(half.dir, 'move', '--to', 'in-progress');
+  writeFileSync(join(half.root, 'half.mjs'), 'export const half = 1;\n');
+  const dirty = tree(half.root);
+  assert.equal(send(half.dir, 'size', { story: 'E-01-1', size: 'L', why: 'three stories' }).reason, 'not-sizable');
+  assert.deepEqual(tree(half.root), dirty);
 });
 
 test("the findings rule is saved under the epic's Decisions while its stories are built, and no other answer is", (t) => {
