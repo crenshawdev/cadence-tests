@@ -27,6 +27,7 @@ const send = (dir, call, payload) => {
   return run(dir, call, '--payload', file);
 };
 const node = (code) => `node -e ${JSON.stringify(code)}`;
+const status = (file, word) => writeFileSync(file, readFileSync(file, 'utf8').replace(/^status: .*$/m, `status: ${word}`));
 
 /** A refined release whose first story, E-01-1, has two checks and is being built. */
 function building(t, status = 'in-progress') {
@@ -42,11 +43,15 @@ function building(t, status = 'in-progress') {
   return { root, dir, file };
 }
 
-test('recorded commands keep the rest of Result, and all passing turns the story done with each one written', (t) => {
+const reviewed = (file) => writeFileSync(file, readFileSync(file, 'utf8').replace(/^status: .*$/m, 'status: review'));
+const record = (dir, commands) => send(dir, 'check-commands', { story: 'E-01-1', commands });
+
+test('recorded commands keep the rest of Result, and all passing turns a reviewed story done with each one written', (t) => {
   const { dir, file } = building(t);
-  assert.deepEqual(send(dir, 'check-commands', { story: 'E-01-1', commands: [node("console.log('listed')"), `  ${node("console.log('refused')")}  `] }),
+  assert.deepEqual(record(dir, [node("console.log('listed')"), `  ${node("console.log('refused')")}  `]),
     { ok: true, story: 'E-01-1', commands: 2, _exit: 0 });
   assert.deepEqual(readStoryChecks(readFileSync(file, 'utf8')).map((c) => c.result), ['not run', 'not run']);
+  reviewed(file);
   const r = run(dir, 'run-checks');
   assert.deepEqual([r.ok, r.status, r.passed, r.failed], [true, 'done', 2, []]);
   const text = readFileSync(file, 'utf8');
@@ -55,17 +60,39 @@ test('recorded commands keep the rest of Result, and all passing turns the story
   assert.equal(run(dir, 'next').next.story.id, 'E-01-2');
 });
 
-test('one failing check sends a story in review back to in-progress and names it, with what it printed', (t) => {
-  const { dir, file } = building(t, 'review');
-  send(dir, 'check-commands', { story: 'E-01-1', commands: [node("console.log('fine')"), node("console.log('trying'); console.error('\\u001b[31mno name check\\u001b[0m'); process.exit(3)")] });
+test('one failing check sends the story back to in-progress and names it, and its commands can no longer be swapped', (t) => {
+  const { dir, file } = building(t);
+  record(dir, [node("console.log('fine')"), node("console.log('trying'); console.error('\\u001b[31mno name check\\u001b[0m'); process.exit(3)")]);
+  reviewed(file);
   const r = run(dir, 'run-checks');
   assert.deepEqual([r.ok, r.status, r.passed], [true, 'in-progress', 1]);
   assert.deepEqual(r.failed, [{ check: 2, line: 'A tool with no name is refused.', result: 'exit 3, no name check' }]);
   assert.equal(readStoryFile(readFileSync(file, 'utf8'))?.status, 'in-progress');
   assert.equal(run(dir, 'next').next.story.id, 'E-01-1');
+  const before = readFileSync(file, 'utf8');
+  assert.equal(record(dir, [node('1'), node('1')]).reason, 'commands-closed');
+  assert.equal(readFileSync(file, 'utf8'), before);
 });
 
-test('a missing, blank, multi-line or backticked command, a wrong count or another story is refused with nothing written', (t) => {
+test('commands are refused unless the story is being built, and checks run only once it is reviewed', (t) => {
+  const { dir, file } = building(t, 'backlog');
+  const before = tree(dir);
+  assert.equal(record(dir, [node('1'), node('1')]).reason, 'commands-closed');
+  status(file, 'in-progress');
+  record(dir, [node('1'), node('1')]);
+  const recorded = tree(dir);
+  for (const word of ['backlog', 'in-progress']) {
+    status(file, word);
+    const at = tree(dir);
+    assert.equal(run(dir, 'run-checks').reason, 'not-reviewed', word);
+    assert.deepEqual(tree(dir), at);
+  }
+  status(file, 'review');
+  assert.equal(record(dir, [node('2'), node('2')]).reason, 'commands-closed');
+  assert.notDeepEqual(recorded, before);
+});
+
+test('a missing, blank, multi-line, backticked or control-character command, a wrong count or another story is refused with nothing written', (t) => {
   const { dir } = building(t);
   const before = tree(dir);
   const ok = node('1');
@@ -75,6 +102,7 @@ test('a missing, blank, multi-line or backticked command, a wrong count or anoth
     [{ story: 'E-01-1', commands: [ok, '  '] }, 'commands-refused'],
     [{ story: 'E-01-1', commands: [ok, 'echo a\necho b'] }, 'commands-refused'],
     [{ story: 'E-01-1', commands: [ok, 'echo `date`'] }, 'commands-refused'],
+    [{ story: 'E-01-1', commands: [ok, 'echo a\u0000b'] }, 'commands-refused'],
     [{ story: 'E-01-1', commands: 'echo' }, 'commands-refused'],
     [{ commands: [ok, ok] }, 'commands-refused'],
     [{ story: 'E-01-2', commands: [ok, ok] }, 'not-building'],
@@ -82,15 +110,44 @@ test('a missing, blank, multi-line or backticked command, a wrong count or anoth
     const r = send(dir, 'check-commands', payload);
     assert.deepEqual([r.ok, r.reason], [false, reason], JSON.stringify(payload));
   }
-  assert.deepEqual(run(dir, 'run-checks').reason, 'checks-missing');
   assert.deepEqual(tree(dir), before);
+});
+
+test('a reviewed story with nothing recorded is refused, and its status is set in its frontmatter however it is spaced', (t) => {
+  const { dir, file } = building(t);
+  const said = readFileSync(file, 'utf8');
+  writeFileSync(file, said.replace(/^status: .*$/m, 'status:review').replace('A volunteer adds a tool.', 'A volunteer adds a tool.\nstatus: kept'));
+  const before = tree(dir);
+  assert.equal(run(dir, 'run-checks').reason, 'checks-missing');
+  assert.deepEqual(tree(dir), before);
+  writeFileSync(file, readFileSync(file, 'utf8').replace('status:review', 'status: in-progress'));
+  record(dir, [node('1'), node('1')]);
+  writeFileSync(file, readFileSync(file, 'utf8').replace('status: in-progress', 'status:review'));
+  assert.equal(run(dir, 'run-checks').status, 'done');
+  const text = readFileSync(file, 'utf8');
+  assert.equal(readStoryFile(text)?.status, 'done');
+  assert.match(text, /\nstatus: kept\n/);
+});
+
+test("a check whose own process exits passes though something it started holds its output, and that's stopped", (t) => {
+  const { root, dir, file } = building(t);
+  record(dir, [node("require('fs').writeFileSync('bg.pid', String(process.pid)); setInterval(() => {}, 1000)")
+    + ' & while [ ! -s bg.pid ]; do sleep 0.05; done; echo started', node('1')]);
+  reviewed(file);
+  const began = Date.now();
+  const r = run(dir, 'run-checks');
+  assert.deepEqual([r.status, r.passed], ['done', 2]);
+  assert.ok(Date.now() - began < 30000, 'it did not wait for the background process');
+  const pid = Number(readFileSync(join(root, 'bg.pid'), 'utf8'));
+  assert.throws(() => process.kill(pid, 0), /ESRCH/);
 });
 
 test('a run stopped while a check runs leaves the story as it was, and the next run finishes it', async (t) => {
   const { root, dir, file } = building(t);
   // the second check waits while "slow" is there, so the first has run when the run is stopped
-  send(dir, 'check-commands', { story: 'E-01-1', commands: [node("require('fs').writeFileSync('started', '')"),
-    node("const f = require('fs'); setInterval(() => { if (!f.existsSync('slow')) process.exit(0); }, 20)")] });
+  record(dir, [node("require('fs').writeFileSync('started', '')"),
+    node("const f = require('fs'); setInterval(() => { if (!f.existsSync('slow')) process.exit(0); }, 20)")]);
+  reviewed(file);
   writeFileSync(join(root, 'slow'), '');
   const before = readFileSync(file, 'utf8');
   const child = spawn('node', [AGILE, 'run-checks', '--dir', dir], { stdio: 'ignore' });
