@@ -200,3 +200,29 @@ test('a Not yet off accept, a bad payload, and a decision that reads as the scri
     assert.deepEqual(tree(ready.root), before, d);
   }
 });
+
+test('a cut for what was missing stopped before the epic\'s file turned is cut again, its stray story replaced and never built', (t) => {
+  const { dir, agile } = finished(t);
+  assert.equal(send(dir, 'not-yet', { missing: 'Nothing adds a tool yet' }).ok, true);
+  const said = readFileSync(epicFile(agile, 'E-01'), 'utf8');
+  const done = ['E-01-1', 'E-01-2'].map((id) => readFileSync(storyFile(agile, id), 'utf8'));
+  const story = { title: 'Add a tool', size: 'S', builds_on: ['E-01-1'], requirements: ['CAT-01'], delivers: 'node add.mjs <name> adds a tool.', accepted_when: ['Adding a drill lists it.'] };
+  assert.equal(send(dir, 'refine', { epic: 'E-01', decisions: [], stories: [story] }).ok, true);
+  // the stop: the story file is written and the epic's own file never turned
+  writeFileSync(epicFile(agile, 'E-01'), said);
+  assert.deepEqual(run(dir, 'next').next, { id: 'E-01', name: 'Catalog', status: 'in-progress', step: 'refine', first: 'E-01-4' });
+  assert.equal(send(dir, 'refine', { epic: 'E-01', decisions: [], stories: [story] }).ok, true);
+  assert.deepEqual(['E-01-1', 'E-01-2'].map((id) => readFileSync(storyFile(agile, id), 'utf8')), done);
+  assert.throws(() => readFileSync(storyFile(agile, 'E-01-3'), 'utf8'), /ENOENT/);
+  assert.equal(decisions(readFileSync(epicFile(agile, 'E-01'), 'utf8')).at(-1), '- Cut again: E-01-3 became E-01-4.');
+  assert.deepEqual([run(dir, 'next').next.step, run(dir, 'next').next.story?.id], ['build', 'E-01-4']);
+});
+
+test('a Not yet on an epic marked review by hand is refused with nothing written, since it would be asked again', (t) => {
+  const { root, dir, agile } = finished(t);
+  setStatus(epicFile(agile, 'E-01'), 'review');
+  const before = tree(root);
+  const r = send(dir, 'not-yet', { missing: 'More' });
+  assert.deepEqual([r.ok, r.reason, r.detail], [false, 'not-accepting', 'E-01 is marked review, which only a hand edit sets']);
+  assert.deepEqual(tree(root), before);
+});
