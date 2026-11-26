@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
@@ -156,6 +156,10 @@ test('a start after a close that can\'t be made is refused before anything is wr
       symlinkSync(join(agile(dir), 'backlog.md'), join(agile(dir), 'releases', '0.10.0', 'REQUIREMENTS.md'));
     }],
     ['closed-release', (dir) => writeFileSync(join(agile(dir), 'releases', 'notes.txt'), 'not a release\n')],
+    // CAT-1 is CAT-01's number however it's padded
+    ['requirement-ids-used', (dir, design) => {
+      for (const name of ['prd.md', 'epics.md']) edit(join(design, name), /CAT-03/g, 'CAT-1');
+    }],
   ];
   for (const [reason, set] of cases) {
     const { root, dir } = closed(t);
@@ -218,4 +222,26 @@ test('the earlier releases\' highest IDs are read back only whole, kept through 
   const ask = (id) => judgeAsk({ defer: [], add: [{ id, text: 'c' }] }, { own: ['LOAN-04'], file: read, named: new Set(['LOAN-04', 'LOAN-05']) });
   assert.deepEqual(ask('LOAN-06').issues.map((i) => i.problem), ['is LOAN-06, and the next LOAN is LOAN-10']);
   assert.deepEqual([ask('LOAN-10').issues, ask('NFR-03').issues], [[], []]);
+});
+
+/** A closed release made by hand, deferring CAT-02 in its own words, with its folder's mtime set. */
+function handClosed(dir, version, words, at) {
+  const home = join(agile(dir), 'releases', version);
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(home, 'REQUIREMENTS.md'), renderRequirementsFile(version, [], [{ id: 'CAT-02', text: words }]));
+  utimesSync(home, at, at);
+}
+
+test('the newest closed release\'s words for a requirement deferred again are carried: semver by version and above the rest, the rest by mtime', (t) => {
+  const words = (dir) => run(dir, 'start', '--design', second(t, { 'CAT-02': 'CAT-04' })).ok && requirements(dir).deferred.find((q) => q.id === 'CAT-02').text;
+  const mixed = closed(t).dir;
+  handClosed(mixed, '1.10.0', 'Words of 1.10.0.', 1000);
+  handClosed(mixed, '1.9.0', 'Words of 1.9.0.', 3000);
+  handClosed(mixed, 'release-x', 'Words of release-x.', 5000);
+  assert.equal(words(mixed), 'Words of 1.10.0.');
+  const named = closed(t).dir;
+  renameSync(join(agile(named), 'releases', '0.10.0'), join(agile(named), 'releases', 'release-9'));
+  utimesSync(join(agile(named), 'releases', 'release-9'), 1000, 1000);
+  handClosed(named, 'release-10', 'Words of release-10.', 3000);
+  assert.equal(words(named), 'Words of release-10.');
 });
