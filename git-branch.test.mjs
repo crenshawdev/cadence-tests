@@ -298,6 +298,20 @@ test('agile: on a protected base the release names the branch, and every setting
   assert.deepEqual([off.action, off.branch], ['stay', 'feat/thing']);
 });
 
+test('agile: on the branch the start was told to commit on anyway nothing is asked, and every other answer keeps its shape', (t) => {
+  const kept = '# Release: Tool Shed\n\n## Goal\n\nLend tools.\n\n## Epics\n\n- E-01: Catalog\n\n## Branch\n\n- Commit here anyway: main\n';
+  for (const gitConfig of [{}, { auto_branch: 'auto' }, { integration_branch: 'trunk' }, { integration_branch_name: 'seldon/hardin' }]) {
+    assert.deepEqual(decide(agileFixture(t, gitConfig, kept), 'main'), { ok: true, action: 'stay', branch: 'main', mode: gitConfig.integration_branch ?? 'milestone',
+      currentBranch: 'main', reason: 'commit-here: the start was told to commit this release on main', kept: true, warnings: [] }, JSON.stringify(gitConfig));
+  }
+  const other = decide(agileFixture(t, {}, kept), 'master');
+  assert.deepEqual([other.action, other.branch, 'kept' in other], ['ask', 'cadence/tool-shed', false]);
+  const plain = decide(agileFixture(t, {}), 'main');
+  assert.deepEqual([plain.action, plain.branch, 'kept' in plain], ['ask', 'cadence/tool-shed', false]);
+  const edited = decide(agileFixture(t, {}, kept.replace('anyway: main', 'anyway: main\n- Commit here anyway: dev')), 'main');
+  assert.deepEqual([edited.action, 'kept' in edited], ['ask', false]);
+});
+
 test('agile: through a linked .planning the release still names the branch', (t) => {
   const real = agileFixture(t, {});
   const dir = tmp(t, 'cad-gb-link-');

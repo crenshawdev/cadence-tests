@@ -6,8 +6,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readDesignFolder } from '../cadence-core/bin/planning/design-read.mjs';
 import {
-  renderEpicFile, renderProjectFile, renderReleaseFile, renderRequirementsFile,
+  renderEpicFile, renderProjectFile, renderReleaseFile, renderReleaseSplit, renderRequirementsFile,
 } from '../cadence-core/bin/lib/agile-render.mjs';
+import { readReleaseFile } from '../cadence-core/bin/lib/agile-read.mjs';
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'seldon-design');
 const read = () => {
@@ -55,6 +56,21 @@ test('the release lists its epics in order under the brief\'s goal, and the proj
   assert.ok(release.endsWith(`## Epics\n\n${d.phases.map((e) => `- ${e.epic}: ${e.name}`).join('\n')}\n`));
   const project = renderProjectFile(d.title, d.brief, d.phases, [...read().decisions.values()]);
   for (const section of Object.values(d.brief)) assert.ok(project.includes(section));
+});
+
+test('a start told to commit here anyway keeps the branch after the epics, a split keeps it, and nothing else reads as it', () => {
+  const d = design();
+  const epics = d.phases.map((e) => ({ id: e.epic, name: e.name }));
+  const plain = renderReleaseFile(d.title, d.brief, d.phases);
+  assert.deepEqual(readReleaseFile(plain), { title: d.title, epics, commitHere: null });
+  const kept = renderReleaseFile(d.title, d.brief, d.phases, 'main');
+  assert.equal(kept, `${plain}\n## Branch\n\n- Commit here anyway: main\n`);
+  assert.deepEqual(readReleaseFile(kept), { title: d.title, epics, commitHere: 'main' });
+  const split = readReleaseFile(renderReleaseSplit(kept, epics[0].id, { id: 'E-09', name: 'The rest' }));
+  assert.deepEqual([split?.epics.map((e) => e.id), split?.commitHere], [[epics[0].id, 'E-09', ...epics.slice(1).map((e) => e.id)], 'main']);
+  for (const branch of ['- Commit here anyway: main\n- Commit here anyway: dev', '- Commit here: main', '- Commit here anyway: main dev', 'main']) {
+    assert.equal(readReleaseFile(`${plain}\n## Branch\n\n${branch}\n`)?.commitHere, null, branch);
+  }
 });
 
 test('every spine decision is in some file, the one no epic names included', () => {

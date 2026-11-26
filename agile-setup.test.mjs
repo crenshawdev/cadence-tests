@@ -91,6 +91,24 @@ test('a start is told about the branch exactly what decide answers once its rele
   }
 });
 
+test('a start told to commit here anyway keeps it in the release, and one naming a branch it is not on writes nothing', (t) => {
+  const dir = answerSetup(planning(t));
+  const root = dirname(dir);
+  spawnSync('git', ['init', '-q', '-b', 'main', root]);
+  spawnSync('git', ['-C', root, 'commit', '-q', '--allow-empty', '--no-gpg-sign', '-m', 'root'], { env: { ...process.env, ...WHO } });
+  const before = tree(dir);
+  const wrong = run(dir, ['start', '--design', FIXTURE, '--commit-here', 'master']);
+  assert.deepEqual([wrong.ok, wrong.reason], [false, 'commit-here-not-current'], JSON.stringify(wrong));
+  assert.match(wrong.detail, /names master, and the start is on main$/);
+  assert.deepEqual(tree(dir), before);
+  assert.equal(run(dir, ['start', '--design', FIXTURE, '--commit-here', 'main']).ok, true);
+  assert.ok(readFileSync(join(dir, 'agile', 'release.md'), 'utf8').endsWith('\n## Branch\n\n- Commit here anyway: main\n'));
+  const r = spawnSync('node', [join(dirname(AGILE), 'git-branch.mjs'), 'decide', '--dir', root],
+    { encoding: 'utf8', env: { ...process.env, CADENCE_GLOBAL_CONFIG: join(dir, 'no-global.json') } });
+  assert.deepEqual(JSON.parse(r.stdout), { ok: true, action: 'stay', branch: 'main', mode: 'milestone', currentBranch: 'main',
+    reason: 'commit-here: the start was told to commit this release on main', kept: true, warnings: [] });
+});
+
 test('a start cut short after its marker still checks clean, so the next one asks nothing again', (t) => {
   const dir = answerSetup(planning(t));
   assert.equal(markAgile(dir).ok, true);
@@ -314,4 +332,17 @@ test('the command asks for every answer before anything it writes, and commits t
   // both commits offer the release's branch: the start before the release is on disk, the later run off decide
   assert.ok(prose.slice(ask, write).includes("with the check's `decide`"), 'the start does not ask about the branch');
   assert.doesNotMatch(commit, /integration branch/, 'the later commit skips the branch decide names');
+});
+
+test('a start holds "Commit here anyway" for its release, and the guard asks nothing on the branch it kept', () => {
+  const read = (...p) => readFileSync(join(HERE, '..', 'cadence-core', ...p), 'utf8').replace(/\s+/g, ' ');
+  const prose = read('workflows', 'agile-start.md');
+  const [ask, write] = ['## 2. Ask', '## 3. Write'].map((h) => prose.indexOf(h));
+  const held = prose.indexOf('and so is that answer, with the branch it names');
+  assert.ok(held > ask && held < write, 'the answer is not held for the write');
+  assert.ok(prose.includes('"Commit here anyway - this release\'s commits go on {branch}, and this isn\'t asked again"'));
+  assert.ok(prose.includes("agile.mjs\" start --design '<folder>' [--commit-here '<branch>']"), 'the start is not told the answer');
+  // every later run reaches the question through agile.md's commit step, and decide's kept answer is what spares it
+  const guard = read('references', 'git-guard.md');
+  assert.ok(guard.includes('On `kept: true` the start was told to commit this release on that branch, so `ask` asks nothing; `refuse` still stops.'));
 });
