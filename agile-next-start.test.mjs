@@ -8,8 +8,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
 import { buildDir, epicFile, storyFile } from '../cadence-core/bin/lib/agile-paths.mjs';
-import { readEpicFile, readReleaseFile } from '../cadence-core/bin/lib/agile-read.mjs';
-import { renderStoryFile } from '../cadence-core/bin/lib/agile-render.mjs';
+import { readEpicFile, readReleaseFile, readRequirementsFile } from '../cadence-core/bin/lib/agile-read.mjs';
+import { judgeAsk } from '../cadence-core/bin/lib/agile-refine.mjs';
+import { renderAskChanged, renderRequirementsFile, renderStoryFile } from '../cadence-core/bin/lib/agile-render.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGILE = join(HERE, '..', 'cadence-core', 'bin', 'agile.mjs');
@@ -28,10 +29,10 @@ const STAYS = ['backlog.md', 'declined.md', 'filed.md', 'tasks', 'releases'];
 const NEW = ['epics', 'REQUIREMENTS.md', 'project.md', 'release.md'];
 
 /** The fixture as the next release's design: a new title, and IDs the closed release never used but the one it deferred. */
-function second(t) {
+function second(t, more = {}) {
   const folder = join(scratch('cad-agile-next-design-', t), 'design');
   mkdirSync(folder, { recursive: true });
-  const ids = { 'CAT-01': 'CAT-03', 'LOAN-01': 'LOAN-04', 'LOAN-02': 'LOAN-05', 'LOAN-03': 'LOAN-06', 'NFR-01': 'NFR-03', 'NFR-02': 'NFR-04' };
+  const ids = { 'CAT-01': 'CAT-03', 'LOAN-01': 'LOAN-04', 'LOAN-02': 'LOAN-05', 'LOAN-03': 'LOAN-06', 'NFR-01': 'NFR-03', 'NFR-02': 'NFR-04', ...more };
   for (const name of readdirSync(FIXTURE)) {
     const text = readFileSync(join(FIXTURE, name), 'utf8').replaceAll('Toolshed', 'Toolshed Lending')
       .replace(/\b(?:CAT|LOAN|NFR)-\d{2}\b/g, (id) => ids[id] ?? id);
@@ -147,6 +148,14 @@ test('a start after a close that can\'t be made is refused before anything is wr
       edit(join(design, 'epics.md'), '**Depends on:** E-02', '**Depends on:** E-001');
     }],
     ['epic-numbers', (dir) => mkdirSync(join(agile(dir), 'releases', '0.10.0', 'epics', 'E-9007199254740990'))],
+    // the closed release's own design again: CAT-01 and the rest are done there
+    ['requirement-ids-used', (dir, design) => cpSync(FIXTURE, design, { recursive: true })],
+    ['closed-requirements', (dir) => writeFileSync(join(agile(dir), 'releases', '0.10.0', 'REQUIREMENTS.md'), 'a line no close writes\n', { flag: 'a' })],
+    ['closed-requirements', (dir) => {
+      rmSync(join(agile(dir), 'releases', '0.10.0', 'REQUIREMENTS.md'));
+      symlinkSync(join(agile(dir), 'backlog.md'), join(agile(dir), 'releases', '0.10.0', 'REQUIREMENTS.md'));
+    }],
+    ['closed-release', (dir) => writeFileSync(join(agile(dir), 'releases', 'notes.txt'), 'not a release\n')],
   ];
   for (const [reason, set] of cases) {
     const { root, dir } = closed(t);
@@ -157,5 +166,56 @@ test('a start after a close that can\'t be made is refused before anything is wr
     assert.deepEqual([r.ok, r.reason], [false, reason], JSON.stringify(r));
     assert.deepEqual(tree(root), before, reason);
     if (reason === 'start-running') assert.ok(r.hint.includes(buildDir(dir, process.pid)), r.hint);
+    if (reason === 'requirement-ids-used') assert.match(r.hint, /CAT-02, LOAN-03, NFR-02/);
   }
+});
+
+const requirements = (dir) => readRequirementsFile(readFileSync(join(agile(dir), 'REQUIREMENTS.md'), 'utf8'));
+
+test('the next release carries what the closed one deferred and the highest ID each prefix used', (t) => {
+  const { dir } = closed(t);
+  assert.equal(run(dir, 'start', '--design', second(t, { 'CAT-02': 'CAT-04' })).ok, true);
+  const read = requirements(dir);
+  assert.equal(read.whole, true);
+  assert.deepEqual(read.deferred, [{ id: 'CAT-02', text: 'A member searches the catalog by name or category.' }]);
+  assert.deepEqual(read.earlier, ['CAT-02', 'LOAN-03', 'NFR-02']);
+  assert.equal(read.requirements.some((q) => q.id === 'CAT-02'), false);
+  assert.equal(run(dir, 'next').next.step, 'refine');
+});
+
+test('a design naming a deferred requirement takes it up with its own words', (t) => {
+  const { dir } = closed(t);
+  const design = second(t);
+  edit(join(design, 'prd.md'), 'searches the catalog by name or category.', 'searches the catalog by name.');
+  assert.equal(run(dir, 'start', '--design', design).ok, true);
+  const read = requirements(dir);
+  assert.deepEqual([read.whole, read.deferred], [true, []]);
+  assert.equal(read.requirements.find((q) => q.id === 'CAT-02').text, 'A member searches the catalog by name.');
+});
+
+test('every closed release counts: what a later one finished is no longer deferred, and its IDs and epics are passed', (t) => {
+  const { dir } = closed(t);
+  const home = join(agile(dir), 'releases', '0.11.0');
+  mkdirSync(join(home, 'epics', 'E-05'), { recursive: true });
+  writeFileSync(join(home, 'REQUIREMENTS.md'), renderRequirementsFile('Toolshed More',
+    [{ id: 'CAT-02', category: 'Catalog', text: 'A member searches the catalog.' }, { id: 'CAT-05', category: 'Catalog', text: 'A tool has a condition.' }],
+    [{ id: 'LOAN-07', text: 'A loan renews once.' }], ['CAT-02', 'LOAN-03', 'NFR-02']));
+  const r = run(dir, 'start', '--design', second(t, { 'CAT-02': 'CAT-06' }));
+  assert.deepEqual([r.ok, r.epics.map((e) => e.id)], [true, ['E-06', 'E-07', 'E-08']], JSON.stringify(r));
+  const read = requirements(dir);
+  assert.deepEqual(read.deferred, [{ id: 'LOAN-07', text: 'A loan renews once.' }]);
+  assert.deepEqual(read.earlier, ['CAT-05', 'LOAN-07', 'NFR-02']);
+});
+
+test('the earlier releases\' highest IDs are read back only whole, kept through a defer, and counted by a refinement\'s next ID', () => {
+  const text = renderRequirementsFile('T', [{ id: 'LOAN-04', category: 'Lending', text: 'a' }, { id: 'LOAN-05', category: 'Lending', text: 'b' }], [], ['LOAN-09', 'NFR-02']);
+  const read = readRequirementsFile(text);
+  assert.deepEqual([read.whole, read.earlier], [true, ['LOAN-09', 'NFR-02']]);
+  const deferred = readRequirementsFile(renderAskChanged(text, read, ['LOAN-05'], []));
+  assert.deepEqual([deferred.whole, deferred.earlier, deferred.deferred.map((q) => q.id)], [true, ['LOAN-09', 'NFR-02'], ['LOAN-05']]);
+  assert.equal(readRequirementsFile(text.replace('- NFR-02', '- LOAN-10')).whole, false);
+  assert.equal(readRequirementsFile(text.replace('- LOAN-09\n- NFR-02\n', '')).whole, false);
+  const ask = (id) => judgeAsk({ defer: [], add: [{ id, text: 'c' }] }, { own: ['LOAN-04'], file: read, named: new Set(['LOAN-04', 'LOAN-05']) });
+  assert.deepEqual(ask('LOAN-06').issues.map((i) => i.problem), ['is LOAN-06, and the next LOAN is LOAN-10']);
+  assert.deepEqual([ask('LOAN-10').issues, ask('NFR-03').issues], [[], []]);
 });
