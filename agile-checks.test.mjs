@@ -81,7 +81,7 @@ test('one failing check sends the story back to in-progress and names it, and a 
   assert.equal(run(dir, 'run-checks').reason, 'not-reviewed');
 });
 
-test('commands are refused unless the story is being built, and checks run only once it is reviewed', (t) => {
+test('commands are recorded only while the story is built or reviewed, and checks run only once it is reviewed', (t) => {
   const { dir, file } = building(t, 'backlog');
   const before = tree(dir);
   assert.equal(record(dir, [node('1'), node('1')]).reason, 'commands-closed');
@@ -94,8 +94,14 @@ test('commands are refused unless the story is being built, and checks run only 
     assert.equal(run(dir, 'run-checks').reason, 'not-reviewed', word);
     assert.deepEqual(tree(dir), at);
   }
+  // in review, new commands send it back to being built, and the review is owed again
   reviewed(file);
-  assert.equal(record(dir, [node('2'), node('2')]).reason, 'commands-closed');
+  assert.equal(record(dir, [node('2'), node('2')]).review_cleared, true);
+  const text = readFileSync(file, 'utf8');
+  assert.equal(readStoryFile(text)?.status, 'in-progress');
+  assert.doesNotMatch(text, /- Review: /);
+  status(file, 'done');
+  assert.equal(record(dir, [node('3'), node('3')]).reason, 'not-building');
   assert.notDeepEqual(recorded, before);
 });
 
@@ -130,7 +136,8 @@ test('a reviewed story with nothing recorded is refused, and its status is set i
   assert.deepEqual(tree(dir), before);
   writeFileSync(file, readFileSync(file, 'utf8').replace('status:review', 'status: in-progress'));
   record(dir, [node('1'), node('1')]);
-  writeFileSync(file, readFileSync(file, 'utf8').replace('status: in-progress', 'status:review'));
+  writeFileSync(file, readFileSync(file, 'utf8').replace('status: in-progress', 'status:review')
+    .replace('- Commits: abc1234', '- Commits: abc1234\n- Review: one reviewer, nothing raised'));
   assert.equal(run(dir, 'run-checks').status, 'done');
   const text = readFileSync(file, 'utf8');
   assert.equal(readStoryFile(text)?.status, 'done');
