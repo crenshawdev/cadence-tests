@@ -43,7 +43,9 @@ function building(t, status = 'in-progress') {
   return { root, dir, file };
 }
 
-const reviewed = (file) => writeFileSync(file, readFileSync(file, 'utf8').replace(/^status: .*$/m, 'status: review'));
+// reviewed: in review, with the note the review leaves
+const reviewed = (file) => writeFileSync(file, readFileSync(file, 'utf8').replace(/^status: .*$/m, 'status: review')
+  .replace('- Commits: abc1234', '- Commits: abc1234\n- Review: one reviewer, nothing raised'));
 const record = (dir, commands) => send(dir, 'check-commands', { story: 'E-01-1', commands });
 
 test('recorded commands keep the rest of Result, and all passing turns a reviewed story done with each one written', (t) => {
@@ -55,12 +57,12 @@ test('recorded commands keep the rest of Result, and all passing turns a reviewe
   const r = run(dir, 'run-checks');
   assert.deepEqual([r.ok, r.status, r.passed, r.failed], [true, 'done', 2, []]);
   const text = readFileSync(file, 'utf8');
-  assert.match(text, /## Result\n\n- Commits: abc1234\n- Check 1: `node -e "console\.log\('listed'\)"` - exit 0, listed\n- Check 2: `node -e "console\.log\('refused'\)"` - exit 0, refused\n/);
+  assert.match(text, /## Result\n\n- Commits: abc1234\n- Review: one reviewer, nothing raised\n- Check 1: `node -e "console\.log\('listed'\)"` - exit 0, listed\n- Check 2: `node -e "console\.log\('refused'\)"` - exit 0, refused\n/);
   assert.equal(readStoryFile(text)?.status, 'done');
   assert.equal(run(dir, 'next').next.story.id, 'E-01-2');
 });
 
-test('one failing check sends the story back to in-progress and names it, and its commands can no longer be swapped', (t) => {
+test('one failing check sends the story back to in-progress and names it, and a command recorded again owes a new review', (t) => {
   const { dir, file } = building(t);
   record(dir, [node("console.log('fine')"), node("console.log('trying'); console.error('\\u001b[31mno name check\\u001b[0m'); process.exit(3)")]);
   reviewed(file);
@@ -69,9 +71,14 @@ test('one failing check sends the story back to in-progress and names it, and it
   assert.deepEqual(r.failed, [{ check: 2, line: 'A tool with no name is refused.', result: 'exit 3, no name check' }]);
   assert.equal(readStoryFile(readFileSync(file, 'utf8'))?.status, 'in-progress');
   assert.equal(run(dir, 'next').next.story.id, 'E-01-1');
-  const before = readFileSync(file, 'utf8');
-  assert.equal(record(dir, [node('1'), node('1')]).reason, 'commands-closed');
-  assert.equal(readFileSync(file, 'utf8'), before);
+  writeFileSync(file, readFileSync(file, 'utf8').replace('- Review: one reviewer, nothing raised', '- Review: one reviewer, nothing raised\n- Fix round: check 2 tried'));
+  assert.deepEqual(record(dir, [node('1'), node('1')]), { ok: true, story: 'E-01-1', commands: 2, review_cleared: true, _exit: 0 });
+  const text = readFileSync(file, 'utf8');
+  assert.doesNotMatch(text, /- Review: |- Fix round: /);
+  assert.deepEqual(readStoryChecks(text).map((c) => c.result), ['not run', 'not run']);
+  // put back in review by hand, it still waits for the review's note
+  status(file, 'review');
+  assert.equal(run(dir, 'run-checks').reason, 'not-reviewed');
 });
 
 test('commands are refused unless the story is being built, and checks run only once it is reviewed', (t) => {
@@ -87,7 +94,7 @@ test('commands are refused unless the story is being built, and checks run only 
     assert.equal(run(dir, 'run-checks').reason, 'not-reviewed', word);
     assert.deepEqual(tree(dir), at);
   }
-  status(file, 'review');
+  reviewed(file);
   assert.equal(record(dir, [node('2'), node('2')]).reason, 'commands-closed');
   assert.notDeepEqual(recorded, before);
 });
@@ -116,7 +123,8 @@ test('a missing, blank, multi-line, backticked or control-character command, a w
 test('a reviewed story with nothing recorded is refused, and its status is set in its frontmatter however it is spaced', (t) => {
   const { dir, file } = building(t);
   const said = readFileSync(file, 'utf8');
-  writeFileSync(file, said.replace(/^status: .*$/m, 'status:review').replace('A volunteer adds a tool.', 'A volunteer adds a tool.\nstatus: kept'));
+  writeFileSync(file, said.replace(/^status: .*$/m, 'status:review').replace('A volunteer adds a tool.', 'A volunteer adds a tool.\nstatus: kept')
+    .replace('- Commits: abc1234', '- Commits: abc1234\n- Review: one reviewer, nothing raised'));
   const before = tree(dir);
   assert.equal(run(dir, 'run-checks').reason, 'checks-missing');
   assert.deepEqual(tree(dir), before);

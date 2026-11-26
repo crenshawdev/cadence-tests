@@ -110,6 +110,10 @@ test("the build asks the findings rule first, records the commands before the re
     'route.mjs" resolve --role cad-reviewer --phase 0', 'planning.mjs" adjudication --phase 0 --trigger diff', 'agile.mjs" run-checks',
     '"fix_round"', 'issue-filing.mjs unfixed', 'git commit -m "docs({story}): record its build"', 'trace close --phase 0 --plan {story} --role cad-agile'];
   order.reduce((last, words) => { const i = at(words); assert.ok(i > last, `${words} comes after what precedes it`); return i; }, -1);
+  // a done story takes no more notes, so what was done differently is noted before the checks can make it done
+  assert.ok(at('with `differently`') < at('agile.mjs" run-checks'));
+  // the review's payload outlives a clear, so the lows can still be put to the user
+  assert.ok(prose.includes('write `.planning/agile/tasks/{story}/payload.json`'));
   // agile.md hands a build step to it, after finishing a refinement cut short
   const main = workflow('agile.md');
   assert.ok(main.indexOf('workflows/agile-build.md') > main.indexOf('REFINED'));
