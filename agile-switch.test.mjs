@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
@@ -66,7 +66,8 @@ test('an old-path project whose release has landed is one a start may move: chec
   assert.match(s.hint, /nothing was written/);
   const n = next(dir);
   assert.deepEqual([n.ok, n.reason], [false, 'switch'], JSON.stringify(n));
-  assert.match(n.hint, /\/cad-agile --brief/);
+  // no command moves it yet, so the hint mustn't send the user to one that stops on this same answer
+  assert.match(n.hint, /agile\.mjs check --design <folder>, and doesn't move it yet/);
   assert.deepEqual(tree(dirname(dir)), before);
 });
 
@@ -78,6 +79,8 @@ test('an old-path project whose release hasn\'t landed is refused naming what to
     ['a queue that can\'t be read', (d) => { mkdirSync(join(d, 'phases'), { recursive: true }); symlinkSync('/tmp', join(d, 'phases', '3')); }, /can't all be read.*phases\/3/, /make them readable/],
     ['risk rulings carried', (d) => mkdirSync(join(d, 'records', 'risk-carry'), { recursive: true }), /records\/risk-carry holds risk rulings/, /\/cad-land; if it was landed by hand, remove that folder/],
     ['a folder named agile', (d) => mkdirSync(join(d, 'agile')), /agile is there/, /move that folder aside/],
+    ['a records folder that is a link', (d) => { renameSync(join(d, 'records'), join(d, 'real-records')); symlinkSync(join(d, 'real-records'), join(d, 'records')); },
+      /records is not a real folder \(symlinked-records\)/, /put the records folder back as a real folder/],
   ];
   for (const [name, make, detail, hint] of cases) {
     const dir = landedProject(t);
@@ -132,11 +135,12 @@ test('check names what a switch archives, what it copies open work from and what
   const r = check(dir, open);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(r.switch.archive, ['ARCHIVE.md', 'CAPTURE.md', 'CAPTURE.md.lock', 'PROJECT.md', 'REQUIREMENTS.md', 'REVIEW-risk_surface-v1.0.0.md',
-    'ROADMAP.md', 'STATE.md', '_archive-v1.0.0', 'debug', 'phases', 'reads.1.jsonl.claim.123', 'records/ARCHIVE.md', 'records/DECLINED.md',
+    'ROADMAP.md', 'STATE.md', '_archive-v1.0.0', 'debug', 'phases', 'reads.1.jsonl.claim.123', 'records/.gitignore', 'records/ARCHIVE.md', 'records/DECLINED.md',
     'records/FILED.md', 'records/FILED.md.lock', 'records/deferred', 'records/reads.jsonl', 'records/state.json', 'records/trace.jsonl', 'research',
     'seldon/brief.md', 'seldon/prd.md', 'seldon/spine.md', 'seldon/epics.md', 'seldon/architecture.md', 'spikes', 'state.json', 'tasks', 'trace.jsonl']);
   assert.deepEqual(r.switch.copy, ['PROJECT.md', 'REQUIREMENTS.md', 'CAPTURE.md', 'records/DECLINED.md', 'records/FILED.md']);
-  assert.deepEqual(r.switch.leave, ['config.json', 'config.json.bak', 'drafts', 'notes.txt', 'records/.gitignore', 'records/codemap', 'seldon/next']);
+  // the ignore file goes with the logs it ignores: its rules are anchored to its folder, so left behind they'd ignore nothing
+  assert.deepEqual(r.switch.leave, ['config.json', 'config.json.bak', 'drafts', 'notes.txt', 'records/codemap', 'seldon/next']);
   assert.deepEqual(tree(dirname(dir)), before);
 });
 
@@ -158,4 +162,21 @@ test('a design whose IDs the old REQUIREMENTS.md holds anywhere is refused, as t
   const r = check(linked);
   assert.deepEqual([r.ok, r.reason], [false, 'old-requirements'], JSON.stringify(r));
   assert.match(r.detail, /not a plain file/);
+});
+
+test('an old REQUIREMENTS.md or a folder the switch lists that can\'t be read is refused by name, not as an internal error', (t) => {
+  const cases = [
+    ['REQUIREMENTS.md', 'old-requirements', /REQUIREMENTS\.md can't be read \(EACCES\)/, (d) => { put(d, 'REQUIREMENTS.md', OLD_REQUIREMENTS); chmodSync(join(d, 'REQUIREMENTS.md'), 0o000); }],
+    ['seldon', 'old-path', /can't be read: .*seldon/, (d) => { mkdirSync(join(d, 'seldon')); chmodSync(join(d, 'seldon'), 0o000); }],
+  ];
+  for (const [name, reason, detail, make] of cases) {
+    const dir = landedProject(t);
+    make(dir);
+    const r = check(dir);
+    // put back before the scratch folder is removed, which can't list a folder no one may read
+    chmodSync(join(dir, name), 0o755);
+    assert.deepEqual([r.ok, r._exit, r.reason], [false, 1, reason], `${name}: ${JSON.stringify(r)}`);
+    assert.match(r.detail, detail, name);
+    assert.match(r.hint, /make it readable, then re-run; nothing was written$/, name);
+  }
 });
