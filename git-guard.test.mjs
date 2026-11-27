@@ -42,7 +42,8 @@ function guardRaw(input) {
   return execFileSync('node', [GUARD], {
     encoding: 'utf8',
     input,
-    env: { ...process.env, CADENCE_GLOBAL_CONFIG: NO_GLOBAL },
+    // the push rail reads git config, so the dev's own ~/.gitconfig stays out of it
+    env: { ...process.env, CADENCE_GLOBAL_CONFIG: NO_GLOBAL, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
   }).trim();
 }
 
@@ -768,6 +769,35 @@ test('a push of a work branch or a tag is silent; one that can reach a protected
     assert.equal(guard(command, main)?.permissionDecision, 'ask', command);
   }
   assert.equal(guard('git push origin feat', main), null);
+});
+
+test('a push the rail cannot read asks: a quoted refspec is read through its quotes, a glob or @ is not ruled clear', (t) => {
+  const feat = project(t, 'feat');
+  for (const command of ['git push origin "feat:main"', "git push origin 'HEAD:main'", 'git push origin "main"',
+    'git push origin refs/heads/*:refs/heads/*', 'git push origin :', 'git push origin @', 'git push origin "feat:$B"',
+    'git push --branches', 'git push --mirr', 'git push --al origin']) {
+    assert.equal(guard(command, feat)?.permissionDecision, 'ask', command);
+  }
+  for (const command of ['git push origin "feat"', 'git push --no-all origin feat', 'git push origin \'v4.5.0\'']) {
+    assert.equal(guard(command, feat), null, command);
+  }
+});
+
+test('a push whose destination git config picks asks when the config can send it to a protected branch', (t) => {
+  const upstream = project(t, 'feat');
+  git(['-C', upstream, 'config', 'push.default', 'upstream']);
+  assert.match(guard('git push origin feat', upstream)?.permissionDecisionReason ?? '', /push\.default=upstream/);
+  assert.equal(guard('git push', upstream)?.permissionDecision, 'ask');
+  assert.equal(guard('git push origin feat:feat', upstream), null);
+  const mapped = project(t, 'feat');
+  git(['-C', mapped, 'config', 'remote.origin.push', 'refs/heads/feat:refs/heads/main']);
+  assert.match(guard('git push -u origin feat', mapped)?.permissionDecisionReason ?? '', /remote\.origin\.push/);
+  const current = project(t, 'feat');
+  git(['-C', current, 'config', 'push.default', 'current']);
+  assert.equal(guard('git push', current), null);
+  const plain = project(t, 'feat');
+  assert.match(guard('git -c push.default=matching push origin', plain)?.permissionDecisionReason ?? '', /a -c on the command/);
+  assert.equal(guard('git -c user.name=x push origin feat:other', plain), null);
 });
 
 test('a commit on a protected branch still asks after the push rail narrowed', (t) => {
