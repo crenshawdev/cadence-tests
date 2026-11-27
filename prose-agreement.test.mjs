@@ -1054,14 +1054,16 @@ test('cad-land 3(b): the GitLab arm consults the authorization seam BEFORE it cr
   }
 
   const seamAt = region.indexOf('git-publish.mjs" authorized');
-  const createAt = region.indexOf('glab mr create --source-branch');
-  assert.ok(createAt > -1, 'step 3(b) no longer spells the glab mr create invocation');
+  // the create runs through the seam's open since E-03-1, which refuses on auto_close itself; the order still matters
+  // for the view probe below, which would otherwise touch the remote unauthorized
+  const createAt = region.indexOf('git-publish.mjs" open');
+  assert.ok(createAt > -1, 'step 3(b) no longer opens the request through git-publish.mjs open');
   assert.ok(seamAt > -1, 'step 3(b) does not call git-publish.mjs authorized on the GitLab arm');
   // ORDER, not presence. A tree that keeps the seam call but moves it after the
   // create has already published the branch by the time it asks - which is the
   // whole failure this closes.
   assert.ok(seamAt < createAt,
-    'the authorization consult comes AFTER glab mr create, which publishes the branch itself');
+    'the authorization consult comes AFTER the open, which on GitLab publishes the branch itself');
   // The reuse arm, not the create, is the one this ordering exists for: an MR
   // already open for the branch skips the create entirely, so a consult placed
   // beside `glab mr create` never runs and `glab mr merge` lands unauthorized.
