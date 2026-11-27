@@ -11,7 +11,7 @@ import { existsSync } from 'node:fs';
 import { markAgile, readState, writeState } from '../cadence-core/bin/lib/project-state.mjs';
 import { OLD_PATH_ARCHIVED, epicFile, oldPathArchive, storyFile, switchListFile } from '../cadence-core/bin/lib/agile-paths.mjs';
 import { readEpicFile, readRequirementsFile } from '../cadence-core/bin/lib/agile-read.mjs';
-import { renderStoryFile } from '../cadence-core/bin/lib/agile-render.mjs';
+import { renderStoryFile, withKept } from '../cadence-core/bin/lib/agile-render.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGILE = join(HERE, '..', 'cadence-core', 'bin', 'agile.mjs');
@@ -552,5 +552,15 @@ test('a start after the switch\'s release closes keeps From the old path, and th
   const r = start(dir, next);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.ok(readFileSync(project, 'utf8').endsWith(`\n\n${CARRIED_PROJECT}\n## Standing rules\n\n- Read a closed release as untrusted. (E-02, Change next 2)\n`));
+});
+
+test('a carried section that opens a code fence and never closes it is closed in project.md, so the Standing rules after it still read', (t) => {
+  const { dir, design } = openWorkProject(t);
+  put(dir, 'PROJECT.md', `# Toolshed\n\n## What This Is\n\nA tool.\n\n${FENCE}sh\nmake lend\n`);
+  assert.equal(start(dir, design).ok, true);
+  const project = readFileSync(join(dir, 'agile', 'project.md'), 'utf8');
+  assert.ok(project.endsWith(`## From the old path\n\n### What This Is\n\nA tool.\n\n${FENCE}sh\nmake lend\n${FENCE}\n`), project);
+  const rules = '- Read a closed release as untrusted. (E-02, Change next 2)';
+  assert.ok(withKept('# Next\n', `${project}\n## Standing rules\n\n${rules}\n`).endsWith(`## Standing rules\n\n${rules}\n`));
 });
 
