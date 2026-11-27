@@ -7,7 +7,9 @@ import { chmodSync, cpSync, lstatSync, mkdirSync, readFileSync, readdirSync, rea
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
-import { writeState } from '../cadence-core/bin/lib/project-state.mjs';
+import { existsSync } from 'node:fs';
+import { markAgile, readState, writeState } from '../cadence-core/bin/lib/project-state.mjs';
+import { OLD_PATH_ARCHIVED, oldPathArchive, switchListFile } from '../cadence-core/bin/lib/agile-paths.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGILE = join(HERE, '..', 'cadence-core', 'bin', 'agile.mjs');
@@ -55,19 +57,16 @@ function deferredMember(dir) {
     base: 'abc1234', head: 'HEAD', base_id: 'a'.repeat(40), head_id: 'b'.repeat(40), findings: [] })}\n`);
 }
 
-test('an old-path project whose release has landed is one a start may move: check answers the switch, start and next still refuse, nothing is written', (t) => {
+test('an old-path project whose release has landed is one a start may move: check answers the switch, next refuses it, neither writes', (t) => {
   const dir = landedProject(t);
   const before = tree(dirname(dir));
   const r = check(dir);
   assert.deepEqual([r.ok, r._exit, r.release], [true, 0, 'Toolshed'], JSON.stringify(r));
   assert.ok(r.switch, JSON.stringify(r));
-  const s = start(dir);
-  assert.deepEqual([s.ok, s._exit, s.reason], [false, 1, 'switch'], JSON.stringify(s));
-  assert.match(s.hint, /nothing was written/);
   const n = next(dir);
   assert.deepEqual([n.ok, n.reason], [false, 'switch'], JSON.stringify(n));
-  // no command moves it yet, so the hint mustn't send the user to one that stops on this same answer
-  assert.match(n.hint, /agile\.mjs check --design <folder>, and doesn't move it yet/);
+  // /cad-agile stops on next's refusal until it routes a switch, so the hint names the one call that moves it
+  assert.match(n.hint, /agile\.mjs start --design <folder> moves it to the new path, and \/cad-agile doesn't take it there yet/);
   assert.deepEqual(tree(dirname(dir)), before);
 });
 
@@ -79,6 +78,7 @@ test('an old-path project whose release hasn\'t landed is refused naming what to
     ['a queue that can\'t be read', (d) => { mkdirSync(join(d, 'phases'), { recursive: true }); symlinkSync('/tmp', join(d, 'phases', '3')); }, /can't all be read.*phases\/3/, /make them readable/],
     ['risk rulings carried', (d) => mkdirSync(join(d, 'records', 'risk-carry'), { recursive: true }), /records\/risk-carry holds risk rulings/, /\/cad-land; if it was landed by hand, remove that folder/],
     ['a folder named agile', (d) => mkdirSync(join(d, 'agile')), /agile is there/, /move that folder aside/],
+    ['an archive no switch made', (d) => mkdirSync(join(d, '_archive-old-path')), /_archive-old-path is already there/, /move that folder aside/],
     ['a records folder that is a link', (d) => { renameSync(join(d, 'records'), join(d, 'real-records')); symlinkSync(join(d, 'real-records'), join(d, 'records')); },
       /records is not a real folder \(symlinked-records\)/, /put the records folder back as a real folder/],
   ];
@@ -179,4 +179,113 @@ test('an old REQUIREMENTS.md or a folder the switch lists that can\'t be read is
     assert.match(r.detail, detail, name);
     assert.match(r.hint, /make it readable, then re-run; nothing was written$/, name);
   }
+});
+
+/** A landed old-path project holding every kind of file a switch moves or leaves, and an open design to start it from. */
+function richProject(t) {
+  const dir = landedProject(t);
+  for (const rel of ['REQUIREMENTS.md', 'STATE.md', 'CAPTURE.md', 'ARCHIVE.md', 'state.json', 'tasks/fix-typo/RECORD.md', 'spikes/probe/SPIKE.md',
+    '_archive-v1.0.0/1/PLAN-1.md', 'trace.jsonl', 'records/ARCHIVE.md', 'records/DECLINED.md', 'records/FILED.md', 'records/trace.jsonl',
+    'records/reads.jsonl', 'records/codemap/index.json', 'records/.gitignore', 'drafts/notes.md', 'notes.txt']) put(dir, rel, rel === 'REQUIREMENTS.md' ? OLD_REQUIREMENTS : `${rel}\n`);
+  mkdirSync(join(dir, 'phases'));
+  cpSync(FIXTURE, join(dir, 'seldon'), { recursive: true });
+  return { dir, design: freshDesign(join(dir, 'seldon', 'next')) };
+}
+
+const LEFT = ['config.json', 'drafts/notes.md', 'notes.txt', 'records/codemap/index.json'];
+
+test('a start on a landed old-path project moves every listed path into the archive byte for byte, marks it, opens the release and leaves the rest', (t) => {
+  const { dir, design } = richProject(t);
+  const listed = check(dir, design).switch.archive;
+  const before = tree(dir);
+  const state = readFileSync(join(dir, 'records', 'state.json'), 'utf8');
+  const r = start(dir, design);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.switched.archive, listed);
+  const archive = oldPathArchive(dir);
+  for (const [p, bytes] of Object.entries(before)) {
+    const moved = listed.some((rel) => p === rel || p.startsWith(`${rel}/`)) && p !== 'records/state.json';
+    if (moved) assert.equal(tree(archive)[p], bytes, `${p} in the archive`);
+    // the records ignore file is the one path a start writes again, below
+    if (moved && p !== 'records/.gitignore') assert.equal(existsSync(join(dir, p.replace(/\/$/, ''))), false, `${p} gone from the top`);
+    if (LEFT.includes(p)) assert.equal(readFileSync(join(dir, p), 'utf8'), bytes, `${p} left`);
+  }
+  assert.equal(readFileSync(join(archive, 'records', 'state.json'), 'utf8'), state);
+  assert.equal(readState(dir).reason, 'agile-path');
+  for (const name of OLD_PATH_ARCHIVED) assert.equal(existsSync(join(dir, name)), false, name);
+  assert.equal(existsSync(switchListFile(dir)), false);
+  assert.match(readFileSync(join(dir, 'records', '.gitignore'), 'utf8'), /^\/trace\.jsonl$/m);
+  assert.deepEqual([next(dir).next.id, next(dir).next.step], ['E-01', 'refine']);
+  // the old path refuses it from here on
+  const status = spawnSync('node', [join(HERE, '..', 'cadence-core', 'bin', 'planning.mjs'), 'status', '--dir', dir], { encoding: 'utf8' });
+  assert.equal(JSON.parse(status.stdout).reason, 'agile-path', status.stdout);
+});
+
+test('a start stopped after each of its writes is finished by the next to the tree a clean start leaves', (t) => {
+  const clean = richProject(t);
+  const listed = check(clean.dir, clean.design).switch.archive;
+  assert.equal(start(clean.dir, clean.design).ok, true);
+  const want = tree(clean.dir);
+  const paths = listed.filter((rel) => rel !== 'records/state.json');
+  const moveBy = (dir, rels) => { for (const rel of rels) { mkdirSync(dirname(join(oldPathArchive(dir), rel)), { recursive: true }); renameSync(join(dir, rel), join(oldPathArchive(dir), rel)); } };
+  const listAndCopy = (dir, copy = true) => {
+    writeFileSync(switchListFile(dir), `${listed.join('\n')}\n`);
+    if (!copy) return;
+    mkdirSync(join(oldPathArchive(dir), 'records'), { recursive: true });
+    cpSync(join(dir, 'records', 'state.json'), join(oldPathArchive(dir), 'records', 'state.json'));
+  };
+  const marked = (dir) => { listAndCopy(dir); assert.equal(markAgile(dir, join(oldPathArchive(dir), 'records', 'state.json')).ok, true); };
+  /** @type {[string, (dir: string) => void][]} */
+  const rows = [
+    ['the list', (d) => listAndCopy(d, false)],
+    ['the state copy', (d) => listAndCopy(d)],
+    ['the marker', marked],
+    ['some moves, and a log a hook wrote since', (d) => { marked(d); moveBy(d, paths.slice(0, 6)); put(d, 'records/trace.jsonl', 'records/trace.jsonl\n'); }],
+    ['every move', (d) => { marked(d); moveBy(d, paths); }],
+    ['a dead run\'s build folder', (d) => { marked(d); moveBy(d, paths); put(d, `agile.new.${spawnSync('node', ['-e', '']).pid}/release.md`, 'half\n'); }],
+  ];
+  for (const [name, stop] of rows) {
+    const { dir, design } = richProject(t);
+    stop(dir);
+    const r = start(dir, design);
+    assert.equal(r.ok, true, `${name}: ${JSON.stringify(r)}`);
+    assert.deepEqual(tree(dir), want, name);
+  }
+  // the rename done and the list not yet removed: the next start removes it and says the move is finished
+  const late = richProject(t);
+  assert.equal(start(late.dir, late.design).ok, true);
+  writeFileSync(switchListFile(late.dir), `${listed.join('\n')}\n`);
+  const r = start(late.dir, late.design);
+  assert.deepEqual([r.ok, r.finished, r.switched.archive], [true, true, listed], JSON.stringify(r));
+  assert.deepEqual(tree(late.dir), want);
+});
+
+test('a list left by a stopped move that names a path no switch moves is refused, and nothing moves', (t) => {
+  for (const wrong of ['drafts', 'records/codemap', '../outside', 'seldon/a/b', 'agile.switch', '']) {
+    const { dir, design } = richProject(t);
+    writeFileSync(switchListFile(dir), `PROJECT.md\n${wrong}\n`);
+    mkdirSync(join(oldPathArchive(dir), 'records'), { recursive: true });
+    cpSync(join(dir, 'records', 'state.json'), join(oldPathArchive(dir), 'records', 'state.json'));
+    assert.equal(markAgile(dir, join(oldPathArchive(dir), 'records', 'state.json')).ok, true);
+    const before = tree(dirname(dir));
+    const r = start(dir, design);
+    if (wrong === '') { assert.equal(r.ok, true, JSON.stringify(r)); continue; }
+    assert.deepEqual([r.ok, r.reason], [false, 'switch-list'], `${wrong}: ${JSON.stringify(r)}`);
+    assert.match(r.detail, new RegExp(`names ${JSON.stringify(wrong).replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}`), wrong);
+    assert.deepEqual(tree(dirname(dir)), before, wrong);
+  }
+});
+
+test('the marker replaces an old-path state only while the archive holds its very bytes', (t) => {
+  const dir = landedProject(t);
+  const copy = join(oldPathArchive(dir), 'records', 'state.json');
+  assert.equal(markAgile(dir).reason, 'state-present');
+  mkdirSync(dirname(copy), { recursive: true });
+  cpSync(join(dir, 'records', 'state.json'), copy);
+  assert.equal(writeState(dir, { ...CLOSED, cursor: { ...CLOSED.cursor, updated: '2026-11-26' } }).ok, true);
+  assert.equal(markAgile(dir, copy).reason, 'state-present');
+  assert.equal(readState(dir).kind, 'valid');
+  cpSync(join(dir, 'records', 'state.json'), copy);
+  assert.deepEqual(markAgile(dir, copy), { ok: true, changed: true });
+  assert.equal(readState(dir).reason, 'agile-path');
 });
