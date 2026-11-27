@@ -677,6 +677,8 @@ test('agentFileText: a stem the table does not name renders nothing', () => {
 // templates/PLAN.md was re-pinned when phase 2 of the size-cut cycle dropped its files: comment's plan-order clause and
 // shortened its braced guidance, every rule the inline planner reads from it kept (D-08, D-14) - a deliberate change,
 // approved with the phase.
+// The executor contract was re-pinned when story E-01-3 of 4.5 gave it an arm for a suite red only where the plan's
+// base is red, proven on the base with just those tests - a deliberate change, made with the story.
 
 const CONTRACT_SURFACE_DIGESTS = {
   'agents/cad-assumptions-analyzer-high.md': '28de11d2f99891fda6a35f57e8cf9b60e28493fa29d05b51fc76791c4ead6c8d',
@@ -712,7 +714,7 @@ const CONTRACT_SURFACE_DIGESTS = {
   'cadence-core/references/reviewer-brief.md': '6974d26ea29421e245cf335cc973103abf4f65098c7b73255b5aa1aa4de085ad',
   'cadence-core/templates/PLAN.md': '198575472986a5f81469d2ee8306442d8cfa9f2ac971016517eb648e59e389ee',
   'skills/cad-assumptions-analyzer-contract/SKILL.md': 'd566cf8317ac5e82627ee3fb3f1023279cc8225067489abfd903ea0ab6001515',
-  'skills/cad-executor-contract/SKILL.md': 'bf9e520f96668648d724b96fd86106e70bed1c4a47c742d2b3e6bb3502c26039',
+  'skills/cad-executor-contract/SKILL.md': 'a091dc814eee7f60524cb60d6fa1677dac3cbf7c4e91ababae2727cb6d9a0792',
   'skills/cad-plan-checker-contract/SKILL.md': '329ee090555cd3f9e7d46d13a1aef7f3651bedce653c23756909debf874d5168',
   'skills/cad-planner-contract/SKILL.md': '5fab25824fd354e7547d49c8c32b37d1dd0a50ff6b8aca657757f779762cb440',
   'skills/cad-reviewer-contract/SKILL.md': 'c00b2a5ec5bea8304620081582d5fd90be4852b7a8143bcc25d072a78d71b23b',
