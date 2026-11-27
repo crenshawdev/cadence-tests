@@ -130,7 +130,7 @@ test('next refuses an old-path project as a start does, and changes nothing in i
   const before = tree(dir);
   const r = run(dir, 'next');
   assert.deepEqual([r.ok, r.reason, r._exit], [false, 'old-path', 1]);
-  assert.match(r.hint, /\/cad-milestone/);
+  assert.match(r.hint, /\/cad-progress once/);
   assert.deepEqual(tree(dir), before);
 });
 
