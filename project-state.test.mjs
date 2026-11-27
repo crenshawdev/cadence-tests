@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  CURSOR_WORDS, STAMP_KEY, STATE_LAYOUT, readState, statePath, updateState, writeState,
+  AGILE_LAYOUT, CURSOR_WORDS, STAMP_KEY, STATE_LAYOUT, markAgile, readState, rebuildState, statePath, updateState, writeState,
 } from '../cadence-core/bin/lib/project-state.mjs';
 import { CURSOR_STATUSES } from '../cadence-core/bin/lib/planning-files.mjs';
 
@@ -128,6 +128,40 @@ test('a state file of a newer layout is refused and left byte-identical', () => 
   assert.equal(readFileSync(statePath(root), 'utf8'), newer);
   assert.equal(updateState(root, (s) => s).reason, 'state-invalid');
   assert.equal(readFileSync(statePath(root), 'utf8'), newer);
+});
+
+test('a marked project reads as on the agile path, and nothing the old path does replaces the marker', () => {
+  const root = tmp();
+  assert.deepEqual(markAgile(root), { ok: true, changed: true });
+  const marker = readFileSync(statePath(root), 'utf8');
+  assert.equal(JSON.parse(marker)[STAMP_KEY], AGILE_LAYOUT);
+  assert.equal(readState(root).reason, 'agile-path');
+  assert.deepEqual(markAgile(root), { ok: true, changed: false });
+  assert.equal(writeState(root, sample()).reason, 'agile-path');
+  assert.equal(updateState(root, (s) => s).why, 'agile-path');
+  assert.equal(rebuildState(root, sample()).reason, 'agile-path');
+  assert.equal(readFileSync(statePath(root), 'utf8'), marker);
+});
+
+test('marking refuses any state file that is already there and leaves its bytes', () => {
+  const root = tmp();
+  writeState(root, sample());
+  for (const bytes of [readFileSync(statePath(root), 'utf8'), '{torn', JSON.stringify({ [STAMP_KEY]: AGILE_LAYOUT })]) {
+    writeFileSync(statePath(root), bytes);
+    assert.equal(markAgile(root).reason, 'state-present');
+    assert.equal(readFileSync(statePath(root), 'utf8'), bytes);
+  }
+});
+
+test('a state that holds nothing is no old-path project, so marking replaces it', () => {
+  const root = tmp();
+  writeState(root, { cycleOpen: false, cursor: null, phases: [], requirements: [] });
+  assert.deepEqual(markAgile(root), { ok: true, changed: true });
+  assert.equal(readState(root).reason, 'agile-path');
+});
+
+test('an old-path save never takes the marker\'s layout number', () => {
+  assert.notEqual(STATE_LAYOUT, AGILE_LAYOUT);
 });
 
 test('a damaged file is replaced by a write, which is how it is rebuilt', () => {

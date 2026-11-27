@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PLANNING, makeTree, run, scratch, stampState } from './planning.test.mjs';
 import { importState } from '../cadence-core/bin/planning/state-import.mjs';
-import { readState, statePath, STAMP_KEY, STATE_LAYOUT } from '../cadence-core/bin/lib/project-state.mjs';
+import { markAgile, readState, statePath, STAMP_KEY, STATE_LAYOUT } from '../cadence-core/bin/lib/project-state.mjs';
 
 /** Every file outside records/, as path -> bytes, for the byte-identical checks. */
 function snapshot(dir, rel = '') {
@@ -450,6 +450,33 @@ test('the converting call says a commit is due, or not, and no other call carrie
 
   // not due outside a repository
   assert.equal(run(['status'], v40(t)).migration.commit_due, false);
+});
+
+/** The seams an agile project runs too; agile-calls.test.mjs drives each of them there. */
+const AGILE_CALLS = ['adjudication', 'capture', 'codemap', 'detect-commands', 'detect-surfaces', 'recall', 'review-file', 'risk-check',
+  'task-record', 'test-policy', 'trace', 'workflow-run'];
+
+test('on a marked project every other seam refuses agile-path naming /cad-agile, through a link too, and the marker stays', (t) => {
+  const dir = join(scratch('cad-migrate-agile-', t), '.planning');
+  mkdirSync(dir);
+  assert.equal(markAgile(dir).ok, true);
+  const marker = readFileSync(statePath(dir), 'utf8');
+  const link = join(scratch('cad-migrate-agile-link-', t), '.planning');
+  symlinkSync(dir, link);
+  const seams = run([], dir).detail.match(/subcommand: (.*) \(got/)[1].split(' | ');
+  for (const seam of AGILE_CALLS) assert.ok(seams.includes(seam), seam);
+  const refused = seams.filter((s) => s !== 'design-read' && !AGILE_CALLS.includes(s));
+  assert.ok(refused.includes('status') && refused.includes('state-rebuild'));
+  // `trace ignore` is what the old commands' stops ask, so it refuses though the rest of its family runs
+  for (const args of [...refused.map((s) => [s]), ['trace', 'ignore'], ['trace', 'ignore', '--check']]) {
+    for (const at of [dir, link]) {
+      const r = run(args, at);
+      assert.deepEqual([r.ok, r.reason], [false, 'agile-path'], `${args.join(' ')} at ${at}`);
+      assert.match(r.hint, /\/cad-agile/, args.join(' '));
+    }
+  }
+  assert.equal(readFileSync(statePath(dir), 'utf8'), marker);
+  assert.deepEqual(readdirSync(dir), ['records']);
 });
 
 // --- rebuilding a state file that does not parse -----------------------------

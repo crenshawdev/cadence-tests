@@ -921,3 +921,49 @@ test('stop: the same stop with an ordinary transcript path still closes the one 
     assert.deepEqual(closeForStop(payload, r, { transcript: billedStop('end_turn') }).map((e) => e.event), ['return'], JSON.stringify(payload));
   }
 });
+
+// On an agile project every run is phase 0 and more than one can be live, so the newest run is no scope there.
+const AGILE = (transcriptText) => ({ transcript: transcriptText, agile: true });
+const REVIEWER = { agent_type: 'cadence:cad-reviewer', agent_id: 'a1' };
+const inRun = (corr, plan, ts) => ({ corr, phase: '0', plan, ts, role: 'cad-reviewer' });
+const closedIn = (corr, plan, ts, id) => ({ ...bracket('cad-reviewer', plan), corr, phase: '0', ts, end: ts, agent_id: id });
+/** A worker that started at `from` and stopped at `to`. */
+const ran = (from, to) => [['tool_use', from], ['end_turn', to]].map(([stop, timestamp], i) => JSON.stringify({
+  type: 'assistant', agentId: 'a1', timestamp, message: { id: `msg_0${i}`, role: 'assistant', content: [], stop_reason: stop },
+})).join('\n');
+
+test('agile stop: each of two live runs\' reviewers closes its own dispatch, where the newest run would take both', () => {
+  const r = render([inRun('0-aaaa-1', 'e-01-1-review', T(1)), inRun('0-bbbb-2', 'e-01-2-review', T(3))]);
+  assert.equal(closeForStop(REVIEWER, r, AGILE(ran(T(2), T(5))))[0].corr, '0-aaaa-1');
+  assert.equal(closeForStop(REVIEWER, r, AGILE(ran(T(4), T(5))))[0].corr, '0-bbbb-2');
+  // the old path's rule, for the first worker, takes the newest run's row
+  assert.equal(closeForStop(REVIEWER, r, { transcript: ran(T(2), T(5)) })[0].corr, '0-bbbb-2');
+});
+
+test("agile stop: a dead run's stranded dispatch of the role doesn't keep the hook from closing a live one", () => {
+  const r = render([inRun('0-aaaa-1', 'e-01-1-review', T(1)), inRun('0-bbbb-2', 'e-01-2-review', T(10))]);
+  const [e] = closeForStop(REVIEWER, r, AGILE(ran(T(11), T(12))));
+  assert.deepEqual([e.event, e.corr, e.plan], ['return', '0-bbbb-2', 'e-01-2-review']);
+});
+
+test("agile stop: an old bracket carrying a reused id is passed over for this worker's own open dispatch", () => {
+  const r = withBrackets([inRun('0-bbbb-2', 'e-01-2-review', T(10))], [closedIn('0-aaaa-1', 'e-01-1-review', T(1), 'a1')]);
+  const [e] = closeForStop(REVIEWER, r, AGILE(ran(T(11), T(12))));
+  assert.deepEqual([e.event, e.corr], ['return', '0-bbbb-2']);
+});
+
+test('agile stop: a worker its own close already carries states only its figures, onto that bracket', () => {
+  const r = withBrackets([inRun('0-bbbb-2', 'e-01-2-review', T(3))], [closedIn('0-aaaa-1', 'e-01-1-review', T(1), 'a1')]);
+  const events = closeForStop(REVIEWER, r, AGILE(billedStop('end_turn').replace(/"timestamp":"[^"]*"/, `"timestamp":"${T(2)}"`)));
+  assert.deepEqual(events.map((e) => [e.event, e.corr]), [['worker_cache', '0-aaaa-1']]);
+});
+
+test('agile stop: two open in one run, or with no start to go by two open anywhere, close nothing', () => {
+  const sameRun = render([inRun('0-aaaa-1', 'e-01-1-review', T(1)), { ...inRun('0-aaaa-1', 'e-01-2-review', T(2)) }]);
+  assert.deepEqual(closeForStop(REVIEWER, sameRun, AGILE(ran(T(3), T(4)))), []);
+  // no close, but the figures keep their run, where the hand-written close's id folds them in
+  assert.deepEqual(closeForStop(REVIEWER, sameRun, AGILE(billedStop('end_turn'))).map((e) => [e.event, e.corr]), [['worker_cache', '0-aaaa-1']]);
+  const twoRuns = render([inRun('0-aaaa-1', 'e-01-1-review', T(1)), inRun('0-bbbb-2', 'e-01-2-review', T(3))]);
+  assert.deepEqual(closeForStop(REVIEWER, twoRuns, AGILE(undefined)), []);
+  assert.equal(closeForStop(REVIEWER, render([inRun('0-bbbb-2', 'e-01-2-review', T(3))]), AGILE(undefined))[0].corr, '0-bbbb-2');
+});

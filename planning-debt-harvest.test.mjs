@@ -55,7 +55,8 @@ function harvest(root, extra = []) {
   const args = root === null ? ['debt-harvest', ...extra]
     : ['debt-harvest', '--root', root, ...extra];
   try {
-    return JSON.parse(execFileSync('node', [PLANNING, ...args], { encoding: 'utf8' }));
+    // run from the root it names, as every `--root .` caller does, or the runner's own .planning answers for it
+    return JSON.parse(execFileSync('node', [PLANNING, ...args], { encoding: 'utf8', cwd: root || undefined }));
   } catch (e) {
     return JSON.parse(e.stdout);
   }
@@ -307,6 +308,8 @@ test('debt-harvest: a planning doc QUOTING a literal marker is not harvested', (
   // nothing.
   const root = debtRepo(t);
   debtAdd(root, 'src/a.js', `// ${debtLine('a real cut', 'c', 't')}\n`);
+  // a phase folder with no roadmap is refused before the harvest runs, so this project has the one a real one has
+  debtAdd(root, '.planning/ROADMAP.md', '# Roadmap: Fixture\n\n## Phases\n\n- [ ] **Phase 1: Plan** - quotes a marker\n');
   debtAdd(root, '.planning/phases/1/PLAN.md',
     `# Plan\n\nMark it like this: \`${debtLine('example only', 'nothing', 'never')}\`\n`);
   const r = harvest(root);

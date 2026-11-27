@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path, { join } from 'node:path';
 
-import { gitInvocations, gitVerbs, parentDir, planningRoot } from '../cadence-core/bin/lib/git-segments.mjs';
+import { forgeRequests, gitInvocations, gitVerbs, parentDir, planningRoot, segments } from '../cadence-core/bin/lib/git-segments.mjs';
 
 // --- The anchor: a segment counts only when its command word is `git`. -------
 
@@ -223,16 +223,67 @@ test('parentDir steps exactly as path.posix.dirname and path.win32.dirname do', 
   chase(WIN32_SHAPES, path.win32.dirname);
 });
 
+test('segments gives every non-empty segment its words and what joins it to the next, and gitInvocations an at that indexes them', () => {
+  const cmd = 'cd x && ; set -- "a b" | git -C y commit -m z';
+  assert.deepEqual(segments(cmd), [{ words: ['cd', 'x'], join: '&&;' }, { words: ['set', '--', '"a', 'b"'], join: '|' },
+    { words: ['git', '-C', 'y', 'commit', '-m', 'z'], join: '' }]);
+  assert.equal(segments(cmd)[gitInvocations(cmd)[0].at].words[0], 'git');
+  assert.deepEqual(segments('; cd x\n').map((g) => g.join), ['\n']);
+  assert.deepEqual(segments(''), []);
+  assert.deepEqual(segments(7), []);
+});
+
 // --- gitInvocations: the same scan, keeping each segment's -C arguments. ----
 
-test('gitInvocations keeps -C arguments in order, raw, and gitVerbs is its verb list', () => {
-  assert.deepEqual(gitInvocations('git -C /tmp/x commit -m y'), [{ verb: 'commit', dirs: ['/tmp/x'] }]);
+test('gitInvocations keeps -C arguments, global options and each segment\'s place, raw, and gitVerbs is its verb list', () => {
+  assert.deepEqual(gitInvocations('git -C /tmp/x commit -m y'),
+    [{ verb: 'commit', dirs: ['/tmp/x'], opts: [], args: ['-m', 'y'], at: 0 }]);
   assert.deepEqual(gitInvocations('git -C a -c k=v -C "$S" commit && git push'),
-    [{ verb: 'commit', dirs: ['a', '"$S"'] }, { verb: 'push', dirs: [] }]);
+    [{ verb: 'commit', dirs: ['a', '"$S"'], opts: ['-c', 'k=v'], args: [], at: 0 },
+      { verb: 'push', dirs: [], opts: [], args: [], at: 1 }]);
+  assert.deepEqual(gitInvocations('git --git-dir=x -p push').map((g) => g.opts), [['--git-dir=x', '-p']]);
+  // at counts every non-empty segment, so a push after cd sits at 1 with nothing at 0
+  assert.deepEqual(gitInvocations('cd x && ; git push').map((g) => g.at), [1]);
+  assert.deepEqual(gitInvocations('git merge --abort').map((g) => g.args), [['--abort']]);
   assert.deepEqual(gitInvocations('git -C'), []);
   assert.deepEqual(gitInvocations(42), []);
   for (const [cmd, verbs] of SEEN) {
     assert.deepEqual(gitInvocations(cmd).map((g) => g.verb), verbs, cmd);
     assert.deepEqual(gitVerbs(cmd), verbs, cmd);
+  }
+});
+
+// --- The request reader: gh, glab and tea opening or merging a request (E-03-2). ---
+
+// Aliases from each CLI's own docs: `gh pr new` (gh pr create --help), glab's `mr new` and `mr accept`, and tea's
+// `pulls`, `pull` and `pr`, with `c` and `m`.
+const REQUESTS = [
+  ['gh pr create --fill', [['gh', 'create']]],
+  ['gh pr new', [['gh', 'create']]],
+  ['gh pr merge 5 --squash', [['gh', 'merge']]],
+  ['glab mr create --fill', [['glab', 'create']]],
+  ['glab mr new', [['glab', 'create']]],
+  ['glab mr merge 5', [['glab', 'merge']]],
+  ['glab mr accept 5', [['glab', 'merge']]],
+  ['tea pr create --base main', [['tea', 'create']]],
+  ['tea pulls c', [['tea', 'create']]],
+  ['tea pull merge 3', [['tea', 'merge']]],
+  ['tea pr m 3', [['tea', 'merge']]],
+  ['/usr/bin/gh pr merge', [['gh', 'merge']]],
+  ['git add . && gh pr create --fill && gh pr merge', [['gh', 'create'], ['gh', 'merge']]],
+  ['gh pr create --title "fix the pr merge"', [['gh', 'create']]],
+];
+
+test('a segment whose command word is gh, glab or tea reports each request it opens or merges', () => {
+  for (const [text, want] of REQUESTS) {
+    assert.deepEqual(forgeRequests(text).map((r) => [r.cli, r.verb]), want, text);
+  }
+});
+
+test('reading, listing, quoting or another program is no request', () => {
+  for (const text of ['gh pr view 5', 'gh pr list', 'gh pr checks 5', 'glab mr view 5', 'tea pr 5', 'tea pulls',
+    'gh repo view', 'echo "gh pr merge"', 'grep -r "glab mr merge" .', 'node git-publish.mjs merge --forge github',
+    'git merge feat', '', undefined, 42]) {
+    assert.deepEqual(forgeRequests(text), [], String(text));
   }
 });

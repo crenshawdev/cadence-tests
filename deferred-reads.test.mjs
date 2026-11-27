@@ -97,6 +97,8 @@ export const DEFERRED_READS = Object.freeze([
     ['Roles interview (\`--roles\`)', 'Stakes migration (a retired routing key is still on disk)'], 2, 'cadence-core/workflows/config.md'),
   row('cad-new-project', 'workflows/config-roles.md', ['setup(4)'], 1, 'cadence-core/workflows/new-project.md'),
   row('cad-adopt', 'workflows/config-roles.md', ['setup(3)'], 1, 'cadence-core/workflows/adopt.md'),
+  // the review step reaches a cross-model reviewer's procedure only when review.reviewers names one
+  row('cad-agile', 'references/review-cross-model.md', ['5. Review'], 1, 'cadence-core/workflows/agile-build.md'),
 ]);`;
 
 test('register: the surviving cut rows are byte-identical, and the register is exactly the rows the cuts made', () => {
@@ -118,8 +120,8 @@ test('register: the surviving cut rows are byte-identical, and the register is e
   const end = src.indexOf(']);', register);
   assert.ok(end > register, 'the register export must close with `]);`');
   assert.equal(src.slice(start, end + 3), REGISTER_SOURCE);
-  // CADENCE-CENSUS: deferred-reads-register | asserts: the register is exactly 17 rows, byte-identical to the export's own source
-  assert.equal(DEFERRED_READS.length, 17);
+  // CADENCE-CENSUS: deferred-reads-register | asserts: the register is exactly 18 rows, byte-identical to the export's own source
+  assert.equal(DEFERRED_READS.length, 18);
 });
 
 // --- AC3: a contract skill's own step ------------------------------------------

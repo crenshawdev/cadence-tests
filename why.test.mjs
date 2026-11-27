@@ -5,11 +5,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, renameSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { recordsDir } from '../cadence-core/bin/lib/planning-store.mjs';
+import { oldPathArchive } from '../cadence-core/bin/lib/agile-paths.mjs';
+import { markAgile } from '../cadence-core/bin/lib/project-state.mjs';
 import { mkdirSync as plantMkdir, writeFileSync as plantWrite } from 'node:fs';
 import { dirname as plantDirname } from 'node:path';
 const plantFile = (file, data) => { plantMkdir(plantDirname(file), { recursive: true }); plantWrite(file, data); };
@@ -897,4 +899,96 @@ test('a path whose log output is over 1 MiB gets its whole chain, not git-failed
   assert.equal(env.ok, true, JSON.stringify(env).slice(0, 300));
   assert.equal(env.result, 'chain');
   assert.equal(env.total, n);
+});
+
+// --- A switched project: the old path's record under _archive-old-path/ (E-08-4) ---
+
+/**
+ * A repository a switch has run on: three commits on `f.txt`, and a `.planning` holding the agile marker and the old
+ * path's archive, where an archived milestone's summary names the first, the old `phases/` the second and a task
+ * record the third. Untracked, as a switch leaves it, so no tier but the archive can name them.
+ * @returns {{dir: string, planning: string, shas: string[]}}
+ */
+function switchedRepo(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'cad-why-switched-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'ignore', env: GIT_ENV });
+  git('init', '-q', '-b', 'main');
+  const shas = ['2026-01-01', '2026-01-02', '2026-01-03'].map((day, i) => {
+    writeFileSync(join(dir, 'f.txt'), `${i}\n`);
+    git('add', 'f.txt');
+    execFileSync('git', ['-C', dir, 'commit', '-q', '-m', `feat(1-${i + 1}): change ${i}`],
+      { stdio: 'ignore', env: { ...GIT_ENV, GIT_AUTHOR_DATE: `${day}T00:00:00-05:00`, GIT_COMMITTER_DATE: `${day}T00:00:00-05:00` } });
+    return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8', env: GIT_ENV }).trim();
+  });
+  const planning = join(dir, '.planning');
+  const old = oldPathArchive(planning);
+  const phase = (group, sha, task, description) => {
+    plantFile(join(old, group, '1', 'SUMMARY.md'), [
+      '# Phase 1 - Summary', '', '## Commits', '',
+      '| Plan | Task | Commit | Description |', '|---|---|---|---|',
+      `| 1 | ${task} | ${sha.slice(0, 7)} | ${description} |`, '',
+    ].join('\n'));
+    plantFile(join(old, group, '1', 'PLAN.md'), '---\nphase: 1\nplan: 1\n---\n\n# a plan\n');
+  };
+  phase('_archive-v9.0.0', shas[0], '2', 'the archived milestone recorded it');
+  phase('phases', shas[1], '1', 'the old last milestone recorded it');
+  plantFile(join(old, 'tasks', 'old-task', 'RECORD.md'), [
+    '# Task: old-task', '', '## Commits', '',
+    '| Task | Commit | Description |', '| --- | --- | --- |',
+    `| 1 | ${shas[2]} | the old task recorded it |`,
+    '', '## Files', '', '### Task 1: old-task', '', '- **Files:** f.txt', '',
+  ].join('\n'));
+  assert.equal(markAgile(planning).ok, true);
+  return { dir, planning, shas };
+}
+
+test('on a switched project a commit the archived old path recorded joins to that record', (t) => {
+  const { dir, shas } = switchedRepo(t);
+  const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
+  assert.equal(env.ok, true);
+  assert.deepEqual(env.warnings, []);
+  const join0 = env.entries.find((e) => e.sha === shas[0]).join;
+  const join1 = env.entries.find((e) => e.sha === shas[1]).join;
+  const join2 = env.entries.find((e) => e.sha === shas[2]).join;
+
+  assert.equal(join0.state, 'resolved');
+  assert.equal(join0.label, '_archive-old-path/_archive-v9.0.0/1');
+  assert.deepEqual([join0.milestone, join0.phase, join0.plan, join0.task], ['v9.0.0', '1', '1', '2']);
+  assert.ok(entryFor(env.text, shas[0]).includes('phase: v9.0.0 phase 1 (_archive-old-path/_archive-v9.0.0/1)'));
+
+  assert.equal(join1.state, 'resolved');
+  assert.equal(join1.label, '_archive-old-path/phases/1');
+  assert.ok(entryFor(env.text, shas[1]).includes("phase: the old path's last milestone phase 1 (_archive-old-path/phases/1)"),
+    'the archive\'s phases/ is no longer the open milestone');
+
+  assert.equal(join2.state, 'resolved');
+  assert.equal(join2.slug, 'old-task');
+  assert.equal(join2.label, '_archive-old-path/tasks/old-task');
+  assert.match(entryFor(env.text, shas[2]), /^ {2}task 1: old-task \(declares f\.txt\)$/m, 'the archived record\'s Files: line reaches the join');
+  assert.ok(!env.text.includes('NOT RESOLVED'));
+});
+
+test('an archive folder that is a link is not read', (t) => {
+  const { dir, planning, shas } = switchedRepo(t);
+  const elsewhere = mkdtempSync(join(tmpdir(), 'cad-why-elsewhere-'));
+  t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
+  renameSync(oldPathArchive(planning), join(elsewhere, 'old'));
+  symlinkSync(join(elsewhere, 'old'), oldPathArchive(planning));
+  const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
+  assert.equal(env.ok, true);
+  for (const sha of shas) assert.equal(env.entries.find((e) => e.sha === sha).join.state, 'unresolved');
+});
+
+test("a gap under a labelled close lists the archive's ARCHIVE.md rows under that file's name", (t) => {
+  const { dir, sha } = repoWithNoRecord(t, { close: 'v9.9.0' });
+  const planning = join(dir, '.planning');
+  const moved = join(recordsDir(oldPathArchive(planning)), 'ARCHIVE.md');
+  mkdirSync(dirname(moved), { recursive: true });
+  renameSync(join(recordsDir(planning), 'ARCHIVE.md'), moved);
+  assert.equal(markAgile(planning).ok, true);
+  const env = oneJsonLine(run(['f.txt', '--dir', dir]).stdout);
+  const entry = entryFor(env.text, sha);
+  assert.match(entry, /^ {2}\.planning\/_archive-old-path\/records\/ARCHIVE\.md keeps 1 residue row\(s\) under that label, bound to the label and to no commit \(D-04\):$/m);
+  assert.match(entry, /^ {4}phases\/1\/SUMMARY\.md: the residue this close kept$/m);
 });

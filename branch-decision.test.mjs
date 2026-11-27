@@ -3,7 +3,8 @@
 // functions are pure, so this needs no subprocess or live git.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { integrationBranchName, configuredNameProblem, decideBranch, activeVersion } from '../cadence-core/bin/lib/branch-decision.mjs';
+import { integrationBranchName, releaseBranchName, configuredNameProblem, decideBranch, activeVersion } from '../cadence-core/bin/lib/branch-decision.mjs';
+import { isBranchName } from '../cadence-core/bin/lib/config-value.mjs';
 
 // --- integrationBranchName --------------------------------------------------
 
@@ -34,6 +35,26 @@ test('name: null when neither prose surface carries a version (never invent one)
 
 test('name: a plain semver without a prerelease suffix still parses', () => {
   assert.equal(integrationBranchName('### Active\n\nshipping `v1.2.0` now\n', ''), 'cadence/v1.2.0');
+});
+
+test('release name: its letters, digits and dashes in lowercase, always a usable branch, and null when it has none', () => {
+  for (const [title, want] of [
+    ['Toolshed', 'cadence/toolshed'],
+    ['  The Tool Shed: v2.0!  ', 'cadence/the-tool-shed-v2-0'],
+    ['-rf ../..; $(x) `y`', 'cadence/rf-x-y'],
+    ['reports.lock', 'cadence/reports-lock'],
+  ]) {
+    assert.equal(releaseBranchName(title), want);
+    assert.equal(isBranchName(want), true, want);
+  }
+  for (const title of ['', ' - ', '道具']) assert.equal(releaseBranchName(title), null, title);
+});
+
+test('release name: a configured name wins, over no name at all too, and one failing the grammar is null', () => {
+  assert.equal(releaseBranchName('Toolshed', 'seldon/hardin'), 'seldon/hardin');
+  assert.equal(releaseBranchName('', 'seldon/hardin'), 'seldon/hardin');
+  assert.equal(releaseBranchName('Toolshed', null), 'cadence/toolshed');
+  for (const bad of ['-D', 'a b', '', 7]) assert.equal(releaseBranchName('Toolshed', bad), null, String(bad));
 });
 
 test('name: a configured name wins, and one failing the grammar is null with a sentence, never the default', () => {

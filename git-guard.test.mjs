@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { basename, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { treeOf, v40Project } from './planning.test.mjs';
 
@@ -42,7 +42,8 @@ function guardRaw(input) {
   return execFileSync('node', [GUARD], {
     encoding: 'utf8',
     input,
-    env: { ...process.env, CADENCE_GLOBAL_CONFIG: NO_GLOBAL },
+    // the push rail reads git config, so the dev's own ~/.gitconfig stays out of it
+    env: { ...process.env, CADENCE_GLOBAL_CONFIG: NO_GLOBAL, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
   }).trim();
 }
 
@@ -123,10 +124,11 @@ test('git push from a linked worktree beneath the project asks', (t) => {
   const dir = project(t, 'main');
   const wt = join(dir, '.claude', 'worktrees', 'agent-x');
   git(['-C', dir, 'worktree', 'add', '-q', '-b', 'agent-x', wt]);
-  const d = guard('git push origin x', wt);
+  const d = guard('git push origin agent-x:main', wt);
   assert.notEqual(d, null);
   assert.equal(d.permissionDecision, 'ask');
   assert.match(d.permissionDecisionReason, /cad-land/);
+  assert.equal(guard('git push origin agent-x', wt), null);
 });
 
 test('git push from a submodule beneath the project asks', (t) => {
@@ -139,7 +141,8 @@ test('git push from a submodule beneath the project asks', (t) => {
   // git 2.38.1+ refuses a local-path submodule clone unless the file transport
   // is allowed for this one call.
   git(['-C', dir, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'vendor/sub']);
-  const d = guard('git push origin x', join(dir, 'vendor', 'sub'));
+  // a submodule's checkout is a detached HEAD, so the push names the protected branch it reaches
+  const d = guard('git push origin x:main', join(dir, 'vendor', 'sub'));
   assert.notEqual(d, null);
   assert.equal(d.permissionDecision, 'ask');
 });
@@ -160,31 +163,31 @@ test('a commit from a linked worktree is judged exactly as before: silent', (t) 
   assert.equal(guard('git commit -m x', wt), null);
 });
 
-test('git push always asks (publishing is /cad-land\'s call)', (t) => {
-  const d = guard('git push origin feature', project(t, 'feature'));
+test('a push asks only when it reaches a protected branch (publishing is /cad-land\'s call)', (t) => {
+  const dir = project(t, 'feature');
+  assert.equal(guard('git push origin feature', dir), null);
+  const d = guard('git push origin feature:main', dir);
   assert.equal(d.hookEventName, 'PreToolUse'); // the harness routes on this
   assert.equal(d.permissionDecision, 'ask');
   assert.match(d.permissionDecisionReason, /cad-land/);
 });
 
-test('auto_close true does not exempt any push - every push still asks', (t) => {
-  // The direct inversion of the removed exemption: git-guard carries NO push
-  // exemption. Even the exact shape that once passed silently under repo
-  // auto_close now asks. cad-land's sanctioned publish runs through the
-  // git-publish seam as a subprocess argv push this Bash hook never sees.
-  const dir = project(t, 'cadence/v1.1.0-rc.2', { git: { auto_close: true } });
-  const d = guard('git push -u origin cadence/v1.1.0-rc.2', dir);
+test('auto_close true exempts no push that reaches a protected branch', (t) => {
+  // auto_close is no push exemption: cad-land's sanctioned publish runs through
+  // the git-publish seam as a subprocess argv push this Bash hook never sees.
+  const dir = project(t, 'main', { git: { auto_close: true } });
+  const d = guard('git push -u origin main', dir);
   assert.notEqual(d, null);
   assert.equal(d.permissionDecision, 'ask');
 });
 
 test('compound command still catches the push half', (t) => {
-  const d = guard('git add . && git push', project(t, 'feature'));
+  const d = guard('git add . && git push', project(t, 'main'));
   assert.equal(d.permissionDecision, 'ask');
 });
 
 test('global git options are skipped when finding the subcommand', (t) => {
-  const d = guard('git -C . -c user.name=t push origin x', project(t, 'feature'));
+  const d = guard('git -C . -c user.name=t push origin x:main', project(t, 'feature'));
   assert.equal(d.permissionDecision, 'ask');
 });
 
@@ -516,7 +519,7 @@ test('a torn repo layer never CANCELS a deny the global layer configured', (t) =
 // NOT move: it answers where commits go, never what a review found, so it must
 // stay reachable by no gate value at all. A change made to give this pin
 // something to observe - a routing import, a resolved gate threaded near
-// commitDecision - is the failure it exists to detect, not a way to pass it.
+// branchDecision - is the failure it exists to detect, not a way to pass it.
 //
 // The census is LEXICAL over git-guard.mjs's own source. Every pattern is built
 // from an escaped string through `new RegExp`, the discipline
@@ -542,7 +545,7 @@ test('census: no gate value reaches the protected-branch guard (D-11)', () => {
       + 'a plumbing change.');
   }
 
-  // What commitDecision consults from the merged config, as the dotted paths
+  // What branchDecision consults from the merged config, as the dotted paths
   // the source spells. `config.json` is the layer FILENAME, not a key, so the
   // config arm excludes it by name rather than by a second allowlist.
   const gitKeys = GUARD_SRC.match(new RegExp("\\bgit\\.[a-z_]+", 'g')) || [];
@@ -645,8 +648,8 @@ test('-C into a Cadence project is policed even from outside any project', (t) =
   const outside = tmp(t, 'cad-guard-outside-');
   const d = guard(`git -C ${target} commit -m x`, outside);
   assert.equal(d.permissionDecision, 'ask');
-  // and a push from outside any project stays silent, as before
-  assert.equal(guard(`git -C ${target} push`, outside), null);
+  // and a push into it is judged there too, the way the commit rail follows -C
+  assert.equal(guard(`git -C ${target} push`, outside).permissionDecision, 'ask');
 });
 
 test('several commits in one command: a deny beats an ask', (t) => {
@@ -655,7 +658,7 @@ test('several commits in one command: a deny beats an ask', (t) => {
   assert.equal(d.permissionDecision, 'deny');
 });
 
-// --- The bypass: git.guard_bypass in both config layers turns both rails off. ---
+// --- The bypass: git.guard_bypass in both config layers turns the push and commit rails off. ---
 
 /** A user-global config file holding `text`, gone when test `t` ends. */
 function globalFile(t, text) {
@@ -689,4 +692,200 @@ test('bypass with a torn global layer: the hook decides as before', (t) => {
   const torn = globalFile(t, '{ nope');
   assert.equal(guardWithGlobal('git push origin main', dir, torn).permissionDecision, 'ask');
   assert.equal(guardWithGlobal('git commit -m x', dir, torn).permissionDecision, 'ask');
+});
+
+// --- The request and merge rails: what the bypass leaves on (E-03-2). ---------
+
+const OPENS_AND_MERGES = ['gh pr create --fill', 'gh pr merge 5', 'glab mr create', 'glab mr merge 5',
+  'tea pr create', 'tea pulls merge 3'];
+
+test('a request opened or merged from Bash asks, with the bypass in both layers and without it', (t) => {
+  const dir = project(t, 'feat', { git: { guard_bypass: true } });
+  const bypassed = globalFile(t, BYPASS);
+  const off = globalFile(t, '{}');
+  for (const command of OPENS_AND_MERGES) {
+    for (const g of [bypassed, off]) {
+      const d = guardWithGlobal(command, dir, g);
+      assert.equal(d && d.permissionDecision, 'ask', `${command} (${g === bypassed ? 'bypass' : 'no bypass'})`);
+      assert.match(d.permissionDecisionReason, /pull or merge request/);
+    }
+  }
+});
+
+test('a request rail stays silent on a view, a mention, the seam, and outside a project', (t) => {
+  const dir = project(t, 'main');
+  for (const command of ['gh pr view 5', 'gh pr list', 'glab mr view 5', 'echo "gh pr merge"',
+    'node cadence-core/bin/git-publish.mjs merge --dir . --forge github']) {
+    assert.equal(guard(command, dir), null, command);
+  }
+  assert.equal(guard('gh pr merge 5', tmp(t, 'cad-guard-plain-')), null);
+});
+
+test('git merge onto a protected branch asks, and onto a task branch is silent', (t) => {
+  const onMain = project(t, 'main');
+  const d = guard('git merge feat', onMain);
+  assert.equal(d.permissionDecision, 'ask');
+  assert.match(d.permissionDecisionReason, /"main" is a protected branch[\s\S]*approve to merge here/);
+  assert.equal(guard('git merge feat', project(t, 'feat2')), null);
+});
+
+test('git merge follows on_protected, and the bypass does not reach it while it still silences a commit', (t) => {
+  const refused = project(t, 'main', { git: { on_protected: 'refuse' } });
+  assert.equal(guard('git merge feat', refused).permissionDecision, 'deny');
+  assert.equal(guard('git merge feat', project(t, 'main', { git: { on_protected: 'allow' } })), null);
+  const dir = project(t, 'main', { git: { guard_bypass: true } });
+  const g = globalFile(t, BYPASS);
+  assert.equal(guardWithGlobal('git merge feat', dir, g).permissionDecision, 'ask');
+  assert.equal(guardWithGlobal('git commit -m x', dir, g), null);
+});
+
+test('across the rails a deny beats an ask: a request ask does not hide a refused commit', (t) => {
+  const dir = project(t, 'main', { git: { on_protected: 'refuse' } });
+  assert.equal(guard('gh pr create --fill && git commit -m x', dir).permissionDecision, 'deny');
+  assert.equal(guard('git push origin feat && git merge feat', dir).permissionDecision, 'deny');
+});
+
+test('git merge --abort and --quit land nothing, so a refused protected branch still lets them run; --continue is judged', (t) => {
+  const dir = project(t, 'main', { git: { guard_bypass: true, on_protected: 'refuse' } });
+  const g = globalFile(t, BYPASS);
+  assert.equal(guardWithGlobal('git merge --abort', dir, g), null);
+  assert.equal(guardWithGlobal('git merge --quit', dir, g), null);
+  assert.equal(guardWithGlobal('git merge --continue', dir, g).permissionDecision, 'deny');
+});
+
+// --- The push rail asks only where a protected branch can be reached (E-03-3). ---
+
+test('a push of a work branch or a tag is silent; one that can reach a protected branch asks', (t) => {
+  const feat = project(t, 'feat');
+  for (const command of ['git push -u origin feat', 'git push origin v4.5.0', 'git push origin HEAD', 'git push --tags']) {
+    assert.equal(guard(command, feat), null, command);
+  }
+  for (const command of ['git push origin feat:main', 'git push --all', 'git push origin +feat:refs/heads/main',
+    'git push origin --delete main', 'git push -o ci.skip origin feat:main']) {
+    assert.equal(guard(command, feat)?.permissionDecision, 'ask', command);
+  }
+  const main = project(t, 'main');
+  for (const command of ['git push', 'git push origin', 'git push origin HEAD']) {
+    assert.equal(guard(command, main)?.permissionDecision, 'ask', command);
+  }
+  assert.equal(guard('git push origin feat', main), null);
+});
+
+test('a push stays quiet only on plain words: a quote, an expansion, a glob or @ in a refspec asks', (t) => {
+  const feat = project(t, 'feat');
+  for (const command of ['git push origin "feat:main"', "git push origin 'HEAD:main'", 'git push origin "main"',
+    'git push origin refs/heads/*:refs/heads/*', 'git push origin :', 'git push origin "feat:$B"', 'git push origin $R:feat',
+    'git push "--all" origin', 'git push origin "feat"', 'git push --branches', 'git push --mirr', 'git push --al origin',
+    'git push origin feat:heads/main', 'git push origin heads/main', 'git push origin @:main']) {
+    assert.equal(guard(command, feat)?.permissionDecision, 'ask', command);
+  }
+  for (const command of ['git push --no-all origin feat', 'git push origin @', 'git push --force-with-lease=feat:abc origin feat']) {
+    assert.equal(guard(command, feat), null, command);
+  }
+});
+
+test('a push asks when an earlier command, a global option or a -C it cannot follow can move where it lands', (t) => {
+  const feat = project(t, 'feat');
+  const main = project(t, 'main');
+  for (const command of ['git checkout main && git push', 'git switch main && git push origin HEAD',
+    'git config remote.origin.push HEAD:main && git push origin', `cd ${main} && git push`, 'npm test && git push',
+    'git -C $R push origin', `git --git-dir=${main}/.git push origin HEAD`, `git --git-dir ${main}/.git push origin HEAD`,
+    'git -c user.name=x push origin feat:other']) {
+    assert.equal(guard(command, feat)?.permissionDecision, 'ask', command);
+  }
+  for (const command of ['git add -A && git commit -m "fix it" && git push', 'git pull --rebase && git push origin feat',
+    `git -C ${feat} push origin feat`, 'git status; git push -u origin feat']) {
+    assert.equal(guard(command, feat), null, command);
+  }
+});
+
+test('a push whose destination git config picks asks when the config can send it to a protected branch', (t) => {
+  const upstream = project(t, 'feat');
+  git(['-C', upstream, 'config', 'push.default', 'upstream']);
+  assert.match(guard('git push origin feat', upstream)?.permissionDecisionReason ?? '', /push\.default=upstream/);
+  assert.equal(guard('git push', upstream)?.permissionDecision, 'ask');
+  assert.equal(guard('git push origin feat:feat', upstream), null);
+  const mapped = project(t, 'feat');
+  git(['-C', mapped, 'config', 'remote.origin.push', 'refs/heads/feat:refs/heads/main']);
+  assert.match(guard('git push -u origin feat', mapped)?.permissionDecisionReason ?? '', /remote\.origin\.push/);
+  const mirror = project(t, 'feat');
+  git(['-C', mirror, 'config', 'remote.origin.mirror', 'true']);
+  assert.match(guard('git push origin', mirror)?.permissionDecisionReason ?? '', /remote\.origin\.mirror/);
+  assert.equal(guard('git push origin feat:feat', mirror), null);
+  const current = project(t, 'feat');
+  git(['-C', current, 'config', 'push.default', 'current']);
+  assert.equal(guard('git push', current), null);
+  const plain = project(t, 'feat');
+  assert.match(guard('git -c push.default=matching push origin', plain)?.permissionDecisionReason ?? '', /carries git -c/);
+});
+
+// --- The commit and merge rails read what runs before them (E-03-4). ----------
+
+test('a commit or merge after a command that can move the branch or the repository asks', (t) => {
+  const feat = project(t, 'feat');
+  const main = project(t, 'main');
+  for (const command of ['git switch main && git merge feat', 'git switch main && git commit -m x',
+    'git checkout main; git merge feat', `cd ${main} && git commit -m x`, 'cd && git commit -m x', 'cd - && git commit -m x',
+    'cd $D && git commit -m x', 'pushd x && git commit -m x', 'gh pr checkout 5 && git commit -m x']) {
+    assert.equal(guard(command, feat)?.permissionDecision, 'ask', command);
+  }
+  assert.match(guard('git switch main && git commit -m x', feat).permissionDecisionReason, /comes after a command/);
+});
+
+test('a cd is followed only when it surely ran, && joins it and its path is absolute, and a wrapped switch still counts', (t) => {
+  const feat = project(t, 'feat');
+  const main = project(t, 'main');
+  for (const command of [`cd ${feat}; git commit -m x`, `cd ${feat} || git commit -m x`, `cd ${feat} & git commit -m x`,
+    `cd ${feat} | git commit -m x`, 'cd nosuch; git commit -m x', `true || cd ${feat} && git commit -m x`,
+    `echo x | cd ${feat} && git commit -m x`, `CDPATH=${dirname(feat)}; cd ${basename(feat)} && git commit -m x`]) {
+    assert.equal(guard(command, main)?.permissionDecision, 'ask', command);
+  }
+  assert.equal(guard(`x; cd ${feat} && git commit -m x`, main), null);
+  assert.equal(guard('env git switch main && git merge feat', feat)?.permissionDecision, 'ask');
+  for (const command of ['(git switch main) && git commit -m x', '{ git switch main; } && git commit -m x',
+    'command git switch main && git commit -m x', 'bash -c "git checkout main" && git merge feat']) {
+    assert.equal(guard(command, feat)?.permissionDecision, 'ask', command);
+  }
+  for (const command of ['[ -n "$(git status --porcelain)" ] && git commit -m x',
+    '[ "$(git cat-file blob HEAD:x)" = y ] || git commit -m x', '{ git add .; } && git commit -m x']) {
+    assert.equal(guard(command, feat), null, command);
+  }
+});
+
+test('the moved-branch ask is judged in the project the commit lands in, not the session directory', (t) => {
+  const feat = project(t, 'feat');
+  const plain = tmp(t, 'cad-guard-plain-');
+  assert.equal(guard(`cd ${feat} && git switch main && git commit -m x`, plain)?.permissionDecision, 'ask');
+  assert.equal(guard(`git -C ${feat} switch main && git -C ${feat} commit -m x`, plain)?.permissionDecision, 'ask');
+  assert.equal(guard('git switch main && git commit -m x', plain), null);
+});
+
+test('a commit or merge after a plain cd, a stage or a read, or any other command lands where it is judged', (t) => {
+  const feat = project(t, 'feat');
+  const main = project(t, 'main');
+  assert.equal(guard(`cd ${feat} && git commit -m x`, main), null);
+  for (const command of ['set -- a && git add -A -- "$@" && git commit -m x -- "$@"', 'npm test && git merge feat2',
+    'git add -A && git rm x && git commit -m y', 'git status; git diff && git commit -m x']) {
+    assert.equal(guard(command, feat), null, command);
+  }
+  // Cadence's own record commit, shaped as agile-build.md section 8 runs it
+  const record = "set -- 'a.md'\n[ -d 'b' ] && set -- \"$@\" 'b'\nfor f in c d; do [ -f \"$f\" ] && set -- \"$@\" \"$f\"; done\n"
+    + 'git add -A -- "$@"\ngit commit -m "docs: record" -- "$@"';
+  assert.equal(guard(record, feat), null);
+  assert.equal(guard(record, main)?.permissionDecision, 'ask');
+});
+
+test('the bypass and on_protected allow turn the moved-branch ask off where they turn the rail off', (t) => {
+  const dir = project(t, 'feat', { git: { guard_bypass: true } });
+  const g = globalFile(t, BYPASS);
+  assert.equal(guardWithGlobal('git switch main && git commit -m x', dir, g), null);
+  assert.equal(guardWithGlobal('git switch main && git merge feat', dir, g)?.permissionDecision, 'ask');
+  const allow = project(t, 'feat', { git: { on_protected: 'allow' } });
+  assert.equal(guard('git switch main && git merge feat', allow), null);
+  assert.equal(guard('git switch main && git commit -m x', tmp(t, 'cad-guard-plain-')), null);
+});
+
+test('a commit on a protected branch still asks after the push rail narrowed', (t) => {
+  assert.equal(guard('git commit -m x', project(t, 'main')).permissionDecision, 'ask');
+  assert.equal(guard('git commit -m x', project(t, 'feat')), null);
 });

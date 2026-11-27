@@ -14,6 +14,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PLANNING, ensureRoadmap, isEntryFile, makeTree, run, scratch, stampState, today, treeOf, verifyChecked } from './planning.test.mjs';
+import { markAgile } from '../cadence-core/bin/lib/project-state.mjs';
 import { readDesign } from '../cadence-core/bin/lib/seldon-design.mjs';
 import { classifyActiveSection, parseActiveIds, phaseCriteria, phaseDetailSpans, phaseRequirements, sectionSpan } from '../cadence-core/bin/lib/planning-files.mjs';
 
@@ -394,6 +395,11 @@ test('design-read --add: a file, an empty path, a project missing a file or head
       writeFileSync(join(planning, 'REQUIREMENTS.md'), ACTIVE);
       return { planning };
     }],
+    ['a project on the agile path', () => {
+      const planning = makeTree({ roadmap: [{ n: 1, name: 'Old 1' }] }, t);
+      assert.equal(markAgile(planning).ok, true);
+      return { planning };
+    }],
     ['--first-phase beside --add', () => ({ planning: project(t, [1]).planning, extra: ['--first-phase', '3'] })],
   ];
   for (const [name, build] of cases) {
@@ -402,6 +408,10 @@ test('design-read --add: a file, an empty path, a project missing a file or head
     assert.equal(r.ok, false, `${name}: ${JSON.stringify(r)}`);
     assert.equal(r._exit, 1);
     assert.ok(r.hint, `${name} carries no hint`);
+    if (name === 'a project on the agile path') {
+      assert.equal(r.reason, 'agile-path');
+      assert.match(r.hint, /\/cad-agile/);
+    }
     if (name === 'no state file') assert.equal(existsSync(join(planning, 'records', 'state.json')), false);
   }
 });

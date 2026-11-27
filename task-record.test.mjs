@@ -15,8 +15,9 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  MAX_SLUG_LENGTH, RECORD_FILE, TASKS_DIR, isTaskSlug, renderTaskRecord, taskRecordsIn,
+  MAX_SLUG_LENGTH, RECORD_FILE, isTaskSlug, renderTaskRecord, taskRecordsIn,
 } from '../cadence-core/bin/lib/task-record.mjs';
+import { TASKS_DIR } from '../cadence-core/bin/lib/project-homes.mjs';
 import { parseCommitRows, taskDeclaredFiles } from '../cadence-core/bin/lib/why-record.mjs';
 
 /** A temp directory under `prefix`, gone when test `t` ends. */

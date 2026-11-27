@@ -65,6 +65,17 @@ const recordsOf = (dir, phase) => {
   return rdir;
 };
 
+test('deferred record: --task is refused on an old-path project, whose land reads the phase homes alone', (t) => {
+  const { repo, dir, base } = adjRepo({}, t);
+  mkdirSync(join(dir, 'tasks', 'fix-it'), { recursive: true });
+  const payload = adjPayloadFile(repo, defPayload());
+  const r = defRun(repo, dir, ['--phase', '0', '--trigger', 'risk_surface', '--discriminator', 'a-b', '--base', base, '--head', 'HEAD',
+    '--payload', payload, '--task', 'fix-it']);
+  assert.deepEqual([r.ok, r.reason], [false, 'task-not-agile'], r.detail);
+  assert.deepEqual(readdirSync(join(dir, 'tasks', 'fix-it')), []);
+  assert.deepEqual(phaseFiles(dir), []);
+});
+
 test('deferred record: the member lands beside the sibling REVIEW discriminator', (t) => {
   const { repo, dir, baseFull, headFull, base } = adjRepo({}, t);
   const payload = adjPayloadFile(repo, defPayload());
