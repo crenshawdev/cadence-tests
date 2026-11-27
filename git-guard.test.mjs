@@ -123,10 +123,11 @@ test('git push from a linked worktree beneath the project asks', (t) => {
   const dir = project(t, 'main');
   const wt = join(dir, '.claude', 'worktrees', 'agent-x');
   git(['-C', dir, 'worktree', 'add', '-q', '-b', 'agent-x', wt]);
-  const d = guard('git push origin x', wt);
+  const d = guard('git push origin agent-x:main', wt);
   assert.notEqual(d, null);
   assert.equal(d.permissionDecision, 'ask');
   assert.match(d.permissionDecisionReason, /cad-land/);
+  assert.equal(guard('git push origin agent-x', wt), null);
 });
 
 test('git push from a submodule beneath the project asks', (t) => {
@@ -139,7 +140,8 @@ test('git push from a submodule beneath the project asks', (t) => {
   // git 2.38.1+ refuses a local-path submodule clone unless the file transport
   // is allowed for this one call.
   git(['-C', dir, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'vendor/sub']);
-  const d = guard('git push origin x', join(dir, 'vendor', 'sub'));
+  // a submodule's checkout is a detached HEAD, so the push names the protected branch it reaches
+  const d = guard('git push origin x:main', join(dir, 'vendor', 'sub'));
   assert.notEqual(d, null);
   assert.equal(d.permissionDecision, 'ask');
 });
@@ -160,31 +162,31 @@ test('a commit from a linked worktree is judged exactly as before: silent', (t) 
   assert.equal(guard('git commit -m x', wt), null);
 });
 
-test('git push always asks (publishing is /cad-land\'s call)', (t) => {
-  const d = guard('git push origin feature', project(t, 'feature'));
+test('a push asks only when it reaches a protected branch (publishing is /cad-land\'s call)', (t) => {
+  const dir = project(t, 'feature');
+  assert.equal(guard('git push origin feature', dir), null);
+  const d = guard('git push origin feature:main', dir);
   assert.equal(d.hookEventName, 'PreToolUse'); // the harness routes on this
   assert.equal(d.permissionDecision, 'ask');
   assert.match(d.permissionDecisionReason, /cad-land/);
 });
 
-test('auto_close true does not exempt any push - every push still asks', (t) => {
-  // The direct inversion of the removed exemption: git-guard carries NO push
-  // exemption. Even the exact shape that once passed silently under repo
-  // auto_close now asks. cad-land's sanctioned publish runs through the
-  // git-publish seam as a subprocess argv push this Bash hook never sees.
-  const dir = project(t, 'cadence/v1.1.0-rc.2', { git: { auto_close: true } });
-  const d = guard('git push -u origin cadence/v1.1.0-rc.2', dir);
+test('auto_close true exempts no push that reaches a protected branch', (t) => {
+  // auto_close is no push exemption: cad-land's sanctioned publish runs through
+  // the git-publish seam as a subprocess argv push this Bash hook never sees.
+  const dir = project(t, 'main', { git: { auto_close: true } });
+  const d = guard('git push -u origin main', dir);
   assert.notEqual(d, null);
   assert.equal(d.permissionDecision, 'ask');
 });
 
 test('compound command still catches the push half', (t) => {
-  const d = guard('git add . && git push', project(t, 'feature'));
+  const d = guard('git add . && git push', project(t, 'main'));
   assert.equal(d.permissionDecision, 'ask');
 });
 
 test('global git options are skipped when finding the subcommand', (t) => {
-  const d = guard('git -C . -c user.name=t push origin x', project(t, 'feature'));
+  const d = guard('git -C . -c user.name=t push origin x:main', project(t, 'feature'));
   assert.equal(d.permissionDecision, 'ask');
 });
 
@@ -645,8 +647,8 @@ test('-C into a Cadence project is policed even from outside any project', (t) =
   const outside = tmp(t, 'cad-guard-outside-');
   const d = guard(`git -C ${target} commit -m x`, outside);
   assert.equal(d.permissionDecision, 'ask');
-  // and a push from outside any project stays silent, as before
-  assert.equal(guard(`git -C ${target} push`, outside), null);
+  // and a push into it is judged there too, the way the commit rail follows -C
+  assert.equal(guard(`git -C ${target} push`, outside).permissionDecision, 'ask');
 });
 
 test('several commits in one command: a deny beats an ask', (t) => {
@@ -748,4 +750,27 @@ test('git merge --abort and --quit land nothing, so a refused protected branch s
   assert.equal(guardWithGlobal('git merge --abort', dir, g), null);
   assert.equal(guardWithGlobal('git merge --quit', dir, g), null);
   assert.equal(guardWithGlobal('git merge --continue', dir, g).permissionDecision, 'deny');
+});
+
+// --- The push rail asks only where a protected branch can be reached (E-03-3). ---
+
+test('a push of a work branch or a tag is silent; one that can reach a protected branch asks', (t) => {
+  const feat = project(t, 'feat');
+  for (const command of ['git push -u origin feat', 'git push origin v4.5.0', 'git push origin HEAD', 'git push --tags']) {
+    assert.equal(guard(command, feat), null, command);
+  }
+  for (const command of ['git push origin feat:main', 'git push --all', 'git push origin +feat:refs/heads/main',
+    'git push origin --delete main', 'git push -o ci.skip origin feat:main']) {
+    assert.equal(guard(command, feat)?.permissionDecision, 'ask', command);
+  }
+  const main = project(t, 'main');
+  for (const command of ['git push', 'git push origin', 'git push origin HEAD']) {
+    assert.equal(guard(command, main)?.permissionDecision, 'ask', command);
+  }
+  assert.equal(guard('git push origin feat', main), null);
+});
+
+test('a commit on a protected branch still asks after the push rail narrowed', (t) => {
+  assert.equal(guard('git commit -m x', project(t, 'main')).permissionDecision, 'ask');
+  assert.equal(guard('git commit -m x', project(t, 'feat')), null);
 });
