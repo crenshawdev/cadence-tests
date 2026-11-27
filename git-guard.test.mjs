@@ -741,3 +741,11 @@ test('across the rails a deny beats an ask: a request ask does not hide a refuse
   assert.equal(guard('gh pr create --fill && git commit -m x', dir).permissionDecision, 'deny');
   assert.equal(guard('git push origin feat && git merge feat', dir).permissionDecision, 'deny');
 });
+
+test('git merge --abort and --quit land nothing, so a refused protected branch still lets them run; --continue is judged', (t) => {
+  const dir = project(t, 'main', { git: { guard_bypass: true, on_protected: 'refuse' } });
+  const g = globalFile(t, BYPASS);
+  assert.equal(guardWithGlobal('git merge --abort', dir, g), null);
+  assert.equal(guardWithGlobal('git merge --quit', dir, g), null);
+  assert.equal(guardWithGlobal('git merge --continue', dir, g).permissionDecision, 'deny');
+});
