@@ -239,6 +239,7 @@ test('a start stopped after each of its writes is finished by the next to the tr
   const rows = [
     ['the list', (d) => listAndCopy(d, false)],
     ['the state copy', (d) => listAndCopy(d)],
+    ['inside the copy\'s write', (d) => { listAndCopy(d, false); put(oldPathArchive(d), 'records/state.json.99999.0.tmp', '{"half\n'); }],
     ['the marker', marked],
     ['some moves', (d) => { marked(d); moveBy(d, paths.slice(0, 6)); }],
     ['every move', (d) => { marked(d); moveBy(d, paths); }],
@@ -295,6 +296,16 @@ test('the marker takes an old-path state\'s place only with a copy of its bytes 
   assert.equal(readState(dir).reason, 'agile-path');
   assert.deepEqual(markAgile(dir, copy), { ok: true, changed: false });
   assert.equal(readFileSync(copy, 'utf8'), old);
+});
+
+test('an old-path state with a cycle opened since the switch judged it landed is never replaced by the marker', (t) => {
+  const dir = landedProject(t, { ...CLOSED, cycleOpen: true });
+  const copy = join(oldPathArchive(dir), 'records', 'state.json');
+  mkdirSync(dirname(copy), { recursive: true });
+  const r = markAgile(dir, copy);
+  assert.deepEqual([r.ok, r.reason], [false, 'cycle-open'], JSON.stringify(r));
+  assert.equal(readState(dir).kind, 'valid');
+  assert.equal(existsSync(copy), false);
 });
 
 test('two starts at once switch the project once, and the archived state is always the old one', async (t) => {
