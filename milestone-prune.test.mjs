@@ -119,6 +119,19 @@ test('archiveRequirements moves shipped rows to a created ## Shipped and cleans 
   assert.ok(r.text.indexOf('## Shipped') < r.text.indexOf('## Out of Scope'));
 });
 
+test('a checkbox bullet ships with its wording, ticked or not, and a prose bullet stays', () => {
+  const src = REQUIREMENTS
+    .replace('- **STOR-01**: bytes survive', '- [ ] **STOR-01**: bytes survive')
+    .replace('- **STOR-02**: the patch holds', '- [x] **STOR-02**: the patch holds\n- **Note**: prose the close never ships');
+  const r = archiveRequirements(src, [1, 2.1], 'v1.2.0');
+  assert.ok(r.text.includes('| STOR-01 (bytes survive) | 1 | Complete | v1.2.0 |'));
+  assert.ok(r.text.includes('| STOR-02 (the patch holds) | 2.1 | Complete | v1.2.0 |'));
+  assert.ok(!r.text.includes('**STOR-01**: bytes survive'));
+  assert.ok(!r.text.includes('**STOR-02**: the patch holds'));
+  assert.ok(r.text.includes('- **Note**: prose the close never ships'));
+  assert.ok(r.text.includes('- **REC-01**: bytes are findable'));
+});
+
 test('an existing ## Shipped table is appended to, never duplicated', () => {
   const first = archiveRequirements(REQUIREMENTS, [1], 'v1.0.0');
   const second = archiveRequirements(first.text, [2.1], 'v1.1.0');
