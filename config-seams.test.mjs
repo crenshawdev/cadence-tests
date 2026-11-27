@@ -458,7 +458,7 @@ test('land-cleanup: with git.base_branch unset, get says null and the seam says 
 
 test('git-guard: the on_protected value it acts on is what get reports', (t) => {
   // The silent/ask pair rather than `refuse`: whether a refuse hard-blocks
-  // depends on commitDecision's `canDeny`, which is a property of the hook
+  // depends on branchDecision's `canDeny`, which is a property of the hook
   // payload rather than of config, and this arm is about the config read.
   const allow = gitLayers({
     branch: 'main',

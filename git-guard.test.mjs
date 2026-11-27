@@ -516,7 +516,7 @@ test('a torn repo layer never CANCELS a deny the global layer configured', (t) =
 // NOT move: it answers where commits go, never what a review found, so it must
 // stay reachable by no gate value at all. A change made to give this pin
 // something to observe - a routing import, a resolved gate threaded near
-// commitDecision - is the failure it exists to detect, not a way to pass it.
+// branchDecision - is the failure it exists to detect, not a way to pass it.
 //
 // The census is LEXICAL over git-guard.mjs's own source. Every pattern is built
 // from an escaped string through `new RegExp`, the discipline
@@ -542,7 +542,7 @@ test('census: no gate value reaches the protected-branch guard (D-11)', () => {
       + 'a plumbing change.');
   }
 
-  // What commitDecision consults from the merged config, as the dotted paths
+  // What branchDecision consults from the merged config, as the dotted paths
   // the source spells. `config.json` is the layer FILENAME, not a key, so the
   // config arm excludes it by name rather than by a second allowlist.
   const gitKeys = GUARD_SRC.match(new RegExp("\\bgit\\.[a-z_]+", 'g')) || [];
@@ -655,7 +655,7 @@ test('several commits in one command: a deny beats an ask', (t) => {
   assert.equal(d.permissionDecision, 'deny');
 });
 
-// --- The bypass: git.guard_bypass in both config layers turns both rails off. ---
+// --- The bypass: git.guard_bypass in both config layers turns the push and commit rails off. ---
 
 /** A user-global config file holding `text`, gone when test `t` ends. */
 function globalFile(t, text) {
@@ -689,4 +689,55 @@ test('bypass with a torn global layer: the hook decides as before', (t) => {
   const torn = globalFile(t, '{ nope');
   assert.equal(guardWithGlobal('git push origin main', dir, torn).permissionDecision, 'ask');
   assert.equal(guardWithGlobal('git commit -m x', dir, torn).permissionDecision, 'ask');
+});
+
+// --- The request and merge rails: what the bypass leaves on (E-03-2). ---------
+
+const OPENS_AND_MERGES = ['gh pr create --fill', 'gh pr merge 5', 'glab mr create', 'glab mr merge 5',
+  'tea pr create', 'tea pulls merge 3'];
+
+test('a request opened or merged from Bash asks, with the bypass in both layers and without it', (t) => {
+  const dir = project(t, 'feat', { git: { guard_bypass: true } });
+  const bypassed = globalFile(t, BYPASS);
+  const off = globalFile(t, '{}');
+  for (const command of OPENS_AND_MERGES) {
+    for (const g of [bypassed, off]) {
+      const d = guardWithGlobal(command, dir, g);
+      assert.equal(d && d.permissionDecision, 'ask', `${command} (${g === bypassed ? 'bypass' : 'no bypass'})`);
+      assert.match(d.permissionDecisionReason, /pull or merge request/);
+    }
+  }
+});
+
+test('a request rail stays silent on a view, a mention, the seam, and outside a project', (t) => {
+  const dir = project(t, 'main');
+  for (const command of ['gh pr view 5', 'gh pr list', 'glab mr view 5', 'echo "gh pr merge"',
+    'node cadence-core/bin/git-publish.mjs merge --dir . --forge github']) {
+    assert.equal(guard(command, dir), null, command);
+  }
+  assert.equal(guard('gh pr merge 5', tmp(t, 'cad-guard-plain-')), null);
+});
+
+test('git merge onto a protected branch asks, and onto a task branch is silent', (t) => {
+  const onMain = project(t, 'main');
+  const d = guard('git merge feat', onMain);
+  assert.equal(d.permissionDecision, 'ask');
+  assert.match(d.permissionDecisionReason, /"main" is a protected branch[\s\S]*approve to merge here/);
+  assert.equal(guard('git merge feat', project(t, 'feat2')), null);
+});
+
+test('git merge follows on_protected, and the bypass does not reach it while it still silences a commit', (t) => {
+  const refused = project(t, 'main', { git: { on_protected: 'refuse' } });
+  assert.equal(guard('git merge feat', refused).permissionDecision, 'deny');
+  assert.equal(guard('git merge feat', project(t, 'main', { git: { on_protected: 'allow' } })), null);
+  const dir = project(t, 'main', { git: { guard_bypass: true } });
+  const g = globalFile(t, BYPASS);
+  assert.equal(guardWithGlobal('git merge feat', dir, g).permissionDecision, 'ask');
+  assert.equal(guardWithGlobal('git commit -m x', dir, g), null);
+});
+
+test('across the rails a deny beats an ask: a request ask does not hide a refused commit', (t) => {
+  const dir = project(t, 'main', { git: { on_protected: 'refuse' } });
+  assert.equal(guard('gh pr create --fill && git commit -m x', dir).permissionDecision, 'deny');
+  assert.equal(guard('git push origin feat && git merge feat', dir).permissionDecision, 'deny');
 });
