@@ -200,6 +200,9 @@ test("the build asks the findings rule first, sizes the story before it's built,
   // a cross-model reviewer runs through its provider's procedure, and a story is never left with none
   assert.ok(at('references/review-cross-model.md` (one consult site - this step)') < at('route.mjs" resolve --role cad-reviewer --phase 0'));
   assert.ok(prose.includes('with none left `claude-subagent` runs'));
+  // the resolve fires for a set with no claude-subagent too, so only a claude-subagent that runs opens a bracket
+  assert.ok(!prose.includes('--bracket-plan {story}-review'));
+  assert.ok(prose.includes('--plan {story}-review --role cad-reviewer --reviewer claude-subagent --read-file'));
   // a name filter that matches nothing exits 0, so a check built on one passes after its test is renamed
   assert.ok(prose.includes('A filter that matches no test still passes'));
   // a done story takes no more notes, so what was done differently is noted before the checks can make it done
