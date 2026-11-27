@@ -225,12 +225,15 @@ test('parentDir steps exactly as path.posix.dirname and path.win32.dirname do', 
 
 // --- gitInvocations: the same scan, keeping each segment's -C arguments. ----
 
-test('gitInvocations keeps -C arguments and -c values in order, raw, and gitVerbs is its verb list', () => {
+test('gitInvocations keeps -C arguments, global options and each segment\'s place, raw, and gitVerbs is its verb list', () => {
   assert.deepEqual(gitInvocations('git -C /tmp/x commit -m y'),
-    [{ verb: 'commit', dirs: ['/tmp/x'], configs: [], args: ['-m', 'y'] }]);
+    [{ verb: 'commit', dirs: ['/tmp/x'], opts: [], args: ['-m', 'y'], at: 0 }]);
   assert.deepEqual(gitInvocations('git -C a -c k=v -C "$S" commit && git push'),
-    [{ verb: 'commit', dirs: ['a', '"$S"'], configs: ['k=v'], args: [] }, { verb: 'push', dirs: [], configs: [], args: [] }]);
-  assert.deepEqual(gitInvocations('git --config-env a=B --config-env=c=D push').map((g) => g.configs), [['a=B', 'c=D']]);
+    [{ verb: 'commit', dirs: ['a', '"$S"'], opts: ['-c', 'k=v'], args: [], at: 0 },
+      { verb: 'push', dirs: [], opts: [], args: [], at: 1 }]);
+  assert.deepEqual(gitInvocations('git --git-dir=x -p push').map((g) => g.opts), [['--git-dir=x', '-p']]);
+  // at counts every non-empty segment, so a push after cd sits at 1 with nothing at 0
+  assert.deepEqual(gitInvocations('cd x && ; git push').map((g) => g.at), [1]);
   assert.deepEqual(gitInvocations('git merge --abort').map((g) => g.args), [['--abort']]);
   assert.deepEqual(gitInvocations('git -C'), []);
   assert.deepEqual(gitInvocations(42), []);

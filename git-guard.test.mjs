@@ -771,14 +771,30 @@ test('a push of a work branch or a tag is silent; one that can reach a protected
   assert.equal(guard('git push origin feat', main), null);
 });
 
-test('a push the rail cannot read asks: a quoted refspec is read through its quotes, a glob or @ is not ruled clear', (t) => {
+test('a push stays quiet only on plain words: a quote, an expansion, a glob or @ in a refspec asks', (t) => {
   const feat = project(t, 'feat');
   for (const command of ['git push origin "feat:main"', "git push origin 'HEAD:main'", 'git push origin "main"',
-    'git push origin refs/heads/*:refs/heads/*', 'git push origin :', 'git push origin @', 'git push origin "feat:$B"',
-    'git push --branches', 'git push --mirr', 'git push --al origin']) {
+    'git push origin refs/heads/*:refs/heads/*', 'git push origin :', 'git push origin "feat:$B"', 'git push origin $R:feat',
+    'git push "--all" origin', 'git push origin "feat"', 'git push --branches', 'git push --mirr', 'git push --al origin',
+    'git push origin feat:heads/main', 'git push origin heads/main', 'git push origin @:main']) {
     assert.equal(guard(command, feat)?.permissionDecision, 'ask', command);
   }
-  for (const command of ['git push origin "feat"', 'git push --no-all origin feat', 'git push origin \'v4.5.0\'']) {
+  for (const command of ['git push --no-all origin feat', 'git push origin @', 'git push --force-with-lease=feat:abc origin feat']) {
+    assert.equal(guard(command, feat), null, command);
+  }
+});
+
+test('a push asks when an earlier command, a global option or a -C it cannot follow can move where it lands', (t) => {
+  const feat = project(t, 'feat');
+  const main = project(t, 'main');
+  for (const command of ['git checkout main && git push', 'git switch main && git push origin HEAD',
+    'git config remote.origin.push HEAD:main && git push origin', `cd ${main} && git push`, 'npm test && git push',
+    'git -C $R push origin', `git --git-dir=${main}/.git push origin HEAD`, `git --git-dir ${main}/.git push origin HEAD`,
+    'git -c user.name=x push origin feat:other']) {
+    assert.equal(guard(command, feat)?.permissionDecision, 'ask', command);
+  }
+  for (const command of ['git add -A && git commit -m "fix it" && git push', 'git pull --rebase && git push origin feat',
+    `git -C ${feat} push origin feat`, 'git status; git push -u origin feat']) {
     assert.equal(guard(command, feat), null, command);
   }
 });
@@ -800,8 +816,7 @@ test('a push whose destination git config picks asks when the config can send it
   git(['-C', current, 'config', 'push.default', 'current']);
   assert.equal(guard('git push', current), null);
   const plain = project(t, 'feat');
-  assert.match(guard('git -c push.default=matching push origin', plain)?.permissionDecisionReason ?? '', /a -c on the command/);
-  assert.equal(guard('git -c user.name=x push origin feat:other', plain), null);
+  assert.match(guard('git -c push.default=matching push origin', plain)?.permissionDecisionReason ?? '', /carries git -c/);
 });
 
 test('a commit on a protected branch still asks after the push rail narrowed', (t) => {
