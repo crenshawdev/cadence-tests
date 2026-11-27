@@ -615,11 +615,14 @@ test('source: push-failed goes through redactAndCap, the other details through r
   const IDIOM = /e && e\.message \? e\.message : String\(e\)/g;
   const CAPPED = /redactAndCap\(e && e\.message \? e\.message : String\(e\)\)/g;
   const WRAPPED = /redactUrl\(e && e\.message \? e\.message : String\(e\)\)/g;
+  // E-03-1 added a fourth: open-failed and merge-failed carry the forge CLI's error, which can name the remote's URL,
+  // so it's capped like push-failed.
   const pub = readFileSync(join(BIN, 'git-publish.mjs'), 'utf8');
-  assert.equal((pub.match(IDIOM) || []).length, 3, 'git-publish.mjs gained or lost a detail site');
-  assert.equal((pub.match(CAPPED) || []).length, 1, 'push-failed is not the one capped site');
+  assert.equal((pub.match(IDIOM) || []).length, 4, 'git-publish.mjs gained or lost a detail site');
+  assert.equal((pub.match(CAPPED) || []).length, 2, 'push-failed and the request failure are not the two capped sites');
   assert.equal((pub.match(WRAPPED) || []).length, 2, 'a git-publish.mjs detail site is unredacted');
   assert.match(pub, /reason: 'push-failed'[\s\S]{0,120}?detail: redactAndCap\(/, 'push-failed');
+  assert.match(pub, /reason: `\$\{op\}-failed`[\s\S]{0,120}?detail: redactAndCap\(/, 'open-failed and merge-failed');
   for (const reason of ['reap-failed', 'internal']) {
     assert.match(pub, new RegExp(`reason: '${reason}'[\\s\\S]{0,120}?detail: redactUrl\\(`), reason);
   }
@@ -635,7 +638,7 @@ test('source: push-failed goes through redactAndCap, the other details through r
 // one explicitly, and they all still pass); only the empty, valueless and
 // flag-shaped spellings refuse.
 for (const [sub, rest] of [['publish', []], ['reap', ['--branch', 'cadence/v2.2.0']],
-  ['authorized', []]]) {
+  ['authorized', []], ['open', ['--forge', 'github', '--base', 'main']], ['merge', ['--forge', 'github']]]) {
   for (const [label, dirArgs] of [['an EMPTY', ['--dir', '']], ['a VALUELESS', ['--dir']]]) {
     test(`${sub}: ${label} --dir refuses by name, exit 1, nothing run`, () => {
       const { d, status } = seamStatus([sub, ...dirArgs, ...rest]);
@@ -648,3 +651,93 @@ for (const [sub, rest] of [['publish', []], ['reap', ['--branch', 'cadence/v2.2.
     });
   }
 }
+
+// --- open and merge: the unattended land's request calls (E-03-1) -------------
+
+// /cad-land 3(b) ran gh, glab and tea in Bash, where git-guard's request rail now asks. These two run them as a
+// subprocess under publish's own gates, so each test reads the stub's argv log: what ran, or that nothing did.
+
+/** Run `open` or `merge` with stub gh, glab and tea first on PATH; the argv log lines, or [] when none ran. */
+function requestRun(t, args, globalCfg, stubOpts = {}) {
+  const stubDir = tmp(t, 'cad-pub-req-stub-');
+  for (const name of ['gh', 'glab', 'tea']) stub(stubDir, name, { body: 'https://forge.test/req/7', ...stubOpts });
+  const log = join(tmp(t, 'cad-pub-req-log-'), 'argv.log');
+  const env = { ...GIT_ENV, CADENCE_GLOBAL_CONFIG: globalCfg, PATH: `${stubDir}:${process.env.PATH}`, CAD_ARGV_LOG: log };
+  let out; let status = 0;
+  try { out = execFileSync('node', [SEAM, ...args], { encoding: 'utf8', env }); }
+  catch (e) { out = e.stdout; status = e.status; }
+  const ran = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [];
+  return { d: JSON.parse(String(out).trim()), status, ran };
+}
+
+const BRANCH = 'cadence/v1.1.0-rc.2';
+
+test('open and merge: each forge runs its own CLI with the argv cad-land ran in Bash', (t) => {
+  const { dir } = repo(t);
+  const rows = [
+    [['open', '--forge', 'github', '--base', 'main'], `gh pr create --base main --head ${BRANCH} --fill`, 'opened'],
+    [['open', '--forge', 'gitlab', '--base', 'main'],
+      `glab mr create --source-branch ${BRANCH} --target-branch main --fill`, 'opened'],
+    [['open', '--forge', 'forgejo', '--base', 'main'], `tea pr create --base main --head ${BRANCH}`, 'opened'],
+    [['merge', '--forge', 'github'], `gh pr merge ${BRANCH} --merge --delete-branch`, 'merged'],
+    [['merge', '--forge', 'github', '--sha', 'abc1234'],
+      `gh pr merge ${BRANCH} --merge --delete-branch --match-head-commit abc1234`, 'merged'],
+    [['merge', '--forge', 'gitlab'], `glab mr merge ${BRANCH} --yes --remove-source-branch --auto-merge=false`, 'merged'],
+    [['merge', '--forge', 'forgejo', '--index', '12'], 'tea pr merge --style merge 12', 'merged'],
+  ];
+  for (const [args, argv, action] of rows) {
+    const { d, status, ran } = requestRun(t, [...args, '--dir', dir], GLOBAL_ON_FILE);
+    assert.equal(status, 0, JSON.stringify(d));
+    assert.equal(d.action, action);
+    assert.equal(d.branch, BRANCH);
+    assert.equal(d.output, 'https://forge.test/req/7', 'the forge CLI printed the request, and the envelope carries it');
+    assert.deepEqual(ran, [argv]);
+  }
+});
+
+test('open and merge refuse with nothing run: auto_close in one layer, or a protected head', (t) => {
+  const repoOnly = repo(t).dir;
+  const globalOnly = repo(t, { config: { git: {} } }).dir;
+  const onMain = repo(t, { branch: 'main' }).dir;
+  for (const args of [['open', '--forge', 'github', '--base', 'main'], ['merge', '--forge', 'gitlab']]) {
+    for (const [dir, cfg, reason] of [[repoOnly, NO_GLOBAL, 'auto-close-off'],
+      [globalOnly, GLOBAL_ON_FILE, 'auto-close-off'], [onMain, GLOBAL_ON_FILE, 'protected-branch']]) {
+      const { d, status, ran } = requestRun(t, [...args, '--dir', dir], cfg);
+      assert.equal(status, 1);
+      assert.equal(d.reason, reason, JSON.stringify(d));
+      assert.deepEqual(ran, [], `${args[0]} ran a forge CLI past ${reason}`);
+    }
+  }
+});
+
+test('open and merge refuse with nothing run: a torn layer that could carry protected_branches', (t) => {
+  const { dir } = repo(t);
+  const { d, status, ran } = requestRun(t, ['merge', '--forge', 'github', '--dir', dir], globalText(t, '{"git":'));
+  assert.equal(status, 1);
+  assert.equal(d.reason, 'config-parse-failed', JSON.stringify(d));
+  assert.match(d.hint, /nothing is merged/);
+  assert.deepEqual(ran, []);
+});
+
+test('merge refuses a flag its forge does not take, so a head check is never dropped', (t) => {
+  const { dir } = repo(t);
+  for (const [args, reason] of [[['--forge', 'gitlab', '--sha', 'abc1234'], 'bad-sha'],
+    [['--forge', 'github', '--sha', 'HEAD~1'], 'bad-sha'], [['--forge', 'github', '--index', '3'], 'bad-index'],
+    [['--forge', 'forgejo'], 'bad-index'], [['--forge', 'bitbucket'], 'bad-forge']]) {
+    const { d, ran } = requestRun(t, ['merge', ...args, '--dir', dir], GLOBAL_ON_FILE);
+    assert.equal(d.reason, reason, JSON.stringify(args));
+    assert.deepEqual(ran, []);
+  }
+  const { d } = requestRun(t, ['open', '--forge', 'github', '--base', 'a:b', '--dir', dir], GLOBAL_ON_FILE);
+  assert.equal(d.reason, 'bad-base');
+});
+
+test('merge: a forge CLI that fails says merge-failed, with its URL credentials redacted', (t) => {
+  const { dir } = repo(t);
+  const { d, status } = requestRun(t, ['merge', '--forge', 'github', '--dir', dir], GLOBAL_ON_FILE,
+    { body: '', code: 1, stderr: 'not mergeable: https://bot:s3cr3t@forge.test/o/r' });
+  assert.equal(status, 1);
+  assert.equal(d.reason, 'merge-failed');
+  assert.match(d.detail, /not mergeable/);
+  assert.doesNotMatch(d.detail, /s3cr3t/);
+});
