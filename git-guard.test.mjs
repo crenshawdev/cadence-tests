@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { basename, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { treeOf, v40Project } from './planning.test.mjs';
 
@@ -830,6 +830,34 @@ test('a commit or merge after a command that can move the branch or the reposito
     assert.equal(guard(command, feat)?.permissionDecision, 'ask', command);
   }
   assert.match(guard('git switch main && git commit -m x', feat).permissionDecisionReason, /comes after a command/);
+});
+
+test('a cd is followed only when it surely ran, && joins it and its path is absolute, and a wrapped switch still counts', (t) => {
+  const feat = project(t, 'feat');
+  const main = project(t, 'main');
+  for (const command of [`cd ${feat}; git commit -m x`, `cd ${feat} || git commit -m x`, `cd ${feat} & git commit -m x`,
+    `cd ${feat} | git commit -m x`, 'cd nosuch; git commit -m x', `true || cd ${feat} && git commit -m x`,
+    `echo x | cd ${feat} && git commit -m x`, `CDPATH=${dirname(feat)}; cd ${basename(feat)} && git commit -m x`]) {
+    assert.equal(guard(command, main)?.permissionDecision, 'ask', command);
+  }
+  assert.equal(guard(`x; cd ${feat} && git commit -m x`, main), null);
+  assert.equal(guard('env git switch main && git merge feat', feat)?.permissionDecision, 'ask');
+  for (const command of ['(git switch main) && git commit -m x', '{ git switch main; } && git commit -m x',
+    'command git switch main && git commit -m x', 'bash -c "git checkout main" && git merge feat']) {
+    assert.equal(guard(command, feat)?.permissionDecision, 'ask', command);
+  }
+  for (const command of ['[ -n "$(git status --porcelain)" ] && git commit -m x',
+    '[ "$(git cat-file blob HEAD:x)" = y ] || git commit -m x', '{ git add .; } && git commit -m x']) {
+    assert.equal(guard(command, feat), null, command);
+  }
+});
+
+test('the moved-branch ask is judged in the project the commit lands in, not the session directory', (t) => {
+  const feat = project(t, 'feat');
+  const plain = tmp(t, 'cad-guard-plain-');
+  assert.equal(guard(`cd ${feat} && git switch main && git commit -m x`, plain)?.permissionDecision, 'ask');
+  assert.equal(guard(`git -C ${feat} switch main && git -C ${feat} commit -m x`, plain)?.permissionDecision, 'ask');
+  assert.equal(guard('git switch main && git commit -m x', plain), null);
 });
 
 test('a commit or merge after a plain cd, a stage or a read, or any other command lands where it is judged', (t) => {

@@ -223,10 +223,12 @@ test('parentDir steps exactly as path.posix.dirname and path.win32.dirname do', 
   chase(WIN32_SHAPES, path.win32.dirname);
 });
 
-test('segments gives every non-empty segment its words, and gitInvocations an at that indexes them', () => {
+test('segments gives every non-empty segment its words and what joins it to the next, and gitInvocations an at that indexes them', () => {
   const cmd = 'cd x && ; set -- "a b" | git -C y commit -m z';
-  assert.deepEqual(segments(cmd), [['cd', 'x'], ['set', '--', '"a', 'b"'], ['git', '-C', 'y', 'commit', '-m', 'z']]);
-  assert.equal(segments(cmd)[gitInvocations(cmd)[0].at][0], 'git');
+  assert.deepEqual(segments(cmd), [{ words: ['cd', 'x'], join: '&&;' }, { words: ['set', '--', '"a', 'b"'], join: '|' },
+    { words: ['git', '-C', 'y', 'commit', '-m', 'z'], join: '' }]);
+  assert.equal(segments(cmd)[gitInvocations(cmd)[0].at].words[0], 'git');
+  assert.deepEqual(segments('; cd x\n').map((g) => g.join), ['\n']);
   assert.deepEqual(segments(''), []);
   assert.deepEqual(segments(7), []);
 });
