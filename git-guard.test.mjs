@@ -792,6 +792,10 @@ test('a push whose destination git config picks asks when the config can send it
   const mapped = project(t, 'feat');
   git(['-C', mapped, 'config', 'remote.origin.push', 'refs/heads/feat:refs/heads/main']);
   assert.match(guard('git push -u origin feat', mapped)?.permissionDecisionReason ?? '', /remote\.origin\.push/);
+  const mirror = project(t, 'feat');
+  git(['-C', mirror, 'config', 'remote.origin.mirror', 'true']);
+  assert.match(guard('git push origin', mirror)?.permissionDecisionReason ?? '', /remote\.origin\.mirror/);
+  assert.equal(guard('git push origin feat:feat', mirror), null);
   const current = project(t, 'feat');
   git(['-C', current, 'config', 'push.default', 'current']);
   assert.equal(guard('git push', current), null);
