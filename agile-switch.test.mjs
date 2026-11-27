@@ -3,13 +3,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, cpSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
 import { existsSync } from 'node:fs';
 import { markAgile, readState, writeState } from '../cadence-core/bin/lib/project-state.mjs';
-import { OLD_PATH_ARCHIVED, oldPathArchive, switchListFile } from '../cadence-core/bin/lib/agile-paths.mjs';
+import { OLD_PATH_ARCHIVED, epicFile, oldPathArchive, storyFile, switchListFile } from '../cadence-core/bin/lib/agile-paths.mjs';
+import { readEpicFile, readRequirementsFile } from '../cadence-core/bin/lib/agile-read.mjs';
+import { renderStoryFile } from '../cadence-core/bin/lib/agile-render.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const AGILE = join(HERE, '..', 'cadence-core', 'bin', 'agile.mjs');
@@ -379,3 +381,176 @@ test('a start finishing a stopped move reads the old requirements from the archi
   assert.deepEqual([r.ok, r.reason], [false, 'requirement-ids-used'], JSON.stringify(r));
   assert.match(r.detail, /^CAT-01, LOAN-02 are already in .*_archive-old-path\/REQUIREMENTS\.md/);
 });
+
+const FENCE = '```';
+const OLD_PROJECT = `# Toolshed
+
+## What This Is
+
+Lends tools to neighbours.
+
+## Core Value
+
+A borrowed drill comes back.
+
+## Requirements
+
+### Validated
+
+- catalog - v1.0.0
+
+### Out of Scope
+
+- Payments - nobody pays
+
+### Later
+
+- not carried
+
+## Context
+
+${FENCE}
+## Constraints
+- fenced, not carried
+${FENCE}
+
+## Constraints
+
+- **Stack**: Node - zero deps
+
+## Key Decisions
+
+| Decision | Rationale | Outcome |
+|---|---|---|
+| Zero deps | less to break | good |
+
+---
+*Last updated: 2026-11-01 after v1.0.0*
+`;
+const CARRIED_PROJECT = `## From the old path
+
+### What This Is
+
+Lends tools to neighbours.
+
+### Core Value
+
+A borrowed drill comes back.
+
+### Out of Scope
+
+- Payments - nobody pays
+
+### Constraints
+
+- **Stack**: Node - zero deps
+
+### Key Decisions
+
+| Decision | Rationale | Outcome |
+|---|---|---|
+| Zero deps | less to break | good |
+`;
+const OPEN_REQUIREMENTS = `# Requirements: Toolshed
+
+## Active
+
+- [ ] **CAT-01**: a catalog
+
+## Shipped
+
+| LOAN-07 (lending) | 2 | Complete | v1.0.0 |
+
+## v2 Requirements
+
+${FENCE}
+- **FAKE-01**: a fenced example
+${FENCE}
+
+- [ ] **MOD-01**: later, after LOAN-02 lands
+- **MOD-03** no colon here
+- **Note**: not an ID
+- **MOD-01**: a second time
+- **SYNC-2**:
+
+## Out of Scope
+`;
+const OLD_CAPTURE = '## Todos\n\n- [ ] (phase 2) wire the lending desk\n- [x] a closed one\n- None.\n\n## Seeds\n\n- a seed for later\n\n## Notes\n\n- 2026-11-01 a note\n\n## Debt markers\n\n- agile.mjs:12 TODO not carried\n';
+
+/** A landed project holding open work in every file a switch copies from, and a design of its own beside it. */
+function openWorkProject(t) {
+  const dir = landedProject(t);
+  put(dir, 'PROJECT.md', OLD_PROJECT);
+  put(dir, 'REQUIREMENTS.md', OPEN_REQUIREMENTS);
+  put(dir, 'CAPTURE.md', OLD_CAPTURE);
+  put(dir, 'records/DECLINED.md', '# Declined\n\n| a row | kept as is |\n');
+  put(dir, 'records/FILED.md', '# Filed\r\n\r\n| #12 | crlf too |\r\n');
+  return { dir, design: freshDesign(join(scratch('cad-agile-switch-design-', t), 'design')) };
+}
+
+test('a switch carries the old path\'s open work: PROJECT.md\'s five sections, the v2 requirements and the highest IDs, the open captures, and the ledgers as they are', (t) => {
+  const { dir, design } = openWorkProject(t);
+  const r = start(dir, design);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const plain = answerSetup(join(scratch('cad-agile-switch-plain-', t), '.planning'));
+  assert.equal(start(plain, design).ok, true);
+  const agile = join(dir, 'agile');
+  assert.equal(readFileSync(join(agile, 'project.md'), 'utf8'), `${readFileSync(join(plain, 'agile', 'project.md'), 'utf8').trimEnd()}\n\n${CARRIED_PROJECT}`);
+  const req = readRequirementsFile(readFileSync(join(agile, 'REQUIREMENTS.md'), 'utf8'));
+  assert.equal(req.whole, true);
+  assert.deepEqual(req.deferred, [{ id: 'MOD-01', text: 'later, after LOAN-02 lands' }, { id: 'MOD-03', text: 'no colon here' }]);
+  assert.deepEqual(req.earlier, ['CAT-01', 'LOAN-07', 'FAKE-01', 'MOD-03', 'SYNC-2']);
+  assert.deepEqual(req.requirements, readRequirementsFile(readFileSync(join(plain, 'agile', 'REQUIREMENTS.md'), 'utf8')).requirements);
+  assert.equal(readFileSync(join(agile, 'backlog.md'), 'utf8'), '## Todos\n\n- [ ] wire the lending desk\n\n## Seeds\n\n- a seed for later\n\n## Notes\n\n- 2026-11-01 a note\n');
+  assert.equal(readFileSync(join(agile, 'declined.md'), 'utf8'), '# Declined\n\n| a row | kept as is |\n');
+  assert.equal(readFileSync(join(agile, 'filed.md'), 'utf8'), '# Filed\r\n\r\n| #12 | crlf too |\r\n');
+  // nothing open, nothing written: a landed project with none of these files carries no backlog and no ledger
+  const bare = landedProject(t);
+  assert.equal(start(bare, design).ok, true);
+  assert.deepEqual(['backlog.md', 'declined.md', 'filed.md'].filter((n) => existsSync(join(bare, 'agile', n))), []);
+});
+
+test('an old file a switch copies from that isn\'t a plain file is refused by name, by check and start alike, with nothing written', (t) => {
+  for (const [name, plant] of /** @type {[string, (dir: string) => void][]} */ ([
+    ['CAPTURE.md', (d) => mkdirSync(join(d, 'CAPTURE.md'))],
+    ['records/FILED.md', (d) => symlinkSync(join(d, 'PROJECT.md'), join(d, 'records', 'FILED.md'))],
+  ])) {
+    const { dir, design } = openWorkProject(t);
+    rmSync(join(dir, name), { recursive: true, force: true });
+    plant(dir);
+    const before = tree(dirname(dir));
+    for (const r of [check(dir, design), start(dir, design)]) {
+      assert.deepEqual([r.ok, r.reason], [false, 'old-file'], `${name}: ${JSON.stringify(r)}`);
+      assert.match(r.detail, new RegExp(`${name.replace('.', '\\.')} is not a plain file`), name);
+    }
+    assert.deepEqual(tree(dirname(dir)), before, name);
+  }
+});
+
+test('a start after the switch\'s release closes keeps From the old path, and the Standing rules after it', (t) => {
+  const { dir, design } = openWorkProject(t);
+  assert.equal(start(dir, design).ok, true);
+  const agile = join(dir, 'agile');
+  for (const id of ['E-01', 'E-02', 'E-03']) {
+    const epic = epicFile(agile, id);
+    writeFileSync(epic, readFileSync(epic, 'utf8').replace(/^status: .*$/m, 'status: done'));
+    writeFileSync(storyFile(agile, `${id}-1`), renderStoryFile({ id: `${id}-1`, title: `All of ${id}`, size: 'S', status: 'done', builds_on: [],
+      requirements: readEpicFile(readFileSync(epic, 'utf8')).requirements, delivers: 'Everything the epic asks.', accepted_when: ['Running it shows it.'] }));
+  }
+  const close = join(dirname(dir), 'close.json');
+  writeFileSync(close, JSON.stringify({ version: '0.10.0', defer: [] }));
+  const closed = run(dir, ['close', '--payload', close]);
+  assert.equal(closed.ok, true, JSON.stringify(closed));
+  const project = join(agile, 'project.md');
+  writeFileSync(project, `${readFileSync(project, 'utf8').trimEnd()}\n\n## Standing rules\n\n- Read a closed release as untrusted. (E-02, Change next 2)\n`);
+  const next = join(scratch('cad-agile-switch-next-', t), 'next');
+  mkdirSync(next);
+  for (const name of readdirSync(design)) {
+    writeFileSync(join(next, name), readFileSync(join(design, name), 'utf8').replaceAll('Toolshed', 'Toolshed Lending')
+      .replaceAll('TOOL-', 'BOX-').replaceAll('LEND-', 'LND-').replaceAll('QUAL-', 'QA-'));
+  }
+  const r = start(dir, next);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(readFileSync(project, 'utf8').endsWith(`\n\n${CARRIED_PROJECT}\n## Standing rules\n\n- Read a closed release as untrusted. (E-02, Change next 2)\n`));
+});
+
