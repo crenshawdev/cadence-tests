@@ -568,7 +568,7 @@ test('a carried section that opens a code fence and never closes it is closed in
 /** The lines agile.md's commit step runs, its stage-switch paths put where it says. @param {string[]} paths */
 function commitStep(paths) {
   const md = readFileSync(join(HERE, '..', 'cadence-core', 'workflows', 'agile.md'), 'utf8');
-  const block = md.split('```').find((b) => b.includes('git commit -m "docs: start the release"'));
+  const block = md.split('```').find((b) => b.includes('commit -m "docs: start the release"'));
   assert.ok(block, 'agile.md has the commit step');
   assert.match(block, / '<each path stage-switch named>'\n$/, 'its paths go on the commit line alone');
   return block.replace("'<each path stage-switch named>'", paths.map((p) => `'${p}'`).join(' '));
@@ -636,4 +636,45 @@ test('a start that isn\'t a switch stages nothing, and a project whose move stop
   const n = next(dir);
   assert.deepEqual([n.ok, n.reason], [false, 'switch'], JSON.stringify(n));
   assert.equal(n.hint, 'run /cad-agile --brief <folder> with the same design to finish it; nothing was written');
+});
+
+/** A landed project whose .planning git tracks, switched by a start. */
+function switchedTracked(t, extra = () => {}) {
+  const { dir, design } = richProject(t);
+  const root = dirname(dir);
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', ...WHO };
+  const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', env });
+  extra(dir);
+  git('init', '-q', '-b', 'main');
+  git('add', '-A');
+  assert.equal(git('commit', '-q', '-m', 'old path').status, 0);
+  return { dir, design, root, env, git };
+}
+
+test('a switch whose staged copies the user committed by hand still commits the old places gone, and a file written later under an archived name stays the user\'s', (t) => {
+  const { dir, design, root, env, git } = switchedTracked(t);
+  assert.equal(start(dir, design).ok, true);
+  assert.equal(run(dir, ['stage-switch']).ok, true);
+  // a run stopped here, and the user's own plain commit took the staged copies with it
+  assert.equal(git('commit', '-q', '-m', 'mine').status, 0);
+  const again = run(dir, ['stage-switch']);
+  assert.ok(again.paths.includes('.planning/PROJECT.md'), JSON.stringify(again));
+  assert.equal(spawnSync('sh', ['-c', commitStep(again.paths)], { cwd: root, encoding: 'utf8', env }).status, 0);
+  assert.deepEqual(git('status', '--porcelain', '--', '.planning').stdout.split('\n').filter((l) => l && !l.startsWith('??')), [], 'no old place is left deleted and uncommitted');
+  // a design the user writes under a name the switch archived is theirs, not a move
+  put(dir, 'PROJECT.md', '# my own notes\n');
+  git('add', '.planning/PROJECT.md');
+  assert.deepEqual(run(dir, ['stage-switch']), { ok: true, staged: 0, paths: [], _exit: 0 });
+});
+
+test('a tracked name holding a glob character stages that file alone, never an untracked neighbour it would match', (t) => {
+  const { dir, design, root, env, git } = switchedTracked(t, (d) => put(d, 'tasks/fix-typo/NOTE*.md', 'tracked\n'));
+  put(dir, 'tasks/fix-typo/NOTE-x.md', 'untracked\n');
+  assert.equal(start(dir, design).ok, true);
+  const staged = run(dir, ['stage-switch']);
+  assert.equal(spawnSync('sh', ['-c', commitStep(staged.paths)], { cwd: root, encoding: 'utf8', env }).status, 0);
+  const files = git('show', '--no-renames', '--name-only', '--format=', 'HEAD').stdout.split('\n');
+  assert.ok(files.includes('.planning/_archive-old-path/tasks/fix-typo/NOTE*.md'));
+  assert.ok(!files.includes('.planning/_archive-old-path/tasks/fix-typo/NOTE-x.md'));
+  assert.match(git('status', '--porcelain', '--', '.planning/_archive-old-path/tasks/fix-typo/NOTE-x.md').stdout, /^\?\? /);
 });
