@@ -2,7 +2,7 @@
 // Run: node --test tests/agile-switch.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, cpSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -240,7 +240,7 @@ test('a start stopped after each of its writes is finished by the next to the tr
     ['the list', (d) => listAndCopy(d, false)],
     ['the state copy', (d) => listAndCopy(d)],
     ['the marker', marked],
-    ['some moves, and a log a hook wrote since', (d) => { marked(d); moveBy(d, paths.slice(0, 6)); put(d, 'records/trace.jsonl', 'records/trace.jsonl\n'); }],
+    ['some moves', (d) => { marked(d); moveBy(d, paths.slice(0, 6)); }],
     ['every move', (d) => { marked(d); moveBy(d, paths); }],
     ['a dead run\'s build folder', (d) => { marked(d); moveBy(d, paths); put(d, `agile.new.${spawnSync('node', ['-e', '']).pid}/release.md`, 'half\n'); }],
   ];
@@ -251,6 +251,13 @@ test('a start stopped after each of its writes is finished by the next to the tr
     assert.equal(r.ok, true, `${name}: ${JSON.stringify(r)}`);
     assert.deepEqual(tree(dir), want, name);
   }
+  // a hook writing the run record after it moved: the new log is the new path's own, and the archived one keeps its bytes
+  const hooked = richProject(t);
+  marked(hooked.dir);
+  moveBy(hooked.dir, ['records/trace.jsonl', 'PROJECT.md']);
+  put(hooked.dir, 'records/trace.jsonl', 'a new run\n');
+  assert.equal(start(hooked.dir, hooked.design).ok, true);
+  assert.deepEqual(tree(hooked.dir), { ...want, 'records/trace.jsonl': 'a new run\n' });
   // the rename done and the list not yet removed: the next start removes it and says the move is finished
   const late = richProject(t);
   assert.equal(start(late.dir, late.design).ok, true);
@@ -261,7 +268,7 @@ test('a start stopped after each of its writes is finished by the next to the tr
 });
 
 test('a list left by a stopped move that names a path no switch moves is refused, and nothing moves', (t) => {
-  for (const wrong of ['drafts', 'records/codemap', '../outside', 'seldon/a/b', 'agile.switch', '']) {
+  for (const wrong of ['drafts', 'records/codemap', '../outside', 'seldon/a/b', 'agile.switch', 'seldon/next', '']) {
     const { dir, design } = richProject(t);
     writeFileSync(switchListFile(dir), `PROJECT.md\n${wrong}\n`);
     mkdirSync(join(oldPathArchive(dir), 'records'), { recursive: true });
@@ -276,16 +283,88 @@ test('a list left by a stopped move that names a path no switch moves is refused
   }
 });
 
-test('the marker replaces an old-path state only while the archive holds its very bytes', (t) => {
+test('the marker takes an old-path state\'s place only with a copy of its bytes beside it, and a marked project\'s copy is never written again', (t) => {
   const dir = landedProject(t);
   const copy = join(oldPathArchive(dir), 'records', 'state.json');
+  const old = readFileSync(join(dir, 'records', 'state.json'), 'utf8');
   assert.equal(markAgile(dir).reason, 'state-present');
-  mkdirSync(dirname(copy), { recursive: true });
-  cpSync(join(dir, 'records', 'state.json'), copy);
-  assert.equal(writeState(dir, { ...CLOSED, cursor: { ...CLOSED.cursor, updated: '2026-11-26' } }).ok, true);
-  assert.equal(markAgile(dir, copy).reason, 'state-present');
   assert.equal(readState(dir).kind, 'valid');
-  cpSync(join(dir, 'records', 'state.json'), copy);
+  mkdirSync(dirname(copy), { recursive: true });
   assert.deepEqual(markAgile(dir, copy), { ok: true, changed: true });
+  assert.equal(readFileSync(copy, 'utf8'), old);
   assert.equal(readState(dir).reason, 'agile-path');
+  assert.deepEqual(markAgile(dir, copy), { ok: true, changed: false });
+  assert.equal(readFileSync(copy, 'utf8'), old);
+});
+
+test('two starts at once switch the project once, and the archived state is always the old one', async (t) => {
+  for (let i = 0; i < 10; i++) {
+    const { dir, design } = richProject(t);
+    const old = readFileSync(join(dir, 'records', 'state.json'), 'utf8');
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', CADENCE_GLOBAL_CONFIG: join(dirname(dir), 'no-global.json'), ...WHO };
+    const both = [0, 1].map(() => spawn('node', [AGILE, 'start', '--design', design, '--dir', dir], { env }));
+    const outs = both.map((c) => new Promise((done) => { let out = ''; c.stdout.on('data', (b) => { out += b; }); c.on('close', () => done(JSON.parse(out))); }));
+    const rs = await Promise.all(outs);
+    assert.equal(readFileSync(join(oldPathArchive(dir), 'records', 'state.json'), 'utf8'), old, `trial ${i}`);
+    assert.ok(rs.some((r) => r.ok), JSON.stringify(rs));
+    for (const r of rs) assert.ok(r.ok || ['release-open', 'switch-locked'].includes(r.reason), JSON.stringify(r));
+    assert.equal(existsSync(switchListFile(dir)), false);
+    assert.equal(readState(dir).reason, 'agile-path');
+  }
+});
+
+test('a held switch lock, an archive that is a link or a file, and a path in both places are refused by name, and nothing moves', (t) => {
+  const outside = scratch('cad-agile-outside-', t);
+  /** @type {[string, string, (dir: string) => void, RegExp][]} */
+  const cases = [
+    ['another start moving it', 'switch-locked', (d) => writeFileSync(`${switchListFile(d)}.lock`, ''), /another start is moving this project/],
+    ['an archive linked out of the tree', 'old-path', (d) => { writeFileSync(switchListFile(d), 'PROJECT.md\n'); symlinkSync(outside, oldPathArchive(d)); }, /move that folder aside/],
+    ['an archived file the switch didn\'t put there', 'old-path', (d) => { writeFileSync(switchListFile(d), 'PROJECT.md\n'); put(oldPathArchive(d), 'PROJECT.md'); }, /move that folder aside/],
+    ['a marked project with its archive\'s records linked out', 'switch-archive', (d) => {
+      writeFileSync(switchListFile(d), 'PROJECT.md\nROADMAP.md\n');
+      mkdirSync(oldPathArchive(d));
+      assert.equal(markAgile(d, join(scratch('cad-agile-copy-', t), 'state.json')).ok, true);
+      symlinkSync(outside, join(oldPathArchive(d), 'records'));
+    }, /records is not a real folder/],
+    ['a marked project with a path in both places', 'switch-twins', (d) => {
+      writeFileSync(switchListFile(d), 'PROJECT.md\nROADMAP.md\n');
+      mkdirSync(join(oldPathArchive(d), 'records'), { recursive: true });
+      assert.equal(markAgile(d, join(oldPathArchive(d), 'records', 'state.json')).ok, true);
+      put(oldPathArchive(d), 'PROJECT.md', '# an older copy\n');
+    }, /PROJECT\.md is both at the top of .* and in .*_archive-old-path/],
+  ];
+  for (const [name, reason, make, hint] of cases) {
+    const { dir, design } = richProject(t);
+    make(dir);
+    const before = tree(dirname(dir));
+    const away = tree(outside);
+    const r = start(dir, design);
+    assert.deepEqual([r.ok, r.reason], [false, reason], `${name}: ${JSON.stringify(r)}`);
+    assert.match(`${r.detail} ${r.hint}`, hint, name);
+    assert.deepEqual(tree(dirname(dir)), before, name);
+    assert.deepEqual(tree(outside), away, name);
+  }
+  // a link where the state's copy goes is replaced, never written through
+  const { dir, design } = richProject(t);
+  const target = join(outside, 'precious');
+  writeFileSync(target, 'precious\n');
+  writeFileSync(switchListFile(dir), 'PROJECT.md\n');
+  mkdirSync(join(oldPathArchive(dir), 'records'), { recursive: true });
+  symlinkSync(target, join(oldPathArchive(dir), 'records', 'state.json'));
+  const old = readFileSync(join(dir, 'records', 'state.json'), 'utf8');
+  assert.equal(start(dir, design).ok, true);
+  assert.equal(readFileSync(target, 'utf8'), 'precious\n');
+  assert.equal(lstatSync(join(oldPathArchive(dir), 'records', 'state.json')).isSymbolicLink(), false);
+  assert.equal(readFileSync(join(oldPathArchive(dir), 'records', 'state.json'), 'utf8'), old);
+});
+
+test('a start finishing a stopped move reads the old requirements from the archive, so a reused ID is still refused', (t) => {
+  const { dir } = richProject(t);
+  writeFileSync(switchListFile(dir), 'REQUIREMENTS.md\nPROJECT.md\n');
+  mkdirSync(join(oldPathArchive(dir), 'records'), { recursive: true });
+  assert.equal(markAgile(dir, join(oldPathArchive(dir), 'records', 'state.json')).ok, true);
+  renameSync(join(dir, 'REQUIREMENTS.md'), join(oldPathArchive(dir), 'REQUIREMENTS.md'));
+  const r = start(dir, FIXTURE);
+  assert.deepEqual([r.ok, r.reason], [false, 'requirement-ids-used'], JSON.stringify(r));
+  assert.match(r.detail, /^CAT-01, LOAN-02 are already in .*_archive-old-path\/REQUIREMENTS\.md/);
 });
