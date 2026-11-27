@@ -819,6 +819,44 @@ test('a push whose destination git config picks asks when the config can send it
   assert.match(guard('git -c push.default=matching push origin', plain)?.permissionDecisionReason ?? '', /carries git -c/);
 });
 
+// --- The commit and merge rails read what runs before them (E-03-4). ----------
+
+test('a commit or merge after a command that can move the branch or the repository asks', (t) => {
+  const feat = project(t, 'feat');
+  const main = project(t, 'main');
+  for (const command of ['git switch main && git merge feat', 'git switch main && git commit -m x',
+    'git checkout main; git merge feat', `cd ${main} && git commit -m x`, 'cd && git commit -m x', 'cd - && git commit -m x',
+    'cd $D && git commit -m x', 'pushd x && git commit -m x', 'gh pr checkout 5 && git commit -m x']) {
+    assert.equal(guard(command, feat)?.permissionDecision, 'ask', command);
+  }
+  assert.match(guard('git switch main && git commit -m x', feat).permissionDecisionReason, /comes after a command/);
+});
+
+test('a commit or merge after a plain cd, a stage or a read, or any other command lands where it is judged', (t) => {
+  const feat = project(t, 'feat');
+  const main = project(t, 'main');
+  assert.equal(guard(`cd ${feat} && git commit -m x`, main), null);
+  for (const command of ['set -- a && git add -A -- "$@" && git commit -m x -- "$@"', 'npm test && git merge feat2',
+    'git add -A && git rm x && git commit -m y', 'git status; git diff && git commit -m x']) {
+    assert.equal(guard(command, feat), null, command);
+  }
+  // Cadence's own record commit, shaped as agile-build.md section 8 runs it
+  const record = "set -- 'a.md'\n[ -d 'b' ] && set -- \"$@\" 'b'\nfor f in c d; do [ -f \"$f\" ] && set -- \"$@\" \"$f\"; done\n"
+    + 'git add -A -- "$@"\ngit commit -m "docs: record" -- "$@"';
+  assert.equal(guard(record, feat), null);
+  assert.equal(guard(record, main)?.permissionDecision, 'ask');
+});
+
+test('the bypass and on_protected allow turn the moved-branch ask off where they turn the rail off', (t) => {
+  const dir = project(t, 'feat', { git: { guard_bypass: true } });
+  const g = globalFile(t, BYPASS);
+  assert.equal(guardWithGlobal('git switch main && git commit -m x', dir, g), null);
+  assert.equal(guardWithGlobal('git switch main && git merge feat', dir, g)?.permissionDecision, 'ask');
+  const allow = project(t, 'feat', { git: { on_protected: 'allow' } });
+  assert.equal(guard('git switch main && git merge feat', allow), null);
+  assert.equal(guard('git switch main && git commit -m x', tmp(t, 'cad-guard-plain-')), null);
+});
+
 test('a commit on a protected branch still asks after the push rail narrowed', (t) => {
   assert.equal(guard('git commit -m x', project(t, 'main')).permissionDecision, 'ask');
   assert.equal(guard('git commit -m x', project(t, 'feat')), null);

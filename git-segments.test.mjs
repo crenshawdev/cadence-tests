@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path, { join } from 'node:path';
 
-import { forgeRequests, gitInvocations, gitVerbs, parentDir, planningRoot } from '../cadence-core/bin/lib/git-segments.mjs';
+import { forgeRequests, gitInvocations, gitVerbs, parentDir, planningRoot, segments } from '../cadence-core/bin/lib/git-segments.mjs';
 
 // --- The anchor: a segment counts only when its command word is `git`. -------
 
@@ -221,6 +221,14 @@ test('parentDir steps exactly as path.posix.dirname and path.win32.dirname do', 
   };
   chase(POSIX_SHAPES, path.posix.dirname);
   chase(WIN32_SHAPES, path.win32.dirname);
+});
+
+test('segments gives every non-empty segment its words, and gitInvocations an at that indexes them', () => {
+  const cmd = 'cd x && ; set -- "a b" | git -C y commit -m z';
+  assert.deepEqual(segments(cmd), [['cd', 'x'], ['set', '--', '"a', 'b"'], ['git', '-C', 'y', 'commit', '-m', 'z']]);
+  assert.equal(segments(cmd)[gitInvocations(cmd)[0].at][0], 'git');
+  assert.deepEqual(segments(''), []);
+  assert.deepEqual(segments(7), []);
 });
 
 // --- gitInvocations: the same scan, keeping each segment's -C arguments. ----
