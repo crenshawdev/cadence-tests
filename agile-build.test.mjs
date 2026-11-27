@@ -192,10 +192,14 @@ test("the build asks the findings rule first, sizes the story before it's built,
   assert.ok(!prose.includes('An M stops here'));
   assert.ok(at('agile.mjs" size --payload') < at('Then make it, an M task by task'));
   assert.ok(prose.includes('sends it back to backlog for the next run to cut again: section 8, with nothing built'));
-  // a risk match runs no checker here, and every gate is followed: deferred queues under the story, off takes the one reviewer
+  // a risk match runs no checker here, and every gate is followed: deferred queues under the story, off takes the reviewers below
   assert.ok(prose.includes('carry `checkers: false`'));
   assert.ok(prose.includes('its `deferred record` takes `--task {story}` too'));
-  assert.ok(at('**No match**, or the gate `off`: one reviewer.') > at('risk-check run --phase 0 --base {Base} --head HEAD'));
+  assert.ok(at('**No match**, or the gate `off`: every reviewer the resolve below prints under `reviewers.diff`')
+    > at('risk-check run --phase 0 --base {Base} --head HEAD'));
+  // a cross-model reviewer runs through its provider's procedure, and a story is never left with none
+  assert.ok(at('references/review-cross-model.md` (one consult site - this step)') < at('route.mjs" resolve --role cad-reviewer --phase 0'));
+  assert.ok(prose.includes('with none left `claude-subagent` runs'));
   // a name filter that matches nothing exits 0, so a check built on one passes after its test is renamed
   assert.ok(prose.includes('A filter that matches no test still passes'));
   // a done story takes no more notes, so what was done differently is noted before the checks can make it done
