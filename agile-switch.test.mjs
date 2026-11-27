@@ -67,8 +67,8 @@ test('an old-path project whose release has landed is one a start may move: chec
   assert.ok(r.switch, JSON.stringify(r));
   const n = next(dir);
   assert.deepEqual([n.ok, n.reason], [false, 'switch'], JSON.stringify(n));
-  // /cad-agile stops on next's refusal until it routes a switch, so the hint names the one call that moves it
-  assert.match(n.hint, /agile\.mjs start --design <folder> moves it to the new path, and \/cad-agile doesn't take it there yet/);
+  // /cad-agile routes a switch only with a design, so the hint names the command and the folder it needs
+  assert.match(n.hint, /^run \/cad-agile --brief <folder> with a finished Seldon design, which shows what moves to the new path and asks first; nothing was written$/);
   assert.deepEqual(tree(dirname(dir)), before);
 });
 
@@ -564,3 +564,76 @@ test('a carried section that opens a code fence and never closes it is closed in
   assert.ok(withKept('# Next\n', `${project}\n## Standing rules\n\n${rules}\n`).endsWith(`## Standing rules\n\n${rules}\n`));
 });
 
+
+/** The lines agile.md's commit step runs, its stage-switch paths put where it says. @param {string[]} paths */
+function commitStep(paths) {
+  const md = readFileSync(join(HERE, '..', 'cadence-core', 'workflows', 'agile.md'), 'utf8');
+  const block = md.split('```').find((b) => b.includes('git commit -m "docs: start the release"'));
+  assert.ok(block, 'agile.md has the commit step');
+  assert.match(block, / '<each path stage-switch named>'\n$/, 'its paths go on the commit line alone');
+  return block.replace("'<each path stage-switch named>'", paths.map((p) => `'${p}'`).join(' '));
+}
+
+test('a switch commits each file git tracked at its archived place, the start\'s files and the switch\'s ledgers, and nothing else', (t) => {
+  const { dir, design } = richProject(t);
+  const root = dirname(dir);
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', ...WHO };
+  const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', env });
+  // anchored, so once the log is under the archive no line ignores it
+  writeFileSync(join(root, '.gitignore'), '/.planning/trace.jsonl\n');
+  put(root, 'notes.md', 'mine\n');
+  put(dir, 'spikes/gone/SPIKE.md');
+  git('init', '-q', '-b', 'main');
+  git('add', '-A');
+  assert.equal(git('commit', '-q', '-m', 'old path').status, 0);
+  const tracked = git('ls-files', '--', '.planning').stdout.split('\n').filter(Boolean);
+  // the user's own: a tracked file removed, an untracked review beside a phase, another file staged
+  rmSync(join(dir, 'spikes', 'gone'), { recursive: true });
+  put(dir, '_archive-v1.0.0/1/REVIEW-diff.md', 'unruled\n');
+  put(root, 'notes.md', 'mine, edited\n');
+  git('add', 'notes.md');
+
+  assert.equal(start(dir, design).ok, true);
+  const staged = run(dir, ['stage-switch']);
+  assert.equal(staged.ok, true, JSON.stringify(staged));
+  const index = git('diff', '--cached', '--name-only').stdout;
+  assert.deepEqual(run(dir, ['stage-switch']), staged, 'a run stopped before the commit stages the same again');
+  assert.equal(git('diff', '--cached', '--name-only').stdout, index);
+  assert.ok(staged.paths.includes('.planning/_archive-old-path') && staged.paths.includes('.planning/records/state.json'), JSON.stringify(staged.paths));
+  assert.ok(staged.paths.includes('.planning/agile/declined.md') && staged.paths.includes('.planning/agile/filed.md'), JSON.stringify(staged.paths));
+  assert.ok(!staged.paths.includes('.planning/records'), 'records/ is named by the entries that moved, never whole');
+
+  const committed = spawnSync('sh', ['-c', commitStep(staged.paths)], { cwd: root, encoding: 'utf8', env });
+  assert.equal(committed.status, 0, committed.stderr);
+  const files = git('show', '--no-renames', '--name-only', '--format=', 'HEAD').stdout.split('\n').filter(Boolean);
+  const moved = tracked.filter((p) => existsSync(join(oldPathArchive(dir), p.slice('.planning/'.length))));
+  for (const p of moved) {
+    assert.ok(files.includes(`.planning/_archive-old-path/${p.slice('.planning/'.length)}`), `${p} committed at its archived place`);
+    if (p !== '.planning/records/state.json' && p !== '.planning/records/.gitignore') assert.ok(files.includes(p), `${p} committed gone`);
+  }
+  for (const p of ['.planning/agile/release.md', '.planning/agile/project.md', '.planning/agile/declined.md', '.planning/agile/filed.md']) assert.ok(files.includes(p), p);
+  const theirs = (p) => moved.includes(p) || p === '.planning/spikes/gone/SPIKE.md' || p.startsWith('.planning/_archive-old-path/') || p.startsWith('.planning/agile/')
+    || ['.planning/records/state.json', '.planning/records/.gitignore', '.planning/config.json', '.github/cadence/coverage-policy.json'].includes(p);
+  assert.deepEqual(files.filter((p) => !theirs(p)), [], 'the commit holds the switch and the start alone');
+  for (const p of ['.planning/_archive-old-path/trace.jsonl', '.planning/_archive-old-path/_archive-v1.0.0/1/REVIEW-diff.md']) {
+    assert.ok(!files.includes(p), `${p} was never tracked, so the switch doesn't commit it`);
+    assert.match(git('status', '--porcelain', '--', p).stdout, /^\?\? /, p);
+  }
+  assert.equal(git('diff', '--cached', '--name-only').stdout, 'notes.md\n', 'the user\'s own staged file stays staged and out of the commit');
+  assert.deepEqual(git('status', '--porcelain', '--', '.planning').stdout.split('\n').filter((l) => l && !l.startsWith('??')), [], 'nothing tracked under .planning is left changed');
+  assert.deepEqual(run(dir, ['stage-switch']), { ok: true, staged: 0, paths: [], _exit: 0 }, 'once committed there is nothing to stage');
+});
+
+test('a start that isn\'t a switch stages nothing, and a project whose move stopped partway names /cad-agile to finish it', (t) => {
+  const plain = join(scratch('cad-agile-plain-', t), '.planning');
+  spawnSync('git', ['init', '-q'], { cwd: dirname(plain) });
+  assert.equal(start(answerSetup(plain)).ok, true);
+  assert.deepEqual(run(plain, ['stage-switch']), { ok: true, staged: 0, paths: [], _exit: 0 });
+  const { dir } = richProject(t);
+  writeFileSync(switchListFile(dir), 'PROJECT.md\n');
+  mkdirSync(join(oldPathArchive(dir), 'records'), { recursive: true });
+  assert.equal(markAgile(dir, join(oldPathArchive(dir), 'records', 'state.json')).ok, true);
+  const n = next(dir);
+  assert.deepEqual([n.ok, n.reason], [false, 'switch'], JSON.stringify(n));
+  assert.equal(n.hint, 'run /cad-agile --brief <folder> with the same design to finish it; nothing was written');
+});
