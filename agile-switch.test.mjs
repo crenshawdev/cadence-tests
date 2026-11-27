@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerSetup, scratch } from './planning.test.mjs';
@@ -16,7 +16,7 @@ const WHO = { GIT_AUTHOR_NAME: 'A', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAM
 
 /** One agile.mjs call with no user-global config and none of this machine's git settings. */
 function run(dir, args) {
-  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', CADENCE_GLOBAL_CONFIG: join(dir, 'no-global.json'), ...WHO };
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', CADENCE_GLOBAL_CONFIG: join(dirname(dir), 'no-global.json'), ...WHO };
   const r = spawnSync('node', [AGILE, ...args, '--dir', dir], { encoding: 'utf8', env });
   return { ...JSON.parse(r.stdout), _exit: r.status };
 }
@@ -103,4 +103,59 @@ test('old-path files with no state file yet are refused naming the command that 
     assert.match(r.hint, /\/cad-progress once/);
   }
   assert.deepEqual(tree(dirname(dir)), before);
+});
+
+/** The test design with every requirement ID renamed, so it reuses none the old project used. @param {string} to */
+function freshDesign(to) {
+  mkdirSync(to, { recursive: true });
+  for (const name of readdirSync(FIXTURE)) {
+    writeFileSync(join(to, name), readFileSync(join(FIXTURE, name), 'utf8').replaceAll('CAT-', 'TOOL-').replaceAll('LOAN-', 'LEND-').replaceAll('NFR-', 'QUAL-'));
+  }
+  return to;
+}
+
+const OLD_REQUIREMENTS = '# Requirements: Toolshed\n\n## Shipped\n\n| CAT-01 (a catalog) | 1 | Complete | v1.0.0 |\n\n## v2 Requirements\n\n- **MOD-01**: later, after LOAN-02 lands\n';
+
+test('check names what a switch archives, what it copies open work from and what it leaves, the user\'s own files and an open design among the left', (t) => {
+  const dir = landedProject(t);
+  for (const rel of ['REQUIREMENTS.md', 'STATE.md', 'CAPTURE.md', 'CAPTURE.md.lock', 'ARCHIVE.md', 'state.json', 'tasks/fix-typo/RECORD.md',
+    'spikes/probe/SPIKE.md', 'debug/hang.md', 'research/RESEARCH.md', '_archive-v1.0.0/1/PLAN-1.md', 'REVIEW-risk_surface-v1.0.0.md',
+    'trace.jsonl', 'reads.1.jsonl.claim.123', 'records/ARCHIVE.md', 'records/DECLINED.md', 'records/FILED.md', 'records/FILED.md.lock',
+    'records/trace.jsonl', 'records/reads.jsonl', 'records/deferred/1/ADJUDICATION-diff-plan-1.json', 'records/codemap/index.json',
+    'records/.gitignore', 'drafts/notes.md', 'notes.txt', 'config.json.bak']) put(dir, rel, rel === 'REQUIREMENTS.md' ? OLD_REQUIREMENTS : 'x\n');
+  mkdirSync(join(dir, 'phases'));
+  // the design the old release started from, at the top, and one no release has, in a folder of its own
+  cpSync(FIXTURE, join(dir, 'seldon'), { recursive: true });
+  put(dir, 'seldon/architecture.md');
+  const open = freshDesign(join(dir, 'seldon', 'next'));
+  const before = tree(dirname(dir));
+  const r = check(dir, open);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.switch.archive, ['ARCHIVE.md', 'CAPTURE.md', 'CAPTURE.md.lock', 'PROJECT.md', 'REQUIREMENTS.md', 'REVIEW-risk_surface-v1.0.0.md',
+    'ROADMAP.md', 'STATE.md', '_archive-v1.0.0', 'debug', 'phases', 'reads.1.jsonl.claim.123', 'records/ARCHIVE.md', 'records/DECLINED.md',
+    'records/FILED.md', 'records/FILED.md.lock', 'records/deferred', 'records/reads.jsonl', 'records/state.json', 'records/trace.jsonl', 'research',
+    'seldon/brief.md', 'seldon/prd.md', 'seldon/spine.md', 'seldon/epics.md', 'seldon/architecture.md', 'spikes', 'state.json', 'tasks', 'trace.jsonl']);
+  assert.deepEqual(r.switch.copy, ['PROJECT.md', 'REQUIREMENTS.md', 'CAPTURE.md', 'records/DECLINED.md', 'records/FILED.md']);
+  assert.deepEqual(r.switch.leave, ['config.json', 'config.json.bak', 'drafts', 'notes.txt', 'records/.gitignore', 'records/codemap', 'seldon/next']);
+  assert.deepEqual(tree(dirname(dir)), before);
+});
+
+test('a design whose IDs the old REQUIREMENTS.md holds anywhere is refused, as the old path refuses it, and so is one that can\'t be read', (t) => {
+  const dir = landedProject(t);
+  put(dir, 'REQUIREMENTS.md', OLD_REQUIREMENTS);
+  const before = tree(dirname(dir));
+  for (const r of [check(dir), start(dir)]) {
+    assert.deepEqual([r.ok, r._exit, r.reason], [false, 1, 'requirement-ids-used'], JSON.stringify(r));
+    assert.match(r.detail, /^CAT-01, LOAN-02 are already in .*REQUIREMENTS\.md/);
+    assert.match(r.hint, /prd\.md.*epics\.md.*nothing was written$/);
+  }
+  assert.deepEqual(tree(dirname(dir)), before);
+  // the same design with fresh IDs goes through
+  assert.equal(check(dir, freshDesign(join(scratch('cad-agile-fresh-', t), 'design'))).ok, true);
+
+  const linked = landedProject(t);
+  symlinkSync(join(dir, 'REQUIREMENTS.md'), join(linked, 'REQUIREMENTS.md'));
+  const r = check(linked);
+  assert.deepEqual([r.ok, r.reason], [false, 'old-requirements'], JSON.stringify(r));
+  assert.match(r.detail, /not a plain file/);
 });
