@@ -180,6 +180,23 @@ test("the findings rule is saved under the epic's Decisions while its stories ar
 
 const workflow = (name) => readFileSync(join(HERE, '..', 'cadence-core', 'workflows', name), 'utf8');
 
+test('an executor agent builds the story and makes its fixes, and the session builds nothing', () => {
+  const prose = workflow('agile-build.md').replace(/\s+/g, ' ');
+  const at = (words) => { const i = prose.indexOf(words); assert.ok(i >= 0, `${words} is there`); return i; };
+  const build = prose.slice(at('## 3. Build'), at('## 4. The commands'));
+  // the resolve, its bracket and its close all come before the work it hands over
+  assert.ok(build.startsWith('## 3. Build The session builds nothing. One `cad-executor` builds the story'));
+  const order = ['route.mjs" resolve --role cad-executor --phase 0', '--event dispatch --plan {story}-build --role cad-executor',
+    'Build story {story} {title} of epic {id}.', 'trace close --phase 0 --plan {story}-build --role cad-executor', '**Its size**, before anything is changed'];
+  order.reduce((last, words) => { const i = build.indexOf(words); assert.ok(i > last, `${words} comes after what precedes it`); return i; }, -1);
+  // the session reads no code to build it, and the review's fixes and the fix round go to an executor too
+  assert.ok(!prose.includes('the code its Delivers changes'));
+  assert.ok(prose.includes('The session builds nothing, so it reads no code'));
+  assert.ok(!prose.includes('Each fix is committed as section 3 commits'));
+  assert.ok(!prose.includes('Otherwise fix the code'));
+  assert.equal(prose.split('dispatched and closed as section 3 dispatches one').length - 1, 2);
+});
+
 test("the build asks the findings rule first, sizes the story before it's built, records the commands before the review, and runs the checks after it", () => {
   const prose = workflow('agile-build.md').replace(/\s+/g, ' ');
   const at = (words) => { const i = prose.indexOf(words); assert.ok(i >= 0, `${words} is there`); return i; };
