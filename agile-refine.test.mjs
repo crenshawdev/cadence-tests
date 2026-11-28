@@ -881,7 +881,7 @@ test('the conversation settles its branch, asks and has the list checked before 
   assert.ok(opening > at('mktemp -d') && opening < at('## 2. Ask'));
   assert.ok(at('From the last retrospective\n') > at('## 3. Cut') && at('From the last retrospective\n') < at('Picked for you'));
   assert.match(prose, /"change_next": \[\]/);
-  assert.match(workflow('agile-build.md'), /project\.md`, whose Standing rules this build follows/);
+  assert.match(workflow('agile-build.md'), /the Standing rules in \.planning\/agile\/project\.md, which this build follows/);
   assert.match(workflow('agile-accept.md'), /lesson happened twice and shows in\na diff says so/);
   assert.doesNotMatch(prose, /resolve --role|subagent/);
   // the late commit of a refinement cut short is the same one
